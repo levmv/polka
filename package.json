@@ -1,0 +1,29 @@
+{
+  "name": "polka",
+  "private": true,
+  "type": "module",
+  "description": "Frontend toolchain for polka — bundling, typecheck, and browser tests.",
+  "scripts": {
+    "build": "node frontend/build.mjs",
+    "typecheck": "tsc --noEmit -p frontend/tsconfig.json",
+    "lint": "biome check frontend/build.mjs frontend/src frontend/test browser-test/screenshot.mjs biome.json",
+    "lint:fix": "biome check --write frontend/build.mjs frontend/src frontend/test browser-test/screenshot.mjs biome.json",
+    "test:unit": "node --experimental-strip-types --test frontend/test/*.test.mjs",
+    "test:browser-list": "cd browser-test && playwright test --list >/dev/null",
+    "e2e": "cd browser-test && playwright test",
+    "screenshot": "node browser-test/screenshot.mjs"
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.0",
+    "@playwright/test": "^1.62.1",
+    "esbuild": "^0.28.1",
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "foliate-js": "1.0.1",
+    "pdfjs-dist": "6.2.108"
+  }
+}

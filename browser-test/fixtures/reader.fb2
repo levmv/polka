@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" xmlns:l="http://www.w3.org/1999/xlink">
+  <description>
+    <title-info>
+      <genre>sf</genre>
+      <author><first-name>Fb</first-name><last-name>Author</last-name></author>
+      <book-title>FB2 Reader Book</book-title>
+      <annotation><p>An FB2 fixture for reader smoke coverage.</p></annotation>
+      <lang>en</lang>
+    </title-info>
+    <document-info><id>fb2-reader-fixture</id></document-info>
+  </description>
+  <body>
+    <section>
+      <title><p>FB2 Reader Book</p></title>
+      <p>This is a browser-test FB2 paragraph 1. FB2 Reader Book keeps the reader fixture long enough for smoke coverage.</p>
+      <p>This is a browser-test FB2 paragraph 2. FB2 Reader Book keeps the reader fixture long enough for smoke coverage.</p>
+      <p>This is a browser-test FB2 paragraph 3. FB2 Reader Book keeps the reader fixture long enough for smoke coverage.</p>
+      <p>This is a browser-test FB2 paragraph 4. FB2 Reader Book keeps the reader fixture long enough for smoke coverage.</p>
+      <p>This is a browser-test FB2 paragraph 5. FB2 Reader Book keeps the reader fixture long enough for smoke coverage.</p>
+      <p>This is a browser-test FB2 paragraph 6. FB2 Reader Book keeps the reader fixture long enough for smoke coverage.</p>
+      <p>This is a browser-test FB2 paragraph 7. FB2 Reader Book keeps the reader fixture long enough for smoke coverage.</p>
+      <p>This is a browser-test FB2 paragraph 8. FB2 Reader Book keeps the reader fixture long enough for smoke coverage.</p>
+      <p>This is a browser-test FB2 paragraph 9. FB2 Reader Book keeps the reader fixture long enough for smoke coverage.</p>
+      <p>This is a browser-test FB2 paragraph 10. FB2 Reader Book keeps the reader fixture long enough for smoke coverage.</p>
+      <p>This is a browser-test FB2 paragraph 11. FB2 Reader Book keeps the reader fixture long enough for smoke coverage.</p>
+    </section>
+  </body>
+</FictionBook>

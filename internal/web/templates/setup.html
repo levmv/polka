@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    {{template "pwa_head" .}}
+    <title>Set up polka</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="login-body">
+    <div class="login-container">
+        <h1>polka</h1>
+        <p class="login-intro">Create the first account. This one is the administrator.</p>
+        {{if .Error}}
+        <div class="login-error">{{.Error}}</div>
+        {{end}}
+        <form method="POST" action="/setup" class="login-form">
+            <input type="text" name="username" placeholder="Username" value="{{.Username}}" autocomplete="username" required autofocus>
+            <input type="password" name="password" placeholder="Password" autocomplete="new-password" required>
+            <input type="password" name="confirm" placeholder="Confirm password" autocomplete="new-password" required>
+            <button type="submit">Create account</button>
+        </form>
+    </div>
+</body>
+</html>

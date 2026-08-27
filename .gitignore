@@ -1,0 +1,39 @@
+# Build artifacts
+/polka
+
+# Local libraries / data
+/.tmp-*/
+/.dev-library/
+/local/
+*.db
+*.db-shm
+*.db-wal
+
+# OS / editor cruft
+.DS_Store
+
+# Generated frontend bundle
+/internal/web/static/app.js
+/internal/web/static/pdf-reader.js
+/internal/web/static/reader.js
+/internal/web/static/style.css
+/internal/web/static/pdf.worker.js
+/internal/web/static/pdfjs/
+/internal/web/static/ThirdPartyNotices.txt
+
+# Compiled Go test binaries
+*.test
+
+# JS toolchain (root package.json)
+/node_modules/
+
+# Playwright browser testing
+/browser-test/screenshots/
+/browser-test/.auth*/
+/browser-test/test-results/
+
+# Python bytecode (browser-test fixture generator)
+__pycache__/
+*.pyc
+/internal/web/static/**/*.gz
+/.claude/
