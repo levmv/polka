@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    {{template "pwa_head" .}}
+    <title>Login - polka</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="login-body">
+    <div class="login-container">
+        <h1>polka</h1>
+        {{if .Error}}
+        <div class="login-error">{{.Error}}</div>
+        {{end}}
+        <form method="POST" action="/login" class="login-form">
+            <input type="text" name="username" placeholder="Username" autocomplete="username" required autofocus>
+            <input type="password" name="password" placeholder="Password" autocomplete="current-password" required>
+            <button type="submit">Log in</button>
+        </form>
+    </div>
+</body>
+</html>

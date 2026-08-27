@@ -1,0 +1,1 @@
+This file ensures the static directory exists so go:embed works.

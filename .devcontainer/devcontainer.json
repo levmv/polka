@@ -1,0 +1,14 @@
+{
+  "name": "polka",
+  "image": "mcr.microsoft.com/devcontainers/go:1-bookworm",
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "24"
+    }
+  },
+  "containerEnv": {
+    "GOTOOLCHAIN": "auto"
+  },
+  "appPort": "127.0.0.1:8082:8080",
+  "postCreateCommand": "sudo apt-get update && sudo apt-get install -y jq ripgrep python3 && go mod download && npm ci && npx playwright install --with-deps chromium webkit"
+}

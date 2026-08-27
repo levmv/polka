@@ -1,0 +1,66 @@
+{{template "layout" .}}
+
+{{define "content"}}
+<div class="reader-page{{if .IsPDF}} reader-page--pdf{{end}}" data-reader-asset-id="{{.AssetID}}" data-reader-format="{{.TransportFormat}}" data-reader-url="{{.ReadURL}}"{{with .FallbackURL}} data-reader-fallback-url="{{.}}"{{end}}>
+    <header class="reader-header">
+        <div class="reader-actions" aria-label="Reader tools">
+            {{if .IsPDF}}
+            <button class="reader-pdf-tool" type="button" data-pdf-zoom-out aria-label="Zoom out" title="Zoom out">−</button>
+            <button class="reader-pdf-tool reader-pdf-fit" type="button" data-pdf-zoom-fit aria-label="Fit page" title="Fit page">Fit</button>
+            <button class="reader-pdf-tool" type="button" data-pdf-zoom-in aria-label="Zoom in" title="Zoom in">+</button>
+            {{end}}
+            {{if .UsesFoliate}}
+            <button class="reader-display-toggle" type="button" data-reader-display-toggle aria-label="Display settings" title="Display settings">
+                <span class="reader-display-toggle-mark" aria-hidden="true">Aa</span>
+            </button>
+            {{end}}
+        </div>
+        <div class="reader-title-block">
+            <h1>{{.Title}}</h1>
+        </div>
+        <a class="reader-close" href="/book/{{.WorkID}}" aria-label="Close reader" title="Close reader">
+            <svg class="icon" width="20" height="20" aria-hidden="true"><use href="#i-close"></use></svg>
+        </a>
+    </header>
+
+    {{if .IsPDF}}
+        <section class="reader-pdf-stage" data-pdf-stage aria-label="PDF reader" tabindex="0">
+            <div class="reader-loading" data-reader-loading>Opening PDF...</div>
+            <div class="reader-pdf-page" data-pdf-page hidden>
+                <canvas class="reader-pdf-canvas" data-pdf-canvas></canvas>
+                <div class="reader-pdf-text-layer textLayer" data-pdf-text-layer></div>
+            </div>
+        </section>
+        <footer class="reader-footer reader-pdf-footer">
+            <button class="reader-pdf-turn" type="button" data-pdf-previous aria-label="Previous page" title="Previous page" disabled>‹</button>
+            <label class="reader-pdf-page-picker">
+                <span class="sr-only">Page</span>
+                <input class="reader-pdf-page-input" type="number" min="1" value="1" inputmode="numeric" data-pdf-page-input aria-label="Page number">
+                <span aria-hidden="true">/</span>
+                <span data-pdf-page-total>…</span>
+            </label>
+            <button class="reader-pdf-turn" type="button" data-pdf-next aria-label="Next page" title="Next page" disabled>›</button>
+            <span class="sr-only" data-reader-progress aria-live="polite"></span>
+            <span class="reader-save-status" data-reader-save-status role="status" hidden>Position not saved</span>
+        </footer>
+    {{else if .UsesFoliate}}
+        <section class="reader-epub-stage" aria-label="Book reader" tabindex="0">
+            <div class="reader-loading" data-reader-loading>Opening book...</div>
+        </section>
+        <footer class="reader-footer" aria-live="polite">
+            <span class="reader-progress" data-reader-progress></span>
+            <span class="reader-save-status" data-reader-save-status role="status" hidden>Position not saved</span>
+        </footer>
+    {{else}}
+        <section class="reader-fallback" aria-labelledby="reader-fallback-title">
+            <h2 id="reader-fallback-title">{{.Extension}} reading is not available yet</h2>
+            <p>Return to the book page to download this file.</p>
+        </section>
+    {{end}}
+</div>
+{{if .IsPDF}}
+<script src="/static/pdf-reader.js"></script>
+{{else if .UsesFoliate}}
+<script src="/static/reader.js"></script>
+{{end}}
+{{end}}
