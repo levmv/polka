@@ -33,9 +33,11 @@ type opfDoc struct {
 	Manifest opfManifest `xml:"manifest"`
 	Spine    opfSpine    `xml:"spine"`
 	Guide    opfGuide    `xml:"guide"`
+	rootName xml.Name
 }
 
 func (d *opfDoc) UnmarshalXML(dec *xml.Decoder, start xml.StartElement) error {
+	d.rootName = start.Name
 	if sameXMLName(start.Name, "metadata") || sameXMLName(start.Name, "dc-metadata") {
 		var metadata opfMetadata
 		if err := dec.DecodeElement(&metadata, &start); err != nil {

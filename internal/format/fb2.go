@@ -138,7 +138,8 @@ func ExtractFB2MetadataFromXMLBytes(raw []byte) (*Metadata, error) {
 }
 
 // ExtractFB2Cover extracts the cover image referenced by title-info/coverpage.
-// If no explicit coverpage image exists, it falls back to the first image binary.
+// If no explicit coverpage image exists, it falls back to the first decodable
+// image binary.
 func ExtractFB2Cover(r io.ReaderAt, size int64) ([]byte, string, error) {
 	doc, err := decodeFB2(r, size)
 	if err != nil {
@@ -161,28 +162,31 @@ func fb2Cover(doc *fb2Doc) ([]byte, string, error) {
 		}
 	}
 
-	var fallback *fb2Binary
+	var fallback []byte
+	fallbackExt := ""
 	for i := range doc.Binaries {
 		bin := &doc.Binaries[i]
-		if wantID != "" && bin.ID == wantID {
+		if wantID != "" && strings.TrimSpace(bin.ID) == wantID {
 			if b, ext, err := decodeFB2ImageBinary(bin); err != nil || len(b) > 0 {
 				return b, ext, err
 			}
 			continue
 		}
-		if !strings.HasPrefix(fb2BinaryContentType(bin.ContentType), "image/") {
+		if fallback != nil || !strings.HasPrefix(fb2BinaryContentType(bin.ContentType), "image/") {
 			continue
 		}
-		if fallback == nil {
-			fallback = bin
+		b, ext, err := decodeFB2ImageBinary(bin)
+		if err != nil {
+			return nil, "", err
+		}
+		if len(b) > 0 {
+			fallback = b
+			fallbackExt = ext
 		}
 	}
-	// If the declared cover target is missing, a first image fallback is still
-	// useful: many FB2 files carry exactly one binary image and no reliable link.
-	if fallback != nil {
-		return decodeFB2ImageBinary(fallback)
-	}
-	return nil, "", nil
+	// If the declared cover target is missing or unusable, the first decodable
+	// image is still useful. Broken binaries before it should not hide it.
+	return fallback, fallbackExt, nil
 }
 
 func decodeFB2(r io.ReaderAt, size int64) (*fb2Doc, error) {

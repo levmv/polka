@@ -51,11 +51,15 @@ func testFB2(cover []byte) []byte {
 }
 
 func testFB2CoverDocument(ref string, binaries ...string) []byte {
+	coverpage := ""
+	if ref != "" {
+		coverpage = `<coverpage><image l:href="#` + ref + `"/></coverpage>`
+	}
 	return []byte(`<?xml version="1.0" encoding="utf-8"?>
 <FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" xmlns:l="http://www.w3.org/1999/xlink">
   <description>
     <title-info>
-      <coverpage><image l:href="#` + ref + `"/></coverpage>
+      ` + coverpage + `
     </title-info>
   </description>
   ` + strings.Join(binaries, "\n  ") + `
@@ -460,6 +464,15 @@ func TestExtractFB2CoverSelection(t *testing.T) {
 		{
 			name:      "missing referenced binary",
 			fb2:       testFB2CoverDocument("missing.png", `<binary id="fallback.png" content-type="image/png">`+encoded+`</binary>`),
+			wantCover: true,
+		},
+		{
+			name: "invalid fallback before valid image",
+			fb2: testFB2CoverDocument(
+				"",
+				`<binary id="broken.png" content-type="image/png">not-valid-base64</binary>`,
+				`<binary id="fallback.png" content-type="image/png">`+encoded+`</binary>`,
+			),
 			wantCover: true,
 		},
 		{

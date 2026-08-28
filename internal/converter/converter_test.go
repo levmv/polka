@@ -1608,6 +1608,67 @@ trailing producer junk`)
 	}
 }
 
+func TestConvertEPUBToKEPUBDiscoversOrRejectsFallbackPackage(t *testing.T) {
+	opf := []byte(`<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Recovered KEPUB</dc:title></metadata>
+  <manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest>
+  <spine><itemref idref="chapter"/></spine>
+</package>`)
+	chapter := []byte(`<html xmlns="http://www.w3.org/1999/xhtml"><body><p>Recovered text.</p></body></html>`)
+	for _, tt := range []struct {
+		name      string
+		container []byte
+	}{
+		{name: "missing container"},
+		{name: "stale rootfile", container: []byte(`<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="missing.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`)},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			entries := []testZipEntry{
+				{name: "mimetype", data: []byte("application/epub+zip"), method: zip.Store, methodSet: true},
+				{name: "OPS/package.opf", data: opf},
+				{name: "OPS/chapter.xhtml", data: chapter},
+			}
+			if tt.container != nil {
+				entries = append(entries, testZipEntry{name: "META-INF/container.xml", data: tt.container})
+			}
+			src := testZipWithHeaders(t, entries)
+			var out bytes.Buffer
+			if err := ConvertContext(context.Background(), &out, bytes.NewReader(src), format.FormatEPUB, int64(len(src)), TargetKEPUB); err != nil {
+				t.Fatalf("Convert EPUB to KEPUB: %v", err)
+			}
+			container := zipEntry(t, out.Bytes(), "META-INF/container.xml")
+			if !strings.Contains(container, `full-path="OPS/package.opf"`) {
+				t.Fatalf("container.xml does not point to recovered OPF:\n%s", container)
+			}
+			if xhtml := zipEntry(t, out.Bytes(), "OPS/chapter.xhtml"); !strings.Contains(xhtml, `class="koboSpan"`) || !strings.Contains(xhtml, "Recovered text.") {
+				t.Fatalf("recovered content was not converted to KEPUB:\n%s", xhtml)
+			}
+			r := bytes.NewReader(out.Bytes())
+			if got := format.DetectFormat("book.kepub.epub", r, r.Size()); got != format.FormatKEPUB {
+				t.Fatalf("DetectFormat output = %v; want KEPUB", got)
+			}
+		})
+	}
+
+	t.Run("ambiguous package", func(t *testing.T) {
+		src := testZip(t, map[string][]byte{
+			"OPS/a.opf":           opf,
+			"OPS/chapter.xhtml":   chapter,
+			"OTHER/b.opf":         opf,
+			"OTHER/chapter.xhtml": chapter,
+		})
+		var out bytes.Buffer
+		err := ConvertContext(context.Background(), &out, bytes.NewReader(src), format.FormatEPUB, int64(len(src)), TargetKEPUB)
+		if err == nil || !strings.Contains(err.Error(), "package is ambiguous") {
+			t.Fatalf("Convert ambiguous EPUB to KEPUB error = %v; want package ambiguity", err)
+		}
+		if out.Len() != 0 {
+			t.Fatalf("failed KEPUB conversion wrote %d bytes", out.Len())
+		}
+	})
+}
+
 func TestConvertEPUBToEPUBNormalizesDeclaredOPFEncoding(t *testing.T) {
 	opf := converterWindows1251(t, `<?xml version="1.0" encoding="windows-1251"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0">
@@ -2886,6 +2947,44 @@ func TestConvertFB2ToKEPUB(t *testing.T) {
 	}
 	if len(problems) != 0 {
 		t.Fatalf("composed KEPUB internal-link problems: %v", problems)
+	}
+}
+
+func TestConvertFB2PreservesFirstDecodableFallbackCover(t *testing.T) {
+	original := testFB2ForEPUB()
+	coverpage := []byte(`      <coverpage><image l:href="#cover.png"/></coverpage>` + "\n")
+	src := bytes.Replace(original, coverpage, nil, 1)
+	if bytes.Equal(src, original) || bytes.Contains(src, []byte("<coverpage>")) {
+		t.Fatal("test fixture still declares an explicit cover")
+	}
+	validBinary := []byte(`  <binary id="cover.png" content-type="image/png">`)
+	brokenBinary := []byte("  <binary id=\"broken.png\" content-type=\"image/png\">not-valid-base64</binary>\n")
+	withBrokenFirst := bytes.Replace(src, validBinary, append(brokenBinary, validBinary...), 1)
+	if bytes.Equal(withBrokenFirst, src) {
+		t.Fatal("test fixture did not gain the broken first image")
+	}
+	src = withBrokenFirst
+	sourceCover, _, err := format.ExtractCover(bytes.NewReader(src), int64(len(src)), format.FormatFB2)
+	if err != nil || !bytes.Equal(sourceCover, converterTinyPNG) {
+		t.Fatalf("source fallback cover = %d bytes, error %v; want original PNG", len(sourceCover), err)
+	}
+	for _, tt := range []struct {
+		target Target
+		kind   format.Format
+	}{
+		{target: TargetEPUB, kind: format.FormatEPUB},
+		{target: TargetKEPUB, kind: format.FormatKEPUB},
+	} {
+		t.Run(string(tt.target), func(t *testing.T) {
+			var out bytes.Buffer
+			if err := ConvertContext(context.Background(), &out, bytes.NewReader(src), format.FormatFB2, int64(len(src)), tt.target); err != nil {
+				t.Fatalf("Convert FB2 to %s: %v", tt.target, err)
+			}
+			cover, _, err := format.ExtractCover(bytes.NewReader(out.Bytes()), int64(out.Len()), tt.kind)
+			if err != nil || !bytes.Equal(cover, converterTinyPNG) {
+				t.Fatalf("converted fallback cover = %d bytes, error %v; want original PNG", len(cover), err)
+			}
+		})
 	}
 }
 

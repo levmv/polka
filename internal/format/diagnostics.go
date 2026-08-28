@@ -47,7 +47,12 @@ func inspectEPUBDiagnostics(r io.ReaderAt, size int64) []Diagnostic {
 	if err != nil || !ok {
 		return out
 	}
-	if opf.containerPath != "META-INF/container.xml" {
+	if opf.discoveredPackage {
+		out = append(out, Diagnostic{
+			Code:    "epub.discovered_package",
+			Message: fmt.Sprintf("Discovered the sole coherent package document %q because container.xml was missing or unusable.", opf.path),
+		})
+	} else if opf.containerPath != "META-INF/container.xml" {
 		out = append(out, Diagnostic{
 			Code:    "epub.normalized_container_path",
 			Message: fmt.Sprintf("Resolved container.xml through the unique normalized archive path %q.", opf.containerPath),
