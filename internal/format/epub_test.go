@@ -3,6 +3,7 @@ package format
 import (
 	"archive/zip"
 	"bytes"
+	"path"
 	"testing"
 )
 
@@ -240,6 +241,76 @@ func TestDetectFormatEPUBAcceptsValidOPFWithImperfectMimetype(t *testing.T) {
 	}
 }
 
+func TestDetectFormatEPUBDiscoversSoleCoherentPackage(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		container string
+	}{
+		{name: "missing container"},
+		{name: "stale rootfile", container: `<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="missing.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			data := testEPUBWithDiscoveredOPFs(t, tt.container, []discoveredEPUBPackage{{
+				path:    "OPS/package.opf",
+				chapter: "OPS/chapter.xhtml",
+				title:   "Discovered Package",
+			}})
+			r := bytes.NewReader(data)
+			if got := DetectFormat("book.epub", r, r.Size()); got != FormatEPUB {
+				t.Fatalf("DetectFormat = %v; want FormatEPUB", got)
+			}
+			meta, err := ExtractEPUBMetadata(r, r.Size())
+			if err != nil {
+				t.Fatalf("ExtractEPUBMetadata: %v", err)
+			}
+			if meta == nil || meta.Title != "Discovered Package" {
+				t.Fatalf("metadata = %+v; want discovered package title", meta)
+			}
+			diagnostics := InspectDiagnostics(r, r.Size(), FormatEPUB, "book.epub")
+			var foundDiscovery bool
+			for _, diagnostic := range diagnostics {
+				if diagnostic.Code == "epub.discovered_package" {
+					foundDiscovery = true
+					break
+				}
+			}
+			if !foundDiscovery {
+				t.Fatalf("diagnostics = %+v; want epub.discovered_package", diagnostics)
+			}
+		})
+	}
+}
+
+func TestDetectFormatEPUBDoesNotGuessIncoherentOrAmbiguousPackage(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		packages []discoveredEPUBPackage
+	}{
+		{
+			name: "incoherent package",
+			packages: []discoveredEPUBPackage{{
+				path:  "OPS/package.opf",
+				title: "No Spine",
+			}},
+		},
+		{
+			name: "two coherent packages",
+			packages: []discoveredEPUBPackage{
+				{path: "OPS/one.opf", chapter: "OPS/one.xhtml", title: "One"},
+				{path: "ALT/two.opf", chapter: "ALT/two.xhtml", title: "Two"},
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			data := testEPUBWithDiscoveredOPFs(t, "", tt.packages)
+			r := bytes.NewReader(data)
+			if got := DetectFormat("book.epub", r, r.Size()); got != FormatUnknown {
+				t.Fatalf("DetectFormat = %v; want FormatUnknown", got)
+			}
+		})
+	}
+}
+
 func TestDetectFormatEPUBFallsBackWhenStrictMimetypeTooLarge(t *testing.T) {
 	data := testEPUBWithMimetypeBodyAndOPF(t, append([]byte(epubMimetype), bytes.Repeat([]byte(" "), int(maxEPUBMimetypeBytes))...))
 	r := bytes.NewReader(data)
@@ -276,6 +347,49 @@ func testEPUBWithMimetype(t *testing.T, mimetypeSecond bool, storeMimetype bool)
 	}
 	if err := w.Close(); err != nil {
 		t.Fatalf("close epub zip: %v", err)
+	}
+	return buf.Bytes()
+}
+
+type discoveredEPUBPackage struct {
+	path    string
+	chapter string
+	title   string
+}
+
+func testEPUBWithDiscoveredOPFs(t *testing.T, container string, packages []discoveredEPUBPackage) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	write := func(name string, method uint16, data string) {
+		header := &zip.FileHeader{Name: name, Method: method}
+		entry, err := zw.CreateHeader(header)
+		if err != nil {
+			t.Fatalf("create %s: %v", name, err)
+		}
+		if _, err := entry.Write([]byte(data)); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	if container != "" {
+		write("META-INF/container.xml", zip.Deflate, container)
+	}
+	for _, pkg := range packages {
+		manifest := ""
+		spine := ""
+		if pkg.chapter != "" {
+			manifest = `<manifest><item id="chapter" href="` + path.Base(pkg.chapter) + `" media-type="application/xhtml+xml"/></manifest>`
+			spine = `<spine><itemref idref="chapter"/></spine>`
+			write(pkg.chapter, zip.Deflate, `<html xmlns="http://www.w3.org/1999/xhtml"><body><p>Text.</p></body></html>`)
+		}
+		opf := `<package xmlns="http://www.idpf.org/2007/opf" version="3.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>` + pkg.title + `</dc:title></metadata>` + manifest + spine + `</package>`
+		write(pkg.path, zip.Deflate, opf)
+	}
+	// Deliberately compressed and non-first: package discovery is the only
+	// recognition evidence for these variants.
+	write("mimetype", zip.Deflate, epubMimetype)
+	if err := zw.Close(); err != nil {
+		t.Fatalf("close EPUB: %v", err)
 	}
 	return buf.Bytes()
 }

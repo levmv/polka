@@ -107,9 +107,9 @@ func convertEPUBToKEPUB(ctx context.Context, w io.Writer, src io.ReaderAt, size 
 	}
 
 	contentDocSet := make(map[*zip.File]bool, len(contentDocs))
-	packageEntrySet := map[*zip.File]bool{
-		pkg.containerFile: true,
-		pkg.opfFile:       true,
+	packageEntrySet := map[*zip.File]bool{pkg.opfFile: true}
+	if pkg.containerFile != nil {
+		packageEntrySet[pkg.containerFile] = true
 	}
 	for _, name := range contentDocs {
 		file, err := kepubZipFile(zr, name)
@@ -132,6 +132,16 @@ func convertEPUBToKEPUB(ctx context.Context, w io.Writer, src io.ReaderAt, size 
 	if err := addEPUBFile(zw, "mimetype", zip.Store, "application/epub+zip"); err != nil {
 		zw.Close()
 		return err
+	}
+	if pkg.containerFile == nil {
+		if len(pkg.containerBytes) == 0 {
+			zw.Close()
+			return fmt.Errorf("recovered EPUB package has no container.xml")
+		}
+		if err := addEPUBBytes(zw, "META-INF/container.xml", zip.Deflate, pkg.containerBytes); err != nil {
+			zw.Close()
+			return err
+		}
 	}
 
 	for _, f := range zr.File {
@@ -183,6 +193,28 @@ func convertEPUBToKEPUB(ctx context.Context, w io.Writer, src io.ReaderAt, size 
 }
 
 func kepubReadPackage(ctx context.Context, zr *zip.Reader) (kepubPackage, error) {
+	pkg, declaredErr := kepubReadDeclaredPackage(ctx, zr)
+	if declaredErr == nil {
+		return pkg, nil
+	}
+
+	// Package rebuild already owns the bounded, unambiguous fallback for a
+	// missing/stale container.xml. Reuse it rather than maintaining a stricter
+	// second discovery policy for direct KEPUB conversion.
+	rebuilt, err := readRebuildPackage(ctx, zr)
+	if err != nil {
+		return kepubPackage{}, err
+	}
+	return kepubPackage{
+		opfPath:        rebuilt.opfPath,
+		opfBytes:       rebuilt.opfBytes,
+		opfFile:        rebuilt.opfFile,
+		containerFile:  rebuilt.containerFile,
+		containerBytes: rebuilt.containerData,
+	}, nil
+}
+
+func kepubReadDeclaredPackage(ctx context.Context, zr *zip.Reader) (kepubPackage, error) {
 	container, err := kepubZipFile(zr, "META-INF/container.xml")
 	if err != nil {
 		return kepubPackage{}, fmt.Errorf("resolve EPUB container.xml: %w", err)

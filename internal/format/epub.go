@@ -25,6 +25,7 @@ const (
 	epubOPFMediaType           = "application/oebps-package+xml"
 	maxEPUBCoverBytes          = 32 << 20
 	maxEPUBMimetypeBytes int64 = int64(len(epubMimetype) + 1024)
+	maxEPUBFallbackOPFs        = 16
 )
 
 type epubOPFRead struct {
@@ -33,6 +34,7 @@ type epubOPFRead struct {
 	containerPath     string
 	relaxedMediaType  bool
 	skippedCandidates int
+	discoveredPackage bool
 	doc               opfDoc
 }
 
@@ -119,46 +121,109 @@ func ExtractEPUBCover(r io.ReaderAt, size int64) ([]byte, string, error) {
 }
 
 func readEPUBOPF(zr *zip.Reader) (epubOPFRead, bool, error) {
-	container, _ := epubZipFileMatch(zr, "META-INF/container.xml")
-	if container == nil {
-		return epubOPFRead{}, false, nil
-	}
-
-	rc, err := container.Open()
-	if err != nil {
-		return epubOPFRead{}, false, err
-	}
-	var cDoc containerDoc
-	err = xml.NewDecoder(rc).Decode(&cDoc)
-	rc.Close()
-	if err != nil || len(cDoc.Rootfiles) == 0 {
-		return epubOPFRead{}, false, nil
-	}
-
-	candidates := epubOPFFiles(zr, cDoc)
-	if len(candidates) == 0 {
-		return epubOPFRead{}, false, nil
-	}
-
 	var firstErr error
-	for i, candidate := range candidates {
-		opf, err := readEPUBOPFFile(candidate.file)
+	container, ambiguous := epubZipFileMatch(zr, "META-INF/container.xml")
+	if ambiguous {
+		return epubOPFRead{}, false, nil
+	}
+	if container != nil {
+		rc, err := container.Open()
 		if err != nil {
-			if firstErr == nil {
-				firstErr = err
+			firstErr = err
+		} else {
+			var cDoc containerDoc
+			err = xml.NewDecoder(rc).Decode(&cDoc)
+			closeErr := rc.Close()
+			if err == nil {
+				err = closeErr
 			}
-			continue
+			if err == nil && len(cDoc.Rootfiles) > 0 {
+				for i, candidate := range epubOPFFiles(zr, cDoc) {
+					opf, err := readEPUBOPFFile(candidate.file)
+					if err != nil {
+						if firstErr == nil {
+							firstErr = err
+						}
+						continue
+					}
+					return epubOPFRead{
+						path:              candidate.path,
+						requestedPath:     candidate.requestedPath,
+						containerPath:     container.Name,
+						relaxedMediaType:  candidate.relaxedMediaType,
+						skippedCandidates: i,
+						doc:               opf,
+					}, true, nil
+				}
+			}
 		}
-		return epubOPFRead{
-			path:              candidate.path,
-			requestedPath:     candidate.requestedPath,
-			containerPath:     container.Name,
-			relaxedMediaType:  candidate.relaxedMediaType,
-			skippedCandidates: i,
-			doc:               opf,
-		}, true, nil
+	}
+
+	if fallback, ok := readSoleCoherentEPUBOPF(zr); ok {
+		return fallback, true, nil
 	}
 	return epubOPFRead{}, false, firstErr
+}
+
+// readSoleCoherentEPUBOPF is the bounded fallback for packages whose producer
+// omitted container.xml or left it pointing at a missing rootfile. It accepts
+// only one parseable OPF whose spine resolves through its manifest to an
+// existing archive member; ambiguity remains a hard stop.
+func readSoleCoherentEPUBOPF(zr *zip.Reader) (epubOPFRead, bool) {
+	var found epubOPFRead
+	candidateCount := 0
+	for _, file := range zr.File {
+		if strings.HasSuffix(file.Name, "/") || !strings.EqualFold(path.Ext(file.Name), ".opf") {
+			continue
+		}
+		candidateCount++
+		if candidateCount > maxEPUBFallbackOPFs {
+			return epubOPFRead{}, false
+		}
+		opf, err := readEPUBOPFFile(file)
+		if err != nil || opf.rootName.Local != "package" || !epubOPFSpineResolves(zr, file.Name, opf) {
+			continue
+		}
+		if found.path != "" {
+			return epubOPFRead{}, false
+		}
+		found = epubOPFRead{
+			path:              file.Name,
+			discoveredPackage: true,
+			doc:               opf,
+		}
+	}
+	return found, found.path != ""
+}
+
+func epubOPFSpineResolves(zr *zip.Reader, opfPath string, opf opfDoc) bool {
+	if len(opf.Manifest.Items) == 0 || len(opf.Spine.Itemrefs) == 0 {
+		return false
+	}
+	manifestPaths := make(map[string]string, len(opf.Manifest.Items))
+	for _, item := range opf.Manifest.Items {
+		id := strings.TrimSpace(item.ID)
+		href := cleanOPFHref(item.Href)
+		if id == "" || href == "" {
+			continue
+		}
+		href = epubZipPath(opfPath, href)
+		if existing, duplicate := manifestPaths[id]; duplicate && existing != href {
+			manifestPaths[id] = ""
+			continue
+		}
+		manifestPaths[id] = href
+	}
+	for _, itemref := range opf.Spine.Itemrefs {
+		name := manifestPaths[strings.TrimSpace(itemref.IDRef)]
+		if name == "" {
+			continue
+		}
+		if file, ambiguous := epubZipFileMatch(zr, name); file != nil && !ambiguous {
+			return true
+		}
+	}
+	return false
 }
 
 func readEPUBOPFFile(opfFile *zip.File) (opfDoc, error) {

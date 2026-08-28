@@ -41,11 +41,15 @@ func convertFB2SourceToEPUB(ctx context.Context, w io.Writer, src io.ReaderAt, s
 	if err != nil {
 		return err
 	}
-	assets, imageRefs, err := fb2EPUBImageAssets(raw)
+	assets, imageRefs, fallbackCoverHref, err := fb2EPUBImageAssets(raw)
 	if err != nil {
 		return err
 	}
-	fb2MarkEPUBCoverAsset(assets, imageRefs[coverID])
+	coverHref := imageRefs[coverID]
+	if coverHref == "" {
+		coverHref = fallbackCoverHref
+	}
+	fb2MarkEPUBCoverAsset(assets, coverHref)
 	body, nav, err := fb2BodyToEPUB(raw, imageRefs)
 	if err != nil {
 		return err
@@ -123,18 +127,19 @@ func fb2MarkEPUBCoverAsset(assets []epubAsset, coverHref string) {
 	}
 }
 
-func fb2EPUBImageAssets(raw []byte) ([]epubAsset, map[string]string, error) {
+func fb2EPUBImageAssets(raw []byte) ([]epubAsset, map[string]string, string, error) {
 	decoder := xml.NewDecoder(bytes.NewReader(raw))
 	decoder.CharsetReader = charset.NewReaderLabel
 	var assets []epubAsset
 	refs := map[string]string{}
+	fallbackCoverHref := ""
 	for {
 		token, err := decoder.Token()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			return nil, nil, fmt.Errorf("decode FB2 binaries: %w", err)
+			return nil, nil, "", fmt.Errorf("decode FB2 binaries: %w", err)
 		}
 		start, ok := token.(xml.StartElement)
 		if !ok || start.Name.Local != "binary" {
@@ -142,14 +147,16 @@ func fb2EPUBImageAssets(raw []byte) ([]epubAsset, map[string]string, error) {
 		}
 		var bin fb2EPUBBinary
 		if err := decoder.DecodeElement(&bin, &start); err != nil {
-			return nil, nil, fmt.Errorf("decode FB2 binary: %w", err)
+			return nil, nil, "", fmt.Errorf("decode FB2 binary: %w", err)
 		}
 		data, mediaType, ext := decodeFB2EPUBImage(bin)
 		if len(data) == 0 {
 			continue
 		}
+		contentType := strings.ToLower(strings.TrimSpace(strings.Split(bin.ContentType, ";")[0]))
+		isFallbackCover := fallbackCoverHref == "" && strings.HasPrefix(contentType, "image/")
 		id := strings.TrimSpace(bin.ID)
-		if id == "" || refs[id] != "" {
+		if (id == "" || refs[id] != "") && !isFallbackCover {
 			continue
 		}
 		assetID := "img" + strconv.Itoa(len(assets)+1)
@@ -160,9 +167,14 @@ func fb2EPUBImageAssets(raw []byte) ([]epubAsset, map[string]string, error) {
 			MediaType: mediaType,
 			Data:      data,
 		})
-		refs[id] = href
+		if id != "" && refs[id] == "" {
+			refs[id] = href
+		}
+		if isFallbackCover {
+			fallbackCoverHref = href
+		}
 	}
-	return assets, refs, nil
+	return assets, refs, fallbackCoverHref, nil
 }
 
 func decodeFB2EPUBImage(bin fb2EPUBBinary) ([]byte, string, string) {
