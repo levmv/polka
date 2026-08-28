@@ -109,6 +109,53 @@ test.describe('Account settings', () => {
     await deleteShelf(page, shelfID);
   });
 
+  test('a section that fails to load rests on its error and offers a retry', async ({
+    page,
+    browserErrors,
+  }) => {
+    browserErrors.allow((message) => message.includes('/api/users'));
+    let attempts = 0;
+    await page.route('**/api/users', async (route) => {
+      attempts += 1;
+      await route.abort('failed');
+    });
+
+    const modal = await openSettings(page, 'Users');
+    const error = modal.locator('.settings-note-error');
+    await expect(error).toContainText('Cannot reach server');
+
+    // The failure must not start the next attempt: that turned an unreachable
+    // server into a render loop hammering it.
+    await page.waitForTimeout(400);
+    expect(attempts).toBe(1);
+    await expect(error).toBeVisible();
+
+    await page.unroute('**/api/users');
+    await error.getByRole('button', { name: 'Retry' }).click();
+    await expect(modal.locator('.settings-user-row', { hasText: 'admin' })).toBeVisible();
+  });
+
+  test('reveals device sending only once an admin turns it on', async ({ page }) => {
+    const modal = await openSettings(page, 'Devices');
+    const sendingSwitch = modal.getByRole('switch', { name: 'Sending books to a device' });
+
+    await expect(sendingSwitch).toHaveAttribute('aria-checked', 'false');
+    await expect(modal.getByRole('heading', { name: 'Email delivery' })).toHaveCount(0);
+    await expect(modal.getByRole('heading', { name: 'Send devices' })).toHaveCount(0);
+    await page.screenshot({ path: 'screenshots/settings-devices-off.png', fullPage: true });
+
+    await sendingSwitch.click();
+    await expect(sendingSwitch).toHaveAttribute('aria-checked', 'true');
+    await expect(modal.getByRole('heading', { name: 'Email delivery' })).toBeVisible();
+    await expect(modal.getByRole('heading', { name: 'Send devices' })).toBeVisible();
+    await expect(modal.getByRole('heading', { name: 'Recent sends' })).toBeVisible();
+    await page.screenshot({ path: 'screenshots/settings-devices-on.png', fullPage: true });
+
+    // Leave the shared catalog as it was found.
+    await sendingSwitch.click();
+    await expect(modal.getByRole('heading', { name: 'Email delivery' })).toHaveCount(0);
+  });
+
   test('manages scoped users across desktop and mobile', async ({ page }) => {
     const stamp = Date.now().toString(36);
     const newUser = `alice-${stamp}`;

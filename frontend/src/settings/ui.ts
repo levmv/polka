@@ -1,6 +1,6 @@
 import { textEl } from '../dom';
 import { errorMessage } from '../errors';
-import { icon } from '../icons';
+import { icon, iconElement } from '../icons';
 import { openModal } from '../modal';
 import { showToast } from '../toast';
 
@@ -12,6 +12,8 @@ export type AsyncLoadState = {
 
 let settingsRowLabelSequence = 0;
 
+// Keep failures stable until explicit retry; rerendering immediately would
+// create a request loop while the server is unreachable.
 export function renderAsyncSection(
     state: AsyncLoadState,
     opts: {
@@ -22,9 +24,22 @@ export function renderAsyncSection(
         isReady?: () => boolean;
     },
 ): boolean {
-    if (!state.loaded && !state.loading) {
+    if (state.loading) {
+        opts.target.append(loadingNote());
+        return true;
+    }
+    if (state.loadError) {
+        opts.target.append(
+            retryableErrorNote(state.loadError, () => {
+                state.loadError = '';
+                opts.rerender();
+            }),
+        );
+        return true;
+    }
+
+    if (!state.loaded) {
         state.loading = true;
-        state.loadError = '';
         opts.target.append(loadingNote());
         opts.load()
             .then(() => {
@@ -40,15 +55,6 @@ export function renderAsyncSection(
         return true;
     }
 
-    if (state.loading) {
-        opts.target.append(loadingNote());
-        return true;
-    }
-    if (state.loadError) {
-        opts.target.append(errorNote(state.loadError));
-        return true;
-    }
-    if (!state.loaded) return true;
     if (opts.isReady && !opts.isReady()) return true;
     return false;
 }
@@ -117,6 +123,31 @@ function hasAccessibleName(
             control.getAttribute('aria-labelledby') ||
             control.labels?.length,
     );
+}
+
+// Disclosure is one-way: folding a row back would only undo the click that opened
+// it, and the panel is rebuilt folded on the next visit anyway. Callers pass
+// `revealed` so a row holding a non-default value is never hidden in the first place.
+export function settingsReveal(
+    label: string,
+    content: HTMLElement,
+    revealed: boolean,
+): HTMLElement {
+    const wrap = document.createElement('div');
+    wrap.className = 'settings-reveal';
+    if (revealed) {
+        wrap.append(content);
+        return wrap;
+    }
+    const button = buttonEl('settings-reveal-btn', label, () => {
+        button.remove();
+        wrap.append(content);
+        // The trigger disappears, so move focus into the revealed content.
+        content.querySelector<HTMLElement>('input, button, select, textarea')?.focus();
+    });
+    button.append(iconElement('expand_more', 16));
+    wrap.append(button);
+    return wrap;
 }
 
 export function createReadonlyCopyControl(
@@ -320,6 +351,14 @@ export function loadingNote(): HTMLElement {
 
 export function errorNote(message: string): HTMLElement {
     return textEl('div', 'settings-note settings-note-error', message);
+}
+
+// A failed section is a dead end until the modal is reopened, so its message
+// carries the way out with it.
+function retryableErrorNote(message: string, onRetry: () => void): HTMLElement {
+    const note = errorNote(message);
+    note.append(document.createTextNode(' · '), inlineSettingsButton('Retry', onRetry));
+    return note;
 }
 
 export function buttonEl(

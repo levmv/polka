@@ -1,3 +1,4 @@
+import { sendEnabled } from './bootstrap';
 import { openModal } from './modal';
 import { createAppsPanel } from './settings/apps';
 import { createDevicesPanel } from './settings/devices';
@@ -62,12 +63,24 @@ export function openSettingsModal(
         apps: createAppsPanel(currentUser),
     };
 
-    const availableTabs: SettingsTab[] = ['general', 'devices'];
+    // Admins need Devices to enable sending; other roles see it only when enabled.
+    const availableTabs: SettingsTab[] = ['general'];
+    if (sendEnabled() || currentUser.role === 'admin') availableTabs.push('devices');
     if (currentUser.role === 'admin') availableTabs.push('storage');
     availableTabs.push('users', 'apps');
     let activeTab: SettingsTab = availableTabs.includes(initialTab) ? initialTab : 'general';
 
-    const renderPanel = () => panels[activeTab](panel);
+    // Per-tab containers keep late async renders from overwriting the active tab.
+    const containers = new Map<SettingsTab, HTMLElement>();
+    const renderPanel = () => {
+        let container = containers.get(activeTab);
+        if (!container) {
+            container = document.createElement('div');
+            containers.set(activeTab, container);
+        }
+        panel.replaceChildren(container);
+        panels[activeTab](container);
+    };
 
     // Storage shows live counts and free space. Refresh quietly whenever the tab
     // is reopened, retaining its current values until the request completes.

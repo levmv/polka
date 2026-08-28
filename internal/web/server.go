@@ -437,6 +437,7 @@ func (s *Server) routes() (*http.ServeMux, error) {
 	s.route(mux, "POST /api/admin/storage/import/preview", db.RoleAdmin, s.handleAPIAdminStorageImportPreview)
 	s.route(mux, "POST /api/admin/storage/import", db.RoleAdmin, s.handleAPIAdminStorageImportRun)
 	s.route(mux, "POST /api/admin/storage/writeback/retry", db.RoleAdmin, s.handleAPIAdminWritebackRetry)
+	s.route(mux, "PUT /api/admin/delivery", db.RoleAdmin, s.handleAPIAdminDeliverySave)
 	s.route(mux, "GET /api/admin/email", db.RoleAdmin, s.handleAPIAdminEmail)
 	s.route(mux, "PUT /api/admin/email", db.RoleAdmin, s.handleAPIAdminEmailSave)
 	s.route(mux, "POST /api/admin/email/test", db.RoleAdmin, s.handleAPIAdminEmailTest)

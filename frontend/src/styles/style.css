@@ -3,6 +3,9 @@
     --text-main: #1a1a1a;
     --text-muted: #666666;
     --border-color: #eaeaea;
+    /* Hairlines that divide content stay quiet; a control you can type in has to
+       read as a control, so its edge is a step darker than a divider. */
+    --control-border: #d0d0d0;
     --primary: #2d2d2d;
     --accent: #0066cc;
     --card-bg: #ffffff;
@@ -60,6 +63,7 @@
         --text-main: #e0e0e0;
         --text-muted: #888888;
         --border-color: #333333;
+        --control-border: #4f4f4f;
         --primary: #ffffff;
         --accent: #4da6ff;
         --card-bg: #1e1e1e;
@@ -96,6 +100,7 @@
     --text-main: #e0e0e0;
     --text-muted: #888888;
     --border-color: #333333;
+    --control-border: #4f4f4f;
     --primary: #ffffff;
     --accent: #4da6ff;
     --card-bg: #1e1e1e;
@@ -131,6 +136,7 @@
     --text-main: #241c15;
     --text-muted: #74685d;
     --border-color: #ded2c3;
+    --control-border: #c3b096;
     --primary: #241c15;
     --accent: #8f4f19;
     --card-bg: #fffaf1;
@@ -549,7 +555,7 @@ a:hover {
     padding: 0.4rem 0.6rem;
     color: var(--text-main);
     background: var(--card-bg);
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--control-border);
     border-radius: var(--radius-control);
     cursor: pointer;
     font: inherit;
@@ -612,6 +618,8 @@ a:hover {
     width: 42px;
     height: 24px;
     padding: 0;
+    /* The track is read by its fill, not its edge, so border and background stay
+       the same colour and the switch keeps its flat pill shape. */
     background: var(--border-color);
     border: 1px solid var(--border-color);
     border-radius: 999px;
@@ -682,7 +690,7 @@ a:hover {
     padding: 0 0.6rem;
     color: var(--text-main);
     background: var(--bg-color);
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--control-border);
     border-radius: var(--radius-control);
     font: inherit;
     font-size: 0.9rem;
@@ -742,7 +750,7 @@ a:hover {
     padding: 0.2rem;
     margin-bottom: 0.6rem;
     background: var(--bg-color);
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--control-border);
     border-radius: var(--radius-control);
 }
 
@@ -797,7 +805,7 @@ a:hover {
     height: 34px;
     color: var(--text-main);
     background: transparent;
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--control-border);
     border-radius: var(--radius-control);
     cursor: pointer;
 }
@@ -836,7 +844,7 @@ a:hover {
     height: 34px;
     color: var(--text-main);
     background: transparent;
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--control-border);
     border-radius: var(--radius-control);
     cursor: pointer;
     font: inherit;
@@ -962,7 +970,7 @@ body.busy .busy__loader {
     left: 1rem;
     z-index: 100;
     background: var(--card-bg);
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--control-border);
     border-radius: var(--radius-control);
     padding: 0.5rem;
     cursor: pointer;
@@ -1360,7 +1368,7 @@ body.busy .busy__loader {
     min-height: var(--toolbar-control-height);
     padding: 0.5rem 1rem;
     font-size: 1.1rem;
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--control-border);
     border-radius: var(--radius-control);
     background-color: var(--card-bg);
     color: var(--text-main);
@@ -1432,7 +1440,7 @@ body.busy .busy__loader {
     place-items: center;
     color: var(--text-muted);
     background-color: var(--card-bg);
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--control-border);
     border-radius: var(--radius-control);
     cursor: pointer;
 }
@@ -1508,7 +1516,7 @@ body.busy .busy__loader {
 
 .load-more-btn {
     background: transparent;
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--control-border);
     border-radius: var(--radius-control);
     padding: 0.6rem 1.4rem;
     cursor: pointer;
@@ -1806,7 +1814,7 @@ body.has-library-jump-rail #app-content {
     padding: 0.45rem 0.8rem;
     color: var(--text-main);
     background: var(--card-bg);
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--control-border);
     border-radius: var(--radius-control);
     cursor: pointer;
     font: inherit;
@@ -1999,7 +2007,7 @@ body.has-library-jump-rail #app-content {
     width: 100%;
     padding: 0.75rem;
     margin-bottom: 1rem;
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--control-border);
     border-radius: var(--radius-control);
     box-sizing: border-box;
     font-size: 1rem;
@@ -2127,7 +2135,7 @@ body.has-library-jump-rail #app-content {
     padding: 0 0.85rem;
     background: var(--card-bg);
     color: var(--text-main);
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--control-border);
     border-radius: var(--radius-control);
     font-size: 0.9rem;
     font-weight: 500;
@@ -2481,7 +2489,7 @@ body.reader-shell .app-layout {
     grid-auto-flow: column;
     gap: 0.25rem;
     padding: 0.2rem;
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--control-border);
     border-radius: var(--radius-control);
     background: var(--surface-subtle);
 }
@@ -2523,7 +2531,7 @@ body.reader-shell .app-layout {
     width: 3rem;
     height: 2.65rem;
     place-items: center;
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--control-border);
     border-radius: var(--radius-control);
     background: var(--card-bg);
     color: var(--text-main);
@@ -2603,7 +2611,7 @@ body.reader-shell .app-layout {
     width: 100%;
     min-height: 2.45rem;
     padding: 0.4rem 0.65rem;
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--control-border);
     border-radius: var(--radius-control);
     background: var(--card-bg);
     color: var(--text-main);
@@ -3027,7 +3035,7 @@ body.reader-shell .app-layout {
     min-height: 2.2rem;
     box-sizing: border-box;
     padding: 0.15rem 0.45rem;
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--control-border);
     border-radius: 999px;
     background: rgba(255, 255, 255, 0.78);
     color: var(--text-muted);
@@ -3399,7 +3407,7 @@ body.reader-shell .app-layout {
     padding: 0.45rem 0.75rem;
     color: var(--text-main);
     background: var(--card-bg);
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--control-border);
     border-radius: var(--radius-control);
     cursor: pointer;
     font: inherit;
@@ -3493,7 +3501,7 @@ body.reader-shell .app-layout {
     padding: 0.5rem 0.75rem;
     cursor: pointer;
     background: var(--card-bg);
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--control-border);
     border-radius: var(--radius-control);
     color: var(--text-main);
     font: inherit;
@@ -3641,7 +3649,7 @@ body.reader-shell .app-layout {
     padding: 0.5rem 0.8rem;
     cursor: pointer;
     background: var(--card-bg);
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--control-border);
     border-radius: var(--radius-control);
     color: var(--text-main);
     font: inherit;
@@ -3883,7 +3891,7 @@ body.reader-shell .app-layout {
     padding: 0.5rem 1rem;
     cursor: pointer;
     background: var(--card-bg);
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--control-border);
     border-radius: 4px;
     color: var(--text-main);
 }
@@ -3989,7 +3997,7 @@ body.reader-shell .app-layout {
 .edit-save-btn {
     min-height: 36px;
     padding: 0.45rem 0.85rem;
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--control-border);
     border-radius: var(--radius-control);
     cursor: pointer;
     font: inherit;
@@ -4227,7 +4235,7 @@ body.reader-shell .app-layout {
     padding: 0.5rem;
     color: var(--text-main);
     background: var(--card-bg);
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--control-border);
     border-radius: 4px;
     font: inherit;
 }
@@ -4260,7 +4268,7 @@ textarea.form-input {
     justify-content: center;
     color: var(--text-main);
     background: var(--card-bg);
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--control-border);
     border-radius: 0 4px 4px 0;
     cursor: pointer;
 }
@@ -4701,6 +4709,35 @@ body.modal_open {
     flex: 0 0 auto;
 }
 
+/* Settings most libraries never touch. The control sits opposite the labels, out
+   of the way of the block's buttons, and leaves once its rows are shown. */
+.settings-reveal {
+    display: flex;
+    flex-direction: column;
+}
+
+.settings-reveal-btn {
+    display: inline-flex;
+    align-self: flex-end;
+    align-items: center;
+    gap: 0.15rem;
+    margin: 0.6rem 0;
+    padding: 0;
+    color: var(--text-muted);
+    background: none;
+    border: 0;
+    cursor: pointer;
+    font: inherit;
+    font-size: 0.9rem;
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+.settings-reveal-btn:hover,
+.settings-reveal-btn:focus-visible {
+    color: var(--text-main);
+}
+
 .settings-row-heading {
     display: flex;
     align-items: center;
@@ -5005,7 +5042,7 @@ body.modal_open {
     padding: 0 0.55rem;
     color: var(--text-main);
     background: var(--card-bg);
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--control-border);
     border-radius: 4px;
     font: inherit;
 }
@@ -5013,6 +5050,16 @@ body.modal_open {
 .settings-input:focus {
     border-color: var(--accent);
     outline: 0;
+}
+
+/* Percent widths resolve against the shrink-to-fit control wrapper, so desktop
+   widths stay fixed; the narrow breakpoint resets wide inputs to 100%. */
+.settings-input.settings-input-wide {
+    width: 17rem;
+}
+
+.settings-input.settings-input-port {
+    width: 5.5rem;
 }
 
 .shelf-query-input {
@@ -5085,7 +5132,7 @@ body.modal_open {
     padding: 0.45rem 0.7rem;
     color: var(--text-main);
     background: var(--card-bg);
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--control-border);
     border-radius: 4px;
     cursor: pointer;
     font: inherit;
@@ -5126,7 +5173,7 @@ body.modal_open {
     overflow: hidden;
     color: var(--text-main);
     background: var(--card-bg);
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--control-border);
     border-radius: 4px;
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
     font-size: 0.86rem;
@@ -5213,7 +5260,7 @@ body.modal_open {
     padding: 0;
     color: var(--text-main);
     background: var(--card-bg);
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--control-border);
     border-radius: 4px;
     cursor: pointer;
 }
@@ -5479,6 +5526,10 @@ body.modal_open {
         width: 100%;
     }
 
+    .settings-input.settings-input-wide {
+        width: 100%;
+    }
+
     /* Natural width + no shrink so the strip scrolls instead of cramming. */
     .settings-tab {
         flex: 0 0 auto;
@@ -5590,7 +5641,7 @@ body.modal_open {
 
 /* Rich Editor */
 .rich-editor-container {
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--control-border);
     border-radius: var(--radius-surface);
     background-color: var(--card-bg);
     overflow: hidden;
@@ -5661,7 +5712,7 @@ body.modal_open {
     min-width: 0;
     padding: 0.35rem 0.5rem;
     font-size: 0.9rem;
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--control-border);
     border-radius: 4px;
     background-color: var(--card-bg);
     color: var(--text-main);
@@ -5670,7 +5721,7 @@ body.modal_open {
 .rich-editor-linkbar-cancel {
     padding: 0.35rem 0.75rem;
     font-size: 0.85rem;
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--control-border);
     border-radius: 4px;
     background: var(--card-bg);
     color: var(--text-main);
@@ -5875,7 +5926,7 @@ body.modal_open {
 .cleanup-action {
     min-height: 34px;
     padding: 0 0.75rem;
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--control-border);
     border-radius: var(--radius-control);
     font: inherit;
     font-weight: 650;
@@ -6204,7 +6255,7 @@ body.modal_open {
     padding: 0.3rem 0.75rem;
     border-radius: 4px;
     cursor: pointer;
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--control-border);
     background: var(--card-bg);
     color: var(--text-main);
     transition:
@@ -6240,7 +6291,7 @@ body.modal_open {
     width: 100%;
     min-width: 0;
     padding: 0.34rem 0.5rem;
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--control-border);
     background: var(--card-bg);
     color: var(--text-main);
     border-radius: 4px;
@@ -6285,7 +6336,7 @@ body.modal_open {
 .btn-confirm-cancel {
     padding: 0.5rem 1rem;
     border-radius: var(--radius-control);
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--control-border);
     background: var(--card-bg);
     color: var(--text-main);
     cursor: pointer;
@@ -6376,7 +6427,7 @@ body.modal_open {
 .btn-purge {
     padding: 0.35rem 0.75rem;
     border-radius: var(--radius-control);
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--control-border);
     background: var(--card-bg);
     color: var(--text-main);
     cursor: pointer;
@@ -6745,7 +6796,7 @@ body.can-curate .table-row.selected:hover td {
     font: inherit;
     color: var(--text-muted);
     background: var(--card-bg);
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--control-border);
     border-radius: var(--radius-control);
     cursor: pointer;
 }

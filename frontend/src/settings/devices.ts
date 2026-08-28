@@ -5,10 +5,13 @@ import {
     fetchDeliveryDevices,
     fetchEmailDeliverySettings,
     saveEmailDeliverySettings,
+    saveSendEnabled,
     sendEmailDeliveryTest,
     updateDeliveryDevice,
 } from '../api';
+import { sendEnabled, setSendEnabled } from '../bootstrap';
 import { createSelect } from '../components/select';
+import { createToggle } from '../components/toggle';
 import { formField, textEl } from '../dom';
 import { errorMessage } from '../errors';
 import { confirmModal } from '../modal';
@@ -28,8 +31,12 @@ import {
     openFormModal,
     renderAsyncSection,
     settingsItemRow,
+    settingsReveal,
     settingsRow,
 } from './ui';
+
+const DEFAULT_SMTP_PORT = 587;
+const DEFAULT_ATTACHMENT_LIMIT_MB = 25;
 
 type DevicesState = AsyncLoadState & {
     email: EmailDeliverySettings | null;
@@ -49,6 +56,8 @@ export function createDevicesPanel(currentUser: CurrentUser): (root: HTMLElement
     return (root) => renderDevicesPanel(root, currentUser, state);
 }
 
+// Nothing below the switch exists for a library that does not send books. An
+// admin still sees the switch itself, because turning it on is the way in.
 function renderDevicesPanel(
     root: HTMLElement,
     currentUser: CurrentUser,
@@ -58,14 +67,10 @@ function renderDevicesPanel(
     const isAdmin = currentUser.role === 'admin';
     const rerender = () => renderDevicesPanel(root, currentUser, state);
 
-    root.append(
-        textEl('h3', 'settings-section-title', 'Devices'),
-        textEl(
-            'p',
-            'settings-section-intro',
-            'Send books to reader email addresses such as Kindle or PocketBook.',
-        ),
-    );
+    root.append(textEl('h3', 'settings-section-title', 'Devices'));
+
+    if (isAdmin) root.append(createSendSwitchRow(rerender));
+    if (!sendEnabled()) return;
 
     if (
         renderAsyncSection(state, {
@@ -93,6 +98,34 @@ function renderDevicesPanel(
     root.append(createDeviceListBlock(state, rerender), createDeliveryHistoryBlock(state));
 }
 
+function createSendSwitchRow(rerender: () => void): HTMLElement {
+    const rows = document.createElement('div');
+    rows.className = 'settings-rows';
+    const apply = async (checked: boolean) => {
+        try {
+            setSendEnabled(await saveSendEnabled(checked));
+        } catch (err) {
+            showToast(errorMessage(err, 'Failed to save sending setting'), { type: 'error' });
+            toggle.setChecked(!checked);
+            return;
+        }
+        rerender();
+    };
+    const toggle = createToggle({
+        ariaLabel: 'Sending books to a device',
+        checked: sendEnabled(),
+        onChange: (checked) => void apply(checked),
+    });
+    rows.append(
+        settingsRow(
+            'Sending',
+            'Send books to a Kindle, PocketBook, or any reader email address.',
+            toggle.el,
+        ),
+    );
+    return rows;
+}
+
 function createEmailDeliveryBlock(state: DevicesState, rerender: () => void): HTMLElement {
     const section = document.createElement('section');
     section.className = 'settings-block';
@@ -107,15 +140,28 @@ function createEmailDeliveryBlock(state: DevicesState, rerender: () => void): HT
     const email = state.email;
     if (!email) return section;
 
-    const host = inputWithValue(email.host);
-    const port = inputWithValue(String(email.port || 587), 'number');
-    const username = inputWithValue(email.username);
-    const password = inputWithValue('', 'password');
+    // Host, credentials, and the address it sends as describe a mail server;
+    // everything else has a working default and waits under Advanced. SMTP-prefixed
+    // labels and a new-password field keep the browser from offering the polka
+    // account here.
+    const host = smtpInput('text', email.host, 'settings-input-wide');
+    const port = smtpInput(
+        'number',
+        String(email.port || DEFAULT_SMTP_PORT),
+        'settings-input-port',
+    );
+    const username = smtpInput('text', email.username, 'settings-input-wide');
+    const password = smtpInput('password', '', 'settings-input-wide');
+    password.autocomplete = 'new-password';
     password.placeholder = email.password_set ? 'Saved password unchanged' : '';
     password.required = false;
-    const fromAddress = inputWithValue(email.from_address);
-    const fromName = inputWithValue(email.from_name || 'polka');
-    const limit = inputWithValue(String(email.attachment_limit_mb || 25), 'number');
+    const fromAddress = smtpInput('text', email.from_address, 'settings-input-wide');
+    const fromName = smtpInput('text', email.from_name, 'settings-input-wide');
+    const limit = smtpInput(
+        'number',
+        String(email.attachment_limit_mb || DEFAULT_ATTACHMENT_LIMIT_MB),
+        'settings-input-port',
+    );
     const security = createSelect({
         ariaLabel: 'SMTP security',
         value: email.security || 'auto',
@@ -125,48 +171,85 @@ function createEmailDeliveryBlock(state: DevicesState, rerender: () => void): HT
             { value: 'ssl', label: 'SSL/TLS' },
             { value: 'plain', label: 'Plain' },
         ],
+        onChange: () => syncActions(),
     });
 
     const rows = document.createElement('div');
     rows.className = 'settings-rows';
     rows.append(
-        settingsRow('SMTP host', 'Mail server hostname.', host),
+        settingsRow('SMTP host', '', host),
         settingsRow('SMTP port', '587 for STARTTLS, 465 for SSL/TLS.', port),
-        settingsRow('Security', '', security.el),
-        settingsRow('Username', 'Leave blank only for a no-auth relay.', username),
-        settingsRow('Password', 'Leave blank to keep the saved password.', password),
+        settingsRow('SMTP username', 'Leave blank only for a no-auth relay.', username),
+        settingsRow(
+            'SMTP password',
+            email.password_set ? 'Leave blank to keep the saved password.' : '',
+            password,
+        ),
         settingsRow('From address', 'Add this address to Amazon approved senders.', fromAddress),
-        settingsRow('From name', '', fromName),
+    );
+
+    const advancedRows = document.createElement('div');
+    advancedRows.className = 'settings-rows';
+    advancedRows.append(
+        settingsRow('Security', 'Auto picks it from the port.', security.el),
+        settingsRow(
+            'From name',
+            'Sender name on the device. Blank sends the address alone.',
+            fromName,
+        ),
         settingsRow('Attachment limit', 'Raw files are checked with base64 email overhead.', limit),
     );
 
+    const save = buttonEl('settings-btn settings-primary-btn', 'Save email settings', async () => {
+        try {
+            const payload: Parameters<typeof saveEmailDeliverySettings>[0] = {
+                host: host.value.trim(),
+                port: Number(port.value),
+                security: emailSecurityValue(security.getValue()),
+                username: username.value.trim(),
+                from_address: fromAddress.value.trim(),
+                from_name: fromName.value.trim(),
+                attachment_limit_mb: Number(limit.value),
+            };
+            if (password.value) payload.password = password.value;
+            state.email = await saveEmailDeliverySettings(payload);
+            showToast('Email settings saved');
+            rerender();
+        } catch (err) {
+            showToast(errorMessage(err, 'Save email settings failed'), { type: 'error' });
+        }
+    });
+    const test = buttonEl('settings-btn', 'Send test', () => openSendTestModal());
+
+    // A test uses persisted settings, so disable it while the form has unsaved edits.
+    const fields = [host, port, username, password, fromAddress, fromName, limit];
+    const snapshot = () =>
+        JSON.stringify([...fields.map((field) => field.value.trim()), security.getValue()]);
+    const saved = snapshot();
+    const configured = email.configured;
+    function syncActions(): void {
+        const edited = snapshot() !== saved;
+        save.disabled = !edited;
+        test.disabled = edited || !configured;
+    }
+    for (const field of fields) field.addEventListener('input', syncActions);
+    syncActions();
+
     const actions = document.createElement('div');
     actions.className = 'settings-section-action';
-    actions.append(
-        buttonEl('settings-btn settings-primary-btn', 'Save email settings', async () => {
-            try {
-                const payload: Parameters<typeof saveEmailDeliverySettings>[0] = {
-                    host: host.value.trim(),
-                    port: Number(port.value),
-                    security: emailSecurityValue(security.getValue()),
-                    username: username.value.trim(),
-                    from_address: fromAddress.value.trim(),
-                    from_name: fromName.value.trim(),
-                    attachment_limit_mb: Number(limit.value),
-                };
-                if (password.value) payload.password = password.value;
-                state.email = await saveEmailDeliverySettings(payload);
-                showToast('Email settings saved');
-                rerender();
-            } catch (err) {
-                showToast(errorMessage(err, 'Save email settings failed'), { type: 'error' });
-            }
-        }),
-        buttonEl('settings-btn', 'Send test', () => openSendTestModal()),
-    );
+    actions.append(save, test);
 
-    section.append(rows, actions);
+    section.append(rows, settingsReveal('Advanced', advancedRows, advancedTouched(email)), actions);
     return section;
+}
+
+// A setting that is doing work never waits behind a click to be found.
+function advancedTouched(email: EmailDeliverySettings): boolean {
+    return (
+        (email.security || 'auto') !== 'auto' ||
+        email.from_name !== '' ||
+        (email.attachment_limit_mb || DEFAULT_ATTACHMENT_LIMIT_MB) !== DEFAULT_ATTACHMENT_LIMIT_MB
+    );
 }
 
 function createDeviceListBlock(state: DevicesState, rerender: () => void): HTMLElement {
@@ -375,9 +458,10 @@ function openSendTestModal(): void {
     });
 }
 
-function inputWithValue(value: string, type = 'text'): HTMLInputElement {
-    const input = makeInput(type, type === 'password' ? 'current-password' : 'off');
+function smtpInput(type: string, value: string, sizeClass = ''): HTMLInputElement {
+    const input = makeInput(type, 'off');
     input.value = value;
+    if (sizeClass) input.classList.add(sizeClass);
     return input;
 }
 
