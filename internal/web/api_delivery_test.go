@@ -129,6 +129,7 @@ func TestAPISendOptionsPlansKindleEPUB(t *testing.T) {
 	if _, err := database.Exec("UPDATE assets SET format = 'epub', current_size = 1024, is_primary = 1 WHERE id = 'asset_1'"); err != nil {
 		t.Fatalf("update asset: %v", err)
 	}
+	enableSending(t, database)
 	s := newTestServer(database, dir)
 	handler := testRoutes(t, s)
 
@@ -185,6 +186,7 @@ func TestAPISendOptionsChoicesUsePersistedFormat(t *testing.T) {
 	`); err != nil {
 		t.Fatalf("seed fb2.zip asset: %v", err)
 	}
+	enableSending(t, database)
 	s := newTestServer(database, dir)
 	handler := testRoutes(t, s)
 
@@ -548,6 +550,65 @@ func TestDeliveryWorkerDrainsDurableQueueSerially(t *testing.T) {
 	}
 }
 
+// Sending is off until an admin turns it on, and turning it off has to stop
+// sends rather than only hide the button: an admin switches it off exactly when
+// a configured transport must no longer be used.
+func TestSendingSwitchGatesDeliveryAPI(t *testing.T) {
+	database, dir := setupTestDB(t)
+	defer database.Close()
+
+	admin := mustUser(t, database, "admin", db.RoleAdmin)
+	seedDeliveryEmailSettings(t, database, 25)
+	s := newTestServer(database, dir)
+	handler := testRoutes(t, s)
+
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, jsonRequest(t, s, admin.ID, http.MethodPost, "/api/devices", map[string]any{
+		"name":  "Kindle",
+		"email": "admin@kindle.com",
+	}))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create device status = %d; body: %s", w.Code, w.Body.String())
+	}
+
+	sendOptions := func() SendOptionsDTO {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, jsonRequest(t, s, admin.ID, http.MethodGet, "/api/send/options?work=w_1", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("send options status = %d; body: %s", rec.Code, rec.Body.String())
+		}
+		var options SendOptionsDTO
+		if err := json.UnmarshalRead(rec.Body, &options); err != nil {
+			t.Fatalf("decode options: %v", err)
+		}
+		return options
+	}
+
+	if options := sendOptions(); options.Configured || len(options.Devices) != 0 {
+		t.Fatalf("options while off = %+v, want no configured devices", options)
+	}
+
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, jsonRequest(t, s, admin.ID, http.MethodPost, "/api/deliveries", map[string]any{
+		"work_id": "w_1",
+	}))
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("create delivery while off = %d, want %d; body: %s", w.Code, http.StatusForbidden, w.Body.String())
+	}
+
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, jsonRequest(t, s, admin.ID, http.MethodPut, "/api/admin/delivery", map[string]any{
+		"enabled": true,
+	}))
+	if w.Code != http.StatusOK {
+		t.Fatalf("enable sending status = %d; body: %s", w.Code, w.Body.String())
+	}
+	if options := sendOptions(); !options.Configured || len(options.Devices) != 1 {
+		t.Fatalf("options after enabling = %+v, want one configured device", options)
+	}
+}
+
 func TestAPIAdminEmailRequiresAdmin(t *testing.T) {
 	database, dir := setupTestDB(t)
 	defer database.Close()
@@ -587,6 +648,13 @@ func (e testUserMessageError) Error() string {
 
 func (e testUserMessageError) UserMessage() string {
 	return e.message
+}
+
+func enableSending(t *testing.T, database *db.DB) {
+	t.Helper()
+	if err := delivery.SaveEnabled(database, true); err != nil {
+		t.Fatalf("enable sending: %v", err)
+	}
 }
 
 func seedDeliveryEmailSettings(t *testing.T, database *db.DB, attachmentLimitMB int) {

@@ -24,11 +24,22 @@ const (
 	deliveryMessagePrepareFailed     = "Could not prepare file for delivery."
 	deliveryMessageFileMissing       = "File is no longer available."
 	deliveryMessageNotConfigured     = "Email delivery is not configured"
+	deliveryMessageDisabled          = "Sending books is turned off for this library"
 	deliveryMessageNoLongerVisible   = "Book is no longer visible to this user."
 	deliveryMessageConversionMissing = "Conversion is not available for this file."
 	deliveryMessageConversionFailed  = "Conversion failed."
 	deliveryMessageSendInterrupted   = "Delivery was interrupted while sending; the message may have been sent."
 )
+
+// DeliverySettingsDTO carries the library-wide sending switch. It is separate
+// from the email settings below because it governs the feature, not a transport.
+type DeliverySettingsDTO struct {
+	Enabled bool `json:"enabled"`
+}
+
+type deliverySettingsRequest struct {
+	Enabled *bool `json:"enabled"`
+}
 
 type EmailSettingsDTO struct {
 	Configured        bool   `json:"configured"`
@@ -126,6 +137,22 @@ type DeliveryJobDTO struct {
 	CreatedAt   int64  `json:"created_at"`
 	UpdatedAt   int64  `json:"updated_at"`
 	SentAt      int64  `json:"sent_at,omitzero"`
+}
+
+func (s *Server) handleAPIAdminDeliverySave(w http.ResponseWriter, r *http.Request) {
+	var req deliverySettingsRequest
+	if !readJSON(w, r, &req) {
+		return
+	}
+	if req.Enabled == nil {
+		http.Error(w, "Missing enabled value", http.StatusBadRequest)
+		return
+	}
+	if err := delivery.SaveEnabled(s.db, *req.Enabled); err != nil {
+		serverError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, DeliverySettingsDTO{Enabled: *req.Enabled})
 }
 
 func (s *Server) handleAPIAdminEmail(w http.ResponseWriter, r *http.Request) {
@@ -302,6 +329,15 @@ func (s *Server) handleAPISendOptions(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Missing work id", http.StatusBadRequest)
 		return
 	}
+	enabled, err := delivery.Enabled(s.db)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	if !enabled {
+		writeJSON(w, http.StatusOK, SendOptionsDTO{Devices: []SendOptionDTO{}, Reason: deliveryMessageDisabled})
+		return
+	}
 	cfg, _, err := s.deliveryEmailConfig()
 	if err != nil {
 		serverError(w, err)
@@ -340,6 +376,18 @@ func (s *Server) handleAPIDeliveryCreate(w http.ResponseWriter, r *http.Request)
 	}
 	if strings.TrimSpace(req.WorkID) == "" {
 		http.Error(w, "Missing work id", http.StatusBadRequest)
+		return
+	}
+	// Turning sending off must actually stop sends, not merely hide the button:
+	// an administrator switches it off exactly when a transport should no longer
+	// be used.
+	enabled, err := delivery.Enabled(s.db)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	if !enabled {
+		http.Error(w, deliveryMessageDisabled, http.StatusForbidden)
 		return
 	}
 	cfg, _, err := s.deliveryEmailConfig()

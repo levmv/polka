@@ -16,6 +16,7 @@ import {
     listURLForContext,
     readBookListContextFromLocation,
 } from '../book-list-context';
+import { SEND_ENABLED_EVENT, sendEnabled } from '../bootstrap';
 import { coverImgHtml } from '../cover';
 import { escapeHtml, formField, textEl } from '../dom';
 import { errorMessage } from '../errors';
@@ -328,11 +329,13 @@ export function renderBookDetail(
         b.assets.forEach((a: Asset) => {
             assetsHtml += assetDownloadHtml(a);
         });
-        assetsHtml += `
-            <button id="btn-send-book" class="detail-action" type="button">
-                ${icon('upload', 16)}Send
-            </button>
-        `;
+        if (sendEnabled()) {
+            assetsHtml += `
+                <button id="btn-send-book" class="detail-action" type="button">
+                    ${icon('upload', 16)}Send
+                </button>
+            `;
+        }
     }
 
     const readingStatus = b.reading_status?.status ?? 'unread';
@@ -517,6 +520,14 @@ export function renderBookDetail(
         const menu = createMenu(menuBtn, items);
         cleanup.push(() => menu.destroy());
     }
+
+    // An admin who turns sending on or off in Settings sees the action row follow
+    // immediately, without leaving the page they were looking at.
+    const handleSendEnabled = () => {
+        if (currentBookDetail?.id === b.id) renderBookDetail(container, b, opts);
+    };
+    window.addEventListener(SEND_ENABLED_EVENT, handleSendEnabled);
+    cleanup.push(() => window.removeEventListener(SEND_ENABLED_EVENT, handleSendEnabled));
 
     const destroy = () => {
         for (const fn of cleanup.splice(0).reverse()) fn();

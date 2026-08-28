@@ -286,6 +286,15 @@ export async function retryFailedWriteback(): Promise<WritebackRetryResult> {
     );
 }
 
+export async function saveSendEnabled(enabled: boolean): Promise<boolean> {
+    const saved = await fetchJSON<{ enabled: boolean }>(
+        '/api/admin/delivery',
+        'Failed to save sending setting',
+        jsonBody('PUT', { enabled }),
+    );
+    return saved.enabled === true;
+}
+
 export async function fetchEmailDeliverySettings(): Promise<EmailDeliverySettings> {
     return await fetchJSON<EmailDeliverySettings>(
         '/api/admin/email',

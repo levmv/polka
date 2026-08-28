@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/levmv/polka/internal/db"
+	"github.com/levmv/polka/internal/delivery"
 	"github.com/levmv/polka/internal/format"
 )
 
@@ -50,6 +51,9 @@ type appPageData struct {
 type appBootstrapDTO struct {
 	Me       *MeDTO          `json:"me,omitzero"`
 	Settings UserSettingsDTO `json:"settings"`
+	// SendEnabled travels with the page so the first render can omit Send without
+	// another request.
+	SendEnabled bool `json:"send_enabled"`
 }
 
 func (s *Server) handleApp(w http.ResponseWriter, r *http.Request) {
@@ -87,6 +91,11 @@ func (s *Server) appPageData(r *http.Request) (appPageData, error) {
 		return appPageData{}, err
 	}
 
+	sendEnabled, err := delivery.Enabled(s.db)
+	if err != nil {
+		return appPageData{}, err
+	}
+
 	var me *MeDTO
 	if u != nil {
 		dto := meDTO(*u)
@@ -94,8 +103,9 @@ func (s *Server) appPageData(r *http.Request) (appPageData, error) {
 	}
 
 	payload, err := json.Marshal(appBootstrapDTO{
-		Me:       me,
-		Settings: userSettingsDTO(settings),
+		Me:          me,
+		Settings:    userSettingsDTO(settings),
+		SendEnabled: sendEnabled,
 	}, jsontext.EscapeForHTML(true))
 	if err != nil {
 		return appPageData{}, err

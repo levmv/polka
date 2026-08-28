@@ -10,6 +10,8 @@ import (
 )
 
 const (
+	enabledKey = "delivery.enabled"
+
 	smtpHostKey          = "email.smtp_host"
 	smtpPortKey          = "email.smtp_port"
 	smtpSecurityKey      = "email.smtp_security"
@@ -26,6 +28,20 @@ var (
 	ErrInvalidAttachmentLimit = errors.New("Attachment limit must be between 1 and 200 MB")
 	ErrInvalidFromAddress     = errors.New("From address is invalid")
 )
+
+// Enabled reports whether this library offers sending books to a device. It
+// governs the feature as a whole rather than one transport, so an administrator
+// can retire or pause sending without erasing a working configuration. It
+// defaults to off: a fresh library shows no Send affordance until an admin asks
+// for one.
+func Enabled(q appsettings.Queryer) (bool, error) {
+	return appsettings.GetBool(q, enabledKey, false)
+}
+
+// SaveEnabled turns sending books on or off for the library.
+func SaveEnabled(exec appsettings.Execer, enabled bool) error {
+	return appsettings.SetBool(exec, enabledKey, enabled)
+}
 
 // OpenSMTPConfig loads the library-wide email delivery settings. Missing rows
 // use the same safe defaults as SMTPConfig.Normalized.

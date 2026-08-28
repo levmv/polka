@@ -520,6 +520,12 @@ test.describe('Library workflows', () => {
   });
 
   test('Send dialog adds a device inline and prepares a plan', async ({ page }) => {
+    // Sending is off by default, so the button exists only once an admin asks
+    // for the feature.
+    const enabledRes = await page.request.put('/api/admin/delivery', {
+      data: { enabled: true },
+    });
+    expect(enabledRes.ok()).toBe(true);
     const settingsRes = await page.request.put('/api/admin/email', {
       data: {
         host: 'smtp.example.org',

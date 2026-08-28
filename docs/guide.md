@@ -201,9 +201,16 @@ password: use HTTPS or a trusted private network.
 
 ### Email delivery
 
-An administrator configures SMTP once in Settings → Devices. Each account can
-then add Kindle, PocketBook, or ordinary email destinations. When necessary,
-polka converts the book to a format accepted by the selected device.
+Sending books is off until an administrator turns on Sending in
+Settings → Devices. That reveals the rest of the section and adds *Send* to book
+pages for everyone.
+
+An administrator then configures SMTP once, and each account can add Kindle,
+PocketBook, or ordinary email destinations. When necessary, polka converts the
+book to a format accepted by the selected device.
+
+Turning Sending off again hides *Send* and refuses new sends while keeping the
+configuration, so a library can stop sending without erasing its settings.
 
 ### Download and conversion
 
