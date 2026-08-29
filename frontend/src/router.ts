@@ -126,3 +126,12 @@ function normalizeCleanup(result: RouteMountResult): RouteCleanup | null {
     if (typeof result === 'function') return result;
     return result.destroy;
 }
+
+// Rewriting the current entry's URL must not discard its history state: that
+// state carries the saved scroll position and the pathname the entry was pushed
+// from, both of which back-navigation depends on. Tidying a URL (dropping a
+// spent `q`, recording the browse offset, following the editor to the next
+// book) is not a new entry, so it merges rather than passing null.
+export function replaceLocationURL(url: string | URL): void {
+    window.history.replaceState(window.history.state, '', url);
+}

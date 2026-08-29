@@ -14,7 +14,7 @@ import { debounce, escapeHtml } from '../dom';
 import { errorMessage } from '../errors';
 import { icon } from '../icons';
 import { beginGlobalLoading } from '../loading-indicator';
-import type { RouteCleanup } from '../router';
+import { type RouteCleanup, replaceLocationURL } from '../router';
 import { queryTerm } from '../search-query';
 import { openSettingsModal } from '../settings';
 import { openCreateShelfDialog } from '../shelf-dialog';
@@ -80,6 +80,17 @@ if (typeof window !== 'undefined') {
     });
 }
 
+// The saved position for the current history entry, written by the navigation
+// layer in main.ts. A view whose content arrives asynchronously has to apply it
+// itself: main.ts restores as soon as mount() resolves, and scrolling against a
+// document that is still one empty viewport tall clamps to the top.
+function restoreSavedScroll(): void {
+    const state = window.history.state as { polkaScroll?: { x: number; y: number } } | null;
+    const scroll = state?.polkaScroll;
+    if (!scroll || typeof scroll.x !== 'number' || typeof scroll.y !== 'number') return;
+    window.scrollTo(scroll.x, scroll.y);
+}
+
 export function initLibrary(): RouteCleanup | undefined {
     const searchInput = document.getElementById('search-input') as HTMLInputElement;
     const params = new URLSearchParams(window.location.search);
@@ -121,7 +132,7 @@ export function initLibrary(): RouteCleanup | undefined {
             const url = new URL(window.location.href);
             url.searchParams.delete('shelf');
             url.searchParams.set('q', searchInput.value.trim());
-            window.history.replaceState(null, '', url);
+            replaceLocationURL(url);
         }
         updateLibraryBrowseURL(sortValue, offset);
         return loadBooks(state, searchInput?.value || '', sortValue, offset);
@@ -286,7 +297,13 @@ export function initLibrary(): RouteCleanup | undefined {
     addCleanup(() => tableBtn?.removeEventListener('click', handleTableClick));
 
     updateViewButtons();
-    reload(initialOffset);
+    // Mount stays synchronous so the router holds this route's cleanup before
+    // anything is awaited; awaiting here would leave the global subscriptions
+    // above live on whatever page the reader moved to next. The saved scroll is
+    // re-applied once the grid actually has content to scroll.
+    void reload(initialOffset)?.then(() => {
+        if (state.active) restoreSavedScroll();
+    });
     return () => {
         state.active = false;
         state.loadingBooks = false;
@@ -339,7 +356,7 @@ function updateLibraryBrowseURL(sort: string, offset: number): void {
     } else {
         url.searchParams.delete('offset');
     }
-    window.history.replaceState(null, '', url);
+    replaceLocationURL(url);
 }
 
 function setupLibrarySearchShortcuts(searchInput: HTMLInputElement): RouteCleanup {
@@ -375,7 +392,7 @@ function setupLibrarySearchShortcuts(searchInput: HTMLInputElement): RouteCleanu
 function clearLibrarySearch(searchInput: HTMLInputElement): void {
     const url = new URL(window.location.href);
     url.searchParams.delete('q');
-    window.history.replaceState(null, '', url);
+    replaceLocationURL(url);
     searchInput.value = '';
     searchInput.dispatchEvent(new Event('input', { bubbles: true }));
 }
@@ -797,7 +814,7 @@ function createLibraryEmptyState(state: LibraryViewState): HTMLElement {
             if (!input) return;
             const url = new URL(window.location.href);
             url.searchParams.delete('q');
-            window.history.replaceState(null, '', url);
+            replaceLocationURL(url);
             input.value = '';
             input.dispatchEvent(new Event('input'));
             input.focus();

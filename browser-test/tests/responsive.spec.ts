@@ -166,18 +166,25 @@ test.describe('Responsive layout (iPad viewport)', () => {
     expect(box!.x).toBeGreaterThanOrEqual(0);
     expect(box!.x + box!.width).toBeLessThanOrEqual(769);
 
-    // Stacked order below the breakpoint: title/authors first, then the cover
-    // rail (Details + tags), then the description. This guards the display:
-    // contents + order rules, which silently lose to the base layout if their
-    // @media block is placed before it (equal specificity, source order wins).
+    // Stacked order below the breakpoint: cover, then title/authors, then the
+    // reading state, then the cover rail (Details + tags), then the description.
+    // This guards the display: contents + order rules, which silently lose to
+    // the base layout if their @media block is placed before it (equal
+    // specificity, source order wins) — and an element left out of the order
+    // list keeps the initial 0 and jumps ahead of the cover.
+    const coverBox = await page.locator('.detail-cover-image').boundingBox();
     const titleBox = await page.locator('.detail-title').boundingBox();
+    const readingBox = await page.locator('.detail-reading-state').boundingBox();
     const railBox = await page.locator('.detail-rail').boundingBox();
     const descBox = await page.locator('.detail-description').boundingBox();
+    expect(coverBox).not.toBeNull();
     expect(titleBox).not.toBeNull();
+    expect(readingBox).not.toBeNull();
     expect(railBox).not.toBeNull();
     expect(descBox).not.toBeNull();
-    expect(titleBox!.y).toBeLessThan(railBox!.y);
+    expect(coverBox!.y).toBeLessThan(titleBox!.y);
+    expect(titleBox!.y).toBeLessThan(readingBox!.y);
+    expect(readingBox!.y).toBeLessThan(railBox!.y);
     expect(railBox!.y).toBeLessThan(descBox!.y);
-
   });
 });

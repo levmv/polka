@@ -1,6 +1,10 @@
 :root {
     --bg-color: #fcfcfc;
     --text-main: #1a1a1a;
+    /* The book page's h1, held off maximum contrast: at display size the full
+       --text-main reads as heavy rather than crisp. Every theme defines it as a
+       short step from its own text colour toward its own background. */
+    --text-title: #222222;
     --text-muted: #666666;
     --border-color: #eaeaea;
     /* Hairlines that divide content stay quiet; a control you can type in has to
@@ -41,6 +45,10 @@
     --reader-search-highlight-fill: rgba(255, 196, 0, 0.38);
     --reader-search-highlight-outline: rgba(180, 119, 0, 0.24);
     --font-sans: system-ui, -apple-system, sans-serif;
+    /* The book page's title block is the one place that steps out of the sans
+       stack, the way a title page would. Georgia leads because it is the serif
+       present on both Apple and Windows. */
+    --font-serif: Georgia, "Times New Roman", Times, serif;
     /* One explicit height for the library toolbar's controls and for the top
        strip the fixed hamburger sits in at drawer widths. Set it here rather
        than letting each control's padding decide: the search field, icon
@@ -61,6 +69,7 @@
     :root:not([data-theme]) {
         --bg-color: #121212;
         --text-main: #e0e0e0;
+        --text-title: #d8d8d8;
         --text-muted: #888888;
         --border-color: #333333;
         --control-border: #4f4f4f;
@@ -98,6 +107,7 @@
 :root[data-theme="dark"] {
     --bg-color: #121212;
     --text-main: #e0e0e0;
+    --text-title: #d8d8d8;
     --text-muted: #888888;
     --border-color: #333333;
     --control-border: #4f4f4f;
@@ -134,6 +144,7 @@
 :root[data-theme="sepia"] {
     --bg-color: #f4efe6;
     --text-main: #241c15;
+    --text-title: #2a221b;
     --text-muted: #74685d;
     --border-color: #ded2c3;
     --control-border: #c3b096;
@@ -1953,24 +1964,97 @@ body.has-library-jump-rail #app-content {
 }
 
 .detail-title {
-    font-size: 2rem;
-    margin: 0 0 0.5rem 0;
+    font-family: var(--font-serif);
+    font-size: 2.2rem;
+    line-height: 1.15;
+    color: var(--text-title);
+    /* Both columns start at the same y, but a line box begins above the letters
+       by half-leading plus (ascent - cap height) — ~0.24em here, for Georgia and
+       the Times-metric fallbacks alike. Pulling the title up by that much is
+       what lines its capitals up with the cover's top edge. We stop a hair
+       short: against the solid mass of a cover, a title set exactly to the edge
+       reads as having drifted above it. */
+    margin: -0.21em 0 0.5rem 0;
 }
 .detail-authors {
+    font-family: var(--font-serif);
     font-size: 1.2rem;
+    font-weight: 400;
     color: var(--text-muted);
     margin: 0;
 }
 .detail-series {
+    font-family: var(--font-serif);
     margin-top: 0.5rem;
     font-size: 1rem;
     color: var(--text-muted);
 }
+/* Author and series are links, but in the title block they read as the book's
+   own name rather than as accents. Colour arrives on hover/focus instead. */
+.detail-authors a,
+.detail-series a {
+    color: var(--text-main);
+}
+.detail-authors a:hover,
+.detail-authors a:focus-visible,
+.detail-series a:hover,
+.detail-series a:focus-visible {
+    color: var(--accent);
+    text-decoration: underline;
+}
+/* The description and its disclosure are one unit, so the space-after that
+   separates them from the footer sits on the pair rather than on the text. */
+.detail-description-block {
+    margin-bottom: 2rem;
+}
 .detail-description {
     line-height: 1.6;
-    margin-bottom: 2rem;
     /* ~65 characters is the comfortable reading measure; 720px ran a touch wide. */
     max-width: 40rem;
+}
+/* Blurbs arrive either as loose text or as <p>/<ul>/<h3> blocks. Dropping the
+   outer margins makes both shapes start and end at the block's own edges, and
+   stops the clamped state from shifting when overflow:hidden keeps the first
+   child's top margin from collapsing out. */
+.detail-description > :first-child {
+    margin-top: 0;
+}
+.detail-description > :last-child {
+    margin-bottom: 0;
+}
+/* A dozen lines is enough to size a book up; the rest is one click away.
+   Clamping by line count rather than by height lets the engine put the cut
+   between lines whatever the markup does to the line grid, and it supplies the
+   trailing ellipsis. --probe is the same clamp plus the slack: book-view.ts
+   asks whether the whole blurb fits inside it and lifts the clamp when it does,
+   rather than hiding a line or two behind a click. */
+.detail-description--collapsed,
+.detail-description--probe {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+.detail-description--collapsed {
+    -webkit-line-clamp: 12;
+}
+.detail-description--probe {
+    -webkit-line-clamp: 14;
+}
+/* Quiet disclosure, like the identifier "…" and tag "+N" toggles. */
+.detail-description-more {
+    margin-top: 0.5rem;
+    padding: 0;
+    background: none;
+    border: 0;
+    font-family: inherit;
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    cursor: pointer;
+}
+.detail-description-more:hover,
+.detail-description-more:focus-visible {
+    color: var(--accent);
+    text-decoration: underline;
 }
 
 .detail-cover-image {
@@ -4368,13 +4452,21 @@ textarea.form-input {
 /* Detail page on narrow screens: collapse the two columns into one flow and
    reorder the pieces. display:contents dissolves the column wrappers so the
    cover, header, rail and description become direct flex items we can order:
-   cover -> title/authors -> actions -> Details + tags -> description -> footer.
-   This block
+   cover -> title/authors -> actions -> reading state -> Details + tags ->
+   description -> footer. Every piece needs an explicit order; one left out
+   keeps the initial 0 and jumps ahead of the cover. This block
    must follow the base .detail-layout* rules above — @media does not raise
    specificity, so an earlier media block would lose to them on source order. */
 @media (max-width: 768px) {
     .detail-layout {
         flex-direction: column;
+        /* The two-column gutter is too much air once the blocks are stacked,
+           and the cover and the title under it read as one unit. */
+        gap: 1.25rem;
+        /* Stacked blocks span the column instead of shrinking to their content.
+           The centred title needs a full-width box to centre inside, and the
+           footer's hairline needs one to divide anything. */
+        align-items: stretch;
     }
     .detail-layout-cover,
     .detail-layout-info {
@@ -4382,22 +4474,34 @@ textarea.form-input {
     }
     .detail-cover-image {
         order: 1;
-        max-width: 220px;
+        /* Centred and smaller: on a phone the cover is an identifier, not the
+           subject, and it should not push the title below the fold. */
+        max-width: 180px;
+        margin-inline: auto;
     }
     .detail-header {
         order: 2;
+        text-align: center;
+    }
+    /* Nothing to align the capitals against once the cover sits above the
+       title rather than beside it. */
+    .detail-title {
+        margin-top: 0;
     }
     .detail-actions {
         order: 3;
     }
-    .detail-rail {
+    .detail-reading-state {
         order: 4;
     }
-    .detail-description {
+    .detail-rail {
         order: 5;
     }
-    .detail-meta-bottom {
+    .detail-description-block {
         order: 6;
+    }
+    .detail-meta-bottom {
+        order: 7;
     }
 }
 

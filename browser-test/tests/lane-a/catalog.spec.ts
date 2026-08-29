@@ -120,6 +120,11 @@ test.describe('Catalog', () => {
     await expect(page.locator('.detail-description strong')).toBeVisible();
     await expect(page.locator('.detail-description script')).toHaveCount(0);
 
+    // A blurb this short never earns a "Show more": the clamp comes off rather
+    // than hiding a line or two behind a click.
+    await expect(page.locator('.detail-description-more')).toHaveCount(0);
+    await expect(page.locator('.detail-description.detail-description--collapsed')).toHaveCount(0);
+
     await expect(page.locator('.detail-meta').first()).toContainText('Test Publisher · 13 June 2026');
 
     // The fixture's 3-letter "eng" is normalized to "en" on import and shown as

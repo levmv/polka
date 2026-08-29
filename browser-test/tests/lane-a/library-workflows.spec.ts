@@ -676,5 +676,39 @@ test.describe('Library workflows', () => {
     expect(await repairedResponse.body()).not.toEqual(epub(title, 'Repair Author', title).buffer);
   });
 
+  test('A long description clamps behind a disclosure and opens in place', async ({ page }) => {
+    const title = `Long Blurb ${Date.now().toString(36)}`;
+    // Well past the twelve-line clamp at any viewport the suite uses, so the
+    // book earns a toggle rather than being shown in full. Real blurbs arrive
+    // as sanitized markup, and headings and paragraph margins are exactly what
+    // pushes the text off a whole number of line-heights.
+    const paragraph =
+      'This publisher blurb runs long on purpose so the book page has something to clamp. '.repeat(
+        4,
+      );
+    const description = `<h3>About the book</h3>${`<p>${paragraph}</p>`.repeat(4)}`;
 
+    await page.goto('/');
+    await expect(page.locator('.book-card').first()).toBeVisible();
+    await page
+      .locator('#book-upload-input')
+      .setInputFiles(epub(title, 'Blurb Author', title, description));
+
+    const card = page.locator('.book-card', { hasText: title });
+    await expect(card).toBeVisible();
+    await card.locator('.book-title-link').click();
+    await expect(page.locator('.detail-title')).toContainText(title);
+
+    const blurb = page.locator('.detail-description');
+    const more = page.locator('.detail-description-more');
+    await expect(more).toBeVisible();
+    await expect(blurb).toHaveClass(/detail-description--collapsed/);
+
+    const clamped = await blurb.evaluate((el) => el.clientHeight);
+
+    await more.click();
+    await expect(more).toHaveCount(0);
+    await expect(blurb).not.toHaveClass(/detail-description--collapsed/);
+    expect(await blurb.evaluate((el) => el.clientHeight)).toBeGreaterThan(clamped);
+  });
 });

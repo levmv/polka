@@ -31,6 +31,8 @@ To add an authenticated app page, add its skeleton in `src/pages.ts`, implement 
 
 Route cleanup must remove global listeners, timers, popovers, menus, and other floating UI created by the view. The router rejects stale async mount results, but it does not cancel side effects inside a still-running mount; async views that mutate DOM after awaited fetches still need local cancellation or staleness guards.
 
+A view that registers global listeners must not await before returning its cleanup: the router only holds the cleanup once `mount()` resolves, so anything awaited first leaves those listeners live on the next page. `main.ts` restores the saved scroll position as soon as `mount()` resolves, which is too early for a view whose content is still loading — `scrollTo` against a document that is one empty viewport tall clamps to the top. Such a view re-applies the position itself once its content is in the DOM, as the library does after its first page of books.
+
 View-local state should live inside the mount closure or an object created by that mount. Module-level state is only for deliberate cross-mount persistence, such as localStorage-backed preferences or process-wide pagehide signals.
 
 ## API and Data Shapes
