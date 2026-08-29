@@ -1,7 +1,14 @@
 import { escapeHtml } from './dom';
+import {
+    newEntryID,
+    type OverlayEntry,
+    type PolkaHistoryState,
+    readEntryID,
+    readOverlayEntry,
+} from './history-state';
 import { icon } from './icons';
 
-export type ModalCloseReason = 'api' | 'backdrop' | 'close-button' | 'escape';
+export type ModalCloseReason = 'api' | 'backdrop' | 'close-button' | 'escape' | 'history';
 
 export type ManagedModal = {
     root: HTMLElement;
@@ -19,12 +26,21 @@ export type ModalOptions = {
     // close, e.g. to confirm discarding unsaved edits. Programmatic close() is
     // never gated; it is a deliberate action by the caller.
     beforeClose?: (reason: ModalCloseReason) => boolean | Promise<boolean>;
+    // Add a same-URL history entry so Back dismisses through beforeClose
+    // without navigating the underlying route.
+    history?: OverlayEntry;
 };
 
 type ModalState = {
     controller: ManagedModal;
     options: ModalOptions;
     returnFocus: HTMLElement | null;
+    history: OwnedOverlayEntry | null;
+};
+
+type OwnedOverlayEntry = {
+    entryID: string;
+    overlay: OverlayEntry;
 };
 
 const modalStack: ModalState[] = [];
@@ -50,6 +66,7 @@ export function createModal(root: HTMLElement, options: ModalOptions = {}): Mana
                 lockPageScroll();
             }
             modalStack.push(state);
+            state.history = options.history ? enterOverlayEntry(options.history) : null;
             root.setAttribute('aria-hidden', 'false');
             ensureKeydownListener();
             window.setTimeout(() => {
@@ -61,6 +78,9 @@ export function createModal(root: HTMLElement, options: ModalOptions = {}): Mana
             const index = modalStack.indexOf(state);
             if (index === -1) return;
             modalStack.splice(index, 1);
+            if (guardedDismissal === state) guardedDismissal = null;
+            if (confirmedDismissal === state) confirmedDismissal = null;
+            state.history = null;
             root.setAttribute('aria-hidden', 'true');
             options.onClose?.(reason);
             if (modalStack.length === 0) {
@@ -80,6 +100,7 @@ export function createModal(root: HTMLElement, options: ModalOptions = {}): Mana
     state.controller = controller;
     state.options = options;
     state.returnFocus = null;
+    state.history = null;
 
     let backdropPointerDown = false;
     root.addEventListener('pointerdown', (event) => {
@@ -115,7 +136,187 @@ async function attemptClose(state: ModalState, reason: ModalCloseReason): Promis
         const proceed = await state.options.beforeClose(reason);
         if (!proceed || !state.controller.isOpen()) return;
     }
+    finishDismissal(state, reason);
+}
+
+// A deliberate dismissal consumes a current overlay entry through Back, then
+// popstate closes the modal. A Back that already consumed the entry closes it
+// directly.
+function finishDismissal(state: ModalState, reason: ModalCloseReason): void {
+    if (state.history && currentOverlayIs(state.history)) {
+        confirmedDismissal = state;
+        window.history.back();
+        return;
+    }
     state.controller.close(reason);
+}
+
+// The modal whose entry a Back is currently consuming, so a guard that has
+// already been answered is not asked again when that Back arrives.
+let confirmedDismissal: ModalState | null = null;
+
+function currentOverlayIs(entry: OwnedOverlayEntry): boolean {
+    return (
+        readEntryID(window.history.state) === entry.entryID &&
+        readOverlayEntry(window.history.state)?.kind === entry.overlay.kind
+    );
+}
+
+// The entry stands for the page with this modal over it, so it carries what
+// that page's own entry carried — its position, the page it was pushed from,
+// the library held for it — under an identity of its own.
+function enterOverlayEntry(overlay: OverlayEntry): OwnedOverlayEntry {
+    const currentOverlay = readOverlayEntry(window.history.state);
+    const currentID = readEntryID(window.history.state);
+    if (
+        currentOverlay &&
+        currentID &&
+        currentOverlay.kind === overlay.kind &&
+        currentOverlay.target === overlay.target
+    ) {
+        return {
+            entryID: currentID,
+            overlay: currentOverlay,
+        };
+    }
+    const base = window.history.state;
+    const entryID = newEntryID();
+    const entry: PolkaHistoryState = {
+        ...(base && typeof base === 'object' ? (base as PolkaHistoryState) : {}),
+        polkaEntryID: entryID,
+        polkaOverlay: overlay,
+        polkaOverlayOriginID: readEntryID(base) ?? undefined,
+    };
+    window.history.pushState(entry, '');
+    return { entryID, overlay };
+}
+
+type PendingOverlayRestore = {
+    entry: OwnedOverlayEntry;
+    promise: Promise<void>;
+    resolve: () => void;
+};
+
+let pendingOverlayRestore: PendingOverlayRestore | null = null;
+
+// Back already left the overlay entry, so return to the exact entry the browser
+// kept in Forward instead of manufacturing a replacement with pushState.
+function restoreOverlayEntry(entry: OwnedOverlayEntry): Promise<void> {
+    if (currentOverlayIs(entry)) return Promise.resolve();
+    if (pendingOverlayRestore?.entry.entryID === entry.entryID) {
+        return pendingOverlayRestore.promise;
+    }
+    let resolve!: () => void;
+    const promise = new Promise<void>((done) => {
+        resolve = done;
+    });
+    pendingOverlayRestore = { entry, promise, resolve };
+    window.history.forward();
+    return promise;
+}
+
+function continueOverlayRestore(): boolean {
+    const pending = pendingOverlayRestore;
+    if (!pending) return false;
+    if (!currentOverlayIs(pending.entry)) {
+        window.history.forward();
+        return true;
+    }
+    pendingOverlayRestore = null;
+    pending.resolve();
+    return true;
+}
+
+function openHistoryModal(): ModalState | null {
+    for (let i = modalStack.length - 1; i >= 0; i--) {
+        if (modalStack[i].history) return modalStack[i];
+    }
+    return null;
+}
+
+// Back landed off an overlay entry. Returns true when the modal layer owns this
+// move and the router must stay out of it: dismissing a modal is not a
+// navigation, and must not resume, detach, or destroy a route.
+export function dismissOverlayOnPopstate(): boolean {
+    if (continueOverlayRestore()) return true;
+    const owner = openHistoryModal();
+    if (!owner?.history) return false;
+    if (confirmedDismissal === owner) {
+        confirmedDismissal = null;
+        guardedDismissal = null;
+        owner.controller.close('history');
+        return true;
+    }
+    const entryWasConsumed = !currentOverlayIs(owner.history);
+
+    // Keep the editor entry in place while dismissing a child above it.
+    const top = modalStack[modalStack.length - 1];
+    if (top !== owner) {
+        if (entryWasConsumed) {
+            void restoreOverlayEntry(owner.history).then(() => attemptClose(top, 'history'));
+        } else {
+            void attemptClose(top, 'history');
+        }
+        return true;
+    }
+    if (guardedDismissal === owner) {
+        if (entryWasConsumed) void restoreOverlayEntry(owner.history);
+        return true;
+    }
+
+    const decision = owner.options.beforeClose?.('history') ?? true;
+    if (typeof decision === 'boolean') {
+        if (decision) {
+            if (entryWasConsumed) owner.controller.close('history');
+            else finishDismissal(owner, 'history');
+        } else if (entryWasConsumed) {
+            void restoreOverlayEntry(owner.history);
+        }
+        return true;
+    }
+
+    const restored = entryWasConsumed ? restoreOverlayEntry(owner.history) : Promise.resolve();
+    guardedDismissal = owner;
+    void Promise.all([decision, restored]).then(([proceed]) => {
+        if (guardedDismissal !== owner) return;
+        guardedDismissal = null;
+        if (!proceed || !owner.controller.isOpen()) return;
+        finishDismissal(owner, 'history');
+    });
+    return true;
+}
+
+let guardedDismissal: ModalState | null = null;
+
+// The overlay is still the same layer, but it is showing something else now —
+// the editor moved to the next book. Forward must come back to what it became.
+export function updateOverlayEntry(overlay: OverlayEntry): void {
+    const owner = openHistoryModal();
+    if (!owner?.history || !currentOverlayIs(owner.history)) return;
+    const base = window.history.state as PolkaHistoryState | null;
+    const state = { ...(base ?? {}), polkaOverlay: overlay };
+    window.history.replaceState(state, '');
+    owner.history = {
+        ...owner.history,
+        overlay,
+    };
+}
+
+const overlayReopeners = new Map<string, (overlay: OverlayEntry) => void>();
+
+// How an overlay comes back when Forward returns to its entry. Without this the
+// entry would be a dead step that changes nothing.
+export function registerOverlayReopen(kind: string, reopen: (overlay: OverlayEntry) => void): void {
+    overlayReopeners.set(kind, reopen);
+}
+
+export function reopenOverlay(overlay: OverlayEntry): boolean {
+    const owner = openHistoryModal();
+    if (owner?.history && currentOverlayIs(owner.history)) return true;
+    const reopen = overlayReopeners.get(overlay.kind);
+    if (!reopen) return false;
+    reopen(overlay);
+    return true;
 }
 
 export type ModalContent = string | Node | (string | Node)[];

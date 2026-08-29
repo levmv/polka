@@ -17,7 +17,31 @@ export interface PolkaHistoryState {
     // On a book entry: the entry ID of the library it was opened from, and so
     // the key of the retained instance that Back should resume.
     polkaRetainedLibraryID?: string;
+    // An overlay opened over the page this entry shares a URL with. Back
+    // dismisses the overlay and leaves the route alone; Forward reopens it.
+    polkaOverlay?: OverlayEntry;
+    // The page entry immediately underneath an overlay. Pathnames are not
+    // enough here: several distinct library surfaces legitimately share `/`.
+    polkaOverlayOriginID?: string;
     [key: string]: unknown;
+}
+
+// What an overlay needs to be reopened when Forward returns to its entry. The
+// kind selects the reopener; the target is whatever that reopener needs to
+// identify what was being shown, such as a book id.
+export interface OverlayEntry {
+    kind: string;
+    target?: string;
+}
+
+export function readOverlayEntry(state: unknown): OverlayEntry | null {
+    const overlay = readState(state)?.polkaOverlay;
+    if (!overlay || typeof overlay !== 'object') return null;
+    const { kind, target } = overlay as OverlayEntry;
+    if (typeof kind !== 'string' || !kind) return null;
+    const entry: OverlayEntry = { kind };
+    if (typeof target === 'string' && target) entry.target = target;
+    return entry;
 }
 
 export function isLibraryPath(pathname: string): boolean {
@@ -53,6 +77,10 @@ export function readEntryID(state: unknown): string | null {
 
 export function readRetainedLibraryID(state: unknown): string | null {
     return readString(state, 'polkaRetainedLibraryID');
+}
+
+export function readOverlayOriginID(state: unknown): string | null {
+    return readString(state, 'polkaOverlayOriginID');
 }
 
 // The URL of the entry one step back, when this entry was created by in-app

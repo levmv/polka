@@ -5,6 +5,8 @@ import {
     newEntryID,
     type PolkaHistoryState,
     readEntryID,
+    readOverlayEntry,
+    readOverlayOriginID,
     readPredecessorURL,
     readRetainedLibraryID,
     readScrollPosition,
@@ -12,7 +14,7 @@ import {
     retentionForPush,
 } from './history-state';
 import { beginGlobalLoading } from './loading-indicator';
-import { closeAllModals } from './modal';
+import { closeAllModals, dismissOverlayOnPopstate, reopenOverlay } from './modal';
 import {
     renderAuthorsPage,
     renderBookPage,
@@ -196,6 +198,25 @@ function initNavigation(router: Router, closeSidebar: () => void): (href: string
     window.addEventListener('popstate', (event) => {
         const url = new URL(window.location.href);
         if (!router.canMount(url.pathname)) return;
+        // Leaving an open overlay entry dismisses only its modal; the origin
+        // route stays mounted.
+        if (dismissOverlayOnPopstate()) {
+            currentEntryID = readEntryID(window.history.state) ?? currentEntryID;
+            return;
+        }
+        // Forward can reopen directly only over the exact mounted origin. If
+        // the app navigated away, fall through to remount the route first.
+        const overlay = readOverlayEntry(event.state);
+        const overlayOriginID = readOverlayOriginID(event.state);
+        if (
+            overlay &&
+            overlayOriginID === currentEntryID &&
+            url.pathname === activeRoutePathname &&
+            reopenOverlay(overlay)
+        ) {
+            currentEntryID = readEntryID(event.state) ?? currentEntryID;
+            return;
+        }
         const scroll = readScrollPosition(event.state);
         if (url.pathname === activeRoutePathname && handlesQueryPopstateLocally(url.pathname)) {
             closeSidebar();
@@ -218,8 +239,16 @@ function initNavigation(router: Router, closeSidebar: () => void): (href: string
             pushHistory: false,
             scroll,
             retention,
+        }).then((mounted) => {
+            if (mounted && overlay) reopenOverlay(overlay);
         });
     });
+
+    // history.state survives a reload. Reconnect an overlay recorded on the
+    // entry the document loaded instead of showing a bare page with a dead
+    // editor step still sitting underneath the browser's Back button.
+    const initialOverlay = readOverlayEntry(window.history.state);
+    if (initialOverlay) reopenOverlay(initialOverlay);
 
     return navigate;
 }

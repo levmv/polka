@@ -54,6 +54,7 @@ import type {
     ReadingStatus,
     SendOptions,
 } from '../types';
+import { type BookDetailHost, registerActiveBookDetailHost } from './book-detail-host';
 import { openEditModal } from './book-edit';
 import { renderShelfPicker } from './book-shelf-picker';
 
@@ -80,17 +81,15 @@ interface BookDetailView {
 // is handed out by the page that opened the dialog, so an editor opened from
 // the library — where there is no book page — simply has none. Telling the rest
 // of the app about the change is not this: that goes through CATALOG_CHANGED.
-export interface BookDetailHost {
-    // The editor saved this book; hold the new record without redrawing.
-    applySaved(b: Book): void;
-    // The editor moved on to another book; follow it.
-    showBook(b: Book, listContext?: BookListContext | null): void;
-    // The editor closed; redraw from what the page holds.
-    rerender(): void;
-}
-
 function hostFor(view: BookDetailView): BookDetailHost {
     const container = () => view.root.querySelector<HTMLElement>('#book-detail-container');
+    // While the editor is open this updates its entry; rerender after dismissal
+    // updates the underlying page entry.
+    const syncLocation = () => {
+        if (view.book && view.listContext) {
+            replaceLocationURL(bookURL(view.book.id, view.listContext));
+        }
+    };
     return {
         applySaved(b: Book): void {
             if (view.phase !== 'active' || view.book?.id !== b.id) return;
@@ -103,12 +102,13 @@ function hostFor(view: BookDetailView): BookDetailHost {
             view.listContext = listContext ?? view.listContext;
             renderBookDetail(view, host, b, { loadReaderProgress: false });
             document.title = `${b.title} - polka`;
-            if (listContext) replaceLocationURL(bookURL(b.id, listContext));
+            syncLocation();
         },
         rerender(): void {
             const host = container();
             if (view.phase !== 'active' || !host || !view.book) return;
             renderBookDetail(view, host, view.book);
+            syncLocation();
         },
     };
 }
@@ -206,9 +206,11 @@ export function initBookDetail(
         renderCleanup: null,
         takeFocus: context.clientNavigation,
     };
+    const releaseEditorHost = registerActiveBookDetailHost(hostFor(view));
     void loadBookDetail(view, workId);
     return {
         destroy(): void {
+            releaseEditorHost();
             view.phase = 'destroyed';
             view.abort.abort();
             view.renderCleanup?.();
