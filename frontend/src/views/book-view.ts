@@ -13,13 +13,16 @@ import {
 } from '../api';
 import {
     type BookListContext,
+    bookURL,
     listURLForContext,
     readBookListContextFromLocation,
 } from '../book-list-context';
 import { SEND_ENABLED_EVENT, sendEnabled } from '../bootstrap';
+import { notifyCatalogChanged } from '../catalog-events';
 import { coverImgHtml } from '../cover';
 import { escapeHtml, formField, textEl } from '../dom';
 import { errorMessage } from '../errors';
+import { isLibraryPath, readPredecessorURL } from '../history-state';
 import { icon } from '../icons';
 import {
     type Identifier,
@@ -28,10 +31,17 @@ import {
     isPrimaryIdentifier,
     parseIdentifiers,
 } from '../identifiers';
+import { beginGlobalLoading } from '../loading-indicator';
 import { createMenu, type MenuItem } from '../menu';
 import { confirmModal, openModal } from '../modal';
 import { createPopover } from '../popover';
-import type { RouteCleanup } from '../router';
+import {
+    navigateApp,
+    type RouteCleanup,
+    type RouteController,
+    type RouteMountContext,
+    replaceLocationURL,
+} from '../router';
 import { queryTerm, seriesLibraryURL } from '../search-query';
 import { showToast } from '../toast';
 import type {
@@ -51,26 +61,56 @@ import { renderShelfPicker } from './book-shelf-picker';
 // modal from the book-view facade.
 export { openEditModal };
 
-// The currently rendered book detail. The edit modal and metadata-fetch dialog
-// read and refresh it through the accessors below so the page stays in sync
-// after an in-place save.
-let currentBookDetail: Book | null = null;
-let currentBookListContext: BookListContext | null = null;
-// Router rejects stale mount results after mount() resolves, but a slow book
-// fetch can mutate the current detail skeleton before returning a cleanup.
-let bookDetailLoadToken = 0;
-let currentDetailRenderCleanup: RouteCleanup | null = null;
-
-export function getCurrentBookDetail(): Book | null {
-    return currentBookDetail;
+// One mounted book page. The book it shows, the list it was opened from, the
+// request that fills it, and the cleanup for whatever is currently rendered all
+// belong to this instance. Two of them exist for a moment during a navigation,
+// and neither may write over the other's page.
+interface BookDetailView {
+    root: HTMLElement;
+    phase: 'active' | 'destroyed';
+    book: Book | null;
+    listContext: BookListContext | null;
+    abort: AbortController;
+    renderCleanup: RouteCleanup | null;
+    // Whether this page has to place focus itself; see the heading below.
+    takeFocus: boolean;
 }
 
-export function setCurrentBookDetail(b: Book | null): void {
-    currentBookDetail = b;
+// What the edit dialog is given so it can keep the page behind it in step. It
+// is handed out by the page that opened the dialog, so an editor opened from
+// the library — where there is no book page — simply has none. Telling the rest
+// of the app about the change is not this: that goes through CATALOG_CHANGED.
+export interface BookDetailHost {
+    // The editor saved this book; hold the new record without redrawing.
+    applySaved(b: Book): void;
+    // The editor moved on to another book; follow it.
+    showBook(b: Book, listContext?: BookListContext | null): void;
+    // The editor closed; redraw from what the page holds.
+    rerender(): void;
 }
 
-export function getCurrentBookListContext(): BookListContext | null {
-    return currentBookListContext;
+function hostFor(view: BookDetailView): BookDetailHost {
+    const container = () => view.root.querySelector<HTMLElement>('#book-detail-container');
+    return {
+        applySaved(b: Book): void {
+            if (view.phase !== 'active' || view.book?.id !== b.id) return;
+            view.book = b;
+        },
+        showBook(b: Book, listContext?: BookListContext | null): void {
+            const host = container();
+            if (view.phase !== 'active' || !host || view.book?.id === b.id) return;
+            view.book = b;
+            view.listContext = listContext ?? view.listContext;
+            renderBookDetail(view, host, b, { loadReaderProgress: false });
+            document.title = `${b.title} - polka`;
+            if (listContext) replaceLocationURL(bookURL(b.id, listContext));
+        },
+        rerender(): void {
+            const host = container();
+            if (view.phase !== 'active' || !host || !view.book) return;
+            renderBookDetail(view, host, view.book);
+        },
+    };
 }
 
 function formatSize(bytes: number): string {
@@ -149,84 +189,156 @@ function openDownload(url: string): void {
     window.location.href = url;
 }
 
-export async function initBookDetail(workId: string): Promise<RouteCleanup | undefined> {
-    const token = ++bookDetailLoadToken;
+// The controller is handed back before the book has arrived: content readiness
+// is view state, not route ownership. Whoever navigates away next can therefore
+// cancel this page's request instead of racing its render.
+export function initBookDetail(
+    workId: string,
+    root: HTMLElement,
+    context: RouteMountContext,
+): RouteController {
+    const view: BookDetailView = {
+        root,
+        phase: 'active',
+        book: null,
+        listContext: readBookListContextFromLocation(),
+        abort: new AbortController(),
+        renderCleanup: null,
+        takeFocus: context.clientNavigation,
+    };
+    void loadBookDetail(view, workId);
+    return {
+        destroy(): void {
+            view.phase = 'destroyed';
+            view.abort.abort();
+            view.renderCleanup?.();
+            view.renderCleanup = null;
+            view.book = null;
+        },
+    };
+}
+
+async function loadBookDetail(view: BookDetailView, workId: string): Promise<void> {
+    const container = view.root.querySelector<HTMLElement>('#book-detail-container');
+    if (!container) return;
+    // The page marks itself busy for its own data, the way the library does.
+    // The router stops waiting for content once it holds this controller, so
+    // nothing else is left to say the page has not filled in yet.
+    const finishGlobalLoading = beginGlobalLoading();
     try {
-        currentBookListContext = readBookListContextFromLocation();
-        const [b, me] = await Promise.all([fetchBook(workId), fetchCurrentUser()]);
-        if (token !== bookDetailLoadToken) return undefined;
+        const [b, me] = await Promise.all([
+            fetchBook(workId, view.abort.signal),
+            fetchCurrentUser(),
+        ]);
+        if (view.phase !== 'active') return;
 
-        const container = document.getElementById('book-detail-container');
-        if (!container) return;
-
-        currentBookDetail = b;
-        updateBackLink(currentBookListContext);
+        view.book = b;
+        updateBackLink(view.root, view.listContext);
         container.classList.remove('book-detail-loading');
         container.removeAttribute('aria-busy');
-        renderBookDetail(container, b, { canCurate: me.role === 'admin' || me.role === 'member' });
+        renderBookDetail(view, container, b, {
+            canCurate: me.role === 'admin' || me.role === 'member',
+        });
 
         document.title = `${b.title} - polka`;
-        return () => {
-            currentDetailRenderCleanup?.();
-            currentDetailRenderCleanup = null;
-            if (token === bookDetailLoadToken) {
-                currentBookDetail = null;
-                currentBookListContext = null;
-            }
-            bookDetailLoadToken++;
-        };
-    } catch (e) {
-        if (token !== bookDetailLoadToken) return undefined;
-        console.error('Failed to load book detail:', e);
-        const container = document.getElementById('book-detail-container');
-        if (container) {
-            container.classList.remove('book-detail-loading');
-            container.removeAttribute('aria-busy');
-            container.innerHTML = '<h2>Book not found.</h2>';
+        // Only when the app swapped this page in under the reader, where a
+        // keyboard reader would otherwise be left on a link that no longer
+        // exists. After a reload it would only paint a ring nobody asked for.
+        const heading = view.takeFocus
+            ? container.querySelector<HTMLElement>('.detail-title')
+            : null;
+        if (heading) {
+            heading.tabIndex = -1;
+            heading.focus({ preventScroll: true });
         }
+    } catch (e) {
+        if (view.phase !== 'active') return;
+        console.error('Failed to load book detail:', e);
+        container.classList.remove('book-detail-loading');
+        container.removeAttribute('aria-busy');
+        container.innerHTML = '<h2>Book not found.</h2>';
+    } finally {
+        finishGlobalLoading();
     }
 }
 
-function updateBackLink(context: BookListContext | null): void {
-    const link = document.querySelector<HTMLAnchorElement>('.back-link a');
+// The control points at the entry this page was actually opened from, so it and
+// browser Back make the same one-entry move. Without a known predecessor — a
+// direct link, a new tab — it falls back to the list the URL describes.
+function updateBackLink(root: HTMLElement, context: BookListContext | null): void {
+    const link = root.querySelector<HTMLAnchorElement>('.back-link a');
     if (!link) return;
-    link.href = listURLForContext(context);
+    const predecessor = readPredecessorURL(window.history.state);
+    link.href = predecessor ?? listURLForContext(context);
+    const target = new URL(link.href, window.location.origin);
+    const label = isLibraryPath(target.pathname) ? 'Back to Library' : 'Back';
+    link.title = label;
+    // At strip widths the control is an icon, so its name cannot come from the
+    // text beside it. It says where the reader lands, not what the icon draws.
+    link.setAttribute('aria-label', label);
 }
 
 // The clamp and the hidden toggle ship in the markup, so a long blurb is never
 // briefly full height. This decides, once the text has been laid out, whether
 // the blurb earns a toggle or should simply be shown whole.
+// How tall a blurb may stand. Both numbers are line-heights rather than lines
+// of text, because a blurb that arrives as several <p> blocks spends real
+// height on the gaps between them and stands taller than the same count of
+// plain prose lines — which is what made the collapsed block look inconsistent
+// from book to book. A blurb no taller than the slack is shown whole — hiding a
+// line or two behind a click buys nothing — and anything longer is cut to the
+// cap.
+const COLLAPSED_DESCRIPTION_LINES = 13;
+const WHOLE_DESCRIPTION_LINES = 15;
+// However the gaps fall, a collapsed blurb still has to say something.
+const COLLAPSED_DESCRIPTION_MIN_LINES = 6;
+
 function setupDescriptionDisclosure(container: HTMLElement): void {
     const description = container.querySelector<HTMLElement>('.detail-description');
     const more = container.querySelector<HTMLButtonElement>('.detail-description-more');
     if (!description || !more) return;
 
-    // Let the engine count the lines. If the whole blurb fits inside the more
-    // generous probe clamp, hiding the remainder would only buy a click for a
-    // line or two, so the clamp comes off instead.
-    description.classList.replace('detail-description--collapsed', 'detail-description--probe');
-    const fitsWithSlack = description.scrollHeight <= description.clientHeight;
-    description.classList.replace('detail-description--probe', 'detail-description--collapsed');
-    if (fitsWithSlack) {
+    // The clamp ships in the markup, so a long blurb is never briefly full
+    // height. Under it, scrollHeight is what the whole blurb would take.
+    const lineHeight = parseFloat(getComputedStyle(description).lineHeight);
+    if (!Number.isFinite(lineHeight) || lineHeight <= 0) return;
+    if (description.scrollHeight <= lineHeight * WHOLE_DESCRIPTION_LINES) {
         description.classList.remove('detail-description--collapsed');
         more.remove();
         return;
     }
 
+    // The clamp is what cuts between lines and supplies the ellipsis, so the
+    // cap is applied by asking it for fewer lines rather than by cropping the
+    // box. Only block-spaced blurbs give back any lines, and they stop after a
+    // step or two, so this costs a couple of reflows on a box already laid out.
+    const budget = lineHeight * COLLAPSED_DESCRIPTION_LINES;
+    let lines = parseInt(getComputedStyle(description).webkitLineClamp, 10);
+    while (
+        Number.isFinite(lines) &&
+        lines > COLLAPSED_DESCRIPTION_MIN_LINES &&
+        description.clientHeight > budget
+    ) {
+        lines -= 1;
+        description.style.setProperty('-webkit-line-clamp', String(lines));
+    }
+
     more.hidden = false;
     more.addEventListener('click', () => {
         description.classList.remove('detail-description--collapsed');
+        description.style.removeProperty('-webkit-line-clamp');
         more.remove();
     });
 }
 
-export function renderBookDetail(
+function renderBookDetail(
+    view: BookDetailView,
     container: HTMLElement,
     b: Book,
     opts: { loadReaderProgress?: boolean; canCurate?: boolean } = {},
 ): RouteCleanup {
-    currentDetailRenderCleanup?.();
-    currentDetailRenderCleanup = null;
+    view.renderCleanup?.();
+    view.renderCleanup = null;
     const cleanup: RouteCleanup[] = [];
     const canCurate = opts.canCurate ?? true;
     const authorsHtml = b.authors_list
@@ -484,7 +596,7 @@ export function renderBookDetail(
             statuses.map((status) => ({
                 label: `${readingStatusLabel(status)}${status === readingStatus ? ' ✓' : ''}`,
                 disabled: status === readingStatus,
-                action: () => void changeBookReadingStatus(container, b, status, opts),
+                action: () => void changeBookReadingStatus(view, container, b, status, opts),
             })),
         );
         cleanup.push(() => statusMenu.destroy());
@@ -503,13 +615,13 @@ export function renderBookDetail(
         cleanup.push(() => menu.destroy());
     });
 
-    document.getElementById('btn-edit-book')?.addEventListener('click', () => {
-        if (currentBookDetail) openEditModal(currentBookDetail, undefined, currentBookListContext);
+    container.querySelector('#btn-edit-book')?.addEventListener('click', () => {
+        if (view.book) openEditModal(view.book, view.listContext, null, hostFor(view));
     });
-    document.getElementById('btn-send-book')?.addEventListener('click', () => {
+    container.querySelector('#btn-send-book')?.addEventListener('click', () => {
         openSendBookModal(b);
     });
-    const shelvesBtn = document.getElementById('btn-book-shelves');
+    const shelvesBtn = container.querySelector<HTMLElement>('#btn-book-shelves');
     if (shelvesBtn) {
         const popover = createPopover(shelvesBtn, (panel, popover) =>
             renderShelfPicker(panel, popover, b.id),
@@ -517,7 +629,7 @@ export function renderBookDetail(
         cleanup.push(() => popover.destroy());
     }
 
-    const menuBtn = document.getElementById('btn-book-menu');
+    const menuBtn = container.querySelector<HTMLElement>('#btn-book-menu');
     if (menuBtn) {
         const items: MenuItem[] = [];
         // Admin-only "Write metadata to file" (manual mode, writable asset): the
@@ -528,7 +640,7 @@ export function renderBookDetail(
             items.push({
                 label: b.writeback.dirty ? 'Write metadata to file' : 'Metadata file is up to date',
                 disabled: !b.writeback.dirty,
-                action: () => void writeBookMetadata(b),
+                action: () => void writeBookMetadata(view, container, b),
             });
         }
         if (primaryReadableAsset) {
@@ -558,16 +670,16 @@ export function renderBookDetail(
     // An admin who turns sending on or off in Settings sees the action row follow
     // immediately, without leaving the page they were looking at.
     const handleSendEnabled = () => {
-        if (currentBookDetail?.id === b.id) renderBookDetail(container, b, opts);
+        if (view.book?.id === b.id) renderBookDetail(view, container, b, opts);
     };
     window.addEventListener(SEND_ENABLED_EVENT, handleSendEnabled);
     cleanup.push(() => window.removeEventListener(SEND_ENABLED_EVENT, handleSendEnabled));
 
     const destroy = () => {
         for (const fn of cleanup.splice(0).reverse()) fn();
-        if (currentDetailRenderCleanup === destroy) currentDetailRenderCleanup = null;
+        if (view.renderCleanup === destroy) view.renderCleanup = null;
     };
-    currentDetailRenderCleanup = destroy;
+    view.renderCleanup = destroy;
     return destroy;
 }
 
@@ -976,6 +1088,7 @@ function readingStatusLabel(status: ReadingStatus): string {
 }
 
 async function changeBookReadingStatus(
+    view: BookDetailView,
     container: HTMLElement,
     book: Book,
     status: ReadingStatus,
@@ -984,7 +1097,9 @@ async function changeBookReadingStatus(
     try {
         book.reading_status = await setReadingStatus(book.id, status);
         showToast(`Marked as ${readingStatusLabel(status).toLowerCase()}`);
-        renderBookDetail(container, book, opts);
+        if (view.phase !== 'active') return;
+        renderBookDetail(view, container, book, opts);
+        notifyCatalogChanged({ kind: 'books-updated', books: [book] });
     } catch (err) {
         showToast(errorMessage(err, 'Failed to change reading status'), { type: 'error' });
     }
@@ -1001,6 +1116,7 @@ async function resetBookReaderPosition(container: HTMLElement, asset: Asset): Pr
 
     try {
         await resetReaderState(asset.id);
+        notifyCatalogChanged();
         const progressEl = container.querySelector<HTMLElement>(
             `[data-reader-progress-asset="${CSS.escape(asset.id)}"]`,
         );
@@ -1023,8 +1139,11 @@ function clampProgress(progress: number): number {
     return Math.max(0, Math.min(1, progress));
 }
 
-async function writeBookMetadata(b: Book): Promise<void> {
-    const detailToken = bookDetailLoadToken;
+async function writeBookMetadata(
+    view: BookDetailView,
+    container: HTMLElement,
+    b: Book,
+): Promise<void> {
     try {
         const result = await writebackBook(b.id);
         if (result.failed > 0) {
@@ -1038,20 +1157,22 @@ async function writeBookMetadata(b: Book): Promise<void> {
             showToast(`Metadata written to ${n} ${n === 1 ? 'file' : 'files'}`);
         }
         // Re-render from the refreshed book so the action reflects the new (clean)
-        // state. The write may outlive this detail mount; a later book page owns
-        // the same global state/container and must not be replaced by this result.
-        // Only an admin can reach this action, so canCurate holds.
-        if (detailToken !== bookDetailLoadToken || currentBookDetail?.id !== b.id) return;
-        currentBookDetail = result.book;
-        const container = document.getElementById('book-detail-container');
-        if (container) renderBookDetail(container, result.book, { canCurate: true });
+        // state. The write can outlive this page; the instance decides whether
+        // the result still belongs to what is on screen. Only an admin can reach
+        // this action, so canCurate holds.
+        if (view.phase !== 'active' || view.book?.id !== b.id) return;
+        view.book = result.book;
+        renderBookDetail(view, container, result.book, { canCurate: true });
     } catch (e) {
         showToast(errorMessage(e, 'Failed to write metadata to file'), { type: 'error' });
     }
 }
 
 // Soft-delete: the book moves to Trash (reversible, files kept) and we return to
-// the library, where it no longer appears.
+// the library, where it no longer appears. The removal is reported first, so a
+// library that is being held for this page has already dropped the book by the
+// time it is shown again — and Back returns through that instance rather than
+// reloading the document out from under it.
 async function removeBook(b: Book): Promise<void> {
     const ok = await confirmModal({
         title: 'Remove from library?',
@@ -1062,7 +1183,9 @@ async function removeBook(b: Book): Promise<void> {
     if (!ok) return;
     try {
         await deleteBook(b.id);
-        window.location.href = '/';
+        notifyCatalogChanged({ kind: 'books-removed', ids: [b.id] });
+        if (readPredecessorURL(window.history.state)) window.history.back();
+        else navigateApp('/');
     } catch (e) {
         console.error('Failed to remove book:', e);
         showToast(errorMessage(e, 'Failed to remove book'), { type: 'error' });

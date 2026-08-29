@@ -6,20 +6,25 @@ import {
     fetchUserSettings,
 } from '../api';
 import { type BookListContext, bookURL, libraryBookListContext } from '../book-list-context';
-import { CATALOG_CHANGED } from '../catalog-events';
+import { CATALOG_CHANGED, type CatalogChange } from '../catalog-events';
 import { createBookCard } from '../components/book-card';
-import { createSelect } from '../components/select';
+import { createSelect, type ManagedSelect } from '../components/select';
 import { coverUrl } from '../cover';
 import { debounce, escapeHtml } from '../dom';
 import { errorMessage } from '../errors';
 import { icon } from '../icons';
 import { beginGlobalLoading } from '../loading-indicator';
-import { type RouteCleanup, replaceLocationURL } from '../router';
+import {
+    navigateApp,
+    type RouteCleanup,
+    type RouteController,
+    replaceLocationURL,
+    type ScrollPosition,
+} from '../router';
 import { queryTerm } from '../search-query';
 import { openSettingsModal } from '../settings';
 import { openCreateShelfDialog } from '../shelf-dialog';
 import { notifyShelvesChanged } from '../sidebar-shelves';
-import { BOOK_UPLOAD_FINISHED, type BookUploadFinishedDetail } from '../sidebar-upload';
 import { showToast } from '../toast';
 import type {
     AdminStorageStatus,
@@ -29,12 +34,9 @@ import type {
     UserSettings,
 } from '../types';
 import { openEditModal } from './book-view';
-import {
-    initContinueReadingRail,
-    resetContinueReadingRail,
-    syncContinueReadingRail,
-} from './continue-reading';
+import { type ContinueReadingRail, createContinueReadingRail } from './continue-reading';
 import { createLibrarySelection, type LibrarySelection } from './library-selection';
+import { createReturnPosition, type ReturnPosition } from './return-position';
 
 const PAGE_SIZE = 50;
 const SORT_OPTIONS = [
@@ -48,6 +50,16 @@ const SORT_OPTIONS = [
 type LibraryViewMode = 'grid' | 'table';
 
 interface LibraryViewState {
+    // Router-owned route root. Every lookup this view makes is scoped to it.
+    root: HTMLElement;
+    // 'suspended' means the root is detached: state and DOM are intact, but this
+    // instance owns nothing on the visible page and must not touch its URL.
+    phase: 'active' | 'suspended' | 'destroyed';
+    // Putting the reader back where they were; see return-position.ts.
+    returnPosition: ReturnPosition;
+    // A change arrived that cannot be patched into the retained result. The
+    // authoritative rebuild happens on resume, never as a jump on return.
+    dirty: boolean;
     books: BookSummary[];
     view: LibraryViewMode;
     query: string;
@@ -62,7 +74,12 @@ interface LibraryViewState {
     canWriteback: boolean;
     loadToken: number;
     loadingBooks: boolean;
-    active: boolean;
+    // Owned by this instance: a stale load is cancelled here, never by whatever
+    // view happens to request books next.
+    booksAbort: AbortController | null;
+    rail: ContinueReadingRail;
+    // Completion for the page-level busy indicator, released on suspend.
+    finishLoading: (() => void) | null;
     selection: LibrarySelection | null;
     jumpKey: string;
     jumps: BookJump[];
@@ -91,10 +108,13 @@ function restoreSavedScroll(): void {
     window.scrollTo(scroll.x, scroll.y);
 }
 
-export function initLibrary(): RouteCleanup | undefined {
-    const searchInput = document.getElementById('search-input') as HTMLInputElement;
+export function initLibrary(root: HTMLElement): RouteController {
+    const searchInput = root.querySelector<HTMLInputElement>('#search-input');
     const params = new URLSearchParams(window.location.search);
     const state: LibraryViewState = {
+        root,
+        phase: 'active',
+        dirty: false,
         books: [],
         view: readLibraryViewMode(),
         query: '',
@@ -109,7 +129,14 @@ export function initLibrary(): RouteCleanup | undefined {
         canWriteback: false,
         loadToken: 0,
         loadingBooks: false,
-        active: true,
+        booksAbort: null,
+        rail: createContinueReadingRail(root, isExpectedFetchCancel),
+        returnPosition: createReturnPosition({
+            root,
+            renderedBookSelector: () => renderedBookSelector(state),
+            isActive: () => state.phase === 'active',
+        }),
+        finishLoading: null,
         selection: null,
         jumpKey: '',
         jumps: [],
@@ -120,13 +147,20 @@ export function initLibrary(): RouteCleanup | undefined {
         if (fn) cleanup.push(fn);
     };
 
-    addCleanup(initContinueReadingRail());
+    addCleanup(() => state.rail.destroy());
 
     let sortValue = normalizeSort(params.get('sort') || 'added');
     const initialOffset = initialLibraryOffset(params, sortValue, state.shelfId);
 
+    // Rebuild the retained view: same offset, and a limit covering everything
+    // that had been loaded, so a coarse change does not shrink the sequence.
+    const rebuildRetained = () => {
+        const limit = Math.max(PAGE_SIZE, Math.ceil(state.books.length / PAGE_SIZE) * PAGE_SIZE);
+        return loadBooks(state, searchInput?.value || '', sortValue, state.pageOffset, limit);
+    };
+
     const reload = (offset = 0) => {
-        if (!state.active) return;
+        if (state.phase !== 'active') return;
         if (state.shelfId && searchInput?.value.trim()) {
             state.shelfId = '';
             const url = new URL(window.location.href);
@@ -138,15 +172,21 @@ export function initLibrary(): RouteCleanup | undefined {
         return loadBooks(state, searchInput?.value || '', sortValue, offset);
     };
 
-    const loadMoreBtn = document.getElementById('load-more-btn');
+    const loadMoreBtn = root.querySelector('#load-more-btn');
     const handleLoadMoreClick = () => loadMore(state);
     loadMoreBtn?.addEventListener('click', handleLoadMoreClick);
     addCleanup(() => loadMoreBtn?.removeEventListener('click', handleLoadMoreClick));
+
+    // Held so suspend() can unschedule a pending search: a debounce that fired
+    // from a detached library would rewrite the book page's URL.
+    let cancelPendingSearch: (() => void) | null = null;
+    let sortSelect: ManagedSelect | null = null;
 
     if (searchInput) {
         const handleSearchInput = debounce((_e: Event) => {
             reload();
         }, 200);
+        cancelPendingSearch = () => handleSearchInput.cancel();
         searchInput.addEventListener('input', handleSearchInput);
         addCleanup(() => {
             searchInput.removeEventListener('input', handleSearchInput);
@@ -157,11 +197,11 @@ export function initLibrary(): RouteCleanup | undefined {
         if (q) {
             searchInput.value = q;
         }
-        addCleanup(setupLibrarySearchShortcuts(searchInput));
-        addCleanup(setupSaveSearchButton(searchInput));
+        addCleanup(setupLibrarySearchShortcuts(state, searchInput));
+        addCleanup(setupSaveSearchButton(root, searchInput));
     }
 
-    const sortControl = document.getElementById('sort-control');
+    const sortControl = root.querySelector('#sort-control');
     if (sortControl) {
         const select = createSelect({
             ariaLabel: 'Sort books',
@@ -173,10 +213,11 @@ export function initLibrary(): RouteCleanup | undefined {
             },
         });
         sortControl.appendChild(select.el);
+        sortSelect = select;
         addCleanup(() => select.destroy());
     }
 
-    const libraryGrid = document.getElementById('library-grid');
+    const libraryGrid = root.querySelector<HTMLElement>('#library-grid');
     if (libraryGrid) {
         state.selection = createLibrarySelection({
             container: libraryGrid,
@@ -191,7 +232,7 @@ export function initLibrary(): RouteCleanup | undefined {
     }
 
     void fetchCurrentUser().then((me) => {
-        if (!state.active) return;
+        if (state.phase === 'destroyed') return;
         if (me.role === 'admin' || me.role === 'member') {
             state.canCurateCatalog = true;
         } else {
@@ -204,11 +245,11 @@ export function initLibrary(): RouteCleanup | undefined {
             state.canManageStorage = true;
             void fetchAdminStorageStatus()
                 .then((status) => {
-                    if (!state.active) return;
+                    if (state.phase === 'destroyed') return;
                     applyAdminStorageStatus(state, status);
                 })
                 .catch(() => {
-                    if (!state.active) return;
+                    if (state.phase === 'destroyed') return;
                     applyAdminStorageStatus(state, null);
                 });
         }
@@ -217,20 +258,40 @@ export function initLibrary(): RouteCleanup | undefined {
         }
     });
 
-    const handleBookUploadFinished = (event: Event) => {
-        const detail = (event as CustomEvent<BookUploadFinishedDetail>).detail;
-        if (!detail) return;
-        if (detail.imported.length > 0 || detail.duplicates.length > 0) {
-            state.jumpKey = '';
-            void reload();
-        }
-    };
-    document.addEventListener(BOOK_UPLOAD_FINISHED, handleBookUploadFinished);
-    addCleanup(() => document.removeEventListener(BOOK_UPLOAD_FINISHED, handleBookUploadFinished));
-
-    const handleCatalogChanged = () => {
+    // Rebuild from the server: now if this view is on screen, on resume if not.
+    const rebuild = () => {
         state.jumpKey = '';
-        void reload();
+        if (state.phase === 'suspended') state.dirty = true;
+        else void reload(state.pageOffset);
+    };
+
+    // The same policy in both phases: a change to books this view already shows
+    // is patched in place and never reorders or re-filters the sequence, and
+    // anything coarser is rebuilt. Returning to a retained library must not jump.
+    const handleCatalogChanged = (event: Event) => {
+        const change = (event as CustomEvent<CatalogChange | undefined>).detail;
+        // Continue reading is derived from reading state, which any of these can
+        // move; its cache is not addressed by book id, so it is simply dropped.
+        state.rail.invalidate();
+        // A list request that started before this change would land afterwards
+        // and undo it — reviving a removed book, or restoring an old card. A
+        // patch cannot be trusted on top of that, so invalidate and rebuild.
+        if (state.loadingBooks || state.loadingMore) {
+            cancelInFlightLoads(state);
+            rebuild();
+            return;
+        }
+        if (change?.kind === 'books-updated') {
+            for (const book of change.books) replaceRenderedBook(state, book);
+            syncContinueReading(state);
+            return;
+        }
+        if (change?.kind === 'books-removed') {
+            removeRenderedBooks(state, change.ids);
+            syncContinueReading(state);
+            return;
+        }
+        rebuild();
     };
     document.addEventListener(CATALOG_CHANGED, handleCatalogChanged);
     addCleanup(() => document.removeEventListener(CATALOG_CHANGED, handleCatalogChanged));
@@ -249,22 +310,26 @@ export function initLibrary(): RouteCleanup | undefined {
     window.addEventListener('polka:admin-storage', handleAdminStorage);
     addCleanup(() => window.removeEventListener('polka:admin-storage', handleAdminStorage));
 
-    const handleResize = () => renderBookJumpRail(state);
+    // Deferred while suspended: the rail's capacity depends on a viewport this
+    // instance is not showing in. resume() recomputes it.
+    const handleResize = () => {
+        if (state.phase === 'active') renderBookJumpRail(state);
+    };
     window.addEventListener('resize', handleResize);
     addCleanup(() => window.removeEventListener('resize', handleResize));
     addCleanup(() => document.body.classList.remove('has-library-jump-rail'));
 
     void fetchUserSettings()
         .then((settings) => {
-            if (!state.active) return;
+            if (state.phase === 'destroyed') return;
             applyUserSettings(state, settings, false);
         })
         .catch(() => {
             /* main bootstrap keeps the default theme/settings behavior */
         });
 
-    const gridBtn = document.getElementById('view-grid-btn');
-    const tableBtn = document.getElementById('view-table-btn');
+    const gridBtn = root.querySelector('#view-grid-btn');
+    const tableBtn = root.querySelector('#view-table-btn');
 
     const updateViewButtons = () => {
         if (state.view === 'grid') {
@@ -302,14 +367,68 @@ export function initLibrary(): RouteCleanup | undefined {
     // above live on whatever page the reader moved to next. The saved scroll is
     // re-applied once the grid actually has content to scroll.
     void reload(initialOffset)?.then(() => {
-        if (state.active) restoreSavedScroll();
+        // Only while this instance is the page on screen: a first load that
+        // lands after the reader has already opened a book would otherwise
+        // scroll the book page to the list's saved position.
+        if (state.phase === 'active') restoreSavedScroll();
     });
-    return () => {
-        state.active = false;
-        state.loadingBooks = false;
-        state.loadingMore = false;
-        for (let i = cleanup.length - 1; i >= 0; i--) cleanup[i]();
+    return {
+        // Everything this instance owns outside its own root is handed back to
+        // the page that is about to replace it.
+        suspend(): void {
+            if (state.phase !== 'active') return;
+            state.phase = 'suspended';
+            state.returnPosition.capture();
+            cancelPendingSearch?.();
+            sortSelect?.close();
+            state.selection?.setActive(false);
+            document.body.classList.remove('has-library-jump-rail');
+            // One policy for unfinished list work: it does not survive the
+            // return, and is recorded as a rebuild instead. A resumed library
+            // must not quietly replace the sequence the reader left with a
+            // result they never saw.
+            if (state.loadingBooks || state.loadingMore) {
+                cancelInFlightLoads(state);
+                state.dirty = true;
+            }
+        },
+        resume(pixelFallback: ScrollPosition | null): void {
+            if (state.phase !== 'suspended') return;
+            state.phase = 'active';
+            state.selection?.setActive(true);
+            renderBookJumpRail(state);
+            // The position is restored against the DOM that is already here,
+            // before any rebuild: waiting for the network would present the top
+            // of the list first and jump afterwards.
+            state.returnPosition.restore(pixelFallback);
+            if (state.dirty) {
+                state.dirty = false;
+                state.jumpKey = '';
+                // Re-anchor once the authoritative result has replaced the DOM.
+                void rebuildRetained().then(() => {
+                    if (state.phase === 'active') state.returnPosition.settle(pixelFallback);
+                });
+            }
+            // A search typed in the debounce window before the book opened was
+            // unscheduled rather than dropped; the reader's intent applies now.
+            else if (searchInput && searchInput.value.trim() !== state.query.trim()) {
+                void reload();
+            }
+        },
+        destroy(): void {
+            state.phase = 'destroyed';
+            state.returnPosition.stop();
+            state.loadingBooks = false;
+            state.loadingMore = false;
+            state.booksAbort?.abort();
+            state.booksAbort = null;
+            for (let i = cleanup.length - 1; i >= 0; i--) cleanup[i]();
+        },
     };
+}
+
+function renderedBookSelector(state: LibraryViewState): string {
+    return state.view === 'table' ? '.table-row' : '.book-card';
 }
 
 function applyAdminStorageStatus(state: LibraryViewState, status: AdminStorageStatus | null): void {
@@ -323,11 +442,8 @@ function applyUserSettings(
     resetRail: boolean,
 ): void {
     state.userSettings = settings;
-    if (resetRail) resetContinueReadingRail();
-    syncContinueReadingRail(
-        shouldShowContinueReading(state) && !settings.hide_continue_reading,
-        isExpectedFetchCancel,
-    );
+    if (resetRail) state.rail.invalidate();
+    syncContinueReading(state);
 }
 
 function readLibraryViewMode(): LibraryViewMode {
@@ -359,8 +475,12 @@ function updateLibraryBrowseURL(sort: string, offset: number): void {
     replaceLocationURL(url);
 }
 
-function setupLibrarySearchShortcuts(searchInput: HTMLInputElement): RouteCleanup {
+function setupLibrarySearchShortcuts(
+    state: LibraryViewState,
+    searchInput: HTMLInputElement,
+): RouteCleanup {
     const handleDocumentKeydown = (event: KeyboardEvent) => {
+        if (state.phase !== 'active') return;
         if (event.defaultPrevented || event.key !== '/') return;
         if (event.altKey || event.ctrlKey || event.metaKey) return;
         const target = event.target instanceof Element ? event.target : null;
@@ -397,8 +517,11 @@ function clearLibrarySearch(searchInput: HTMLInputElement): void {
     searchInput.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
-function setupSaveSearchButton(searchInput: HTMLInputElement): RouteCleanup | undefined {
-    const btn = document.getElementById('save-search-btn') as HTMLButtonElement | null;
+function setupSaveSearchButton(
+    root: HTMLElement,
+    searchInput: HTMLInputElement,
+): RouteCleanup | undefined {
+    const btn = root.querySelector<HTMLButtonElement>('#save-search-btn');
     if (!btn) return undefined;
 
     const update = () => {
@@ -422,7 +545,7 @@ function setupSaveSearchButton(searchInput: HTMLInputElement): RouteCleanup | un
                 return;
             }
             notifyShelvesChanged();
-            window.location.href = `/?shelf=${encodeURIComponent(shelf.id)}`;
+            navigateApp(`/?shelf=${encodeURIComponent(shelf.id)}`);
         } catch (e) {
             console.error('Failed to save search shelf:', e);
             showToast(errorMessage(e, 'Save search failed'), { type: 'error' });
@@ -460,29 +583,36 @@ async function loadBooks(
     query: string = '',
     sort: string = '',
     offset = 0,
+    // A rebuild of a view that had accumulated several pages asks for all of
+    // them in one request, so a coarse change does not silently shrink the
+    // sequence the reader was browsing back to one page.
+    limit = PAGE_SIZE,
 ) {
     const token = ++state.loadToken;
     // A new query/sort/shelf replaces the loaded set; selection must not linger.
     state.selection?.clearSelection();
+    state.booksAbort?.abort();
+    const abort = new AbortController();
+    state.booksAbort = abort;
     const finishGlobalLoading = beginGlobalLoading();
+    // Held so suspend() can release it: a request that is still running for a
+    // library the reader has left must not keep the book page marked busy.
+    state.finishLoading?.();
+    state.finishLoading = finishGlobalLoading;
     state.loadingBooks = true;
     state.loadingMore = false;
-    setLibraryResultsLoading(true);
+    setLibraryResultsLoading(state, true);
     updateLoadMore(state);
     state.query = query;
     state.sort = sort;
     state.pageOffset = offset;
     syncBookJumps(state);
-    syncContinueReadingRail(
-        shouldShowContinueReading(state, query) &&
-            state.userSettings?.hide_continue_reading === false,
-        isExpectedFetchCancel,
-    );
+    syncContinueReading(state);
     try {
-        const books = await fetchBooks(query, sort, PAGE_SIZE, offset, state.shelfId);
-        if (!state.active || token !== state.loadToken) return;
+        const books = await fetchBooks(query, sort, limit, offset, state.shelfId, abort.signal);
+        if (state.phase !== 'active' || token !== state.loadToken) return;
         state.books = books;
-        state.hasMore = hasMoreBooks(state, state.books.length);
+        state.hasMore = hasMoreBooks(state, state.books.length, limit);
         renderBooks(state, state.books);
         renderBookJumpRail(state);
         updateLoadMore(state);
@@ -490,58 +620,88 @@ async function loadBooks(
         // An aborted fetch is the expected outcome of cancelling a stale
         // request (newer query/sort superseded it). A full-page navigation can
         // also reject in-flight fetches as a TypeError in Chromium.
-        if (state.active && token === state.loadToken && !isExpectedFetchCancel(e)) {
+        if (token === state.loadToken && !isExpectedFetchCancel(e)) {
             console.error('Failed to fetch books:', e);
         }
     } finally {
         finishGlobalLoading();
-        if (state.active && token === state.loadToken) {
+        if (state.finishLoading === finishGlobalLoading) state.finishLoading = null;
+        if (state.phase === 'active' && token === state.loadToken) {
             state.loadingBooks = false;
-            setLibraryResultsLoading(false);
+            setLibraryResultsLoading(state, false);
             updateLoadMore(state);
         }
     }
 }
 
-function setLibraryResultsLoading(loading: boolean): void {
-    const container = document.getElementById('library-grid');
+// Discard whatever list work is in flight, leaving no stuck loading control.
+// The result of the discarded request can no longer be committed: its token is
+// spent, and the request itself is aborted.
+function cancelInFlightLoads(state: LibraryViewState): void {
+    state.loadToken += 1;
+    state.booksAbort?.abort();
+    state.booksAbort = null;
+    state.loadingBooks = false;
+    state.loadingMore = false;
+    state.finishLoading?.();
+    state.finishLoading = null;
+    setLibraryResultsLoading(state, false);
+    updateLoadMore(state);
+}
+
+function syncContinueReading(state: LibraryViewState): void {
+    state.rail.sync(
+        shouldShowContinueReading(state) && state.userSettings?.hide_continue_reading === false,
+    );
+}
+
+function setLibraryResultsLoading(state: LibraryViewState, loading: boolean): void {
+    const container = state.root.querySelector('#library-grid');
     if (!container) return;
     container.classList.toggle('library-results-loading', loading);
     container.setAttribute('aria-busy', loading ? 'true' : 'false');
 }
 
-function shouldShowContinueReading(state: LibraryViewState, query: string = state.query): boolean {
-    return state.shelfId === '' && query.trim() === '';
+function shouldShowContinueReading(state: LibraryViewState): boolean {
+    return state.shelfId === '' && state.query.trim() === '';
 }
 
 async function loadMore(state: LibraryViewState) {
-    if (!state.active || state.loadingBooks || state.loadingMore || !state.hasMore) return;
+    if (state.phase !== 'active' || state.loadingBooks || state.loadingMore || !state.hasMore)
+        return;
     const token = state.loadToken;
     state.loadingMore = true;
     updateLoadMore(state);
     try {
         const offset = state.pageOffset + state.books.length;
-        const books = await fetchBooks(state.query, state.sort, PAGE_SIZE, offset, state.shelfId);
-        if (!state.active || token !== state.loadToken) return;
+        const books = await fetchBooks(
+            state.query,
+            state.sort,
+            PAGE_SIZE,
+            offset,
+            state.shelfId,
+            state.booksAbort?.signal,
+        );
+        if (state.phase !== 'active' || token !== state.loadToken) return;
         const newBooks = books;
         state.books = state.books.concat(newBooks);
         appendBooks(state, newBooks);
         state.hasMore = hasMoreBooks(state, newBooks.length);
     } catch (e: unknown) {
-        if (state.active && token === state.loadToken && !isExpectedFetchCancel(e)) {
+        if (token === state.loadToken && !isExpectedFetchCancel(e)) {
             console.error('Failed to load more books:', e);
             showToast(errorMessage(e, 'Failed to load more books'), { type: 'error' });
         }
     } finally {
-        if (state.active && token === state.loadToken) {
+        if (state.phase === 'active' && token === state.loadToken) {
             state.loadingMore = false;
             updateLoadMore(state);
         }
     }
 }
 
-function hasMoreBooks(state: LibraryViewState, received: number): boolean {
-    if (received < PAGE_SIZE) return false;
+function hasMoreBooks(state: LibraryViewState, received: number, limit = PAGE_SIZE): boolean {
+    if (received < limit) return false;
     if (state.jumpTotal == null) return true;
     return state.pageOffset + state.books.length < state.jumpTotal;
 }
@@ -553,8 +713,8 @@ function isExpectedFetchCancel(e: unknown): boolean {
 }
 
 function updateLoadMore(state: LibraryViewState) {
-    const container = document.getElementById('load-more-container');
-    const btn = document.getElementById('load-more-btn') as HTMLButtonElement | null;
+    const container = state.root.querySelector<HTMLElement>('#load-more-container');
+    const btn = state.root.querySelector<HTMLButtonElement>('#load-more-btn');
     if (!container || !btn) return;
     container.hidden = !state.hasMore || state.books.length === 0;
     btn.disabled = state.loadingBooks || state.loadingMore;
@@ -562,7 +722,7 @@ function updateLoadMore(state: LibraryViewState) {
 }
 
 function renderBooks(state: LibraryViewState, books: BookSummary[]) {
-    const container = document.getElementById('library-grid');
+    const container = state.root.querySelector<HTMLElement>('#library-grid');
     if (!container) return;
 
     if (state.view === 'grid') {
@@ -616,9 +776,13 @@ function syncBookJumps(state: LibraryViewState): void {
     renderBookJumpRail(state);
     if (!key) return;
 
+    // The one request allowed to land while this view is off screen: it writes
+    // only inside its own root, its key is its generation, and it holds no
+    // global loading or body UI. Finishing it means the rail is ready on return
+    // instead of being requested again.
     void fetchBookJumps(key)
         .then((result) => {
-            if (!state.active || state.jumpKey !== key) return;
+            if (state.phase === 'destroyed' || state.jumpKey !== key) return;
             state.jumps = result.items;
             state.jumpTotal = result.total;
             state.hasMore = hasMoreBooks(state, state.books.length);
@@ -626,7 +790,7 @@ function syncBookJumps(state: LibraryViewState): void {
             updateLoadMore(state);
         })
         .catch((error) => {
-            if (!state.active || state.jumpKey !== key) return;
+            if (state.phase === 'destroyed' || state.jumpKey !== key) return;
             console.error('Failed to fetch book jumps:', error);
             state.jumps = [];
             state.jumpTotal = null;
@@ -635,12 +799,16 @@ function syncBookJumps(state: LibraryViewState): void {
 }
 
 function renderBookJumpRail(state: LibraryViewState): void {
-    const rail = document.getElementById('library-jump-rail');
+    const rail = state.root.querySelector<HTMLElement>('#library-jump-rail');
     if (!rail) return;
     const jumps = sampleBookJumps(state.jumps, jumpRailCapacity());
     const visible = state.jumpKey !== '' && jumps.length > 1;
     rail.hidden = !visible;
-    document.body.classList.toggle('has-library-jump-rail', visible);
+    // The body class belongs to whichever route is on screen: a jumps request
+    // that lands while this library is detached must not re-pad the book page.
+    if (state.phase === 'active') {
+        document.body.classList.toggle('has-library-jump-rail', visible);
+    }
     rail.replaceChildren();
     if (!visible) return;
 
@@ -689,7 +857,7 @@ function replaceRenderedBook(state: LibraryViewState, updated: BookSummary): voi
     state.books = state.books.map((book) => (book.id === updated.id ? updated : book));
 
     if (state.view === 'table') {
-        const row = document.querySelector<HTMLTableRowElement>(
+        const row = state.root.querySelector<HTMLTableRowElement>(
             `.table-row[data-id=${CSS.escape(updated.id)}]`,
         );
         row?.replaceWith(createBookRow(state, updated));
@@ -697,7 +865,7 @@ function replaceRenderedBook(state: LibraryViewState, updated: BookSummary): voi
         return;
     }
 
-    const card = document.querySelector<HTMLElement>(
+    const card = state.root.querySelector<HTMLElement>(
         `.book-card[data-id=${CSS.escape(updated.id)}]`,
     );
     card?.replaceWith(createBookCard(updated, currentLibraryContext(state)));
@@ -710,8 +878,8 @@ function removeRenderedBooks(state: LibraryViewState, ids: string[]): void {
     if (ids.length === 0) return;
     const drop = new Set(ids);
     state.books = state.books.filter((book) => !drop.has(book.id));
-    const container = document.getElementById('library-grid');
-    const selector = state.view === 'table' ? '.table-row' : '.book-card';
+    const container = state.root.querySelector<HTMLElement>('#library-grid');
+    const selector = renderedBookSelector(state);
     for (const id of ids) {
         container?.querySelector<HTMLElement>(`${selector}[data-id=${CSS.escape(id)}]`)?.remove();
     }
@@ -722,7 +890,7 @@ function removeRenderedBooks(state: LibraryViewState, ids: string[]): void {
 // appendBooks adds only the newly-loaded books to the existing DOM, so a
 // "Load more" never re-renders or reflows the books already on screen.
 function appendBooks(state: LibraryViewState, newBooks: BookSummary[]) {
-    const container = document.getElementById('library-grid');
+    const container = state.root.querySelector<HTMLElement>('#library-grid');
     if (!container || newBooks.length === 0) return;
 
     if (state.view === 'grid') {
@@ -810,7 +978,7 @@ function createLibraryEmptyState(state: LibraryViewState): HTMLElement {
         body.textContent = `No books match “${query}”.`;
         action.textContent = 'Clear search';
         action.addEventListener('click', () => {
-            const input = document.getElementById('search-input') as HTMLInputElement | null;
+            const input = state.root.querySelector<HTMLInputElement>('#search-input');
             if (!input) return;
             const url = new URL(window.location.href);
             url.searchParams.delete('q');
@@ -824,7 +992,7 @@ function createLibraryEmptyState(state: LibraryViewState): HTMLElement {
         body.textContent = 'No books are on this shelf.';
         action.textContent = 'Library';
         action.addEventListener('click', () => {
-            window.location.href = '/';
+            navigateApp('/');
         });
     } else {
         title.textContent = 'No books yet';
@@ -869,8 +1037,8 @@ const TABLE_TAG_LIMIT = 3;
 
 // Add (or keep) an author:"Name" filter on the current search and reload. The
 // author cells are clickable but not styled as links, to avoid table noise.
-function applyAuthorFilter(name: string): void {
-    const input = document.getElementById('search-input') as HTMLInputElement | null;
+function applyAuthorFilter(state: LibraryViewState, name: string): void {
+    const input = state.root.querySelector<HTMLInputElement>('#search-input');
     if (!input) return;
     const token = queryTerm('author', name);
     const current = input.value.trim();
@@ -960,11 +1128,11 @@ function createBookRow(state: LibraryViewState, b: BookSummary): HTMLTableRowEle
     `;
     for (const el of tr.querySelectorAll<HTMLElement>('.table-author-link')) {
         const author = el.dataset.author || '';
-        el.addEventListener('click', () => applyAuthorFilter(author));
+        el.addEventListener('click', () => applyAuthorFilter(state, author));
         el.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault();
-                applyAuthorFilter(author);
+                applyAuthorFilter(state, author);
             }
         });
     }
@@ -980,12 +1148,7 @@ function createBookRow(state: LibraryViewState, b: BookSummary): HTMLTableRowEle
     const editBtn = tr.querySelector('.btn-quick-edit') as HTMLButtonElement;
     editBtn.addEventListener('click', (e) => {
         e.preventDefault();
-        openEditModal(
-            b,
-            (updated) => replaceRenderedBook(state, updated),
-            currentLibraryContext(state),
-            currentLibrarySequence(state, b.id),
-        );
+        openEditModal(b, currentLibraryContext(state), currentLibrarySequence(state, b.id));
     });
 
     return tr;

@@ -6,8 +6,8 @@ import { confirmModal } from '../modal';
 import { showToast } from '../toast';
 import type { TrashedBook } from '../types';
 
-export async function initTrash(): Promise<void> {
-    const container = document.getElementById('trash-content');
+export async function initTrash(root: HTMLElement): Promise<void> {
+    const container = root.querySelector<HTMLElement>('#trash-content');
     if (!container) return;
 
     // Role gates the irreversible "Delete permanently" action; the server
@@ -37,18 +37,18 @@ function renderTrash(container: HTMLElement, books: TrashedBook[], isAdmin: bool
     const frag = document.createDocumentFragment();
     // The bulk "Empty trash" action is admin-only, mirroring the per-card purge.
     if (isAdmin) {
-        frag.appendChild(createTrashToolbar());
+        frag.appendChild(createTrashToolbar(container));
     }
     const grid = document.createElement('div');
     grid.className = 'trash-grid';
     for (const b of books) {
-        grid.appendChild(createTrashCard(b, isAdmin));
+        grid.appendChild(createTrashCard(container, b, isAdmin));
     }
     frag.appendChild(grid);
     container.replaceChildren(frag);
 }
 
-function createTrashToolbar(): HTMLElement {
+function createTrashToolbar(container: HTMLElement): HTMLElement {
     const bar = document.createElement('div');
     bar.className = 'trash-toolbar';
     bar.innerHTML = `<button class="btn-purge btn-empty-trash" type="button">Empty trash</button>`;
@@ -58,7 +58,7 @@ function createTrashToolbar(): HTMLElement {
         async () => {
             // Count what's actually on screen so the confirm copy is accurate even if
             // cards were restored/purged individually since the view first rendered.
-            const n = document.querySelectorAll('.trash-card').length;
+            const n = container.querySelectorAll('.trash-card').length;
             if (n === 0) return;
             const ok = await confirmModal({
                 title: 'Empty trash?',
@@ -69,8 +69,7 @@ function createTrashToolbar(): HTMLElement {
             if (!ok) return;
             try {
                 await emptyTrash();
-                const container = document.getElementById('trash-content');
-                if (container) container.innerHTML = `<p class="trash-empty">Trash is empty.</p>`;
+                container.innerHTML = `<p class="trash-empty">Trash is empty.</p>`;
             } catch (e) {
                 console.error('Failed to empty trash:', e);
                 showToast(errorMessage(e, 'Failed to empty trash'), { type: 'error' });
@@ -80,7 +79,7 @@ function createTrashToolbar(): HTMLElement {
     return bar;
 }
 
-function createTrashCard(b: TrashedBook, isAdmin: boolean): HTMLElement {
+function createTrashCard(container: HTMLElement, b: TrashedBook, isAdmin: boolean): HTMLElement {
     const el = document.createElement('div');
     el.className = 'trash-card';
 
@@ -108,7 +107,7 @@ function createTrashCard(b: TrashedBook, isAdmin: boolean): HTMLElement {
             try {
                 await restoreBook(b.id);
                 el.remove();
-                reflectEmptyState();
+                reflectEmptyState(container);
             } catch (e) {
                 console.error('Failed to restore book:', e);
                 showToast(errorMessage(e, 'Failed to restore book'), { type: 'error' });
@@ -128,7 +127,7 @@ function createTrashCard(b: TrashedBook, isAdmin: boolean): HTMLElement {
         try {
             await purgeBook(b.id);
             el.remove();
-            reflectEmptyState();
+            reflectEmptyState(container);
         } catch (e) {
             console.error('Failed to permanently delete book:', e);
             showToast(errorMessage(e, 'Failed to permanently delete book'), { type: 'error' });
@@ -147,10 +146,9 @@ function trashedMeta(b: TrashedBook): string {
 }
 
 // When the last card is removed, swap in the empty-state message.
-function reflectEmptyState(): void {
-    const container = document.getElementById('trash-content');
-    const grid = container?.querySelector('.trash-grid');
-    if (container && grid && grid.children.length === 0) {
+function reflectEmptyState(container: HTMLElement): void {
+    const grid = container.querySelector('.trash-grid');
+    if (grid && grid.children.length === 0) {
         container.innerHTML = `<p class="trash-empty">Trash is empty.</p>`;
     }
 }

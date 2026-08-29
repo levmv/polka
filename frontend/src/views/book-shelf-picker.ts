@@ -1,4 +1,5 @@
 import { addBookToShelf, fetchBookShelves, fetchCurrentUser, removeBookFromShelf } from '../api';
+import { notifyCatalogChanged } from '../catalog-events';
 import { errorMessage } from '../errors';
 import { icon } from '../icons';
 import type { ManagedPopover } from '../popover';
@@ -145,6 +146,9 @@ function shelfPickerRow(membership: BookShelfMembership, workId: string): HTMLEl
             } else {
                 await removeBookFromShelf(membership.id, workId);
             }
+            // A shelf-scoped list may no longer contain this book, and only that
+            // list knows which shelf it shows.
+            notifyCatalogChanged();
         } catch (e) {
             console.error('Failed to update shelf membership:', e);
             checkbox.checked = !checked;
@@ -184,6 +188,7 @@ function buildCreateRow(popover: ManagedPopover, workId: string): HTMLElement {
             if (!shelf) return;
             await addBookToShelf(shelf.id, workId);
             notifyShelvesChanged();
+            notifyCatalogChanged();
         } catch (e) {
             console.error('Failed to create shelf:', e);
             showToast(errorMessage(e, 'Shelf update failed'), { type: 'error' });

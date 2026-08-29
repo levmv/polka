@@ -704,11 +704,18 @@ test.describe('Library workflows', () => {
     await expect(more).toBeVisible();
     await expect(blurb).toHaveClass(/detail-description--collapsed/);
 
-    const clamped = await blurb.evaluate((el) => el.clientHeight);
+    const clamped = await blurb.evaluate((el) => ({
+        height: el.clientHeight,
+        lineHeight: parseFloat(getComputedStyle(el).lineHeight),
+    }));
+    // The gaps between those blocks are height no line of text pays for, so a
+    // clamp counting lines alone let this blurb stand two lines taller than a
+    // plain one. The collapsed block is capped however the markup falls.
+    expect(clamped.height / clamped.lineHeight).toBeLessThanOrEqual(14);
 
     await more.click();
     await expect(more).toHaveCount(0);
     await expect(blurb).not.toHaveClass(/detail-description--collapsed/);
-    expect(await blurb.evaluate((el) => el.clientHeight)).toBeGreaterThan(clamped);
+    expect(await blurb.evaluate((el) => el.clientHeight)).toBeGreaterThan(clamped.height);
   });
 });

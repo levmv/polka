@@ -26,6 +26,10 @@ export interface LibrarySelection {
     syncAfterRender(): void;
     // Rebuilds the floating action panel when an external capability changes.
     refreshActions(): void;
+    // Suspended selection keeps its set of ids but owns no body-level UI: the
+    // bulk bar and body classes belong to whichever route is on screen, and the
+    // Escape shortcut must not fire from a route the reader cannot see.
+    setActive(on: boolean): void;
     destroy(): void;
 }
 
@@ -42,6 +46,8 @@ export interface SelectionOptions {
 export function createLibrarySelection(opts: SelectionOptions): LibrarySelection {
     const selected = new Set<string>();
     let enabled = false;
+    // False while the owning route is suspended: the set is kept, its UI is not.
+    let active = true;
     let bar: HTMLElement | null = null;
     let countEl: HTMLElement | null = null;
     let actionButtons: HTMLButtonElement[] = [];
@@ -175,7 +181,7 @@ export function createLibrarySelection(opts: SelectionOptions): LibrarySelection
     // the table select-all tristate, the body class that reveals every grid
     // checkbox once a selection exists, and the floating bar.
     function updateUI(): void {
-        const showSelection = enabled && selected.size > 0;
+        const showSelection = active && enabled && selected.size > 0;
         document.body.classList.toggle('has-selection', showSelection);
 
         for (const card of opts.container.querySelectorAll<HTMLElement>('.book-card')) {
@@ -287,9 +293,8 @@ export function createLibrarySelection(opts: SelectionOptions): LibrarySelection
     const onKeydown = (event: KeyboardEvent) => {
         // defaultPrevented covers a control that already handled Escape — notably
         // the search box, whose own handler clears the query first.
-        if (event.key !== 'Escape' || !enabled || selected.size === 0 || event.defaultPrevented) {
-            return;
-        }
+        if (!active || event.key !== 'Escape' || !enabled || selected.size === 0) return;
+        if (event.defaultPrevented) return;
         // Also yield to an open modal or menu; their own Escape handling wins.
         if (
             document.querySelector(
@@ -306,8 +311,13 @@ export function createLibrarySelection(opts: SelectionOptions): LibrarySelection
     return {
         setEnabled: (on) => {
             enabled = on;
-            document.body.classList.toggle('can-curate', on);
+            document.body.classList.toggle('can-curate', active && on);
             if (!on) selected.clear();
+            updateUI();
+        },
+        setActive: (on) => {
+            active = on;
+            document.body.classList.toggle('can-curate', active && enabled);
             updateUI();
         },
         clearSelection,

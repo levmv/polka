@@ -3,6 +3,7 @@ import { readBookListContextFromLocation } from './book-list-context';
 import { errorMessage } from './errors';
 import { icon } from './icons';
 import { createMenu, type ManagedMenu, type MenuItem } from './menu';
+import { navigateApp } from './router';
 import { openCreateShelfDialog, openEditShelfDialog } from './shelf-dialog';
 import { showToast } from './toast';
 import type { CurrentUser, Shelf } from './types';
@@ -209,7 +210,7 @@ function showDeleteConfirm(li: HTMLElement, shelf: Shelf, reload: () => Promise<
             // If we're currently viewing the deleted shelf, fall back to the
             // full library; otherwise just refresh the sidebar list.
             if (currentShelfID() === shelf.id) {
-                window.location.href = '/';
+                navigateApp('/');
                 return;
             }
             await reload();
