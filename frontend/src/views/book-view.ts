@@ -193,6 +193,33 @@ function updateBackLink(context: BookListContext | null): void {
     link.href = listURLForContext(context);
 }
 
+// The clamp and the hidden toggle ship in the markup, so a long blurb is never
+// briefly full height. This decides, once the text has been laid out, whether
+// the blurb earns a toggle or should simply be shown whole.
+function setupDescriptionDisclosure(container: HTMLElement): void {
+    const description = container.querySelector<HTMLElement>('.detail-description');
+    const more = container.querySelector<HTMLButtonElement>('.detail-description-more');
+    if (!description || !more) return;
+
+    // Let the engine count the lines. If the whole blurb fits inside the more
+    // generous probe clamp, hiding the remainder would only buy a click for a
+    // line or two, so the clamp comes off instead.
+    description.classList.replace('detail-description--collapsed', 'detail-description--probe');
+    const fitsWithSlack = description.scrollHeight <= description.clientHeight;
+    description.classList.replace('detail-description--probe', 'detail-description--collapsed');
+    if (fitsWithSlack) {
+        description.classList.remove('detail-description--collapsed');
+        more.remove();
+        return;
+    }
+
+    more.hidden = false;
+    more.addEventListener('click', () => {
+        description.classList.remove('detail-description--collapsed');
+        more.remove();
+    });
+}
+
 export function renderBookDetail(
     container: HTMLElement,
     b: Book,
@@ -219,7 +246,12 @@ export function renderBookDetail(
 
     let descHtml = '';
     if (b.description_html) {
-        descHtml = `<div class="detail-description">${b.description_html}</div>`;
+        descHtml = `
+            <div class="detail-description-block">
+                <div class="detail-description detail-description--collapsed">${b.description_html}</div>
+                <button type="button" class="detail-description-more" hidden>Show more</button>
+            </div>
+        `;
     }
 
     // Publication facts + identifiers — the "Details" block that lives in the
@@ -437,6 +469,8 @@ export function renderBookDetail(
             btn.remove();
         });
     });
+
+    setupDescriptionDisclosure(container);
 
     if (primaryReadableAsset && opts.loadReaderProgress !== false) {
         renderBookReaderProgress(container, b, primaryReadableAsset.id);

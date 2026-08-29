@@ -598,6 +598,30 @@ test.describe('Polka read-only browser tests', () => {
 
   });
 
+  test('Returning from a book restores the list position', async ({ page }) => {
+    // A short viewport makes the small fixture library scroll at all.
+    await page.setViewportSize({ width: 1280, height: 360 });
+    await page.goto('/');
+    const card = page.locator('.book-card').last();
+    await expect(card).toBeVisible();
+    await card.scrollIntoViewIfNeeded();
+    const scrolled = await page.evaluate(() => window.scrollY);
+    expect(scrolled).toBeGreaterThan(0);
+
+    // Opening the book saves the position itself, so this does not depend on
+    // the debounced scroll listener having fired.
+    await card.locator('.book-title-link').click();
+    await expect(page.locator('.detail-title')).toBeVisible();
+
+    // The in-page Back control returns through history rather than re-entering
+    // the list at the top, so the position comes back with it.
+    const entries = await page.evaluate(() => history.length);
+    await page.locator('.back-link a').click();
+    await expect(page.locator('.book-card').first()).toBeVisible();
+    await expect.poll(async () => await page.evaluate(() => window.scrollY)).toBe(scrolled);
+    expect(await page.evaluate(() => history.length)).toBe(entries);
+  });
+
   test('Table author click filters the search and reveals save-search', async ({ page }) => {
     await page.goto('/');
     await page.locator('#view-table-btn').click();

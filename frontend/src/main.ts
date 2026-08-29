@@ -128,6 +128,10 @@ interface ScrollPosition {
 
 interface PolkaHistoryState {
     polkaScroll?: ScrollPosition;
+    // Pathname this entry was pushed from. An in-page "Back" control that points
+    // there can then return through history — bringing the list back with its
+    // scroll position — instead of pushing a fresh entry that lands at the top.
+    polkaFrom?: string;
     [key: string]: unknown;
 }
 
@@ -152,6 +156,16 @@ function initNavigation(router: Router, closeSidebar: () => void): (href: string
         const link = appNavigationLink(event.target, router);
         if (!link) return;
         if (!canUseAppNavigation(event, link)) return;
+
+        // A "Back" control returns through history when this entry was pushed
+        // from the page it points at, so the list comes back where it was left
+        // rather than being re-entered at the top. The href stays real for a
+        // middle click, "open in new tab", and arriving by direct link.
+        if (link.hasAttribute('data-app-back') && isEntryPushedFrom(link)) {
+            event.preventDefault();
+            window.history.back();
+            return;
+        }
         if (!canNavigateWithRouter(link.href, router)) return;
 
         event.preventDefault();
@@ -208,9 +222,10 @@ async function navigateWithRouter(
     opts: { pushHistory: boolean; scroll: ScrollPosition | null },
 ): Promise<boolean> {
     if (opts.pushHistory) {
+        const from = window.location.pathname;
         saveScrollPosition();
         window.history.pushState(
-            historyStateWithScroll(null, opts.scroll || { x: 0, y: 0 }),
+            { ...historyStateWithScroll(null, opts.scroll || { x: 0, y: 0 }), polkaFrom: from },
             '',
             `${url.pathname}${url.search}${url.hash}`,
         );
@@ -262,6 +277,15 @@ function saveScrollPosition(): void {
         historyStateWithScroll(window.history.state, { x: window.scrollX, y: window.scrollY }),
         '',
     );
+}
+
+// True when going back one entry lands on the page this link points at.
+function isEntryPushedFrom(link: HTMLAnchorElement): boolean {
+    const state = window.history.state;
+    if (!state || typeof state !== 'object') return false;
+    const from = (state as PolkaHistoryState).polkaFrom;
+    if (typeof from !== 'string') return false;
+    return from === new URL(link.href, window.location.href).pathname;
 }
 
 function readScrollPosition(state: unknown): ScrollPosition | null {

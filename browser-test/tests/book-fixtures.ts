@@ -88,16 +88,18 @@ function buildEPUB(
   author: string,
   name: string,
   chapterName = 'chapter.xhtml',
+  description = '',
 ): UploadFile {
   const t = xmlEscape(title);
   const a = xmlEscape(author);
+  const desc = description ? `\n    <dc:description>${xmlEscape(description)}</dc:description>` : '';
   const opf = `<?xml version="1.0" encoding="utf-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid" version="3.0">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
     <dc:identifier id="bookid">urn:uuid:${name}</dc:identifier>
     <dc:title>${t}</dc:title>
     <dc:creator>${a}</dc:creator>
-    <dc:language>en</dc:language>
+    <dc:language>en</dc:language>${desc}
   </metadata>
   <manifest><item id="chapter" href="${xmlEscape(chapterName)}" media-type="application/xhtml+xml"/></manifest>
   <spine><itemref idref="chapter"/></spine>
@@ -118,8 +120,13 @@ function buildEPUB(
   return { name: `${name}.epub`, mimeType: 'application/epub+zip', buffer };
 }
 
-export function epub(title: string, author: string, name: string): UploadFile {
-  return buildEPUB(title, author, name);
+export function epub(
+  title: string,
+  author: string,
+  name: string,
+  description = '',
+): UploadFile {
+  return buildEPUB(title, author, name, 'chapter.xhtml', description);
 }
 
 export function epubWithNonstandardZIPSignature(

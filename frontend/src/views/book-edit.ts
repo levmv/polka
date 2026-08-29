@@ -16,6 +16,7 @@ import { icon } from '../icons';
 import { formatIdentifiers, parseIdentifiers, validISBN } from '../identifiers';
 import { beginGlobalLoading } from '../loading-indicator';
 import { confirmModal, openModal } from '../modal';
+import { replaceLocationURL } from '../router';
 import { titleSort } from '../titles';
 import { showToast } from '../toast';
 import type {
@@ -1107,7 +1108,7 @@ function syncBackgroundDetailIfNeeded(b: Book, listContext?: BookListContext | n
     renderBookDetail(container, b, { loadReaderProgress: false });
     document.title = `${b.title} - polka`;
     if (listContext) {
-        window.history.replaceState(null, '', bookURL(b.id, listContext));
+        replaceLocationURL(bookURL(b.id, listContext));
     }
 }
 
