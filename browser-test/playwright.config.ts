@@ -85,6 +85,7 @@ export default defineConfig({
         /pdf-reader\.spec\.ts/,
         /responsive\.spec\.ts/,
         /pagination\.spec\.ts/,
+        /retained-navigation\.spec\.ts/,
         authSetupPattern,
       ],
       use: {
@@ -147,12 +148,13 @@ export default defineConfig({
       },
     },
     {
-      // Pagination needs >50 books; runs against the filler-only library (:8098)
-      // so the main suite stays small.
+      // Pagination and retained navigation need >50 books and a scrollable
+      // document; both run against the filler-only library (:8098) so the main
+      // suite stays small.
       name: 'pager-chromium',
       dependencies: ['setup-pager'],
       workers: 1,
-      testMatch: /pagination\.spec\.ts/,
+      testMatch: /(pagination|retained-navigation)\.spec\.ts/,
       use: {
         ...devices['Desktop Chrome'],
         baseURL: pagerBaseURL,

@@ -5,6 +5,7 @@ import { createMenu, type ManagedMenu } from '../menu';
 import type { AuthorAdmin } from '../types';
 
 interface AuthorsViewState {
+    root: HTMLElement;
     container: HTMLElement;
     statusTimeout: ReturnType<typeof setTimeout> | null;
     // Only one row in this mount may be in edit mode at a time.
@@ -13,11 +14,12 @@ interface AuthorsViewState {
     destroyed: boolean;
 }
 
-export async function initAuthors() {
-    const container = document.getElementById('authors-content');
+export async function initAuthors(root: HTMLElement) {
+    const container = root.querySelector<HTMLElement>('#authors-content');
     if (!container) return;
 
     const state: AuthorsViewState = {
+        root,
         container,
         statusTimeout: null,
         activeEditCancel: null,
@@ -60,7 +62,7 @@ function destroyAuthorMenus(state: AuthorsViewState): void {
 
 function showStatus(state: AuthorsViewState, msg: string) {
     if (state.destroyed) return;
-    const statusEl = document.getElementById('authors-status');
+    const statusEl = state.root.querySelector<HTMLElement>('#authors-status');
     if (!statusEl) return;
     statusEl.textContent = msg;
     statusEl.removeAttribute('hidden');

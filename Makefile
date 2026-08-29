@@ -104,7 +104,7 @@ browser-test: build
 	./polka serve --addr $(BROWSER_HOST):$$PAGER_PORT --data $(BROWSER_PAGER_DATA_ABS) --admin-user admin --admin-password devpass >/dev/null 2>&1 & \
 	PAGER_PID=$$!; \
 	python3 browser-test/wait-for-servers.py http://$(BROWSER_HOST):$$LANE_A_PORT/login http://$(BROWSER_HOST):$$LANE_B_PORT/login http://$(BROWSER_HOST):$$PAGER_PORT/login; \
-	cd browser-test && PLAYWRIGHT_BROWSERS_PATH=~/.cache/ms-playwright PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 POLKA_LANE_A_BASE_URL=http://$(BROWSER_HOST):$$LANE_A_PORT POLKA_LANE_B_BASE_URL=http://$(BROWSER_HOST):$$LANE_B_PORT POLKA_PAGER_BASE_URL=http://$(BROWSER_HOST):$$PAGER_PORT POLKA_AUTH_STATE_DIR=$(BROWSER_AUTH_DIR_ABS) POLKA_BROWSER_WORKERS=$(BROWSER_WORKERS) npx playwright test
+	cd browser-test && PLAYWRIGHT_BROWSERS_PATH=~/.cache/ms-playwright PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 POLKA_LANE_A_BASE_URL=http://$(BROWSER_HOST):$$LANE_A_PORT POLKA_LANE_B_BASE_URL=http://$(BROWSER_HOST):$$LANE_B_PORT POLKA_PAGER_BASE_URL=http://$(BROWSER_HOST):$$PAGER_PORT POLKA_AUTH_STATE_DIR=$(BROWSER_AUTH_DIR_ABS) POLKA_BROWSER_WORKERS=$(BROWSER_WORKERS) npx playwright test $(PWARGS)
 
 seed: build
 	./polka import "$(SEED_INPUT)" --data "$(DATA)"

@@ -1,20 +1,14 @@
 import { uploadBook } from './api';
 import { bookURL } from './book-list-context';
+import { notifyCatalogChanged } from './catalog-events';
 import { errorMessage } from './errors';
+import { navigateApp } from './router';
 import { showToast } from './toast';
 import type { BookImportResult, CurrentUser } from './types';
-
-export const BOOK_UPLOAD_FINISHED = 'polka:book-upload-finished';
 
 export interface UploadFailure {
     name: string;
     message: string;
-}
-
-export interface BookUploadFinishedDetail {
-    imported: BookImportResult[];
-    duplicates: BookImportResult[];
-    failures: UploadFailure[];
 }
 
 let uploadingBooks = false;
@@ -133,11 +127,10 @@ async function importBookFiles(files: File[], acceptedExtensions: string[]): Pro
         }
         reportUploadResult(imported, duplicates, failures);
         if (imported.length > 0 || duplicates.length > 0) {
-            document.dispatchEvent(
-                new CustomEvent<BookUploadFinishedDetail>(BOOK_UPLOAD_FINISHED, {
-                    detail: { imported, duplicates, failures },
-                }),
-            );
+            // An import adds books nobody can place in a sequence the reader is
+            // part-way through, so it reports coarse through the one channel
+            // rather than keeping a private one of its own.
+            notifyCatalogChanged();
         }
     } finally {
         uploadingBooks = false;
@@ -171,7 +164,7 @@ function showUploadToast(
             action: {
                 label: 'Open',
                 onClick: () => {
-                    window.location.href = bookURL(result.book.id);
+                    navigateApp(bookURL(result.book.id));
                 },
             },
         });

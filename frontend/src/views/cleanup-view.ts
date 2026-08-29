@@ -7,8 +7,8 @@ import { confirmModal } from '../modal';
 import { showToast } from '../toast';
 import type { Asset, BookSummary, Cleanup, DuplicateGroup } from '../types';
 
-export async function initCleanup() {
-    const container = document.getElementById('cleanup-content');
+export async function initCleanup(root: HTMLElement) {
+    const container = root.querySelector<HTMLElement>('#cleanup-content');
     if (!container) return;
     await loadCleanup(container);
 }

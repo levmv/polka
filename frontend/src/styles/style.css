@@ -1052,14 +1052,6 @@ body.busy .busy__loader {
     .app-main--strip {
         padding-top: 1rem;
     }
-
-    .back-link {
-        display: flex;
-        align-items: center;
-        min-height: var(--toolbar-control-height);
-        padding-left: 4rem; /* clear the fixed hamburger chip on the left */
-        margin-bottom: 0.75rem;
-    }
 }
 
 /* Search */
@@ -1928,21 +1920,18 @@ body.has-library-jump-rail #app-content {
 }
 
 /* Book Detail */
+/* Zero height, so the close control hangs over the top-right corner of the
+   content instead of pushing it down a row. The title reserves room for it. */
 .back-link {
-    margin-bottom: 1rem;
+    display: flex;
+    justify-content: flex-end;
+    align-items: flex-start;
+    height: 0;
 }
-.back-link a {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.25rem;
-    font-size: 0.9rem;
-    color: var(--text-muted);
-}
-.back-link a:hover {
-    color: var(--accent);
-}
-.back-link svg {
-    opacity: 0.8;
+.back-link .page-close {
+    position: static;
+    /* Sits on the title's optical line, not on the centre of its own box. */
+    margin-top: -7px;
 }
 
 .detail-header {
@@ -1965,6 +1954,9 @@ body.has-library-jump-rail #app-content {
 
 .detail-title {
     font-family: var(--font-serif);
+    /* Room for the close control, and enough gap that a full line beside it
+       does not read as punctuation after the title. */
+    padding-right: 5rem;
     font-size: 2.2rem;
     line-height: 1.15;
     color: var(--text-title);
@@ -1976,6 +1968,28 @@ body.has-library-jump-rail #app-content {
        reads as having drifted above it. */
     margin: -0.21em 0 0.5rem 0;
 }
+/* The strip band is reserved for the fixed hamburger anyway, so at drawer
+   widths the control sits in it rather than over the content, at the far end
+   from the toggle: beside it, a leftward arrow read as pointing at it. Kept
+   next to the rules it overrides — these selectors are no more specific, so
+   any distance between them would be a trap. */
+@media (max-width: 900px) {
+    .back-link {
+        align-items: center;
+        height: auto;
+        min-height: var(--toolbar-control-height);
+        margin-bottom: 0.5rem;
+    }
+    /* Level with the toggle, not with a heading. */
+    .back-link .page-close {
+        margin-top: 0;
+    }
+    /* Nothing hangs over the title down here. */
+    .detail-title {
+        padding-right: 0;
+    }
+}
+
 .detail-authors {
     font-family: var(--font-serif);
     font-size: 1.2rem;
@@ -2025,20 +2039,14 @@ body.has-library-jump-rail #app-content {
 /* A dozen lines is enough to size a book up; the rest is one click away.
    Clamping by line count rather than by height lets the engine put the cut
    between lines whatever the markup does to the line grid, and it supplies the
-   trailing ellipsis. --probe is the same clamp plus the slack: book-view.ts
-   asks whether the whole blurb fits inside it and lifts the clamp when it does,
-   rather than hiding a line or two behind a click. */
-.detail-description--collapsed,
-.detail-description--probe {
+   trailing ellipsis. The clamp ships collapsed so a long blurb is never briefly
+   full height; book-view.ts then lifts it for a short blurb, or lowers it until
+   the block fits its height budget. */
+.detail-description--collapsed {
     display: -webkit-box;
     -webkit-box-orient: vertical;
     overflow: hidden;
-}
-.detail-description--collapsed {
     -webkit-line-clamp: 12;
-}
-.detail-description--probe {
-    -webkit-line-clamp: 14;
 }
 /* Quiet disclosure, like the identifier "…" and tag "+N" toggles. */
 .detail-description-more {
@@ -4592,10 +4600,39 @@ body.modal_open {
     cursor: pointer;
 }
 
+/* The book page closes the same way a dialog does — the list it was opened
+   from is still there, held, and comes back exactly as it was left. Same
+   button, so the gesture is learned once. */
+.modal-close,
+.page-close {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 2;
+    display: inline-grid;
+    width: 38px;
+    height: 38px;
+    padding: 0;
+    place-items: center;
+    color: var(--text-main);
+    background: transparent;
+    border: 0;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
 .modal-close:hover,
-.modal-close:focus-visible {
+.modal-close:focus-visible,
+.page-close:hover,
+.page-close:focus-visible {
     background: var(--border-color);
     outline: 0;
+}
+
+.page-close svg,
+.modal-close svg {
+    width: 26px;
+    height: 26px;
 }
 
 .modal-close svg {

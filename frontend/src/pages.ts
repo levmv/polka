@@ -43,7 +43,7 @@ export function renderLibraryPage(): string {
 export function renderBookPage(): string {
     return `
         <div class="back-link">
-            <a href="/" title="Back to Library" data-app-back>${icon('arrow_back', 18)}Back</a>
+            <a href="/" class="page-close" title="Back to Library" aria-label="Back to Library" data-app-back>${icon('close', 24)}</a>
         </div>
         <div id="book-detail-container" class="detail-layout book-detail-loading" aria-busy="true">
             <div class="book-detail-loading-card local-loading-state" role="status" aria-live="polite">

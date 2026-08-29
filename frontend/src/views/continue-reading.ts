@@ -4,17 +4,35 @@ import type { ContinueReadingItem } from '../types';
 
 const CONTINUE_READING_LIMIT = 8;
 
-let items: ContinueReadingItem[] = [];
-let loaded = false;
-let loading = false;
-let visible = false;
+// The rail belongs to one library instance, and so does its data. A retained
+// library brings its own rendered rail back with it, so a cache shared between
+// mounts would buy nothing on the return path and could only serve a fresh
+// mount stale items. Every lookup is scoped to the library's route root, so a
+// library that is no longer on screen cannot write into the visible page.
+export interface ContinueReadingRail {
+    // Show or hide the rail, fetching its items the first time they are needed.
+    sync(shouldShow: boolean): void;
+    // The items are derived from reading state and are not addressed by book
+    // id, so any catalog change simply drops them.
+    invalidate(): void;
+    destroy(): void;
+}
 
-export function initContinueReadingRail(): (() => void) | undefined {
-    const section = document.getElementById('continue-reading') as HTMLElement | null;
-    const button = document.getElementById('continue-reading-dismiss') as HTMLButtonElement | null;
-    if (!section || !button) return;
+export function createContinueReadingRail(
+    root: HTMLElement,
+    isExpectedFetchCancel: (e: unknown) => boolean,
+): ContinueReadingRail {
+    let items: ContinueReadingItem[] = [];
+    let loaded = false;
+    let loading = false;
+    let visible = false;
+    let destroyed = false;
+
+    const section = root.querySelector<HTMLElement>('#continue-reading');
+    const button = root.querySelector<HTMLButtonElement>('#continue-reading-dismiss');
 
     const dismiss = async () => {
+        if (!button || !section) return;
         button.disabled = true;
         try {
             const settings = await saveUserSettings({ hide_continue_reading: true });
@@ -28,68 +46,64 @@ export function initContinueReadingRail(): (() => void) | undefined {
             button.disabled = false;
         }
     };
-    button.addEventListener('click', dismiss);
-    return () => button.removeEventListener('click', dismiss);
-}
+    button?.addEventListener('click', dismiss);
 
-export function syncContinueReadingRail(
-    shouldShow: boolean,
-    isExpectedFetchCancel: (e: unknown) => boolean,
-): void {
-    visible = shouldShow;
-
-    const section = document.getElementById('continue-reading') as HTMLElement | null;
-    if (!section) return;
-
-    if (!visible) {
-        section.hidden = true;
-        return;
-    }
-
-    if (loaded) {
-        render();
-        return;
-    }
-    if (loading) return;
-
-    loading = true;
-    fetchContinueReading(CONTINUE_READING_LIMIT)
-        .then((nextItems) => {
-            items = nextItems;
-            loaded = true;
-            render();
-        })
-        .catch((e) => {
-            if (!isExpectedFetchCancel(e)) console.error('Failed to fetch continue reading:', e);
+    const render = () => {
+        const list = root.querySelector<HTMLElement>('#continue-reading-list');
+        if (!section || !list) return;
+        if (!visible || items.length === 0) {
             section.hidden = true;
-        })
-        .finally(() => {
-            loading = false;
-        });
-}
+            list.replaceChildren();
+            return;
+        }
+        const fragment = document.createDocumentFragment();
+        for (const item of items) fragment.appendChild(createCard(item));
+        list.replaceChildren(fragment);
+        section.hidden = false;
+    };
 
-export function resetContinueReadingRail(): void {
-    loaded = false;
-    items = [];
-}
+    return {
+        sync(shouldShow: boolean): void {
+            visible = shouldShow;
+            if (!section) return;
+            if (!visible) {
+                section.hidden = true;
+                return;
+            }
+            if (loaded) {
+                render();
+                return;
+            }
+            if (loading) return;
 
-function render(): void {
-    const section = document.getElementById('continue-reading') as HTMLElement | null;
-    const list = document.getElementById('continue-reading-list');
-    if (!section || !list) return;
-
-    if (!visible || items.length === 0) {
-        section.hidden = true;
-        list.replaceChildren();
-        return;
-    }
-
-    const fragment = document.createDocumentFragment();
-    for (const item of items) {
-        fragment.appendChild(createCard(item));
-    }
-    list.replaceChildren(fragment);
-    section.hidden = false;
+            loading = true;
+            fetchContinueReading(CONTINUE_READING_LIMIT)
+                .then((nextItems) => {
+                    if (destroyed) return;
+                    items = nextItems;
+                    loaded = true;
+                    render();
+                })
+                .catch((e) => {
+                    if (destroyed) return;
+                    if (!isExpectedFetchCancel(e)) {
+                        console.error('Failed to fetch continue reading:', e);
+                    }
+                    section.hidden = true;
+                })
+                .finally(() => {
+                    loading = false;
+                });
+        },
+        invalidate(): void {
+            loaded = false;
+            items = [];
+        },
+        destroy(): void {
+            destroyed = true;
+            button?.removeEventListener('click', dismiss);
+        },
+    };
 }
 
 function createCard(item: ContinueReadingItem): HTMLElement {

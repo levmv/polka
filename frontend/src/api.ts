@@ -53,11 +53,6 @@ import type {
     WritebackStatus,
 } from './types';
 
-// fetchBooks is currently the library list loader, not a general-purpose
-// concurrent query primitive. The shared controller intentionally keeps only one
-// library list request alive; move cancellation to the caller if another
-// independent surface starts fetching /api/books at the same time.
-let currentAbortController: AbortController | null = null;
 let currentUserPromise: Promise<CurrentUser> | null = null;
 let userSettingsPromise: Promise<UserSettings> | null = null;
 
@@ -443,19 +438,17 @@ export async function revokeKoboConnection(): Promise<void> {
     });
 }
 
+// The signal is caller-owned: a list request belongs to the route instance that
+// started it, so a module-wide controller here would let one view cancel
+// another's in-flight load.
 export async function fetchBooks(
     query: string = '',
     sort: string = '',
     limit?: number,
     offset?: number,
     shelfId?: string,
+    signal?: AbortSignal,
 ): Promise<BookSummary[]> {
-    if (currentAbortController) {
-        currentAbortController.abort();
-    }
-
-    currentAbortController = new AbortController();
-
     let url = '/api/books';
     const params = new URLSearchParams();
     if (query) params.set('q', query);
@@ -468,7 +461,7 @@ export async function fetchBooks(
         url += `?${params.toString()}`;
     }
     return await fetchJSON<BookSummary[]>(url, (res) => `HTTP error! status: ${res.status}`, {
-        signal: currentAbortController.signal,
+        signal,
     });
 }
 
@@ -568,8 +561,10 @@ export async function removeBookFromShelf(shelfId: string, workId: string): Prom
     );
 }
 
-export async function fetchBook(workId: string): Promise<Book> {
-    return await fetchJSON<Book>(`/api/books/${encodeURIComponent(workId)}`, 'Not found');
+export async function fetchBook(workId: string, signal?: AbortSignal): Promise<Book> {
+    return await fetchJSON<Book>(`/api/books/${encodeURIComponent(workId)}`, 'Not found', {
+        signal,
+    });
 }
 
 export async function writebackBook(workId: string): Promise<BookWritebackResult> {

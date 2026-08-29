@@ -1,6 +1,7 @@
 import { fetchAuthorInfo, fetchBook, renameAuthor, setAuthorSortName, updateBook } from '../api';
 import { authorSort, formatAuthorsForEdit, parseAuthorList } from '../authors';
-import { type BookListContext, bookURL } from '../book-list-context';
+import type { BookListContext } from '../book-list-context';
+import { notifyCatalogChanged } from '../catalog-events';
 import {
     attachAuthorAutocomplete,
     attachSeriesAutocomplete,
@@ -16,7 +17,6 @@ import { icon } from '../icons';
 import { formatIdentifiers, parseIdentifiers, validISBN } from '../identifiers';
 import { beginGlobalLoading } from '../loading-indicator';
 import { confirmModal, openModal } from '../modal';
-import { replaceLocationURL } from '../router';
 import { titleSort } from '../titles';
 import { showToast } from '../toast';
 import type {
@@ -51,7 +51,7 @@ import {
     createBookEditSequenceController,
 } from './book-edit-sequence';
 import { type MetadataDraftApply, openMetadataCandidatesModal } from './book-metadata-fetch';
-import { getCurrentBookDetail, renderBookDetail, setCurrentBookDetail } from './book-view';
+import type { BookDetailHost } from './book-view';
 
 // Render the date-field hint. A date is "recognized" when it is already in the
 // normalized YYYY[-MM[-DD]] form, OR when the server produced a human form that
@@ -103,9 +103,11 @@ function syncEditFormFromBook(form: HTMLFormElement, b: Book, uiID: string = b.i
 
 export async function openEditModal(
     summary: Pick<BookSummary, 'id'>,
-    onCloseCallback?: (updated: Book) => void,
     listContext?: BookListContext | null,
     initialSequence?: BookSequenceWindow | null,
+    // The page that opened this dialog, when there is one behind it. Opened from
+    // the library there is no book page to keep in step, so there is no host.
+    host?: BookDetailHost | null,
 ) {
     let cancelled = false;
     const { modal, root } = openModal({
@@ -129,7 +131,7 @@ export async function openEditModal(
         const b = await fetchBook(summary.id);
         if (cancelled) return;
         modal.close();
-        openLoadedEditModal(b, onCloseCallback, listContext, initialSequence);
+        openLoadedEditModal(b, listContext, initialSequence, host);
     } catch (e) {
         console.error('Failed to load book for editing:', e);
         if (cancelled) return;
@@ -149,15 +151,15 @@ export async function openEditModal(
 
 function openLoadedEditModal(
     b: Book,
-    onCloseCallback?: (updated: Book) => void,
     listContext?: BookListContext | null,
     initialSequence?: BookSequenceWindow | null,
+    host?: BookDetailHost | null,
 ) {
     // The table/list passes a lean Book projection — the list endpoint omits the
     // edition-level fields (identifiers, language, publisher). Always load the
     // authoritative full record by id so the form is complete and current no
     // matter where edit was opened from, instead of trusting the caller's shape.
-    syncBackgroundDetailIfNeeded(b, listContext);
+    host?.showBook(b, listContext);
     // Element ids stay pinned to the opened modal; Save & Next rebinds b below.
     const uiID = b.id;
     let coverDraft: CoverDraftController | null = null;
@@ -199,13 +201,8 @@ function openLoadedEditModal(
             coverDraft?.destroy();
             coverDraft = null;
             datePickerPopover?.destroy();
-            if (onCloseCallback) {
-                onCloseCallback(b);
-            }
-            const container = document.getElementById('book-detail-container');
-            const current = getCurrentBookDetail();
-            if (container && current && current.id === b.id) {
-                renderBookDetail(container, current);
+            if (host) {
+                host.rerender();
                 setTimeout(() => document.getElementById('btn-edit-book')?.focus(), 0);
             }
         },
@@ -569,7 +566,7 @@ function openLoadedEditModal(
             const nextBook = await fetchBook(target.id);
             if (closed) return;
             b = nextBook;
-            syncBackgroundDetailIfNeeded(b, listContext);
+            host?.showBook(b, listContext);
             syncEditFormFromBook(form, b, uiID);
             savedState = readEditForm(form);
             fetchedFieldSources.clear();
@@ -603,45 +600,52 @@ function openLoadedEditModal(
         let saved: Book | null = null;
         const authorChange = { changed: false, previous: '', next: '' };
         if (metadataDirty) {
-            await saveEditForm(b, form, savedState, uiID, {
-                beforeSave: () => {
-                    saving = true;
-                    updateDirtyState();
-                },
-                afterSave: (ok, updated, previousState) => {
-                    saving = false;
-                    if (ok && updated) {
-                        Object.assign(b, updated);
-                        syncEditFormFromBook(form, b, uiID);
-                        coverDraft?.renderPending();
-                        savedState = readEditForm(form);
-                        fetchedFieldSources.clear();
-                        titleSortControls.close();
-                        titleSortControls.resetFollow();
-                        if (!authorSortChange) resetAuthorSortFromBook(b);
-                        const prevAuthors = previousState.authors || '';
-                        const nextAuthors = savedState.authors || '';
-                        if (prevAuthors !== nextAuthors) {
-                            authorChange.changed = true;
-                            authorChange.previous = prevAuthors;
-                            authorChange.next = nextAuthors;
+            await saveEditForm(
+                b,
+                form,
+                savedState,
+                uiID,
+                {
+                    beforeSave: () => {
+                        saving = true;
+                        updateDirtyState();
+                    },
+                    afterSave: (ok, updated, previousState) => {
+                        saving = false;
+                        if (ok && updated) {
+                            Object.assign(b, updated);
+                            syncEditFormFromBook(form, b, uiID);
+                            coverDraft?.renderPending();
+                            savedState = readEditForm(form);
+                            fetchedFieldSources.clear();
+                            titleSortControls.close();
+                            titleSortControls.resetFollow();
+                            if (!authorSortChange) resetAuthorSortFromBook(b);
+                            const prevAuthors = previousState.authors || '';
+                            const nextAuthors = savedState.authors || '';
+                            if (prevAuthors !== nextAuthors) {
+                                authorChange.changed = true;
+                                authorChange.previous = prevAuthors;
+                                authorChange.next = nextAuthors;
+                            }
+                            if (savedFlashTimer) window.clearTimeout(savedFlashTimer);
+                            savedFlashTimer = undefined;
+                            if (flash && !coverDraft?.hasPending()) {
+                                savedFlashTimer = flashSaved(uiID, () => {
+                                    savedFlashTimer = undefined;
+                                    updateDirtyState();
+                                });
+                            }
+                            saved = updated;
+                            notifyCatalogChanged({ kind: 'books-updated', books: [updated] });
                         }
-                        if (savedFlashTimer) window.clearTimeout(savedFlashTimer);
-                        savedFlashTimer = undefined;
-                        if (flash && !coverDraft?.hasPending()) {
-                            savedFlashTimer = flashSaved(uiID, () => {
-                                savedFlashTimer = undefined;
-                                updateDirtyState();
-                            });
-                        }
-                        saved = updated;
-                        onCloseCallback?.(updated);
-                    }
-                    updateIdentifiersValidation();
-                    renderDateHint(document.getElementById(`date-validation-${uiID}`), b);
-                    updateDirtyState();
+                        updateIdentifiersValidation();
+                        renderDateHint(document.getElementById(`date-validation-${uiID}`), b);
+                        updateDirtyState();
+                    },
                 },
-            });
+                host,
+            );
             if (!saved) return null;
         }
         if (authorSortChange) {
@@ -652,17 +656,14 @@ function openLoadedEditModal(
                 await setAuthorSortName(authorSortChange.name, authorSortChange.sortName);
                 const updated = await fetchBook(b.id);
                 if (closed) return null;
-                const current = getCurrentBookDetail();
-                if (current && current.id === b.id) {
-                    setCurrentBookDetail(updated);
-                }
+                host?.applySaved(updated);
                 Object.assign(b, updated);
                 syncEditFormFromBook(form, b, uiID);
                 coverDraft?.renderPending();
                 savedState = readEditForm(form);
                 resetAuthorSortFromBook(b);
                 saved = updated;
-                onCloseCallback?.(updated);
+                notifyCatalogChanged({ kind: 'books-updated', books: [updated] });
                 if (savedFlashTimer) window.clearTimeout(savedFlashTimer);
                 savedFlashTimer = undefined;
                 if (flash && !coverDraft?.hasPending()) {
@@ -687,10 +688,7 @@ function openLoadedEditModal(
             updateDirtyState();
             try {
                 const updated = await coverDraft.savePending(b.id);
-                const current = getCurrentBookDetail();
-                if (current && current.id === b.id) {
-                    setCurrentBookDetail(updated);
-                }
+                host?.applySaved(updated);
                 Object.assign(b, updated);
                 syncEditFormFromBook(form, b, uiID);
                 savedState = readEditForm(form);
@@ -699,7 +697,7 @@ function openLoadedEditModal(
                 titleSortControls.resetFollow();
                 resetAuthorSortFromBook(b);
                 saved = updated;
-                onCloseCallback?.(updated);
+                notifyCatalogChanged({ kind: 'books-updated', books: [updated] });
                 if (savedFlashTimer) window.clearTimeout(savedFlashTimer);
                 savedFlashTimer = undefined;
                 if (flash) {
@@ -1099,19 +1097,6 @@ function wireTitleSortEditor(opts: {
     return { sync, resetFollow, close };
 }
 
-function syncBackgroundDetailIfNeeded(b: Book, listContext?: BookListContext | null): void {
-    const container = document.getElementById('book-detail-container');
-    const current = getCurrentBookDetail();
-    if (!container || !current || current.id === b.id) return;
-
-    setCurrentBookDetail(b);
-    renderBookDetail(container, b, { loadReaderProgress: false });
-    document.title = `${b.title} - polka`;
-    if (listContext) {
-        replaceLocationURL(bookURL(b.id, listContext));
-    }
-}
-
 function attachIdentifierAutocomplete(input: HTMLInputElement) {
     const types = [
         ['isbn:', 'ISBN-10 or ISBN-13'],
@@ -1190,6 +1175,7 @@ async function saveEditForm(
     previousState: BookUpdate,
     uiID: string,
     callbacks: SaveCallbacks,
+    host?: BookDetailHost | null,
 ): Promise<void> {
     normalizeFormBeforeSave(form);
     if (!validateTitle(form, uiID)) return;
@@ -1198,10 +1184,7 @@ async function saveEditForm(
 
     try {
         const updatedBook = await updateBook(b.id, payload);
-        const current = getCurrentBookDetail();
-        if (current && current.id === b.id) {
-            setCurrentBookDetail(updatedBook);
-        }
+        host?.applySaved(updatedBook);
         callbacks.afterSave(true, updatedBook, previousState);
     } catch (err) {
         showToast(`Save failed: ${errorMessage(err)}`, { type: 'error' });
@@ -1278,6 +1261,7 @@ async function maybeOfferAuthorConvergence(
 
     try {
         await renameAuthor(oldName, newName);
+        notifyCatalogChanged();
         flashSaved(uiID);
     } catch (err) {
         showToast(`Rename failed: ${errorMessage(err)}`, { type: 'error' });

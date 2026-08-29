@@ -5,10 +5,10 @@ import type { RouteCleanup } from '../router';
 import { seriesLibraryURL } from '../search-query';
 import type { SeriesSummary } from '../types';
 
-export async function initSeries(): Promise<RouteCleanup | undefined> {
-    const grid = document.getElementById('series-grid');
-    const loadMoreWrap = document.getElementById('series-load-more');
-    const loadMoreButton = document.getElementById('series-load-more-btn');
+export async function initSeries(root: HTMLElement): Promise<RouteCleanup | undefined> {
+    const grid = root.querySelector<HTMLElement>('#series-grid');
+    const loadMoreWrap = root.querySelector<HTMLElement>('#series-load-more');
+    const loadMoreButton = root.querySelector('#series-load-more-btn');
     if (!grid || !loadMoreWrap || !(loadMoreButton instanceof HTMLButtonElement)) return;
 
     let nextCursor = '';

@@ -1,5 +1,16 @@
 import { initSidebarAccount } from './account-menu';
 import { fetchCurrentUser, fetchUserSettings } from './api';
+import {
+    historyStateWithScroll,
+    newEntryID,
+    type PolkaHistoryState,
+    readEntryID,
+    readPredecessorURL,
+    readRetainedLibraryID,
+    readScrollPosition,
+    retentionForPop,
+    retentionForPush,
+} from './history-state';
 import { beginGlobalLoading } from './loading-indicator';
 import { closeAllModals } from './modal';
 import {
@@ -10,7 +21,14 @@ import {
     renderSeriesPage,
     renderTrashPage,
 } from './pages';
-import { initRouter, type Route, type Router } from './router';
+import {
+    initRouter,
+    type Retention,
+    type Route,
+    type Router,
+    type ScrollPosition,
+    setAppNavigate,
+} from './router';
 import { initSidebarCuration } from './sidebar-curation';
 import { initSidebarShelves, syncSidebarShelfActive } from './sidebar-shelves';
 import { initSidebarUpload } from './sidebar-upload';
@@ -31,7 +49,7 @@ const routes: Route<unknown>[] = [
         title: 'polka',
         match: (path) => (path === '/' || path === '/index.html' ? true : null),
         render: () => renderLibraryPage(),
-        mount: () => initLibrary(),
+        mount: (_match, root) => initLibrary(root),
     },
     {
         mainClass: 'app-main--strip',
@@ -41,9 +59,7 @@ const routes: Route<unknown>[] = [
             return pathParts[pathParts.length - 1] || null;
         },
         render: () => renderBookPage(),
-        mount: async (workId) => {
-            return await initBookDetail(String(workId));
-        },
+        mount: (workId, root, context) => initBookDetail(String(workId), root, context),
     },
     {
         navId: 'nav-library',
@@ -51,8 +67,8 @@ const routes: Route<unknown>[] = [
         title: 'Cleanup - polka',
         match: (path) => (path === '/cleanup' ? true : null),
         render: () => renderCleanupPage(),
-        mount: async () => {
-            await initCleanup();
+        mount: async (_match, root) => {
+            await initCleanup(root);
             return undefined;
         },
     },
@@ -62,7 +78,7 @@ const routes: Route<unknown>[] = [
         title: 'Series - polka',
         match: (path) => (path === '/series' ? true : null),
         render: () => renderSeriesPage(),
-        mount: () => initSeries(),
+        mount: (_match, root) => initSeries(root),
     },
     {
         navId: 'nav-authors',
@@ -70,8 +86,8 @@ const routes: Route<unknown>[] = [
         title: 'Authors - polka',
         match: (path) => (path === '/authors' ? true : null),
         render: () => renderAuthorsPage(),
-        mount: async () => {
-            return await initAuthors();
+        mount: async (_match, root) => {
+            return await initAuthors(root);
         },
     },
     {
@@ -80,8 +96,8 @@ const routes: Route<unknown>[] = [
         title: 'Trash - polka',
         match: (path) => (path === '/trash' ? true : null),
         render: () => renderTrashPage(),
-        mount: async () => {
-            await initTrash();
+        mount: async (_match, root) => {
+            await initTrash(root);
             return undefined;
         },
     },
@@ -118,26 +134,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const router = initRouter(routes);
     const navigate = initNavigation(router, () => setSidebarOpen(false));
+    setAppNavigate(navigate);
     initSidebarCuration(currentUserPromise, navigate);
 });
 
-interface ScrollPosition {
-    x: number;
-    y: number;
-}
-
-interface PolkaHistoryState {
-    polkaScroll?: ScrollPosition;
-    // Pathname this entry was pushed from. An in-page "Back" control that points
-    // there can then return through history — bringing the list back with its
-    // scroll position — instead of pushing a fresh entry that lands at the top.
-    polkaFrom?: string;
-    [key: string]: unknown;
-}
-
 function initNavigation(router: Router, closeSidebar: () => void): (href: string) => void {
     setupScrollRestoration();
+    // The route that is mounted, which is deliberately not "whatever the URL
+    // says": Back and Forward change the URL before popstate runs, so this is
+    // the only remaining record of the page being left. It may also lag the
+    // URL, which the edit dialog rewrites when it moves to the next book.
     let activeRoutePathname = window.location.pathname;
+    let currentEntryID = ensureEntryID();
 
     const navigate = (href: string) => {
         if (!canNavigateWithRouter(href, router)) {
@@ -145,10 +153,23 @@ function initNavigation(router: Router, closeSidebar: () => void): (href: string
             return;
         }
         const url = new URL(href, window.location.href);
+        const { retention, retainedLibraryID } = retentionForPush({
+            // Nothing has moved yet, so the URL is the page being left, and it
+            // is the more current of the two.
+            fromPathname: window.location.pathname,
+            toPathname: url.pathname,
+            fromID: currentEntryID,
+            retainedKey: router.retainedKey(),
+        });
+
         activeRoutePathname = url.pathname;
+        currentEntryID = newEntryID();
         void navigateWithRouter(url, router, closeSidebar, {
             pushHistory: true,
             scroll: { x: 0, y: 0 },
+            entryID: currentEntryID,
+            retainedLibraryID,
+            retention,
         });
     };
 
@@ -157,11 +178,11 @@ function initNavigation(router: Router, closeSidebar: () => void): (href: string
         if (!link) return;
         if (!canUseAppNavigation(event, link)) return;
 
-        // A "Back" control returns through history when this entry was pushed
-        // from the page it points at, so the list comes back where it was left
-        // rather than being re-entered at the top. The href stays real for a
-        // middle click, "open in new tab", and arriving by direct link.
-        if (link.hasAttribute('data-app-back') && isEntryPushedFrom(link)) {
+        // A "Back" control means one history entry back whenever this entry has
+        // a known in-app predecessor, so the previous page comes back as it was
+        // left rather than being re-entered at the top. The href stays real for
+        // a middle click, "open in new tab", and arriving by direct link.
+        if (link.hasAttribute('data-app-back') && readPredecessorURL(window.history.state)) {
             event.preventDefault();
             window.history.back();
             return;
@@ -181,11 +202,38 @@ function initNavigation(router: Router, closeSidebar: () => void): (href: string
             restoreScrollPosition(scroll);
             return;
         }
+        const targetID = readEntryID(event.state) ?? ensureEntryID();
+        const retention = retentionForPop({
+            targetPathname: url.pathname,
+            targetID,
+            targetRetainedLibraryID: readRetainedLibraryID(event.state),
+            fromPathname: activeRoutePathname,
+            fromID: currentEntryID,
+            retainedKey: router.retainedKey(),
+            scroll,
+        });
         activeRoutePathname = url.pathname;
-        void navigateWithRouter(url, router, closeSidebar, { pushHistory: false, scroll });
+        currentEntryID = targetID;
+        void navigateWithRouter(url, router, closeSidebar, {
+            pushHistory: false,
+            scroll,
+            retention,
+        });
     });
 
     return navigate;
+}
+
+// Entries that predate this (a reload, a link from outside) get an ID on first
+// sight, so identity is available even for the entry the app started on.
+function ensureEntryID(): string {
+    const existing = readEntryID(window.history.state);
+    if (existing) return existing;
+    const id = newEntryID();
+    const state = window.history.state;
+    const base = state && typeof state === 'object' ? { ...(state as PolkaHistoryState) } : {};
+    window.history.replaceState({ ...base, polkaEntryID: id }, '');
+    return id;
 }
 
 function canNavigateWithRouter(href: string, router: Router): boolean {
@@ -215,26 +263,44 @@ function canUseAppNavigation(event: MouseEvent, link: HTMLAnchorElement): boolea
     return !link.target || link.target === '_self';
 }
 
+interface NavigationOptions {
+    pushHistory: boolean;
+    scroll: ScrollPosition | null;
+    entryID?: string;
+    retainedLibraryID?: string;
+    retention?: Retention;
+}
+
 async function navigateWithRouter(
     url: URL,
     router: Router,
     closeSidebar: () => void,
-    opts: { pushHistory: boolean; scroll: ScrollPosition | null },
+    opts: NavigationOptions,
 ): Promise<boolean> {
     if (opts.pushHistory) {
-        const from = window.location.pathname;
+        const from = `${window.location.pathname}${window.location.search}`;
         saveScrollPosition();
-        window.history.pushState(
-            { ...historyStateWithScroll(null, opts.scroll || { x: 0, y: 0 }), polkaFrom: from },
-            '',
-            `${url.pathname}${url.search}${url.hash}`,
-        );
+        const state: PolkaHistoryState = {
+            ...historyStateWithScroll(null, opts.scroll || { x: 0, y: 0 }),
+            polkaEntryID: opts.entryID ?? newEntryID(),
+            polkaFrom: from,
+        };
+        if (opts.retainedLibraryID) state.polkaRetainedLibraryID = opts.retainedLibraryID;
+        window.history.pushState(state, '', `${url.pathname}${url.search}${url.hash}`);
     }
     closeSidebar();
     closeAllModals();
+    // Any restore still waiting for a frame belongs to the navigation this one
+    // supersedes. Left alone it lands after the new page is in place — which is
+    // how a Back that has already restored its position gets pulled back to the
+    // book page's top.
+    cancelScrollRestore();
     const finishGlobalLoading = beginGlobalLoading();
     try {
-        const mounted = await router.mount(url.pathname, { render: true });
+        const mounted = await router.mount(url.pathname, {
+            retention: opts.retention,
+            clientNavigation: true,
+        });
         if (!mounted) {
             if (
                 window.location.pathname === url.pathname &&
@@ -245,7 +311,9 @@ async function navigateWithRouter(
             return false;
         }
         syncSidebarShelfActive();
-        if (!url.hash) restoreScrollPosition(opts.scroll);
+        // A resumed route restores its own position from its own anchor; the
+        // generic pixel restore would fight it a frame later.
+        if (!url.hash && opts.retention?.mode !== 'resume') restoreScrollPosition(opts.scroll);
         return true;
     } finally {
         finishGlobalLoading();
@@ -279,32 +347,24 @@ function saveScrollPosition(): void {
     );
 }
 
-// True when going back one entry lands on the page this link points at.
-function isEntryPushedFrom(link: HTMLAnchorElement): boolean {
-    const state = window.history.state;
-    if (!state || typeof state !== 'object') return false;
-    const from = (state as PolkaHistoryState).polkaFrom;
-    if (typeof from !== 'string') return false;
-    return from === new URL(link.href, window.location.href).pathname;
-}
+// Two frames, so the restore runs after the mounted route's first layout and
+// paint. The wait is what makes it cancellable work: see navigateWithRouter.
+let pendingScrollFrame = 0;
 
-function readScrollPosition(state: unknown): ScrollPosition | null {
-    if (!state || typeof state !== 'object') return null;
-    const scroll = (state as PolkaHistoryState).polkaScroll;
-    if (!scroll || typeof scroll.x !== 'number' || typeof scroll.y !== 'number') return null;
-    return scroll;
-}
-
-function historyStateWithScroll(state: unknown, scroll: ScrollPosition): PolkaHistoryState {
-    const base =
-        state && typeof state === 'object' ? { ...(state as Record<string, unknown>) } : {};
-    return { ...base, polkaScroll: scroll };
+function cancelScrollRestore(): void {
+    if (!pendingScrollFrame) return;
+    window.cancelAnimationFrame(pendingScrollFrame);
+    pendingScrollFrame = 0;
 }
 
 function restoreScrollPosition(scroll: ScrollPosition | null): void {
+    cancelScrollRestore();
     if (!scroll) return;
-    window.requestAnimationFrame(() => {
-        window.requestAnimationFrame(() => window.scrollTo(scroll.x, scroll.y));
+    pendingScrollFrame = window.requestAnimationFrame(() => {
+        pendingScrollFrame = window.requestAnimationFrame(() => {
+            pendingScrollFrame = 0;
+            window.scrollTo(scroll.x, scroll.y);
+        });
     });
 }
 

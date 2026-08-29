@@ -9,6 +9,9 @@ export type ManagedSelect = {
     el: HTMLButtonElement;
     getValue(): string;
     setValue(value: string): void;
+    // Close the listbox without tearing the control down, so a route that is
+    // being suspended leaves no floating layer over the page that replaces it.
+    close(): void;
     destroy(): void;
 };
 
@@ -206,6 +209,7 @@ export function createSelect(opts: SelectOptions): ManagedSelect {
             value = next;
             syncLabel();
         },
+        close,
         destroy(): void {
             close();
             list.remove();
