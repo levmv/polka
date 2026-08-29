@@ -1,3 +1,5 @@
+import { isLibraryPath } from './history-state';
+
 // Where a book was opened from, so the detail view can offer "back to the list"
 // and walk the same ordered set. The library list is the only such source: the
 // Series page hands its series to the library search rather than keeping a list
@@ -48,7 +50,10 @@ export function listURLForContext(context: BookListContext | null): string {
 }
 
 export function readBookListContextFromLocation(): BookListContext | null {
-    return readContextParams(new URLSearchParams(window.location.search));
+    const params = new URLSearchParams(window.location.search);
+    return isLibraryPath(window.location.pathname)
+        ? readLibraryContextParams(params)
+        : readContextParams(params);
 }
 
 function writeContextParams(params: URLSearchParams, context: BookListContext): void {
@@ -65,6 +70,10 @@ function writeListParams(params: URLSearchParams, context: BookListContext): voi
 
 function readContextParams(params: URLSearchParams): BookListContext | null {
     if (params.get(CONTEXT_SOURCE_PARAM) !== 'library') return null;
+    return readLibraryContextParams(params);
+}
+
+function readLibraryContextParams(params: URLSearchParams): BookListContext {
     return libraryBookListContext(
         params.get('q') || '',
         params.get('sort') || '',

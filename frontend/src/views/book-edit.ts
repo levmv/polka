@@ -1,6 +1,6 @@
 import { fetchAuthorInfo, fetchBook, renameAuthor, setAuthorSortName, updateBook } from '../api';
 import { authorSort, formatAuthorsForEdit, parseAuthorList } from '../authors';
-import type { BookListContext } from '../book-list-context';
+import { type BookListContext, readBookListContextFromLocation } from '../book-list-context';
 import { notifyCatalogChanged } from '../catalog-events';
 import {
     attachAuthorAutocomplete,
@@ -13,10 +13,11 @@ import { attachTextListAutocomplete } from '../components/text-list-autocomplete
 import { coverImgHtml } from '../cover';
 import { escapeHtml } from '../dom';
 import { errorMessage } from '../errors';
+import { isBookPath, type OverlayEntry } from '../history-state';
 import { icon } from '../icons';
 import { formatIdentifiers, parseIdentifiers, validISBN } from '../identifiers';
 import { beginGlobalLoading } from '../loading-indicator';
-import { confirmModal, openModal } from '../modal';
+import { confirmModal, openModal, registerOverlayReopen, updateOverlayEntry } from '../modal';
 import { titleSort } from '../titles';
 import { showToast } from '../toast';
 import type {
@@ -27,6 +28,7 @@ import type {
     BookSummary,
     BookUpdate,
 } from '../types';
+import { activeBookDetailHost, type BookDetailHost } from './book-detail-host';
 import {
     type CoverDraftController,
     createCoverDraftController,
@@ -51,7 +53,6 @@ import {
     createBookEditSequenceController,
 } from './book-edit-sequence';
 import { type MetadataDraftApply, openMetadataCandidatesModal } from './book-metadata-fetch';
-import type { BookDetailHost } from './book-view';
 
 // Render the date-field hint. A date is "recognized" when it is already in the
 // normalized YYYY[-MM[-DD]] form, OR when the server produced a human form that
@@ -101,6 +102,18 @@ function syncEditFormFromBook(form: HTMLFormElement, b: Book, uiID: string = b.i
     renderStoredEditCover(b, uiID);
 }
 
+const BOOK_EDIT_OVERLAY = 'book-edit';
+
+// Forward returns to an editor entry. Its URL is the page underneath, so it
+// already contains the origin and the list context needed to reopen it.
+registerOverlayReopen(BOOK_EDIT_OVERLAY, (overlay) => {
+    if (!overlay.target) return;
+    const fromBook = isBookPath(window.location.pathname);
+    const listContext = readBookListContextFromLocation();
+    const host = fromBook ? activeBookDetailHost() : null;
+    void openEditModal({ id: overlay.target }, listContext, null, host);
+});
+
 export async function openEditModal(
     summary: Pick<BookSummary, 'id'>,
     listContext?: BookListContext | null,
@@ -110,6 +123,7 @@ export async function openEditModal(
     host?: BookDetailHost | null,
 ) {
     let cancelled = false;
+    const overlay: OverlayEntry = { kind: BOOK_EDIT_OVERLAY, target: summary.id };
     const { modal, root } = openModal({
         title: 'Edit book',
         body: `
@@ -120,6 +134,7 @@ export async function openEditModal(
         `,
         backdropClass: 'modal-wide',
         modalClass: 'edit-modal edit-modal-loading',
+        history: overlay,
         onClose: () => {
             cancelled = true;
         },
@@ -131,7 +146,7 @@ export async function openEditModal(
         const b = await fetchBook(summary.id);
         if (cancelled) return;
         modal.close();
-        openLoadedEditModal(b, listContext, initialSequence, host);
+        openLoadedEditModal(b, overlay, listContext, initialSequence, host);
     } catch (e) {
         console.error('Failed to load book for editing:', e);
         if (cancelled) return;
@@ -151,6 +166,7 @@ export async function openEditModal(
 
 function openLoadedEditModal(
     b: Book,
+    initialOverlay: OverlayEntry,
     listContext?: BookListContext | null,
     initialSequence?: BookSequenceWindow | null,
     host?: BookDetailHost | null,
@@ -163,6 +179,7 @@ function openLoadedEditModal(
     // Element ids stay pinned to the opened modal; Save & Next rebinds b below.
     const uiID = b.id;
     let coverDraft: CoverDraftController | null = null;
+    let overlay = initialOverlay;
 
     const { modal, root } = openModal({
         header: renderEditHeader(uiID),
@@ -171,6 +188,7 @@ function openLoadedEditModal(
         modalClass: 'edit-modal',
         closeButton: false,
         ariaLabel: 'Edit book',
+        history: overlay,
         onKeydown: (event) => {
             if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
                 event.preventDefault();
@@ -181,27 +199,23 @@ function openLoadedEditModal(
         },
         // Guard every dismissal path — close button, Escape, backdrop click:
         // block while busy, and confirm before discarding unsaved edits.
-        beforeClose: async () => {
+        beforeClose: () => {
             if (saving || switching) return false;
-            if (
-                isDirty() &&
-                !(await confirmModal({
-                    title: 'Discard changes?',
-                    body: 'The edited metadata has not been saved.',
-                    confirmLabel: 'Discard',
-                    cancelLabel: 'Keep editing',
-                }))
-            ) {
-                return false;
-            }
-            return true;
+            if (!isDirty()) return true;
+            return confirmModal({
+                title: 'Discard changes?',
+                body: 'The edited metadata has not been saved.',
+                confirmLabel: 'Discard',
+                cancelLabel: 'Keep editing',
+            });
         },
-        onClose: () => {
+        onClose: (reason) => {
             closed = true;
             coverDraft?.destroy();
             coverDraft = null;
             datePickerPopover?.destroy();
-            if (host) {
+            // Navigation closes modals programmatically; do not rewrite its destination.
+            if (host && reason !== 'api') {
                 host.rerender();
                 setTimeout(() => document.getElementById('btn-edit-book')?.focus(), 0);
             }
@@ -567,6 +581,8 @@ function openLoadedEditModal(
             if (closed) return;
             b = nextBook;
             host?.showBook(b, listContext);
+            overlay = { ...overlay, target: b.id };
+            updateOverlayEntry(overlay);
             syncEditFormFromBook(form, b, uiID);
             savedState = readEditForm(form);
             fetchedFieldSources.clear();

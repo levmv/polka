@@ -4,6 +4,8 @@ import test from 'node:test';
 import {
     historyStateWithScroll,
     readEntryID,
+    readOverlayEntry,
+    readOverlayOriginID,
     readPredecessorURL,
     readRetainedLibraryID,
     retentionForPop,
@@ -18,6 +20,21 @@ test('history state readers reject values the app did not mint', () => {
     assert.equal(readEntryID({ polkaEntryID: 'e1' }), 'e1');
     assert.equal(readRetainedLibraryID({ polkaRetainedLibraryID: 'lib' }), 'lib');
     assert.equal(readPredecessorURL({ polkaFrom: '/?sort=title' }), '/?sort=title');
+    assert.equal(readOverlayOriginID({ polkaOverlayOriginID: 'page' }), 'page');
+    assert.equal(readOverlayEntry({ polkaOverlay: { kind: '' } }), null);
+    assert.deepEqual(
+        readOverlayEntry({
+            polkaOverlay: {
+                kind: 'book-edit',
+                target: 'book-2',
+                ignored: 7,
+            },
+        }),
+        {
+            kind: 'book-edit',
+            target: 'book-2',
+        },
+    );
 });
 
 // Every scroll writes the position back into the current entry. Replacing the
