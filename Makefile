@@ -14,6 +14,7 @@ BROWSER_LANE_B_DATA ?= .tmp-browser-lane-b-data-$(BROWSER_RUN_ID)
 BROWSER_PAGER_DATA ?= .tmp-browser-pager-data-$(BROWSER_RUN_ID)
 BROWSER_FILLER ?= .tmp-browser-filler-$(BROWSER_RUN_ID)
 BROWSER_AUTH_DIR ?= browser-test/.auth-$(BROWSER_RUN_ID)
+POLKA_VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 BROWSER_LANE_A_DATA_ABS := $(abspath $(BROWSER_LANE_A_DATA))
 BROWSER_LANE_B_DATA_ABS := $(abspath $(BROWSER_LANE_B_DATA))
 BROWSER_PAGER_DATA_ABS := $(abspath $(BROWSER_PAGER_DATA))
@@ -61,7 +62,7 @@ pdfium-wasm-verify:
 	go run ./internal/pdfcover/wasmtool verify
 
 build: frontend
-	CGO_ENABLED=0 go build -o polka .
+	CGO_ENABLED=0 go build -ldflags "-X github.com/levmv/polka/internal/version.Version=$(POLKA_VERSION)" -o polka .
 
 # Three isolated servers keep stateful browser lanes independent; pagination
 # uses a separate filler-only library (>50 books).

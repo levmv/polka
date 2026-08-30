@@ -23,6 +23,8 @@ import (
 	"github.com/levmv/polka/internal/testfixture"
 )
 
+const testReaderCurrentSHA256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
 func setupTestDB(t *testing.T) (*db.DB, string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -577,6 +579,9 @@ func TestDownloadAsEPUBToKEPUB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("insert epub fixture: %v", err)
 	}
+	if _, err := database.Exec("UPDATE assets SET current_sha256 = ? WHERE id = 'asset_epub_kepub'", testReaderCurrentSHA256); err != nil {
+		t.Fatalf("set epub current hash: %v", err)
+	}
 	fileDir := filepath.Join(dir, "EPUB", "Kobo")
 	if err := os.MkdirAll(fileDir, 0o755); err != nil {
 		t.Fatalf("mkdir epub fixture: %v", err)
@@ -589,7 +594,11 @@ func TestDownloadAsEPUBToKEPUB(t *testing.T) {
 	s := newTestServer(database, dir)
 	handler := testRoutes(t, s)
 
-	req := httptest.NewRequest("GET", "/download/asset_epub_kepub/as/kepub", nil)
+	convertedVersion := conversionCacheVersion(testReaderCurrentSHA256)
+	if convertedVersion == "" {
+		t.Fatal("test build has no Polka version for converted asset cache key")
+	}
+	req := httptest.NewRequest("GET", "/download/asset_epub_kepub/as/kepub?v="+convertedVersion, nil)
 	addSessionCookie(t, s, req, user.ID)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -605,6 +614,9 @@ func TestDownloadAsEPUBToKEPUB(t *testing.T) {
 	}
 	if got := w.Header().Get("Content-Length"); got != strconv.Itoa(w.Body.Len()) {
 		t.Fatalf("Content-Length = %q, want %d", got, w.Body.Len())
+	}
+	if got := w.Header().Get("Cache-Control"); got != "private, max-age=31536000, immutable" {
+		t.Fatalf("Cache-Control = %q, want immutable private cache", got)
 	}
 	xhtml := testZipEntry(t, w.Body.Bytes(), "OEBPS/text.xhtml")
 	if !strings.Contains(xhtml, "koboSpan") || !strings.Contains(xhtml, "Kobo body.") {
@@ -771,6 +783,8 @@ func TestReaderRoutesServeReadablePrimaryAssets(t *testing.T) {
 		INSERT INTO works (id, title, sort_title) VALUES ('w_epub', 'EPUB Book', 'EPUB Book');
 		INSERT INTO assets (id, work_id, storage_path, filename, extension, format, is_primary, can_read) VALUES ('asset_epub', 'w_epub', 'EPUB/EPUB_Book/asset_epub.epub', 'asset_epub.epub', '.epub', 'epub', 1, 1);
 		INSERT INTO assets (id, work_id, storage_path, filename, extension, format, is_primary, can_read) VALUES ('asset_epub_alt', 'w_epub', 'EPUB/EPUB_Book/asset_epub_alt.fb2', 'asset_epub_alt.fb2', '.fb2', 'fb2', 0, 1);
+		INSERT INTO works (id, title, sort_title) VALUES ('w_missing_epub', 'Missing EPUB', 'Missing EPUB');
+		INSERT INTO assets (id, work_id, storage_path, filename, extension, format, is_primary, can_read) VALUES ('asset_missing_epub', 'w_missing_epub', 'EPUB/Missing/asset_missing.epub', 'asset_missing.epub', '.epub', 'epub', 1, 1);
 		INSERT INTO works (id, title, sort_title) VALUES ('w_kepub', 'KEPUB Book', 'KEPUB Book');
 		INSERT INTO assets (id, work_id, storage_path, filename, extension, format, is_primary, can_read) VALUES ('asset_kepub', 'w_kepub', 'KEPUB/KEPUB_Book/asset_kepub.kepub.epub', 'asset_kepub.kepub.epub', '.kepub.epub', 'kepub', 1, 1);
 		INSERT INTO works (id, title, sort_title) VALUES ('w_mobi', 'MOBI Book', 'MOBI Book');
@@ -792,6 +806,9 @@ func TestReaderRoutesServeReadablePrimaryAssets(t *testing.T) {
 		`)
 	if err != nil {
 		t.Fatalf("insert reader fixtures: %v", err)
+	}
+	if _, err := database.Exec("UPDATE assets SET current_sha256 = ? WHERE id IN ('asset_epub', 'asset_missing_epub', 'asset_cbr', 'asset_cb7')", testReaderCurrentSHA256); err != nil {
+		t.Fatalf("set reader asset current hash: %v", err)
 	}
 	fileDir := filepath.Join(dir, "PDF", "PDF_Book")
 	if err := os.MkdirAll(fileDir, 0o755); err != nil {
@@ -901,8 +918,45 @@ func TestReaderRoutesServeReadablePrimaryAssets(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("epub read page status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
 	}
-	if body := w.Body.String(); !strings.Contains(body, `data-reader-url="/read/assets/asset_epub"`) || !strings.Contains(body, `data-reader-fallback-url="/download/asset_epub/as/kepub"`) || !strings.Contains(body, `reader-epub-stage`) || !strings.Contains(body, `/static/reader.js`) {
+	convertedVersion := conversionCacheVersion(testReaderCurrentSHA256)
+	if convertedVersion == "" {
+		t.Fatal("test build has no Polka version for converted asset cache key")
+	}
+	if body := w.Body.String(); !strings.Contains(body, `data-reader-url="/read/assets/asset_epub?v=0123456789abcdef"`) || !strings.Contains(body, `data-reader-fallback-url="/download/asset_epub/as/kepub?v=`+convertedVersion+`"`) || !strings.Contains(body, `reader-epub-stage`) || !strings.Contains(body, `/static/reader.js`) {
 		t.Fatalf("read page did not render EPUB reader shell: %s", body)
+	}
+	if got := w.Header().Get("Cache-Control"); got != "private, no-cache" {
+		t.Fatalf("reader page Cache-Control = %q, want private revalidation", got)
+	}
+
+	req = httptest.NewRequest("GET", "/read/assets/asset_epub?v=0123456789abcdef", nil)
+	addSessionCookie(t, s, req, user.ID)
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("versioned EPUB asset status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+	if got := w.Header().Get("Cache-Control"); got != "private, max-age=31536000, immutable" {
+		t.Fatalf("versioned EPUB Cache-Control = %q, want immutable private cache", got)
+	}
+
+	req = httptest.NewRequest("GET", "/read/assets/asset_epub?v=stale", nil)
+	addSessionCookie(t, s, req, user.ID)
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if got := w.Header().Get("Cache-Control"); got != "private, no-cache" {
+		t.Fatalf("stale EPUB Cache-Control = %q, want private revalidation", got)
+	}
+
+	req = httptest.NewRequest("GET", "/read/assets/asset_missing_epub?v=0123456789abcdef", nil)
+	addSessionCookie(t, s, req, user.ID)
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("missing versioned EPUB status = %d, want %d", w.Code, http.StatusNotFound)
+	}
+	if got := w.Header().Get("Cache-Control"); strings.Contains(got, "immutable") {
+		t.Fatalf("missing versioned EPUB Cache-Control = %q, must not cache an error as immutable", got)
 	}
 
 	req = httptest.NewRequest("GET", "/read/asset/asset_epub_alt", nil)
@@ -1101,16 +1155,19 @@ func TestReaderRoutesServeReadablePrimaryAssets(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("cbr read page status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
 	}
-	if body := w.Body.String(); !strings.Contains(body, `data-reader-url="/read/assets/asset_cbr"`) || !strings.Contains(body, `reader-epub-stage`) || !strings.Contains(body, `data-reader-format="cbz"`) {
+	if body := w.Body.String(); !strings.Contains(body, `data-reader-url="/read/assets/asset_cbr?v=`+convertedVersion+`"`) || !strings.Contains(body, `reader-epub-stage`) || !strings.Contains(body, `data-reader-format="cbz"`) {
 		t.Fatalf("read page did not render normalized CBR reader shell: %s", body)
 	}
 
-	req = httptest.NewRequest("GET", "/read/assets/asset_cbr", nil)
+	req = httptest.NewRequest("GET", "/read/assets/asset_cbr?v="+convertedVersion, nil)
 	addSessionCookie(t, s, req, user.ID)
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
-	if w.Code != http.StatusTemporaryRedirect || w.Header().Get("Location") != "/download/asset_cbr/as/cbz" {
+	if w.Code != http.StatusTemporaryRedirect || w.Header().Get("Location") != "/download/asset_cbr/as/cbz?v="+convertedVersion {
 		t.Fatalf("CBR read asset status/location = %d/%q; want 307 conversion redirect", w.Code, w.Header().Get("Location"))
+	}
+	if got := w.Header().Get("Cache-Control"); got != "private, max-age=31536000, immutable" {
+		t.Fatalf("CBR redirect Cache-Control = %q, want immutable private cache", got)
 	}
 
 	req = httptest.NewRequest("GET", "/read/w_cb7", nil)
@@ -1120,15 +1177,15 @@ func TestReaderRoutesServeReadablePrimaryAssets(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("cb7 read page status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
 	}
-	if body := w.Body.String(); !strings.Contains(body, `data-reader-url="/read/assets/asset_cb7"`) || !strings.Contains(body, `reader-epub-stage`) || !strings.Contains(body, `data-reader-format="cbz"`) {
+	if body := w.Body.String(); !strings.Contains(body, `data-reader-url="/read/assets/asset_cb7?v=`+convertedVersion+`"`) || !strings.Contains(body, `reader-epub-stage`) || !strings.Contains(body, `data-reader-format="cbz"`) {
 		t.Fatalf("read page did not render normalized CB7 reader shell: %s", body)
 	}
 
-	req = httptest.NewRequest("GET", "/read/assets/asset_cb7", nil)
+	req = httptest.NewRequest("GET", "/read/assets/asset_cb7?v="+convertedVersion, nil)
 	addSessionCookie(t, s, req, user.ID)
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
-	if w.Code != http.StatusTemporaryRedirect || w.Header().Get("Location") != "/download/asset_cb7/as/cbz" {
+	if w.Code != http.StatusTemporaryRedirect || w.Header().Get("Location") != "/download/asset_cb7/as/cbz?v="+convertedVersion {
 		t.Fatalf("CB7 read asset status/location = %d/%q; want 307 conversion redirect", w.Code, w.Header().Get("Location"))
 	}
 

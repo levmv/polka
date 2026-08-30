@@ -5155,6 +5155,12 @@ body.modal_open {
     font-size: 0.9rem;
 }
 
+.settings-version-link {
+    color: inherit;
+    text-decoration: underline;
+    text-underline-offset: 0.12em;
+}
+
 .settings-note-error {
     color: var(--danger);
 }

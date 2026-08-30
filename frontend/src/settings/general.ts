@@ -5,6 +5,7 @@ import {
     saveAdminStorageStatus,
     saveUserSettings,
 } from '../api';
+import { appVersion } from '../bootstrap';
 import { createSelect } from '../components/select';
 import { createToggle } from '../components/toggle';
 import { textEl } from '../dom';
@@ -130,6 +131,18 @@ function renderGeneralPanel(
         appendGeneralLibraryRows(rows, state, () => renderGeneralPanel(root, currentUser, state));
     }
     root.append(rows);
+    const currentVersion = appVersion();
+    if (currentVersion) {
+        const versionLine = textEl('div', 'settings-note', 'Polka version: ');
+        const versionLink = document.createElement('a');
+        versionLink.className = 'settings-version-link';
+        versionLink.href = 'https://github.com/levmv/polka';
+        versionLink.target = '_blank';
+        versionLink.rel = 'noreferrer';
+        versionLink.textContent = currentVersion;
+        versionLine.append(versionLink);
+        root.append(versionLine);
+    }
 }
 
 function appendGeneralLibraryRows(

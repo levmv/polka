@@ -8,6 +8,8 @@ import (
 	"os"
 	"slices"
 	"strings"
+
+	"github.com/levmv/polka/internal/version"
 )
 
 type reportedError struct {
@@ -150,7 +152,7 @@ func runSubcommand(ctx context.Context, dataDir, subcommand string, subArgs []st
 }
 
 func printUsage() {
-	fmt.Fprintf(os.Stderr, `polka — a quiet personal book library
+	fmt.Fprintf(os.Stderr, `polka %s — a quiet personal book library
 
 Usage:
   polka <command> [arguments]
@@ -169,7 +171,7 @@ Library:
   library         Manage library contents for scripts and agents
   user            Manage accounts
   token           Manage device app-password tokens
-`)
+`, version.Version)
 	printGlobalFlags()
 	fmt.Fprintln(os.Stderr, `Use "polka <command> -h" or "polka help <command>" for more information about a command.`)
 }
