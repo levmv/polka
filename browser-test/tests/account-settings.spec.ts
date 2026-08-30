@@ -15,9 +15,8 @@ async function deleteShelf(page: Page, id: string): Promise<void> {
 
 async function openSettings(page: Page, tab: string): Promise<Locator> {
   await page.goto('/');
-  await expect(page.locator('.account-trigger')).toBeVisible();
-  await page.locator('.account-trigger').click();
-  await page.getByRole('menuitem', { name: 'Settings' }).click();
+  await expect(page.locator('.account-settings')).toBeVisible();
+  await page.locator('.account-settings').click();
 
   const modal = page.locator('.settings-modal');
   await expect(modal).toBeVisible();

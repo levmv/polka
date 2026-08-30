@@ -265,7 +265,7 @@ async function openReader(page: Page, title: string, openedAssets: string[]): Pr
   const card = page.locator('.book-card', { hasText: title });
   await expect(card).toBeVisible();
   const href = await card.locator('.book-title-link').getAttribute('href');
-  const workId = href?.split('/').pop();
+  const workId = href?.split('/').pop()?.split('?')[0];
   if (!workId) throw new Error(`missing work id for ${title}`);
 
   await page.goto(`/read/${workId}`);

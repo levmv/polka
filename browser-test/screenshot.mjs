@@ -97,6 +97,6 @@ Env:
 
 Examples:
   npm run screenshot -- / browser-test/screenshots/library.png --wait=.book-card
-  POLKA_BASE_URL=http://127.0.0.1:8080 npm run screenshot -- / /tmp/menu.png --click=.account-trigger
+  POLKA_BASE_URL=http://127.0.0.1:8080 npm run screenshot -- / /tmp/menu.png --click=#nav-library-actions
 `);
 }

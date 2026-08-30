@@ -30,7 +30,7 @@ function testMOBIWithPayload(payload: Buffer): Buffer {
 }
 
 test.describe('Library workflows', () => {
-  test('Account menu logs out with POST', async ({ page }) => {
+  test('Sidebar log out posts to /logout', async ({ page }) => {
     await page.context().clearCookies();
     await login(page);
 
@@ -41,11 +41,26 @@ test.describe('Library workflows', () => {
     });
 
     await page.goto('/');
-    await expect(page.getByRole('button', { name: 'Account menu for admin' })).toBeVisible();
-    await page.getByRole('button', { name: 'Account menu for admin' }).click();
+    const logout = page.getByRole('button', { name: 'Log out' });
+    await expect(logout).toBeVisible();
+
+    // The bar takes the row's place, so a resize would nudge the whole footer.
+    const rowBox = await logout.boundingBox();
+    await logout.click();
+    await expect(page.locator('.account-confirm')).toBeVisible();
+    const barBox = await page.locator('.account-confirm').boundingBox();
+    expect(barBox!.height).toBe(rowBox!.height);
+    expect(barBox!.width).toBe(rowBox!.width);
+
+    await page.locator('.account-confirm-no').click();
+    await expect(logout).toBeVisible();
+    expect(logoutMethods).toEqual([]);
+
+    await logout.click();
+    await expect(page.locator('.account-confirm')).toBeVisible();
     await Promise.all([
       page.waitForURL((url) => new URL(url).pathname === '/login'),
-      page.getByRole('menuitem', { name: 'Log out' }).click(),
+      page.locator('.account-confirm-yes').click(),
     ]);
 
     expect(logoutMethods).toEqual(['POST']);
@@ -87,17 +102,24 @@ test.describe('Library workflows', () => {
       await page.goto('/');
       const rail = page.locator('#continue-reading');
       await expect(rail).toBeVisible();
-      await expect(
-        rail.locator('.continue-reading-card', { hasText: target.title }),
-      ).toBeVisible();
-      await expect(rail).toContainText('37%');
+      const card = rail.locator('.continue-reading-card', { hasText: target.title });
+      await expect(card).toBeVisible();
+      // The card shows progress as a bar; the reading of it is the accessible name.
+      await expect(card).toHaveAttribute('aria-label', /37% read/);
       await page.screenshot({ path: 'screenshots/continue-reading.png', fullPage: true });
 
-      const readPath = `/read/asset/${encodeURIComponent(target.assetId)}`;
-      await expect(
-        rail.locator('.continue-reading-card', { hasText: target.title }),
-      ).toHaveAttribute('href', readPath);
+      // ?from=library so closing the reader returns to the rail, not to the book.
+      const readPath = `/read/asset/${encodeURIComponent(target.assetId)}?from=library`;
+      await expect(card).toHaveAttribute('href', readPath);
       expect((await page.request.get(readPath)).ok()).toBe(true);
+
+      await card.click();
+      await expect(page).toHaveURL(/\/read\/asset\//);
+      const closeReader = page.getByRole('link', { name: 'Close reader' });
+      await expect(closeReader).toHaveAttribute('href', '/');
+      await closeReader.click();
+      await expect(page).toHaveURL((url) => url.pathname === '/');
+      await expect(page.locator('#continue-reading')).toBeVisible();
 
       // The library DOM is replaced on each SPA visit. Return to it in the same
       // document and prove the newly rendered dismiss button owns a listener.
@@ -126,10 +148,9 @@ test.describe('Library workflows', () => {
 
   test('Storage settings shows the books folder health line and scans on demand', async ({ page }) => {
     await page.goto('/');
-    await expect(page.locator('.account-trigger')).toBeVisible();
+    await expect(page.locator('.account-settings')).toBeVisible();
 
-    await page.locator('.account-trigger').click();
-    await page.getByRole('menuitem', { name: 'Settings' }).click();
+    await page.locator('.account-settings').click();
 
     const modal = page.locator('.settings-modal');
     await expect(modal).toBeVisible();
@@ -175,9 +196,8 @@ test.describe('Library workflows', () => {
     // General shows the mode control (default Manual) and a backlog
     // line because write-back is a global library policy, not a path control.
     await page.goto('/');
-    await expect(page.locator('.account-trigger')).toBeVisible();
-    await page.locator('.account-trigger').click();
-    await page.getByRole('menuitem', { name: 'Settings' }).click();
+    await expect(page.locator('.account-settings')).toBeVisible();
+    await page.locator('.account-settings').click();
     const settings = page.locator('.settings-modal');
     const writebackRow = settings.locator('.settings-row', { hasText: 'Metadata write-back' });
     await expect(writebackRow).toBeVisible();
@@ -512,7 +532,12 @@ test.describe('Library workflows', () => {
     const renamedRow = page.locator('#shelf-nav .shelf-nav-row', { hasText: 'Renamed Shelf' });
     await renamedRow.hover();
     await renamedRow.locator('.shelf-actions-btn').click();
+    const shelfRowH = (await page.locator('#shelf-nav .shelf-nav-item').first().boundingBox())!
+      .height;
     await page.getByRole('menuitem', { name: 'Delete' }).click();
+    const shelfBarH = (await page.locator('#shelf-nav .shelf-delete-confirm').boundingBox())!
+      .height;
+    expect(shelfBarH).toBe(shelfRowH);
     await page.locator('#shelf-nav .shelf-delete-yes').click();
     await expect(
       page.locator('#shelf-nav .shelf-nav-item', { hasText: 'Renamed Shelf' }),

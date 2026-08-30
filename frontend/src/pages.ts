@@ -4,9 +4,9 @@ export function renderLibraryPage(): string {
     return `
         <section id="continue-reading" class="continue-reading" aria-labelledby="continue-reading-title" hidden>
             <div class="section-heading-row">
-                <h1 id="continue-reading-title">Continue reading</h1>
+                <h2 id="continue-reading-title">Continue reading</h2>
                 <button id="continue-reading-dismiss" class="continue-reading-dismiss" type="button" aria-label="Hide Continue reading" title="Hide Continue reading">
-                    ${icon('close', 18)}
+                    ${icon('close', 16)}
                 </button>
             </div>
             <div id="continue-reading-list" class="continue-reading-list"></div>

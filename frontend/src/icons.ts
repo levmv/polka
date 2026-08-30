@@ -21,7 +21,9 @@ export type IconName =
     | 'calendar_month'
     | 'arrow_back'
     | 'delete'
-    | 'content_copy';
+    | 'content_copy'
+    | 'logout'
+    | 'settings';
 
 // icon returns an <svg><use> snippet pointing at the shared sprite. extraClass
 // lets callers attach styling hooks (e.g. 'format-icon').

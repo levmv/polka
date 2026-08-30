@@ -24,7 +24,7 @@ test.describe('Polka read-only browser tests', () => {
 
     await page.goto('/');
     await expect(page.locator('.book-card').first()).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Account menu for admin' })).toBeVisible();
+    await expect(page.locator('.account-name')).toHaveText('admin');
 
     expect(bootstrapRequests).toEqual([]);
   });
