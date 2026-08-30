@@ -18,7 +18,8 @@ test.describe('Reader', () => {
 
       const href = await card.locator('.book-title-link').getAttribute('href');
       if (!href) throw new Error('missing book link');
-      workId = href.split('/').pop() || '';
+      // The href carries the ?from= context; the id is the path alone.
+      workId = (href.split('/').pop() || '').split('?')[0];
       if (!workId) throw new Error('missing work id');
 
       await page.goto(`/read/${workId}`);
@@ -31,7 +32,7 @@ test.describe('Reader', () => {
       await expect(displayToggle).toBeVisible();
       const closeReader = page.getByRole('link', { name: 'Close reader' });
       await expect(closeReader).toBeVisible();
-      await expect(closeReader).toHaveAttribute('href', `/book/${workId.split('?')[0]}`);
+      await expect(closeReader).toHaveAttribute('href', `/book/${workId}`);
       await expect
         .poll(async () => {
           return page.evaluate(() => {

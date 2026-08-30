@@ -36,7 +36,7 @@ export async function login(
     page.waitForURL((url) => new URL(url).pathname !== '/login'),
     page.locator('button[type="submit"]').click(),
   ]);
-  await page.locator('.account-trigger').waitFor();
+  await page.locator('.account-name').waitFor();
 }
 
 export async function loginByRequest(

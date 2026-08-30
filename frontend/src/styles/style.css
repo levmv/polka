@@ -417,7 +417,11 @@ a:hover {
     padding-right: 1.95rem;
 }
 
-.shelf-delete-confirm {
+/* A confirm bar replaces its row in place, so it is pinned to that row's height:
+   its small buttons and the row's label have different natural line boxes, and
+   without the pin confirming visibly nudges everything below. */
+.shelf-delete-confirm,
+.account-confirm {
     display: flex;
     align-items: center;
     gap: 0.35rem;
@@ -425,7 +429,13 @@ a:hover {
     font-size: 0.82rem;
 }
 
-.shelf-delete-text {
+.shelf-delete-confirm {
+    box-sizing: border-box;
+    height: 40px;
+}
+
+.shelf-delete-text,
+.account-confirm-text {
     flex: 1;
     min-width: 0;
     overflow: hidden;
@@ -435,7 +445,9 @@ a:hover {
 }
 
 .shelf-delete-yes,
-.shelf-delete-no {
+.shelf-delete-no,
+.account-confirm-yes,
+.account-confirm-no {
     flex: 0 0 auto;
     padding: 0.15rem 0.45rem;
     border: 0;
@@ -450,12 +462,26 @@ a:hover {
     background: var(--danger-fill);
 }
 
-.shelf-delete-no {
+/* Not the shelf bar's delete red: signing out is reversible. */
+.account-confirm-yes {
+    color: var(--text-main);
+    background: var(--surface-hover);
+    font-weight: 700;
+}
+
+.account-confirm-yes:hover {
+    color: var(--accent);
+    background: var(--accent-soft-strong);
+}
+
+.shelf-delete-no,
+.account-confirm-no {
     color: var(--text-muted);
     background: transparent;
 }
 
-.shelf-delete-no:hover {
+.shelf-delete-no:hover,
+.account-confirm-no:hover {
     color: var(--text-main);
     background: var(--surface-hover);
 }
@@ -466,58 +492,64 @@ a:hover {
     border-top: 1px solid var(--border-color);
 }
 
-.account-trigger {
-    display: grid;
-    grid-template-columns: 32px minmax(0, 1fr) 8px;
+/* A button stays shrink-to-fit even as a flex container, so the width that
+   spans the gutter has to be explicit; without it the hover background stops at
+   the label and the trailing name has no space to be pushed into. */
+.account-row,
+.account-confirm {
+    box-sizing: border-box;
+    width: calc(100% + 1.5rem);
+    margin-inline: -0.75rem;
+    padding-inline: 0.75rem;
+}
+
+.account-row {
+    justify-content: flex-start;
     gap: 0.625rem;
-    align-items: center;
-    width: 100%;
-    min-height: 44px;
-    padding: 0.375rem 0.5rem;
-    color: var(--text-main);
     background: transparent;
     border: 0;
-    border-radius: var(--radius-control);
     cursor: pointer;
     font: inherit;
+    font-weight: 500;
     text-align: left;
 }
 
-.account-trigger:hover,
-.account-trigger:focus-visible,
-.account-trigger[aria-expanded="true"] {
-    background: var(--surface-hover);
+.account-row:focus-visible {
+    background-color: var(--surface-hover);
+    color: var(--text-main);
     outline: 0;
 }
 
-.account-avatar {
-    display: grid;
-    width: 32px;
-    height: 32px;
-    place-items: center;
-    color: var(--card-bg);
-    background: var(--text-main);
-    border-radius: 50%;
+.account-label {
+    flex: 0 0 auto;
+}
+
+.account-logout {
+    height: 36px;
+    padding-block: 0.4rem;
     font-size: 0.85rem;
-    font-weight: 700;
+    font-weight: 400;
+}
+
+/* Pads the 14px glyph back out to Settings' 18px column, so both labels align. */
+.account-logout .icon {
+    margin-inline: 2px;
+}
+
+.account-confirm {
+    height: 36px;
 }
 
 .account-name {
+    flex: 0 1 auto;
     min-width: 0;
+    margin-left: auto;
     overflow: hidden;
-    color: var(--text-main);
-    font-size: 0.95rem;
-    font-weight: 600;
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    font-weight: 400;
     text-overflow: ellipsis;
     white-space: nowrap;
-}
-
-.account-caret {
-    width: 0;
-    height: 0;
-    border-top: 5px solid var(--text-muted);
-    border-right: 4px solid transparent;
-    border-left: 4px solid transparent;
 }
 
 .floating-menu {
@@ -1063,19 +1095,24 @@ body.busy .busy__loader {
     display: none;
 }
 
+/* Labels a block inside a page, not the page, so it borrows the sidebar's
+   section caption (.sidebar-section-header) instead of competing with a page
+   title. The hide control sits with the label rather than at the page's right
+   edge, where it would read as closing the page. */
 .section-heading-row {
     display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 1rem;
-    margin-bottom: 0.85rem;
+    align-items: center;
+    gap: 0.25rem;
+    margin-bottom: 0.6rem;
 }
 
-.section-heading-row h1 {
+.section-heading-row h2 {
     margin: 0;
-    color: var(--text-main);
-    font-size: 1.05rem;
+    color: var(--text-muted);
+    font-size: 0.75rem;
     font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
 }
 
 /* Title of a whole routed page (Series, Authors, Cleanup, Trash), as opposed to
@@ -1124,8 +1161,8 @@ body.busy .busy__loader {
 
 .continue-reading-dismiss {
     display: inline-grid;
-    width: 30px;
-    height: 30px;
+    width: 24px;
+    height: 24px;
     flex: 0 0 auto;
     place-items: center;
     color: var(--text-muted);
@@ -1151,6 +1188,23 @@ body.busy .busy__loader {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
     gap: 0.75rem;
+}
+
+/* Desktop: one row of five slots, matching what the rail fetches, so it stays a
+   band above the library instead of growing with what is in progress. Fixed
+   slots, not auto-fill, so fewer cards don't stretch across the leftover room. */
+@media (min-width: 1200px) {
+    .continue-reading-list {
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+    }
+}
+
+/* Drawer widths: with only a caption up top, the rail no longer fills the strip
+   beside the fixed hamburger, so it clears it instead. */
+@media (max-width: 900px) {
+    .continue-reading:not([hidden]) {
+        margin-top: 3.5rem;
+    }
 }
 
 .continue-reading-card {
@@ -1197,36 +1251,34 @@ body.busy .busy__loader {
     gap: 0.2rem;
 }
 
-.continue-reading-book-title,
-.continue-reading-authors,
-.continue-reading-meta {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
+/* Two lines, because one truncates most titles to their first words. */
 .continue-reading-book-title {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
     color: var(--text-main);
-    font-size: 0.95rem;
-    font-weight: 700;
+    font-size: 0.9rem;
+    font-weight: 600;
 }
 
 .continue-reading-authors {
+    overflow: hidden;
     color: var(--text-muted);
-    font-size: 0.85rem;
-}
-
-.continue-reading-meta {
-    color: var(--text-muted);
-    font-size: 0.78rem;
-    font-weight: 650;
+    font-size: 0.8rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .continue-reading-progress {
     display: block;
     width: 100%;
     height: 4px;
-    margin-top: 0.25rem;
+    /* Bottom of the card, so a two-line title doesn't push one bar out of line
+       with its neighbours. The gap above it comes from the column's own gap:
+       padding here would be painted as track. */
+    margin-top: auto;
     overflow: hidden;
     background: var(--border-color);
     border-radius: 999px;
@@ -1237,6 +1289,56 @@ body.busy .busy__loader {
     height: 100%;
     background: var(--accent);
     border-radius: inherit;
+}
+
+/* Phones: stacked cards own the whole screen, so the rail becomes one swipeable
+   row, each card narrow enough that the next one peeks. */
+@media (max-width: 700px) {
+    .continue-reading-list {
+        display: flex;
+        /* Scrolls inside itself: a sideways-scrolling page strands the fixed
+           hamburger on iOS. */
+        overflow-x: auto;
+        overscroll-behavior-x: contain;
+        scroll-snap-type: x proximity;
+        /* Bleed into the page gutters so the screen edge cuts the peek. */
+        margin-inline: -1rem;
+        padding-inline: 1rem;
+        /* Snapping measures from the padding box; without this the first card
+           snaps over the gutter. */
+        scroll-padding-inline: 1rem;
+        /* Room for the card's focus border. */
+        padding-block: 2px;
+    }
+
+    /* Cover over title, not beside it: the title then owns the full card width
+       instead of the sliver a horizontal card leaves it, and the card narrows to
+       a cover, so more of the shelf is visible at once. */
+    .continue-reading-card {
+        display: flex;
+        box-sizing: border-box;
+        flex: 0 0 112px;
+        flex-direction: column;
+        min-height: 0;
+        padding: 0;
+        gap: 0.4rem;
+        background: transparent;
+        border-color: transparent;
+        scroll-snap-align: start;
+    }
+
+    .continue-reading-cover {
+        width: 112px;
+        height: 168px;
+    }
+
+    .continue-reading-card .continue-reading-authors {
+        display: none;
+    }
+
+    .continue-reading-book-title {
+        font-size: 0.8rem;
+    }
 }
 
 .search-container {
@@ -1278,6 +1380,11 @@ body.busy .busy__loader {
         gap: 0.75rem;
         min-height: var(--toolbar-control-height);
     }
+
+    /* Unless the rail is on: it took the strip, so this is an ordinary row. */
+    .continue-reading:not([hidden]) + .search-container .search-row {
+        padding-left: 0;
+    }
 }
 
 /* Phones: one row no longer fits, so the view controls take the strip beside
@@ -1294,6 +1401,11 @@ body.busy .busy__loader {
         padding-left: 4rem;
         gap: 0.6rem;
         justify-content: flex-end;
+    }
+
+    /* Same as above: with the rail on, the strip is already spoken for. */
+    .continue-reading:not([hidden]) + .search-container .library-view-controls {
+        padding-left: 0;
     }
 
     .search-field {
@@ -4460,7 +4572,7 @@ textarea.form-input {
 /* Detail page on narrow screens: collapse the two columns into one flow and
    reorder the pieces. display:contents dissolves the column wrappers so the
    cover, header, rail and description become direct flex items we can order:
-   cover -> title/authors -> actions -> reading state -> Details + tags ->
+   cover -> title/authors -> reading state -> actions -> Details + tags ->
    description -> footer. Every piece needs an explicit order; one left out
    keeps the initial 0 and jumps ahead of the cover. This block
    must follow the base .detail-layout* rules above — @media does not raise
@@ -4468,9 +4580,10 @@ textarea.form-input {
 @media (max-width: 768px) {
     .detail-layout {
         flex-direction: column;
-        /* The two-column gutter is too much air once the blocks are stacked,
-           and the cover and the title under it read as one unit. */
-        gap: 1.25rem;
+        /* The two-column gutter is too much air once the blocks are stacked, and
+           it now applies between every block, so the per-block bottom margins
+           below give way to it instead of stacking on top. */
+        gap: 0.75rem;
         /* Stacked blocks span the column instead of shrinking to their content.
            The centred title needs a full-width box to centre inside, and the
            footer's hairline needs one to divide anything. */
@@ -4487,20 +4600,32 @@ textarea.form-input {
         max-width: 180px;
         margin-inline: auto;
     }
-    .detail-header {
-        order: 2;
-        text-align: center;
-    }
     /* Nothing to align the capitals against once the cover sits above the
        title rather than beside it. */
     .detail-title {
         margin-top: 0;
     }
-    .detail-actions {
-        order: 3;
+    .detail-header {
+        order: 2;
+        margin-bottom: 0;
+        text-align: center;
     }
+    /* Above the buttons and centred with the title: below them it read as a
+       stray label hanging off the Read button. */
     .detail-reading-state {
+        order: 3;
+        display: flex;
+        justify-content: center;
+        margin-bottom: 0;
+    }
+    .detail-reading-status {
+        text-align: center;
+    }
+    .detail-actions {
         order: 4;
+        /* The one real break in the column: identity and its actions above,
+           the book's details below. */
+        margin-bottom: 0.75rem;
     }
     .detail-rail {
         order: 5;
@@ -4583,26 +4708,9 @@ body.modal_open {
     width: min(1040px, calc(100vw - 32px));
 }
 
-.modal-close {
-    position: absolute;
-    top: 8px;
-    right: 8px;
-    z-index: 2;
-    display: inline-grid;
-    width: 38px;
-    height: 38px;
-    padding: 0;
-    place-items: center;
-    color: var(--text-main);
-    background: transparent;
-    border: 0;
-    border-radius: 4px;
-    cursor: pointer;
-}
-
 /* The book page closes the same way a dialog does — the list it was opened
-   from is still there, held, and comes back exactly as it was left. Same
-   button, so the gesture is learned once. */
+   from is still there, held, and comes back exactly as it was left. Same button
+   in the same corner, so the gesture is learned once. */
 .modal-close,
 .page-close {
     position: absolute;
@@ -4633,13 +4741,25 @@ body.modal_open {
 .modal-close svg {
     width: 26px;
     height: 26px;
-}
-
-.modal-close svg {
-    width: 26px;
-    height: 26px;
     fill: currentColor;
     stroke: none;
+}
+
+/* Alone in the page margin the dialog's weight reads as an accent, so the cross
+   steps down a size and stays quiet until pointed at. The button box is
+   unchanged: same target and hover chip as the dialog's. */
+.page-close {
+    color: var(--text-muted);
+}
+
+.page-close svg {
+    width: 22px;
+    height: 22px;
+}
+
+.page-close:hover,
+.page-close:focus-visible {
+    color: var(--text-main);
 }
 
 .modal-header,

@@ -1,4 +1,3 @@
-import { initSidebarAccount } from './account-menu';
 import { fetchCurrentUser, fetchUserSettings } from './api';
 import {
     historyStateWithScroll,
@@ -31,6 +30,7 @@ import {
     type ScrollPosition,
     setAppNavigate,
 } from './router';
+import { initSidebarAccount } from './sidebar-account';
 import { initSidebarCuration } from './sidebar-curation';
 import { initSidebarShelves, syncSidebarShelfActive } from './sidebar-shelves';
 import { initSidebarUpload } from './sidebar-upload';
@@ -121,7 +121,7 @@ document.addEventListener('DOMContentLoaded', () => {
         overlay.addEventListener('click', () => setSidebarOpen(false));
     }
 
-    initSidebarAccount();
+    initSidebarAccount(() => setSidebarOpen(false));
     const currentUserPromise = fetchCurrentUser();
     initSidebarUpload(currentUserPromise);
     initSidebarShelves();

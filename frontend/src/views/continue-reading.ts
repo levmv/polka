@@ -2,7 +2,10 @@ import { fetchContinueReading, saveUserSettings } from '../api';
 import { coverUrl } from '../cover';
 import type { ContinueReadingItem } from '../types';
 
-const CONTINUE_READING_LIMIT = 8;
+// One desktop row's worth; older books belong to the library view below.
+const CONTINUE_READING_LIMIT = 5;
+
+const MIN_VISIBLE_PROGRESS_PERCENT = 3;
 
 // The rail belongs to one library instance, and so does its data. A retained
 // library brings its own rendered rail back with it, so a cache shared between
@@ -109,8 +112,13 @@ export function createContinueReadingRail(
 function createCard(item: ContinueReadingItem): HTMLElement {
     const link = document.createElement('a');
     link.className = 'continue-reading-card';
-    link.href = `/read/asset/${encodeURIComponent(item.asset_id)}`;
-    link.setAttribute('aria-label', `Continue reading ${item.title}`);
+    // ?from= so the reader closes back to this rail, not to the book's page.
+    link.href = `/read/asset/${encodeURIComponent(item.asset_id)}?from=library`;
+    const progressPercent = Math.round(clampProgress(item.progress) * 100);
+    link.setAttribute(
+        'aria-label',
+        `Continue reading ${item.title}, ${progressLabel(progressPercent)}`,
+    );
 
     const coverSlot = document.createElement('span');
     coverSlot.className = 'continue-reading-cover';
@@ -133,20 +141,14 @@ function createCard(item: ContinueReadingItem): HTMLElement {
     authors.className = 'continue-reading-authors';
     authors.textContent = item.authors_display;
 
-    const progress = clampProgress(item.progress);
-    const progressPercent = Math.round(progress * 100);
-    const meta = document.createElement('span');
-    meta.className = 'continue-reading-meta';
-    meta.textContent = progressLabel(progressPercent);
-
     const bar = document.createElement('span');
     bar.className = 'continue-reading-progress';
     const fill = document.createElement('span');
     fill.className = 'continue-reading-progress-fill';
-    fill.style.width = progressPercent > 0 ? `${Math.max(3, progressPercent)}%` : '0%';
+    fill.style.width = `${Math.max(MIN_VISIBLE_PROGRESS_PERCENT, progressPercent)}%`;
     bar.appendChild(fill);
 
-    info.append(title, authors, meta, bar);
+    info.append(title, authors, bar);
     link.append(coverSlot, info);
     return link;
 }

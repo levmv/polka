@@ -45,6 +45,21 @@ test.describe('Responsive layout (iPad viewport)', () => {
 
   });
 
+  test('Settings opens from the drawer and closes it on the way', async ({ page }) => {
+    await page.goto('/');
+
+    const sidebar = page.locator('#app-sidebar');
+    const overlay = page.locator('#sidebar-overlay');
+    await page.locator('#sidebar-toggle').click();
+    await expect(sidebar).toHaveClass(/open/);
+
+    // Or the modal covers a drawer still open behind it.
+    await page.locator('.account-settings').click();
+    await expect(page.locator('.settings-modal')).toBeVisible();
+    await expect(sidebar).not.toHaveClass(/open/);
+    await expect(overlay).not.toHaveClass(/open/);
+  });
+
   test('Sidebar drawer breakpoint covers portrait iPad Air but not large portrait tablets', async ({
     page,
   }) => {
