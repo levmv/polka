@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"os"
 
 	"github.com/levmv/polka/internal/web"
@@ -32,10 +33,14 @@ func runServe(ctx context.Context, dataDir string, args []string) error {
 
 	// Auth is mandatory. The bootstrap creds (if given) seed the first account;
 	// otherwise the first-run setup page does, so serve always starts.
-	return web.Serve(ctx, web.Config{
+	err := web.Serve(ctx, web.Config{
 		DataDir:       dataDir,
 		Addr:          *addr,
 		AdminUser:     au,
 		AdminPassword: ap,
 	})
+	if errors.Is(err, context.Canceled) && errors.Is(ctx.Err(), context.Canceled) {
+		return nil
+	}
+	return err
 }

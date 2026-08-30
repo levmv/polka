@@ -20,6 +20,7 @@
 /internal/web/static/pdf.worker.js
 /internal/web/static/pdfjs/
 /internal/web/static/ThirdPartyNotices.txt
+/internal/web/static/LICENSE.txt
 
 # Compiled Go test binaries
 *.test

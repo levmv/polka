@@ -1,0 +1,109 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    name: Build Linux release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Validate tag
+        shell: bash
+        run: |
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Release tags must use vMAJOR.MINOR.PATCH, optionally followed by a prerelease suffix." >&2
+            exit 1
+          fi
+
+      - name: Run checks
+        run: |
+          make test
+          git diff --exit-code
+
+      - name: Build release binary
+        shell: bash
+        run: |
+          asset="polka-linux-amd64"
+
+          GOOS=linux GOARCH=amd64 make build POLKA_VERSION="$GITHUB_REF_NAME"
+          ./polka --help 2>&1 | grep -F "polka $GITHUB_REF_NAME"
+          ldd_status=0
+          ldd_output="$(ldd ./polka 2>&1)" || ldd_status=$?
+          if [[ $ldd_status -eq 0 || "$ldd_output" != *"not a dynamic executable"* ]]; then
+            echo "Release binary is dynamically linked:" >&2
+            echo "$ldd_output" >&2
+            exit 1
+          fi
+
+          mkdir -p dist
+          install -m 0755 polka "dist/$asset"
+          (cd dist && sha256sum "$asset" > SHA256SUMS && sha256sum -c SHA256SUMS)
+
+      - name: Attest release files
+        uses: actions/attest@v4
+        with:
+          subject-path: dist/*
+
+      - name: Pass release files to publisher
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-files
+          path: dist/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download release files
+        uses: actions/download-artifact@v8
+        with:
+          name: release-files
+          path: dist
+
+      - name: Verify release files
+        working-directory: dist
+        run: sha256sum -c SHA256SUMS
+
+      - name: Publish release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          args=(release create "$GITHUB_REF_NAME" --verify-tag --generate-notes)
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+            args+=(--prerelease)
+          fi
+          gh "${args[@]}" dist/*
