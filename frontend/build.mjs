@@ -58,8 +58,10 @@ for (const directory of ['cmaps', 'iccs', 'standard_fonts', 'wasm']) {
     });
 }
 
-// Keep the distribution self-contained by embedding the canonical notice file.
+// Keep the distribution self-contained by embedding its license and the
+// canonical third-party notice file.
 await rm(`${staticRoot}/licenses`, { recursive: true, force: true });
+await copyFile('LICENSE', `${staticRoot}/LICENSE.txt`);
 await copyFile('ThirdPartyNotices.txt', `${staticRoot}/ThirdPartyNotices.txt`);
 
 // Precompress the assets a browser pulls on the browse and reading paths, so a

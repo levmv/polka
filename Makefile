@@ -55,8 +55,8 @@ test: pdfium-wasm
 	npm run test:unit
 	npm run test:browser-list
 	npm run build
-	go vet ./...
-	go test ./...
+	CGO_ENABLED=0 go vet -tags nodynamic ./...
+	CGO_ENABLED=0 go test -tags nodynamic ./...
 
 # Derivation instructions and provenance live in internal/pdfcover/README.md.
 pdfium-wasm: node-deps
@@ -67,7 +67,7 @@ pdfium-wasm-verify:
 
 build: pdfium-wasm
 	$(MAKE) frontend
-	CGO_ENABLED=0 go build -ldflags "-X github.com/levmv/polka/internal/version.Version=$(POLKA_VERSION)" -o polka .
+	CGO_ENABLED=0 go build -trimpath -tags nodynamic -ldflags "-s -w -X github.com/levmv/polka/internal/version.Version=$(POLKA_VERSION)" -o polka .
 
 # Three isolated servers keep stateful browser lanes independent; pagination
 # uses a separate filler-only library (>50 books).
