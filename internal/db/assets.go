@@ -25,8 +25,9 @@ type AssetRow struct {
 
 type PrimaryAssetRow struct {
 	AssetRow
-	Filename string
-	Title    string
+	Filename      string
+	Title         string
+	CurrentSHA256 string
 }
 
 type AssetWithAuthorRow struct {
@@ -160,12 +161,13 @@ func PrimaryAssetForWork(queryer Queryer, scope VisibilityScope, workID string) 
 	var isPrimary, canRead int
 	where, args := scope.AppendWorkWhere("w.id = ? AND w.deleted_at IS NULL AND a.is_primary = 1", "w.id", workID)
 	err := queryer.QueryRow(`
-			SELECT w.id, w.title, a.id, a.extension, a.format, a.storage_path, a.filename, a.is_primary, a.can_read
+			SELECT w.id, w.title, a.id, a.extension, a.format, a.storage_path, a.filename, a.is_primary, a.can_read,
+			       COALESCE(a.current_sha256, '')
 			FROM works w
 			JOIN assets a ON a.work_id = w.id
 			WHERE `+where+`
 			LIMIT 1
-	`, args...).Scan(&a.WorkID, &a.Title, &a.ID, &a.Extension, &formatKey, &a.StoragePath, &a.Filename, &isPrimary, &canRead)
+	`, args...).Scan(&a.WorkID, &a.Title, &a.ID, &a.Extension, &formatKey, &a.StoragePath, &a.Filename, &isPrimary, &canRead, &a.CurrentSHA256)
 	if err != nil {
 		return PrimaryAssetRow{}, err
 	}

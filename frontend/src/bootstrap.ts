@@ -3,6 +3,7 @@ import type { CurrentUser, UserSettings } from './types';
 interface AppBootstrap {
     me?: CurrentUser;
     settings?: UserSettings;
+    version?: string;
     send_enabled?: boolean;
 }
 
@@ -26,6 +27,10 @@ export function takeBootstrapUserSettings(): UserSettings | undefined {
     const value = data.settings;
     delete data.settings;
     return value;
+}
+
+export function appVersion(): string {
+    return readBootstrap().version || '';
 }
 
 // Unlike the values above this is app-wide state an admin can flip mid-session,

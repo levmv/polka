@@ -29,6 +29,7 @@ export interface FoliateTOCItem {
 
 export interface FoliateBook {
     toc?: FoliateTOCItem[];
+    sections?: Array<{ id?: string }>;
 }
 
 interface FoliateComicSection {
@@ -636,6 +637,69 @@ export function setFoliateDocumentJustification(doc: Document, relaxed: boolean)
         justified[i].style.textAlign = 'start';
     }
     doc.documentElement?.setAttribute(JUSTIFY_DOCUMENT_STATE_ATTR, 'relaxed');
+}
+
+const COVER_SECTION_RE = /(?:^|[/_\-.])cover(?:page|image)?(?:[/_\-.]|$)/i;
+const COVER_MARKER_RE = /(?:^|[\s_-])cover(?:[\s_-]|page|image|$)/i;
+
+export function fitFoliateCoverDocument(
+    doc: Document,
+    sectionID = '',
+    sectionIndex?: number,
+): void {
+    const root = doc.documentElement;
+    const body = doc.body;
+    if (!root || !body || !isFoliateCoverDocument(root, body, sectionID, sectionIndex)) return;
+
+    const svg = body.querySelector<SVGSVGElement>('svg[viewBox]');
+    if (!svg?.querySelector('image')) return;
+
+    preserveSVGImageAspectRatio(svg);
+    for (const image of svg.querySelectorAll<SVGImageElement>('image')) {
+        preserveSVGImageAspectRatio(image);
+    }
+}
+
+function isFoliateCoverDocument(
+    root: HTMLElement,
+    body: HTMLElement,
+    sectionID: string,
+    sectionIndex?: number,
+): boolean {
+    if (COVER_SECTION_RE.test(sectionID)) return true;
+    for (const element of [root, body, body.firstElementChild]) {
+        if (!element) continue;
+        const marker = [
+            element.getAttribute('id'),
+            element.getAttribute('class'),
+            element.getAttribute('epub:type'),
+            element.getAttribute('role'),
+        ]
+            .filter(Boolean)
+            .join(' ');
+        if (COVER_MARKER_RE.test(marker)) return true;
+    }
+    return sectionIndex === 0 && isSoleDocumentGraphic(body);
+}
+
+function isSoleDocumentGraphic(body: HTMLElement): boolean {
+    const first = body.firstElementChild;
+    if (!first || first.nextElementSibling) return false;
+    let element: Element = first;
+    const wrappers = new Set(['a', 'div', 'figure', 'p', 'section']);
+    while (wrappers.has(element.localName)) {
+        const child: Element | null = element.firstElementChild;
+        if (!child || child.nextElementSibling) return false;
+        element = child;
+    }
+    return element.localName === 'svg' || element.localName === 'img';
+}
+
+function preserveSVGImageAspectRatio(element: SVGSVGElement | SVGImageElement): void {
+    const value = element.getAttribute('preserveAspectRatio')?.trim().toLowerCase() || '';
+    if (value.split(/\s+/).includes('none')) {
+        element.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+    }
 }
 
 function restoreFoliateDocumentJustification(doc: Document): void {

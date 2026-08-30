@@ -1,7 +1,9 @@
 package web
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"io"
 	"net/http"
@@ -12,6 +14,7 @@ import (
 	"github.com/levmv/polka/internal/converter"
 	"github.com/levmv/polka/internal/db"
 	"github.com/levmv/polka/internal/format"
+	"github.com/levmv/polka/internal/version"
 )
 
 type readerPageData struct {
@@ -33,11 +36,12 @@ type readerPageData struct {
 }
 
 type readerPageAsset struct {
-	WorkID    string
-	AssetID   string
-	Title     string
-	Extension string
-	Format    format.Format
+	WorkID        string
+	AssetID       string
+	Title         string
+	Extension     string
+	Format        format.Format
+	CurrentSHA256 string
 }
 
 func (s *Server) handleRead(w http.ResponseWriter, r *http.Request) {
@@ -63,11 +67,12 @@ func (s *Server) handleRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	renderReaderPage(w, readerPageAsset{
-		WorkID:    asset.WorkID,
-		AssetID:   asset.ID,
-		Title:     asset.Title,
-		Extension: asset.Extension,
-		Format:    asset.Format,
+		WorkID:        asset.WorkID,
+		AssetID:       asset.ID,
+		Title:         asset.Title,
+		Extension:     asset.Extension,
+		Format:        asset.Format,
+		CurrentSHA256: asset.CurrentSHA256,
 	})
 }
 
@@ -89,11 +94,12 @@ func (s *Server) handleReadAssetPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	renderReaderPage(w, readerPageAsset{
-		WorkID:    asset.WorkID,
-		AssetID:   assetID,
-		Title:     asset.Title,
-		Extension: asset.Extension,
-		Format:    asset.Format,
+		WorkID:        asset.WorkID,
+		AssetID:       assetID,
+		Title:         asset.Title,
+		Extension:     asset.Extension,
+		Format:        asset.Format,
+		CurrentSHA256: asset.CurrentSHA256,
 	})
 }
 
@@ -107,22 +113,77 @@ func renderReaderPage(w http.ResponseWriter, asset readerPageAsset) {
 		Title:           asset.Title,
 		Extension:       strings.TrimPrefix(strings.ToUpper(ext), "."),
 		TransportFormat: readerTransportFormat(asset.Format),
-		ReadURL:         "/read/assets/" + asset.AssetID,
-		FallbackURL:     readerFallbackURL(asset.AssetID, asset.Format),
+		ReadURL:         readerAssetURL(asset.AssetID, asset.Format, asset.CurrentSHA256),
+		FallbackURL:     readerFallbackURL(asset.AssetID, asset.Format, asset.CurrentSHA256),
 		IsPDF:           reader == format.ReaderPDF,
 		UsesFoliate:     reader == format.ReaderFoliate,
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Content-Security-Policy", readerContentSecurityPolicy)
+	// The shell is cheap and carries the current content-versioned asset URLs.
+	// Revalidate it so a cached page cannot keep pointing at an older book body.
+	w.Header().Set("Cache-Control", "private, no-cache")
 	renderPage(w, readerTmpl, "reader.html", data)
 }
 
-func readerFallbackURL(assetID string, kind format.Format) string {
+func readerFallbackURL(assetID string, kind format.Format, currentSHA256 string) string {
 	if kind != format.FormatEPUB || !converter.CanConvert(kind, converter.TargetKEPUB) {
 		return ""
 	}
-	return "/download/" + assetID + "/as/kepub"
+	return versionedURL("/download/"+assetID+"/as/kepub", conversionCacheVersion(currentSHA256))
+}
+
+func readerAssetURL(assetID string, kind format.Format, currentSHA256 string) string {
+	version := assetCacheVersion(currentSHA256)
+	if kind == format.FormatCBR || kind == format.FormatCB7 {
+		version = conversionCacheVersion(currentSHA256)
+	}
+	return versionedURL("/read/assets/"+assetID, version)
+}
+
+const assetCacheVersionHexLength = 16
+
+func assetCacheVersion(currentSHA256 string) string {
+	if len(currentSHA256) < assetCacheVersionHexLength {
+		return ""
+	}
+	return currentSHA256[:assetCacheVersionHexLength]
+}
+
+func versionedAssetURL(baseURL, currentSHA256 string) string {
+	return versionedURL(baseURL, assetCacheVersion(currentSHA256))
+}
+
+func versionedURL(baseURL, version string) string {
+	if version == "" {
+		return baseURL
+	}
+	return baseURL + "?v=" + version
+}
+
+func conversionCacheVersion(currentSHA256 string) string {
+	if len(currentSHA256) < assetCacheVersionHexLength || version.Version == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(currentSHA256 + "\x00" + version.Version))
+	return hex.EncodeToString(sum[:assetCacheVersionHexLength/2])
+}
+
+func setVersionedAssetCacheControl(w http.ResponseWriter, r *http.Request, currentSHA256 string) {
+	setCacheControlForVersion(w, r, assetCacheVersion(currentSHA256))
+}
+
+func setVersionedConversionCacheControl(w http.ResponseWriter, r *http.Request, currentSHA256 string) {
+	setCacheControlForVersion(w, r, conversionCacheVersion(currentSHA256))
+}
+
+func setCacheControlForVersion(w http.ResponseWriter, r *http.Request, version string) {
+	if version != "" && r.URL.Query().Get("v") == version {
+		w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-cache")
 }
 
 func readerTransportFormat(kind format.Format) string {
@@ -165,7 +226,8 @@ func (s *Server) handleReadAsset(w http.ResponseWriter, r *http.Request) {
 	if asset.Format == format.FormatCBR || asset.Format == format.FormatCB7 {
 		// Foliate reads ZIP comic archives. Keep the original archive asset as the
 		// source of truth and normalize a bounded temporary CBZ for this read.
-		http.Redirect(w, r, "/download/"+assetID+"/as/cbz", http.StatusTemporaryRedirect)
+		setVersionedConversionCacheControl(w, r, asset.CurrentSHA256)
+		http.Redirect(w, r, versionedURL("/download/"+assetID+"/as/cbz", conversionCacheVersion(asset.CurrentSHA256)), http.StatusTemporaryRedirect)
 		return
 	}
 
@@ -175,20 +237,25 @@ func (s *Server) handleReadAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if asset.Format == format.FormatFB2 {
-		s.serveFB2ReadAsset(w, asset, fullPath)
+		s.serveFB2ReadAsset(w, r, asset, fullPath)
 		return
 	}
-	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
-		http.Error(w, "File not found on disk", http.StatusNotFound)
+	if _, err := os.Stat(fullPath); err != nil {
+		if os.IsNotExist(err) {
+			http.Error(w, "File not found on disk", http.StatusNotFound)
+			return
+		}
+		serverError(w, err)
 		return
 	}
 
+	setVersionedAssetCacheControl(w, r, asset.CurrentSHA256)
 	w.Header().Set("Content-Type", format.MediaTypeForExtension(asset.Extension))
 	w.Header().Set("Content-Disposition", fileContentDisposition("inline", asset.Filename))
 	http.ServeFile(w, r, fullPath)
 }
 
-func (s *Server) serveFB2ReadAsset(w http.ResponseWriter, asset assetFileRow, fullPath string) {
+func (s *Server) serveFB2ReadAsset(w http.ResponseWriter, r *http.Request, asset assetFileRow, fullPath string) {
 	f, err := os.Open(fullPath)
 	if os.IsNotExist(err) {
 		http.Error(w, "File not found on disk", http.StatusNotFound)
@@ -215,6 +282,7 @@ func (s *Server) serveFB2ReadAsset(w http.ResponseWriter, asset assetFileRow, fu
 	}
 	defer source.Reader.Close()
 
+	setVersionedAssetCacheControl(w, r, asset.CurrentSHA256)
 	w.Header().Set("Content-Type", "application/x-fictionbook+xml")
 	w.Header().Set("Content-Disposition", fileContentDisposition("inline", format.FB2PlainFilename(asset.Filename)))
 	if source.ContentLength > 0 {

@@ -12,6 +12,7 @@ import (
 	"github.com/levmv/polka/internal/db"
 	"github.com/levmv/polka/internal/delivery"
 	"github.com/levmv/polka/internal/format"
+	"github.com/levmv/polka/internal/version"
 )
 
 // renderPage executes an embedded HTML template, logging a render failure. By
@@ -51,6 +52,7 @@ type appPageData struct {
 type appBootstrapDTO struct {
 	Me       *MeDTO          `json:"me,omitzero"`
 	Settings UserSettingsDTO `json:"settings"`
+	Version  string          `json:"version"`
 	// SendEnabled travels with the page so the first render can omit Send without
 	// another request.
 	SendEnabled bool `json:"send_enabled"`
@@ -105,6 +107,7 @@ func (s *Server) appPageData(r *http.Request) (appPageData, error) {
 	payload, err := json.Marshal(appBootstrapDTO{
 		Me:          me,
 		Settings:    userSettingsDTO(settings),
+		Version:     version.Version,
 		SendEnabled: sendEnabled,
 	}, jsontext.EscapeForHTML(true))
 	if err != nil {

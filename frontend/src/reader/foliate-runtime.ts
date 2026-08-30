@@ -14,6 +14,7 @@ import {
     type FoliateLoadDetail,
     type FoliateViewElement,
     fetchFoliateBookFile,
+    fitFoliateCoverDocument,
     openFoliateBookFile,
     setFoliateDocumentJustification,
     suppressTransientFoliateRenderErrors,
@@ -178,6 +179,8 @@ function createReaderFoliateView(page: HTMLElement, stage: HTMLElement): Foliate
 function wireFoliateDocumentStyling(page: HTMLElement, view: FoliateViewElement): void {
     view.addEventListener('load', (event) => {
         const detail = (event as CustomEvent<FoliateLoadDetail>).detail;
+        const sectionID = view.book?.sections?.[detail.index ?? -1]?.id;
+        fitFoliateCoverDocument(detail.doc, sectionID, detail.index);
         setFoliateDocumentJustification(detail.doc, page.dataset.readerStyle !== 'original');
     });
 }

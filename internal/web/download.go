@@ -165,28 +165,39 @@ func (s *Server) handleDownloadAs(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Disposition", fileContentDisposition("attachment", convertedDownloadFilename(asset.Filename, target)))
 	w.Header().Set("Content-Length", strconv.FormatInt(convertedSize, 10))
+	if conversionDependsOnlyOnSource(asset.Format, target) {
+		setVersionedConversionCacheControl(w, r, asset.CurrentSHA256)
+	} else {
+		w.Header().Set("Cache-Control", "private, no-cache")
+	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = io.Copy(w, ready)
 }
 
+func conversionDependsOnlyOnSource(from format.Format, target converter.Target) bool {
+	return from == format.FormatEPUB && target == converter.TargetKEPUB ||
+		(from == format.FormatCBR || from == format.FormatCB7) && target == converter.TargetCBZ
+}
+
 type assetFileRow struct {
-	StoragePath  string
-	WorkID       string
-	Filename     string
-	Extension    string
-	Format       format.Format
-	CanRead      bool
-	KOReaderHash string
-	Title        string
-	SortTitle    string
-	Language     string
-	Description  string
-	Publisher    string
-	Date         string
-	Identifier   string
-	Series       string
-	SeriesIndex  float64
-	Tags         string
+	StoragePath   string
+	WorkID        string
+	Filename      string
+	Extension     string
+	Format        format.Format
+	CanRead       bool
+	CurrentSHA256 string
+	KOReaderHash  string
+	Title         string
+	SortTitle     string
+	Language      string
+	Description   string
+	Publisher     string
+	Date          string
+	Identifier    string
+	Series        string
+	SeriesIndex   float64
+	Tags          string
 }
 
 func (s *Server) assetFile(assetID string) (assetFileRow, error) {
@@ -195,6 +206,7 @@ func (s *Server) assetFile(assetID string) (assetFileRow, error) {
 	var canRead int
 	err := s.db.QueryRow(`
 		SELECT a.storage_path, a.work_id, a.filename, a.extension, a.format, a.can_read,
+		       COALESCE(a.current_sha256, ''),
 		       COALESCE(a.koreader_hash, ''),
 		       w.title, w.sort_title, COALESCE(w.language, ''),
 		       COALESCE(w.description, ''), COALESCE(w.publisher, ''),
@@ -205,7 +217,7 @@ func (s *Server) assetFile(assetID string) (assetFileRow, error) {
 		JOIN works w ON w.id = a.work_id
 		WHERE a.id = ?
 	`, assetID).Scan(
-		&a.StoragePath, &a.WorkID, &a.Filename, &a.Extension, &formatKey, &canRead, &a.KOReaderHash,
+		&a.StoragePath, &a.WorkID, &a.Filename, &a.Extension, &formatKey, &canRead, &a.CurrentSHA256, &a.KOReaderHash,
 		&a.Title, &a.SortTitle, &a.Language, &a.Description, &a.Publisher,
 		&a.Date, &a.Identifier, &a.Series, &a.SeriesIndex, &a.Tags,
 	)
