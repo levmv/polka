@@ -26,6 +26,7 @@ func TestParseOPF(t *testing.T) {
     <meta name="calibre:title_sort" content="Foundation, The"/>
     <meta name="calibre:series" content="Foundation"/>
     <meta name="calibre:series_index" content="1.0"/>
+    <meta name="calibre:timestamp" content="2014-01-08T22:00:58.123456+00:00"/>
   </metadata>
 </package>`
 
@@ -57,6 +58,27 @@ func TestParseOPF(t *testing.T) {
 	}
 	if len(meta.Tags) != 1 || meta.Tags[0] != "Science Fiction" {
 		t.Errorf("tags = %v; want [Science Fiction]", meta.Tags)
+	}
+	if meta.CalibreTimestamp != "2014-01-08T22:00:58.123456+00:00" {
+		t.Errorf("calibre timestamp = %q; want import timestamp", meta.CalibreTimestamp)
+	}
+}
+
+func TestParseOPFCalibreTimestampProperty(t *testing.T) {
+	const opf = `<?xml version='1.0' encoding='utf-8'?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" prefix="calibre: https://calibre-ebook.com">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Property Timestamp</dc:title>
+    <meta property="calibre:timestamp">2018-04-03T12:34:56Z</meta>
+  </metadata>
+</package>`
+
+	meta, err := ParseOPF(strings.NewReader(opf))
+	if err != nil {
+		t.Fatalf("ParseOPF: %v", err)
+	}
+	if meta.CalibreTimestamp != "2018-04-03T12:34:56Z" {
+		t.Fatalf("CalibreTimestamp = %q; want EPUB 3 property value", meta.CalibreTimestamp)
 	}
 }
 
@@ -487,8 +509,9 @@ func TestMetadataMerge(t *testing.T) {
 		Tags:        []string{"old"},
 	}
 	override := &Metadata{
-		Title:   "Sidecar Title",
-		Authors: []bookmeta.AuthorMeta{{Name: "Sidecar Author", SortName: "Author, Sidecar"}},
+		Title:            "Sidecar Title",
+		Authors:          []bookmeta.AuthorMeta{{Name: "Sidecar Author", SortName: "Author, Sidecar"}},
+		CalibreTimestamp: "2019-02-03T04:05:06Z",
 		// Language empty -> keep base.
 		Publisher: "Sidecar Press",
 		Tags:      []string{"new"},
@@ -512,6 +535,9 @@ func TestMetadataMerge(t *testing.T) {
 	}
 	if len(base.Tags) != 1 || base.Tags[0] != "new" {
 		t.Errorf("tags = %v; want sidecar [new]", base.Tags)
+	}
+	if base.CalibreTimestamp != override.CalibreTimestamp {
+		t.Errorf("calibre timestamp = %q; want sidecar %q", base.CalibreTimestamp, override.CalibreTimestamp)
 	}
 
 	// Merging nil is a no-op.

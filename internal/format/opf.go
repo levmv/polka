@@ -493,6 +493,12 @@ func metadataFromOPF(opf opfDoc) *Metadata {
 				meta.SeriesIndex = v
 			}
 		}
+		if name == "calibre:timestamp" {
+			meta.CalibreTimestamp = content
+		}
+		if strings.EqualFold(strings.TrimSpace(m.Property), "calibre:timestamp") {
+			meta.CalibreTimestamp = strings.TrimSpace(m.Text)
+		}
 	}
 	// Prefer explicit legacy series fields when present, but let EPUB 3 fill in
 	// the missing series name/index from belongs-to-collection metadata.

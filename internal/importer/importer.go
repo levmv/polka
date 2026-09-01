@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/levmv/polka/internal/bookmeta"
 	"github.com/levmv/polka/internal/covers"
@@ -113,7 +114,7 @@ type Plan struct {
 	Title        string
 	SortTitle    string
 	Authors      []bookmeta.AuthorMeta
-	Confidence   string
+	AddedAt      time.Time
 	Warnings     []error
 }
 
@@ -124,6 +125,7 @@ type sourceInfo struct {
 	Format       format.Format
 	Extension    string
 	CanRead      bool
+	ModTime      time.Time
 }
 
 type storedWork struct {
@@ -214,7 +216,7 @@ func Import(ctx context.Context, database *db.DB, root storage.Root, src Source,
 		return Result{}, err
 	}
 
-	if existing, found, err := findDuplicate(database, info.SourceSHA256, info.Size); err != nil {
+	if existing, found, err := findDuplicate(database, info.SourceSHA256); err != nil {
 		return Result{}, err
 	} else if found {
 		if err := restoreDuplicateAsset(ctx, database, root, info, &existing); err != nil {
@@ -255,7 +257,7 @@ func ImportGroup(ctx context.Context, database *db.DB, root storage.Root, source
 		}
 		infos = append(infos, info)
 
-		if existing, found, err := findDuplicate(database, info.SourceSHA256, info.Size); err != nil {
+		if existing, found, err := findDuplicate(database, info.SourceSHA256); err != nil {
 			return GroupResult{}, err
 		} else if found {
 			if err := restoreDuplicateAsset(ctx, database, root, info, &existing); err != nil {
@@ -284,6 +286,7 @@ func ImportGroup(ctx context.Context, database *db.DB, root storage.Root, source
 	if err != nil {
 		return GroupResult{}, err
 	}
+	plan.AddedAt = addedAtForSources(plan.Metadata.CalibreTimestamp, infos, time.Now())
 	return persistNewWorkGroup(ctx, database, root, plan, infos, newIndexes, results, opts)
 }
 
@@ -305,7 +308,7 @@ func ProbeSource(ctx context.Context, database db.Queryer, src Source) (SourcePr
 	if err != nil {
 		return SourceProbe{}, err
 	}
-	existing, found, err := findDuplicate(database, info.SourceSHA256, info.Size)
+	existing, found, err := findDuplicate(database, info.SourceSHA256)
 	if err != nil {
 		return SourceProbe{}, err
 	}
@@ -322,7 +325,7 @@ func Persist(ctx context.Context, database *db.DB, root storage.Root, plan Plan,
 	if err := importContextError(ctx); err != nil {
 		return Result{}, err
 	}
-	if existing, found, err := findDuplicate(database, plan.SourceSHA256, plan.Size); err != nil {
+	if existing, found, err := findDuplicate(database, plan.SourceSHA256); err != nil {
 		return Result{}, err
 	} else if found {
 		if err := restoreDuplicateAsset(ctx, database, root, planSourceInfo(plan), &existing); err != nil {
@@ -362,7 +365,7 @@ func Persist(ctx context.Context, database *db.DB, root storage.Root, plan Plan,
 	}
 	defer tx.Rollback()
 
-	if existing, found, err := findDuplicate(tx, plan.SourceSHA256, plan.Size); err != nil {
+	if existing, found, err := findDuplicate(tx, plan.SourceSHA256); err != nil {
 		return Result{}, err
 	} else if found {
 		if err := restoreDuplicateAsset(ctx, tx, root, planSourceInfo(plan), &existing); err != nil {
@@ -623,10 +626,15 @@ func insertWork(tx *sql.Tx, workID string, plan Plan) (storedWork, error) {
 	// values are consistent across formats and sources; see bookmeta.NormalizeLanguage.
 	language := bookmeta.NormalizeLanguage(meta.Language)
 
+	var addedAt sql.NullInt64
+	if !plan.AddedAt.IsZero() {
+		addedAt = sql.NullInt64{Int64: plan.AddedAt.Unix(), Valid: true}
+	}
+
 	_, err := tx.Exec(`
-			INSERT INTO works (id, title, sort_title, series, series_index, description, tags, cover_version, metadata_confidence, publisher, published_date, language, identifiers)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		`, workID, plan.Title, plan.SortTitle, meta.Series, meta.SeriesIndex, meta.Description, strings.Join(meta.Tags, ", "), coverVersion, plan.Confidence, meta.Publisher, meta.Date, language, meta.Identifier)
+			INSERT INTO works (id, title, sort_title, series, series_index, description, tags, cover_version, publisher, published_date, language, identifiers, added_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, unixepoch()))
+		`, workID, plan.Title, plan.SortTitle, meta.Series, meta.SeriesIndex, meta.Description, strings.Join(meta.Tags, ", "), coverVersion, meta.Publisher, meta.Date, language, meta.Identifier, addedAt)
 	if err != nil {
 		return storedWork{}, fmt.Errorf("insert work: %w", err)
 	}
@@ -805,7 +813,7 @@ func refreshGroupDuplicates(ctx context.Context, tx *sql.Tx, root storage.Root, 
 		if err := importContextError(ctx); err != nil {
 			return nil, "", err
 		}
-		existing, found, err := findDuplicate(tx, infos[idx].SourceSHA256, infos[idx].Size)
+		existing, found, err := findDuplicate(tx, infos[idx].SourceSHA256)
 		if err != nil {
 			return nil, "", err
 		}
@@ -936,18 +944,12 @@ func resolveFromInfo(ctx context.Context, info sourceInfo, renderer *pdfcover.Re
 		meta.Merge(sidecarMeta)
 	}
 
-	embeddedTitle := meta.Title != ""
-	embeddedAuthors := len(meta.Authors) > 0
-	filenameTitle := false
-	filenameAuthors := false
 	if filenameMeta, ok := structuredFilenameMetadata(info.sourceName()); ok {
 		if meta.Title == "" && filenameMeta.Title != "" {
 			meta.Title = filenameMeta.Title
-			filenameTitle = true
 		}
 		if len(meta.Authors) == 0 && len(filenameMeta.Authors) > 0 {
 			meta.Authors = filenameMeta.Authors
-			filenameAuthors = true
 		}
 		if meta.Identifier == "" && filenameMeta.Identifier != "" {
 			meta.Identifier = filenameMeta.Identifier
@@ -982,13 +984,6 @@ func resolveFromInfo(ctx context.Context, info sourceInfo, renderer *pdfcover.Re
 		}
 	}
 
-	confidence := "low"
-	if embeddedTitle && embeddedAuthors {
-		confidence = "high"
-	} else if embeddedTitle || embeddedAuthors || (filenameTitle && filenameAuthors) {
-		confidence = "medium"
-	}
-
 	title := meta.Title
 	if title == "" {
 		base := filepath.Base(info.sourceName())
@@ -1016,8 +1011,32 @@ func resolveFromInfo(ctx context.Context, info sourceInfo, renderer *pdfcover.Re
 	plan.Title = title
 	plan.SortTitle = sortTitle
 	plan.Authors = authors
-	plan.Confidence = confidence
+	plan.AddedAt = addedAtForSources(meta.CalibreTimestamp, []sourceInfo{info}, time.Now())
 	return plan, nil
+}
+
+func addedAtForSources(calibreTimestamp string, infos []sourceInfo, now time.Time) time.Time {
+	if addedAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(calibreTimestamp)); err == nil && plausibleAddedAt(addedAt, now) {
+		return addedAt
+	}
+
+	var earliest time.Time
+	for _, info := range infos {
+		if !plausibleAddedAt(info.ModTime, now) {
+			continue
+		}
+		if earliest.IsZero() || info.ModTime.Before(earliest) {
+			earliest = info.ModTime
+		}
+	}
+	if !earliest.IsZero() {
+		return earliest
+	}
+	return now
+}
+
+func plausibleAddedAt(candidate, now time.Time) bool {
+	return candidate.Unix() > 0 && !candidate.After(now)
 }
 
 func structuredFilenameMetadata(name string) (*bookmeta.Metadata, bool) {
@@ -1155,22 +1174,20 @@ func fingerprintSource(ctx context.Context, src Source) (sourceInfo, error) {
 		Format:       kind,
 		Extension:    ext,
 		CanRead:      format.CanRead(kind),
+		ModTime:      stat.ModTime(),
 	}, nil
 }
 
-func findDuplicate(database db.Queryer, fileHash string, size int64) (Result, bool, error) {
+func findDuplicate(database db.Queryer, fileHash string) (Result, bool, error) {
 	var assetID, workID, storagePath string
 	var workTrashed bool
 	err := database.QueryRow(`
 		SELECT a.id, a.work_id, a.storage_path, w.deleted_at IS NOT NULL
 		FROM assets a
 		JOIN works w ON w.id = a.work_id
-		WHERE (a.original_size = ? AND a.original_sha256 = ?)
-		   OR (a.current_size = ? AND a.current_sha256 = ?)
-		   OR (a.original_size IS NULL AND a.original_sha256 = ?)
-		   OR (a.current_size IS NULL AND a.current_sha256 = ?)
+		WHERE a.original_sha256 = ? OR a.current_sha256 = ?
 		LIMIT 1
-	`, size, fileHash, size, fileHash, fileHash, fileHash).Scan(&assetID, &workID, &storagePath, &workTrashed)
+	`, fileHash, fileHash).Scan(&assetID, &workID, &storagePath, &workTrashed)
 	if err == nil {
 		return Result{Status: StatusDuplicate, AssetID: assetID, WorkID: workID, WorkTrashed: workTrashed, StoragePath: storagePath}, true, nil
 	}
