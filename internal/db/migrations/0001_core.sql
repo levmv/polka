@@ -33,8 +33,6 @@ CREATE TABLE works (
     published_date TEXT,
     language TEXT,
     identifiers TEXT,
-    metadata_confidence TEXT,
-    source_metadata TEXT,
     manual_overrides TEXT,
     -- Monotonic revision of user-owned work metadata. Imported files start at
     -- rev 0 and are considered born clean; edits bump this so write-back can
@@ -44,6 +42,9 @@ CREATE TABLE works (
     -- >0 means a cover exists and the number is the browser cache-buster
     -- generation. It is deliberately not a metadata/write-back revision.
     cover_version INTEGER NOT NULL DEFAULT 0,
+    -- created_at records when Polka created this row. added_at preserves the
+    -- book's earlier collection chronology when import metadata or source file
+    -- times provide it; otherwise both begin at the current time.
     created_at INTEGER NOT NULL DEFAULT (unixepoch()),
     updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
     added_at INTEGER NOT NULL DEFAULT (unixepoch()),
@@ -103,9 +104,8 @@ CREATE TABLE assets (
     -- tracks the bytes currently on disk and changes after such rewrites.
     original_sha256 TEXT,
     current_sha256 TEXT,
-    -- Sizes mirror the original/current byte identities. They are cheap
-    -- duplicate prefilters and let UI/check paths avoid stat/hash work when
-    -- SQLite already knows the served asset size.
+    -- Sizes mirror the original/current byte identities and let UI/check paths
+    -- avoid stat/hash work when SQLite already knows the served asset size.
     original_size INTEGER,
     current_size INTEGER,
     -- Lazy read-model over the exact bytes served through /download/{asset_id}
@@ -125,8 +125,6 @@ CREATE TABLE assets (
 
 CREATE UNIQUE INDEX idx_assets_original_sha256 ON assets(original_sha256);
 CREATE INDEX idx_assets_current_sha256 ON assets(current_sha256);
-CREATE INDEX idx_assets_original_size ON assets(original_size) WHERE original_size IS NOT NULL;
-CREATE INDEX idx_assets_current_size ON assets(current_size) WHERE current_size IS NOT NULL;
 CREATE INDEX idx_assets_koreader_hash ON assets(koreader_hash) WHERE koreader_hash IS NOT NULL AND koreader_hash <> '';
 -- Keep this predicate in sync with format.MetadataWritebackFormatKeys().
 CREATE INDEX idx_assets_writeback_dirty ON assets(work_id, writeback_rev) WHERE format IN ('epub', 'fb2', 'kepub');
@@ -176,6 +174,8 @@ CREATE TABLE authors (
     sort_name TEXT NOT NULL
 );
 
+CREATE INDEX idx_authors_name ON authors(name);
+
 -- author_order defines the display order and primary author. The first author
 -- is also the author used by canonical path construction.
 CREATE TABLE work_authors (
@@ -224,7 +224,6 @@ CREATE TABLE sessions (
 );
 
 CREATE INDEX idx_sessions_user_id ON sessions(user_id);
-CREATE INDEX idx_sessions_expiry ON sessions(expires_at, last_seen_at);
 
 -- Long-lived per-device credentials ("app passwords") for non-interactive
 -- clients: OPDS readers and KOReader sync. Like sessions, only the
@@ -243,8 +242,6 @@ CREATE TABLE app_tokens (
     last_used_at INTEGER,
     UNIQUE (user_id, name)
 );
-
-CREATE INDEX idx_app_tokens_user_id ON app_tokens(user_id);
 
 -- Sidebar shelves. One entity covers both manual lists and saved searches:
 -- kind='manual' has explicit shelf_books rows; kind='query' stores the same
@@ -318,8 +315,6 @@ CREATE TABLE kobo_items (
     PRIMARY KEY (connection_id, asset_id),
     UNIQUE (connection_id, revision)
 );
-
-CREATE INDEX idx_kobo_items_changes ON kobo_items(connection_id, revision);
 
 -- Cleanup duplicate dismissals are detector bookkeeping, not book metadata. A
 -- group is hidden only while its current live member set is covered by one of

@@ -18,6 +18,9 @@ type Metadata struct {
 	Series      string
 	SeriesIndex float64
 	Tags        []string
+	// CalibreTimestamp is transient import context from calibre:timestamp. It
+	// is not bibliographic metadata and is not written back into book files.
+	CalibreTimestamp string
 }
 
 // AuthorMeta holds information about an author.
@@ -66,6 +69,9 @@ func (m *Metadata) Merge(o *Metadata) {
 	}
 	if len(o.Tags) > 0 {
 		m.Tags = o.Tags
+	}
+	if o.CalibreTimestamp != "" {
+		m.CalibreTimestamp = o.CalibreTimestamp
 	}
 }
 

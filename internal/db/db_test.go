@@ -60,27 +60,3 @@ func assertWorkCount(t *testing.T, database *DB, workID string, want int) {
 		t.Fatalf("count work %s = %d, want %d", workID, got, want)
 	}
 }
-
-func TestLargeLibraryIndexesExist(t *testing.T) {
-	database := newTestDB(t)
-
-	want := map[string]string{
-		"idx_works_live_author_sort": "primary_author_sort",
-		"idx_works_live_added":       "added_at",
-		"idx_works_live_title":       "sort_title",
-		"idx_works_live_pubdate":     "published_date",
-		"idx_work_authors_author_id": "author_id",
-	}
-	for name, needle := range want {
-		t.Run(name, func(t *testing.T) {
-			var sql string
-			err := database.QueryRow("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?", name).Scan(&sql)
-			if err != nil {
-				t.Fatalf("index %s missing: %v", name, err)
-			}
-			if !strings.Contains(sql, needle) {
-				t.Fatalf("index %s SQL = %q; want it to mention %q", name, sql, needle)
-			}
-		})
-	}
-}

@@ -18,6 +18,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/levmv/polka/internal/bookmeta"
 	"github.com/levmv/polka/internal/covers"
@@ -807,9 +808,6 @@ func TestResolveMarkdownMetadataFromLeadingLabels(t *testing.T) {
 	if plan.Metadata == nil || plan.Metadata.Date != "1865" {
 		t.Fatalf("Metadata = %+v; want year from markdown labels", plan.Metadata)
 	}
-	if plan.Confidence != "high" {
-		t.Fatalf("Confidence = %v; want high for title+author markdown metadata", plan.Confidence)
-	}
 }
 
 func TestResolveParsedMetadataDispatch(t *testing.T) {
@@ -822,7 +820,6 @@ func TestResolveParsedMetadataDispatch(t *testing.T) {
 		wantLanguage    string
 		wantPublisher   string
 		wantDescription string
-		wantConfidence  string
 		write           func(t *testing.T, path string)
 	}{
 		{
@@ -907,11 +904,10 @@ func TestResolveParsedMetadataDispatch(t *testing.T) {
 			},
 		},
 		{
-			name:           "manual.chm",
-			wantFormat:     format.FormatCHM,
-			wantTitle:      "Oracle PL/SQL by Example, Third Edition",
-			wantAuthor:     "Unknown Author",
-			wantConfidence: "medium",
+			name:       "manual.chm",
+			wantFormat: format.FormatCHM,
+			wantTitle:  "Oracle PL/SQL by Example, Third Edition",
+			wantAuthor: "Unknown Author",
 			write: func(t *testing.T, path string) {
 				if err := os.WriteFile(path, testCHMBytesWithTitle("Oracle PL/SQL by Example, Third Edition"), 0o644); err != nil {
 					t.Fatalf("write source: %v", err)
@@ -945,9 +941,6 @@ func TestResolveParsedMetadataDispatch(t *testing.T) {
 			}
 			if tt.wantAuthorSort != "" && plan.Authors[0].SortName != tt.wantAuthorSort {
 				t.Fatalf("Author sort = %q; want %q", plan.Authors[0].SortName, tt.wantAuthorSort)
-			}
-			if tt.wantConfidence != "" && plan.Confidence != tt.wantConfidence {
-				t.Fatalf("Confidence = %q; want %q", plan.Confidence, tt.wantConfidence)
 			}
 			if tt.wantLanguage != "" && (plan.Metadata == nil || plan.Metadata.Language != tt.wantLanguage) {
 				t.Fatalf("Metadata = %+v; want language %q", plan.Metadata, tt.wantLanguage)
@@ -1173,9 +1166,6 @@ func TestResolveStructuredFilenameFallbackMetadata(t *testing.T) {
 	if plan.Metadata == nil || plan.Metadata.Identifier != "isbn:9780306406157" {
 		t.Fatalf("Metadata = %+v; want ISBN from structured filename", plan.Metadata)
 	}
-	if plan.Confidence != "medium" {
-		t.Fatalf("Confidence = %q; want medium for structured filename metadata", plan.Confidence)
-	}
 }
 
 func TestResolveIgnoresUnsignaledDelimitedFilename(t *testing.T) {
@@ -1195,9 +1185,6 @@ func TestResolveIgnoresUnsignaledDelimitedFilename(t *testing.T) {
 	}
 	if len(plan.Authors) != 1 || plan.Authors[0].Name != "Unknown Author" {
 		t.Fatalf("Authors = %+v; want Unknown Author fallback", plan.Authors)
-	}
-	if plan.Confidence != "low" {
-		t.Fatalf("Confidence = %q; want low for plain filename fallback", plan.Confidence)
 	}
 }
 
@@ -1409,15 +1396,12 @@ func TestResolveRecoversForbiddenEPUBOPFControl(t *testing.T) {
 	if plan.Title != "Invalid OPF" {
 		t.Fatalf("Title = %q; want recovered OPF title", plan.Title)
 	}
-	if plan.Confidence != "medium" {
-		t.Fatalf("Confidence = %q; want medium", plan.Confidence)
-	}
 	if len(plan.Authors) != 1 || plan.Authors[0].Name != "Unknown Author" {
 		t.Fatalf("Authors = %+v; want Unknown Author fallback", plan.Authors)
 	}
 }
 
-func TestResolveTrustsCompleteSidecarMetadataOverRecoverableEmbeddedEPUBMetadata(t *testing.T) {
+func TestResolvePrefersCompleteSidecar(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "sidecar-wins.epub")
 	embeddedOPF := `<?xml version="1.0" encoding="UTF-8"?>
@@ -1431,6 +1415,7 @@ func TestResolveTrustsCompleteSidecarMetadataOverRecoverableEmbeddedEPUBMetadata
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
     <dc:title>Curated Sidecar Title</dc:title>
     <dc:creator>Curated Author</dc:creator>
+    <meta name="calibre:timestamp" content="2013-02-01T10:11:12.345678+00:00"/>
   </metadata>
 </package>`)
 	if err := os.WriteFile(filepath.Join(dir, "metadata.opf"), sidecarOPF, 0o644); err != nil {
@@ -1441,7 +1426,7 @@ func TestResolveTrustsCompleteSidecarMetadataOverRecoverableEmbeddedEPUBMetadata
 		t.Fatalf("write sidecar cover: %v", err)
 	}
 
-	plan, err := Resolve(context.Background(), Source{Path: path, SidecarDir: dir}, nil)
+	plan, err := Resolve(context.Background(), Source{Path: path}, nil)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -1453,6 +1438,10 @@ func TestResolveTrustsCompleteSidecarMetadataOverRecoverableEmbeddedEPUBMetadata
 	}
 	if len(plan.Authors) != 1 || plan.Authors[0].Name != "Curated Author" {
 		t.Fatalf("Authors = %+v; want sidecar author", plan.Authors)
+	}
+	wantAddedAt := time.Date(2013, time.February, 1, 10, 11, 12, 345678000, time.UTC)
+	if !plan.AddedAt.Equal(wantAddedAt) {
+		t.Fatalf("AddedAt = %s; want calibre timestamp %s", plan.AddedAt, wantAddedAt)
 	}
 	if !bytes.Equal(plan.CoverBytes, sidecarCover) {
 		t.Fatalf("CoverBytes = %q; want sidecar cover", plan.CoverBytes)
@@ -1488,9 +1477,6 @@ func TestResolveMOBIMetadataAndCover(t *testing.T) {
 	}
 	if !bytes.Equal(plan.CoverBytes, cover) {
 		t.Fatalf("CoverBytes did not come from MOBI cover record")
-	}
-	if plan.Confidence != "high" {
-		t.Fatalf("Confidence = %q; want high", plan.Confidence)
 	}
 }
 
@@ -1670,9 +1656,6 @@ func TestResolveCBZMetadataAndCover(t *testing.T) {
 	if !bytes.Equal(plan.CoverBytes, cover) {
 		t.Fatalf("CoverBytes did not come from first CBZ page")
 	}
-	if plan.Confidence != "high" {
-		t.Fatalf("Confidence = %q; want high", plan.Confidence)
-	}
 }
 
 func TestImportGroupElectsReadablePrimary(t *testing.T) {
@@ -1749,6 +1732,96 @@ func TestImportGroupElectsReadablePrimary(t *testing.T) {
 		}
 		assertPrimaryEPUB(t, database, result.WorkID)
 	})
+}
+
+func TestAddedAtForSources(t *testing.T) {
+	now := time.Date(2026, time.September, 1, 12, 0, 0, 0, time.UTC)
+	earlier := time.Date(2012, time.March, 4, 5, 6, 7, 0, time.UTC)
+	later := time.Date(2019, time.April, 5, 6, 7, 8, 0, time.UTC)
+	calibre := time.Date(2015, time.June, 7, 8, 9, 10, 123456000, time.FixedZone("calibre", 2*60*60))
+
+	tests := []struct {
+		name      string
+		timestamp string
+		infos     []sourceInfo
+		want      time.Time
+	}{
+		{
+			name:      "calibre timestamp wins over earlier file",
+			timestamp: calibre.Format(time.RFC3339Nano),
+			infos:     []sourceInfo{{ModTime: earlier}},
+			want:      calibre,
+		},
+		{
+			name:      "invalid calibre timestamp falls back to earliest file",
+			timestamp: "not-a-timestamp",
+			infos:     []sourceInfo{{ModTime: later}, {ModTime: earlier}},
+			want:      earlier,
+		},
+		{
+			name:  "implausible file times fall back to now",
+			infos: []sourceInfo{{ModTime: time.Unix(0, 0)}, {ModTime: now.Add(time.Hour)}},
+			want:  now,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := addedAtForSources(tt.timestamp, tt.infos, now)
+			if !got.Equal(tt.want) {
+				t.Fatalf("addedAtForSources = %s; want %s", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestImportGroupStoresEarliestSourceModTimeAsAddedAt(t *testing.T) {
+	dataDir := t.TempDir()
+	database, err := db.InitPath(filepath.Join(dataDir, "library.db"))
+	if err != nil {
+		t.Fatalf("db.Init: %v", err)
+	}
+	t.Cleanup(func() { database.Close() })
+	root := storage.NewRoot(filepath.Join(dataDir, "books"))
+	if err := storage.EnsureLayout(root); err != nil {
+		t.Fatalf("EnsureLayout: %v", err)
+	}
+
+	sourceDir := t.TempDir()
+	laterPath := filepath.Join(sourceDir, "Book.txt")
+	earlierPath := filepath.Join(sourceDir, "Book.md")
+	if err := os.WriteFile(laterPath, []byte("plain version"), 0o644); err != nil {
+		t.Fatalf("write later source: %v", err)
+	}
+	if err := os.WriteFile(earlierPath, []byte("markdown version"), 0o644); err != nil {
+		t.Fatalf("write earlier source: %v", err)
+	}
+	earlier := time.Date(2011, time.February, 3, 4, 5, 6, 0, time.UTC)
+	later := time.Date(2018, time.July, 8, 9, 10, 11, 0, time.UTC)
+	if err := os.Chtimes(laterPath, later, later); err != nil {
+		t.Fatalf("set later mtime: %v", err)
+	}
+	if err := os.Chtimes(earlierPath, earlier, earlier); err != nil {
+		t.Fatalf("set earlier mtime: %v", err)
+	}
+
+	before := time.Now().Unix()
+	result, err := ImportGroup(context.Background(), database, root, []Source{{Path: laterPath}, {Path: earlierPath}}, nil, Options{})
+	if err != nil {
+		t.Fatalf("ImportGroup: %v", err)
+	}
+	after := time.Now().Unix()
+
+	var createdAt, addedAt int64
+	if err := database.QueryRow("SELECT created_at, added_at FROM works WHERE id = ?", result.WorkID).Scan(&createdAt, &addedAt); err != nil {
+		t.Fatalf("query work timestamps: %v", err)
+	}
+	if addedAt != earlier.Unix() {
+		t.Fatalf("added_at = %d; want earliest source mtime %d", addedAt, earlier.Unix())
+	}
+	if createdAt < before || createdAt > after {
+		t.Fatalf("created_at = %d; want Polka creation time in [%d, %d]", createdAt, before, after)
+	}
 }
 
 func TestImportGroupRestoresTrashedWorkOnlyWhenAddingAsset(t *testing.T) {
@@ -1915,7 +1988,6 @@ func TestPersistStoresWorkMetadata(t *testing.T) {
 			{Name: "Primary Author", SortName: "Author, Primary", Role: "aut"},
 			{Name: "Second Author", SortName: "Author, Second", Role: "trl"},
 		},
-		Confidence: "medium",
 	}
 
 	result, err := Persist(context.Background(), database, root, plan, Options{})
@@ -1924,24 +1996,24 @@ func TestPersistStoresWorkMetadata(t *testing.T) {
 	}
 
 	type storedMetadata struct {
-		title, sortTitle, series    string
-		seriesIndex                 float64
-		description, tags           string
-		coverVersion                int
-		confidence, publisher, date string
-		language, identifiers       string
+		title, sortTitle, series string
+		seriesIndex              float64
+		description, tags        string
+		coverVersion             int
+		publisher, date          string
+		language, identifiers    string
 	}
 	var got storedMetadata
 	if err := database.QueryRow(`
 		SELECT title, sort_title, series, series_index, description, tags,
-		       cover_version, metadata_confidence, publisher, published_date,
+		       cover_version, publisher, published_date,
 		       language, identifiers
 		FROM works
 		WHERE id = ?
 	`, result.WorkID).Scan(
 		&got.title, &got.sortTitle, &got.series, &got.seriesIndex,
-		&got.description, &got.tags, &got.coverVersion, &got.confidence,
-		&got.publisher, &got.date, &got.language, &got.identifiers,
+		&got.description, &got.tags, &got.coverVersion, &got.publisher,
+		&got.date, &got.language, &got.identifiers,
 	); err != nil {
 		t.Fatalf("query work metadata: %v", err)
 	}
@@ -1953,7 +2025,6 @@ func TestPersistStoresWorkMetadata(t *testing.T) {
 		description:  plan.Metadata.Description,
 		tags:         strings.Join(plan.Metadata.Tags, ", "),
 		coverVersion: 1,
-		confidence:   plan.Confidence,
 		publisher:    plan.Metadata.Publisher,
 		date:         plan.Metadata.Date,
 		language:     "pt-BR",

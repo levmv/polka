@@ -76,7 +76,11 @@ its metadata is optional and can happen later.
 Imports copy books into managed storage and leave their sources unchanged by
 default. Metadata and covers are read from the files when available; books
 without a usable cover get a generated one. Importing the same file again is
-safe: matching content is recognized instead of added twice.
+safe: matching content is recognized instead of added twice. An imported
+book's *Added* date may come from calibre's timestamp or the earliest source
+file modification time, so it can be older than the import itself. This keeps
+an existing collection in order instead of every book appearing new on the
+same day.
 
 Source deletion must be enabled explicitly for the incoming folder or with
 `--delete-sources`. A source is removed only after it is imported or recognized
