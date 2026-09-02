@@ -19,8 +19,8 @@ func TestImportCreatesLibraryOnFirstRun(t *testing.T) {
 	srcPath := filepath.Join(base, "book.epub")
 	writeEPUB(t, srcPath, "First Import", "Ada Writer", "Writer, Ada")
 
-	if err := runImportFile(context.Background(), dataDir, []string{srcPath}); err != nil {
-		t.Fatalf("runImportFile: %v", err)
+	if err := runImport(context.Background(), dataDir, []string{srcPath}); err != nil {
+		t.Fatalf("runImport: %v", err)
 	}
 
 	database, err := db.InitPath(filepath.Join(dataDir, "library.db"))
@@ -105,8 +105,8 @@ func TestImportUsesConfiguredLibraryRoot(t *testing.T) {
 
 	srcPath := filepath.Join(base, "book.epub")
 	writeEPUB(t, srcPath, "Separate Storage", "Ada Writer", "Writer, Ada")
-	if err := runImportFile(context.Background(), dataDir, []string{srcPath}); err != nil {
-		t.Fatalf("runImportFile: %v", err)
+	if err := runImport(context.Background(), dataDir, []string{srcPath}); err != nil {
+		t.Fatalf("runImport: %v", err)
 	}
 
 	database, err := db.InitPath(filepath.Join(dataDir, "library.db"))
@@ -142,8 +142,8 @@ func TestImportRefusesEmptyRootWithExistingCatalog(t *testing.T) {
 
 	first := filepath.Join(base, "first.epub")
 	writeEPUB(t, first, "First Book", "Ada Writer", "Writer, Ada")
-	if err := runImportFile(context.Background(), dataDir, []string{first}); err != nil {
-		t.Fatalf("runImportFile: %v", err)
+	if err := runImport(context.Background(), dataDir, []string{first}); err != nil {
+		t.Fatalf("runImport: %v", err)
 	}
 
 	// Simulate a dropped mount: the folder is present but empty again.
@@ -156,7 +156,7 @@ func TestImportRefusesEmptyRootWithExistingCatalog(t *testing.T) {
 
 	second := filepath.Join(base, "second.epub")
 	writeEPUB(t, second, "Second Book", "Ada Writer", "Writer, Ada")
-	if err := runImportFile(context.Background(), dataDir, []string{second}); !errors.Is(err, storage.ErrRootEmpty) {
+	if err := runImport(context.Background(), dataDir, []string{second}); !errors.Is(err, storage.ErrRootEmpty) {
 		t.Fatalf("import into empty root = %v; want ErrRootEmpty", err)
 	}
 }

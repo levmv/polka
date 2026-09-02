@@ -122,16 +122,12 @@ func runSubcommand(ctx context.Context, dataDir, subcommand string, subArgs []st
 	switch subcommand {
 	case "import":
 		return runImport(ctx, dataDir, subArgs)
-	case "import-file":
-		return runImportFile(ctx, dataDir, subArgs)
 	case "serve":
 		return runServe(ctx, dataDir, subArgs)
 	case "check":
 		return runCheck(dataDir, subArgs)
 	case "repair":
 		return runRepair(ctx, dataDir, subArgs)
-	case "import-folder":
-		return runImportFolder(ctx, dataDir, subArgs)
 	case "convert":
 		return runConvert(ctx, dataDir, subArgs)
 	case "meta":

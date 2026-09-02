@@ -18,19 +18,11 @@ import (
 
 var errImportItemsFailed = errors.New("some files failed to import or clean up")
 
-type importMode int
-
-const (
-	importModeAuto importMode = iota
-	importModeFile
-	importModeFolder
-)
-
 type importCommandOptions struct {
-	mode          importMode
 	jsonOutput    bool
 	dryRun        bool
 	deleteSources bool
+	displayRoot   string
 }
 
 type importReport struct {
@@ -91,43 +83,6 @@ func runImport(ctx context.Context, dataDir string, args []string) error {
 		return reportedErrorf("usage: polka import [--json] [--dry-run] [--delete-sources] <path>")
 	}
 	return runImportPath(ctx, dataDir, fs.Arg(0), importCommandOptions{
-		mode:          importModeAuto,
-		jsonOutput:    *jsonOutput,
-		dryRun:        *dryRun,
-		deleteSources: *deleteSources,
-	})
-}
-
-func runImportFile(ctx context.Context, dataDir string, args []string) error {
-	fs := commandFlagSet("import-file", "polka import-file [--json] <path>")
-	jsonOutput := fs.Bool("json", false, "print machine-readable JSON")
-	if help, err := parseCommandFlags(fs, args); help || err != nil {
-		return err
-	}
-	if fs.NArg() != 1 {
-		fs.Usage()
-		return reportedErrorf("usage: polka import-file [--json] <path>")
-	}
-	return runImportPath(ctx, dataDir, fs.Arg(0), importCommandOptions{
-		mode:       importModeFile,
-		jsonOutput: *jsonOutput,
-	})
-}
-
-func runImportFolder(ctx context.Context, dataDir string, args []string) error {
-	fs := commandFlagSet("import-folder", "polka import-folder [--json] [--dry-run] [--delete-sources] <path>")
-	jsonOutput := fs.Bool("json", false, "print machine-readable JSON")
-	dryRun := fs.Bool("dry-run", false, "scan and report without writing SQLite or managed storage")
-	deleteSources := fs.Bool("delete-sources", false, "delete source files/directories after successful or duplicate import")
-	if help, err := parseCommandFlags(fs, args); help || err != nil {
-		return err
-	}
-	if fs.NArg() != 1 {
-		fs.Usage()
-		return reportedErrorf("usage: polka import-folder [--json] [--dry-run] [--delete-sources] <path>")
-	}
-	return runImportPath(ctx, dataDir, fs.Arg(0), importCommandOptions{
-		mode:          importModeFolder,
 		jsonOutput:    *jsonOutput,
 		dryRun:        *dryRun,
 		deleteSources: *deleteSources,
@@ -138,12 +93,6 @@ func runImportPath(ctx context.Context, dataDir, srcPath string, opts importComm
 	info, err := os.Stat(srcPath)
 	if err != nil {
 		return fmt.Errorf("stat source: %w", err)
-	}
-	if opts.mode == importModeFile && info.IsDir() {
-		return fmt.Errorf("%s is a directory; use polka import <directory>", srcPath)
-	}
-	if opts.mode == importModeFolder && !info.IsDir() {
-		return fmt.Errorf("%s is not a directory; use polka import <file>", srcPath)
 	}
 	report := importReport{
 		Source:        srcPath,
@@ -164,7 +113,16 @@ func runImportPath(ctx context.Context, dataDir, srcPath string, opts importComm
 		}
 		return errors.Join(errImportItemsFailed, err)
 	}
+	if info.IsDir() {
+		srcPath, err = filepath.EvalSymlinks(srcPath)
+		if err != nil {
+			return fmt.Errorf("resolve import folder symlinks: %w", err)
+		}
+	}
 
+	// Import intentionally remains usable while serve is running. SQLite
+	// serializes catalog writes; rare filesystem races are recoverable and not
+	// worth blocking normal use.
 	var database *db.DB
 	if opts.dryRun {
 		database, err = openDatabase(dataDir)
@@ -176,14 +134,9 @@ func runImportPath(ctx context.Context, dataDir, srcPath string, opts importComm
 	}
 	defer database.Close()
 
-	if !opts.dryRun {
-		if _, _, _, err := openImportStorage(database, dataDir); err != nil {
-			return err
-		}
-	}
-
 	var runErr error
 	if info.IsDir() {
+		opts.displayRoot = srcPath
 		runErr = importFolderPath(ctx, database, dataDir, srcPath, opts, &report)
 	} else {
 		runErr = importSinglePath(ctx, database, dataDir, srcPath, opts, &report)
@@ -214,6 +167,9 @@ func importSinglePath(ctx context.Context, database *db.DB, dataDir, srcPath str
 	if err != nil {
 		return err
 	}
+	if err := rejectManagedImportSource(srcPath, root); err != nil {
+		return err
+	}
 	renderer := pdfcover.NewRenderer()
 	defer renderer.Close()
 
@@ -228,7 +184,7 @@ func importSinglePath(ctx context.Context, database *db.DB, dataDir, srcPath str
 
 	item = importOutcomeFromResult(srcPath, res)
 	if opts.deleteSources {
-		deleteImportedSource(srcPath, true, &item)
+		deleteImportedSource(srcPath, false, &item)
 	}
 	recordImportOutcome(report, opts, item, true)
 	return itemError(item)
@@ -243,6 +199,9 @@ func importFolderPath(ctx context.Context, database *db.DB, dataDir, rootPath st
 		var err error
 		root, coverRoot, template, err = openImportStorage(database, dataDir)
 		if err != nil {
+			return err
+		}
+		if err := rejectManagedImportSource(rootPath, root); err != nil {
 			return err
 		}
 		renderer = pdfcover.NewRenderer()
@@ -328,12 +287,6 @@ func importFolderPath(ctx context.Context, database *db.DB, dataDir, rootPath st
 
 	if !opts.jsonOutput {
 		printImportSummary(report.Summary, opts.dryRun, opts.deleteSources)
-		if report.Summary.Errors > 0 {
-			fmt.Println("Error details:")
-			for _, item := range errorItems(report.Items) {
-				fmt.Printf("  - %s: %s\n", item.Source, item.Error)
-			}
-		}
 	}
 	if report.Summary.Errors > 0 {
 		return errImportItemsFailed
@@ -367,6 +320,31 @@ func openImportStorage(database db.Queryer, dataDir string) (storage.Root, stora
 		return storage.Root{}, storage.Root{}, "", err
 	}
 	return root, storage.NewRoot(dataDir), template, nil
+}
+
+func rejectManagedImportSource(source string, root storage.Root) error {
+	sourcePath, err := filepath.Abs(source)
+	if err != nil {
+		return fmt.Errorf("resolve import source: %w", err)
+	}
+	sourcePath, err = filepath.EvalSymlinks(sourcePath)
+	if err != nil {
+		return fmt.Errorf("resolve import source symlinks: %w", err)
+	}
+	rootPath, err := filepath.Abs(root.Path)
+	if err != nil {
+		return fmt.Errorf("resolve managed books folder: %w", err)
+	}
+	rootPath, err = filepath.EvalSymlinks(rootPath)
+	if err != nil {
+		return fmt.Errorf("resolve managed books folder symlinks: %w", err)
+	}
+	_, sourceIsManaged := pathRelativeTo(rootPath, sourcePath)
+	_, rootIsUnderSource := pathRelativeTo(sourcePath, rootPath)
+	if sourceIsManaged || rootIsUnderSource {
+		return fmt.Errorf("import source %s overlaps the managed books folder %s", source, root.Path)
+	}
+	return nil
 }
 
 func probeImportOutcome(ctx context.Context, database db.Queryer, path string) (importOutcome, error) {
@@ -490,9 +468,9 @@ func importWarnings(warnings []error) []string {
 	return out
 }
 
-func deleteImportedSource(path string, removeAll bool, item *importOutcome) {
+func deleteImportedSource(path string, directory bool, item *importOutcome) {
 	var err error
-	if removeAll {
+	if directory {
 		err = os.RemoveAll(path)
 	} else {
 		err = os.Remove(path)
@@ -505,11 +483,12 @@ func deleteImportedSource(path string, removeAll bool, item *importOutcome) {
 }
 
 func recordImportOutcome(report *importReport, opts importCommandOptions, item importOutcome, detailed bool) {
-	report.Items = append(report.Items, item)
 	addImportOutcomeSummary(&report.Summary, item)
-	if !opts.jsonOutput {
-		printImportOutcome(item, detailed, opts.dryRun)
+	if opts.jsonOutput {
+		report.Items = append(report.Items, item)
+		return
 	}
+	printImportOutcome(item, detailed, opts.dryRun, opts.displayRoot)
 }
 
 func addImportOutcomeSummary(summary *importSummary, item importOutcome) {
@@ -562,86 +541,113 @@ func itemError(item importOutcome) error {
 	return nil
 }
 
-func errorItems(items []importOutcome) []importOutcome {
-	var out []importOutcome
-	var walk func(importOutcome)
-	walk = func(item importOutcome) {
-		if item.Error != "" {
-			out = append(out, item)
-		}
-		for _, asset := range item.Assets {
-			walk(asset)
-		}
-	}
-	for _, item := range items {
-		walk(item)
-	}
-	return out
-}
-
-func printImportOutcome(item importOutcome, detailed, dryRun bool) {
+func printImportOutcome(item importOutcome, detailed, dryRun bool, displayRoot string) {
 	printImportOutcomeWarnings(item)
 
+	source := displayImportSource(item.Source, displayRoot)
 	counts := importSummary{}
 	addImportOutcomeSummary(&counts, item)
 	switch item.Status {
 	case "error":
-		if len(item.Assets) > 0 {
-			fmt.Printf("ERR   %s (%s)\n", item.Source, item.Error)
-		} else {
-			fmt.Printf("ERR   %s: %s\n", item.Source, item.Error)
+		fmt.Printf("ERR   %s: %s\n", source, item.Error)
+		for _, asset := range item.Assets {
+			if asset.Error != "" {
+				fmt.Printf("      %s: %s\n", displayImportSource(asset.Source, displayRoot), asset.Error)
+			}
 		}
 	case "skipped":
 		// Folder walks count unrelated files but keep normal output quiet.
 	case "would_import":
 		if len(item.Assets) == 0 {
-			fmt.Printf("DRY   %s (%s)\n", item.Source, outcomeFormatLabel(item))
+			fmt.Printf("DRY   %s (%s)\n", source, outcomeFormatLabel(item))
 			break
 		}
-		fmt.Printf("DRY   %s (assets %d", item.Source, counts.WouldImport)
+		fmt.Printf("DRY   %s", source)
+		var details []string
+		if len(item.Assets) > 1 {
+			details = append(details, fmt.Sprintf("assets %d", len(item.Assets)))
+		}
 		if counts.Duplicates > 0 {
-			fmt.Printf(", duplicates %d", counts.Duplicates)
+			details = append(details, fmt.Sprintf("duplicates %d", counts.Duplicates))
 		}
 		if counts.Trashed > 0 {
-			fmt.Printf(", currently in Trash %d", counts.Trashed)
+			details = append(details, fmt.Sprintf("currently in Trash %d", counts.Trashed))
 		}
-		fmt.Println(")")
+		finishImportLine(details)
 	case "duplicate":
 		if len(item.Assets) > 0 {
-			fmt.Printf("DUP   %s (%d assets", item.Source, counts.Duplicates)
-			if counts.Trashed > 0 {
-				fmt.Print(", book in Trash")
+			fmt.Printf("DUP   %s", source)
+			var details []string
+			if len(item.Assets) > 1 {
+				details = append(details, fmt.Sprintf("assets %d", len(item.Assets)))
 			}
-			fmt.Println(")")
+			if counts.Trashed > 0 {
+				details = append(details, "book in Trash")
+			}
+			finishImportLine(details)
 		} else if detailed && !dryRun {
-			fmt.Printf("duplicate of %s, skipped%s\n", item.AssetID, inTrashSuffix(item.InTrash))
+			fmt.Printf("Duplicate, skipped%s\n", inTrashSuffix(item.InTrash))
 		} else {
-			fmt.Printf("DUP   %s (asset %s%s)\n", item.Source, item.AssetID, inTrashSuffix(item.InTrash))
+			fmt.Printf("DUP   %s", source)
+			var details []string
+			if item.InTrash {
+				details = append(details, "book in Trash")
+			}
+			finishImportLine(details)
 		}
 	case "imported":
 		if len(item.Assets) > 0 {
-			fmt.Printf("OK    %s (work %s, assets %d", item.Source, item.WorkID, counts.Imported)
+			fmt.Printf("OK    %s", source)
+			var details []string
+			if len(item.Assets) > 1 {
+				details = append(details, fmt.Sprintf("assets %d", len(item.Assets)))
+			}
 			if counts.Duplicates > 0 {
-				fmt.Printf(", duplicates %d", counts.Duplicates)
+				details = append(details, fmt.Sprintf("duplicates %d", counts.Duplicates))
 			}
 			if item.Restored {
-				fmt.Print(", restored from Trash")
+				details = append(details, "restored from Trash")
 			}
-			fmt.Println(")")
+			finishImportLine(details)
 		} else if detailed {
 			fmt.Printf("Imported: %s\n", item.Title)
 			fmt.Printf("Authors:  %s\n", strings.Join(item.Authors, ", "))
 			fmt.Printf("Format:   %s\n", outcomeFormatLabel(item))
-			fmt.Printf("Asset ID: %s\n", item.AssetID)
 			fmt.Printf("Path:     %s\n", item.storagePath)
 		} else {
-			fmt.Printf("OK    %s (%s)\n", item.Source, item.AssetID)
+			fmt.Printf("OK    %s\n", source)
 		}
 	}
 
 	if item.Error != "" && item.Status != "error" {
-		fmt.Printf("ERR   %s: %s\n", item.Source, item.Error)
+		fmt.Printf("ERR   %s: %s\n", source, item.Error)
 	}
+}
+
+func finishImportLine(details []string) {
+	if len(details) > 0 {
+		fmt.Printf(" (%s)", strings.Join(details, ", "))
+	}
+	fmt.Println()
+}
+
+func displayImportSource(source, root string) string {
+	if root == "" {
+		return source
+	}
+	rel, ok := pathRelativeTo(root, source)
+	if !ok {
+		return source
+	}
+	if rel == "." {
+		return filepath.Base(filepath.Clean(source))
+	}
+	return rel
+}
+
+func pathRelativeTo(root, target string) (string, bool) {
+	rel, err := filepath.Rel(root, target)
+	return rel, err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func printImportOutcomeWarnings(item importOutcome) {

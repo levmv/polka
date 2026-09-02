@@ -626,7 +626,7 @@ func TestResolveMOBIFamilyUsesFilenameFallbacks(t *testing.T) {
 			}
 
 			if !IsSupportedBook(tt.name) {
-				t.Fatalf("%q should be accepted by import-folder", tt.name)
+				t.Fatalf("%q should be accepted by folder import", tt.name)
 			}
 			if plan.Format != tt.wantFormat {
 				t.Fatalf("Format = %v; want %v", plan.Format, tt.wantFormat)
@@ -713,7 +713,7 @@ func TestResolveComicArchivesUseAvailableCapabilities(t *testing.T) {
 			}
 
 			if !IsSupportedBook(tt.name) {
-				t.Fatalf("%q should be accepted by import-folder", tt.name)
+				t.Fatalf("%q should be accepted by folder import", tt.name)
 			}
 			if plan.Format != tt.wantFormat {
 				t.Fatalf("Format = %v; want %v", plan.Format, tt.wantFormat)
@@ -762,7 +762,7 @@ func TestResolveTextFormatsUseFilenameFallbacks(t *testing.T) {
 			}
 
 			if !IsSupportedBook(tt.name) {
-				t.Fatalf("%q should be accepted by import-folder", tt.name)
+				t.Fatalf("%q should be accepted by folder import", tt.name)
 			}
 			if plan.Format != tt.wantFormat {
 				t.Fatalf("Format = %v; want %v", plan.Format, tt.wantFormat)
@@ -1090,7 +1090,7 @@ func TestResolveHTMLFormatsUseMetadata(t *testing.T) {
 				t.Fatalf("Resolve: %v", err)
 			}
 			if !IsSupportedBook(tt.name) {
-				t.Fatalf("%q should be accepted by import-folder", tt.name)
+				t.Fatalf("%q should be accepted by folder import", tt.name)
 			}
 			if plan.Format != tt.wantFormat {
 				t.Fatalf("Format = %v; want %v", plan.Format, tt.wantFormat)
@@ -1123,7 +1123,7 @@ func TestResolveCHMUsesFilenameFallbacks(t *testing.T) {
 		t.Fatalf("Resolve: %v", err)
 	}
 	if !IsSupportedBook("Technical Manual.chm") {
-		t.Fatalf("CHM should be accepted by import-folder")
+		t.Fatalf("CHM should be accepted by folder import")
 	}
 	if plan.Format != format.FormatCHM {
 		t.Fatalf("Format = %v; want FormatCHM", plan.Format)

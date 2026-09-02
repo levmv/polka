@@ -82,6 +82,33 @@ func TestAPIAdminStorageImportFolderRejectsDataDirOverlap(t *testing.T) {
 	}
 }
 
+func TestAPIAdminStorageImportFolderPreviewFollowsRootSymlink(t *testing.T) {
+	database, dataDir := setupTestDB(t)
+	defer database.Close()
+
+	sourceDir := t.TempDir()
+	writeFile(t, filepath.Join(sourceDir, "book.epub"), testEPUB(t, "Linked Import", "Ada Writer", "Writer, Ada"))
+	link := filepath.Join(t.TempDir(), "books-link")
+	if err := os.Symlink(sourceDir, link); err != nil {
+		t.Skipf("create directory symlink: %v", err)
+	}
+
+	admin := mustUser(t, database, "Admin", db.RoleAdmin)
+	s := &Server{db: database, dataDir: dataDir, sessions: newSessionStore(database)}
+	w := httptest.NewRecorder()
+	testRoutes(t, s).ServeHTTP(w, jsonRequest(t, s, admin.ID, http.MethodPost, "/api/admin/storage/import/preview", folderImportRequest{Path: link}))
+	if w.Code != http.StatusOK {
+		t.Fatalf("preview status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+	var got FolderImportPreviewDTO
+	if err := json.UnmarshalRead(w.Body, &got); err != nil {
+		t.Fatalf("decode preview: %v", err)
+	}
+	if got.Files != 1 || got.WouldImport != 1 || got.Failed != 0 {
+		t.Fatalf("preview = %+v; want one importable file", got)
+	}
+}
+
 func TestAPIAdminStorageImportFolderRun(t *testing.T) {
 	dataDir := t.TempDir()
 	database, err := db.InitPath(filepath.Join(dataDir, "library.db"))
