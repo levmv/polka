@@ -1,5 +1,6 @@
 # Build artifacts
 /polka
+/dist/
 /internal/pdfcover/generated/
 
 # Local libraries / data

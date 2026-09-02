@@ -158,7 +158,7 @@ func (s *Server) validateFolderImportPath(raw string) (string, error) {
 			return "", fmt.Errorf("Folder must be outside the %s", reserved.name)
 		}
 	}
-	return abs, nil
+	return sourcePath, nil
 }
 
 func (s *Server) previewFolderImport(ctx context.Context, rootPath string) (FolderImportPreviewDTO, error) {

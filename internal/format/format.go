@@ -431,7 +431,7 @@ func KnownBookExtension(ext string) bool {
 
 // BookUploadAccept returns the browser file-input accept list for formats Polka
 // can import. Keep this derived from the registry so upload does not drift from
-// CLI/import-folder support when new formats are added.
+// CLI import support when new formats are added.
 func BookUploadAccept() string {
 	tokens := make([]string, 0, len(bookFormats)*2)
 	seenMediaTypes := make(map[string]bool)

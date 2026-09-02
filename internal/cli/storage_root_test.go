@@ -53,7 +53,7 @@ func TestStorageRootSetRequiresCopiedFilesForExistingCatalog(t *testing.T) {
 	if err := os.WriteFile(src, []byte("root set source"), 0o644); err != nil {
 		t.Fatalf("write source: %v", err)
 	}
-	if err := runImportFile(context.Background(), dataDir, []string{src}); err != nil {
+	if err := runImport(context.Background(), dataDir, []string{src}); err != nil {
 		t.Fatalf("import source: %v", err)
 	}
 

@@ -1232,7 +1232,7 @@ func restoreDuplicateAsset(ctx context.Context, database db.Execer, root storage
 	return nil
 }
 
-// IsSupportedBook is the import-folder extension filter. Some accepted
+// IsSupportedBook is the folder import extension filter. Some accepted
 // extensions are currently opaque imports: they store the original file with
 // filename/Unknown Author fallback metadata until a real parser exists.
 func IsSupportedBook(name string) bool {

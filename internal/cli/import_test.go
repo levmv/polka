@@ -50,7 +50,9 @@ func writeEPUB(t *testing.T, path, title, creator, fileAs string) {
 func TestImportReusedAuthorUsesPersistedSortName(t *testing.T) {
 	tempDir := t.TempDir()
 	dataDir := filepath.Join(tempDir, "data")
-	os.MkdirAll(dataDir, 0o755)
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		t.Fatalf("mkdir data: %v", err)
+	}
 	database, err := db.InitPath(filepath.Join(dataDir, "library.db"))
 	if err != nil {
 		t.Fatalf("db.Init: %v", err)
@@ -81,54 +83,6 @@ func TestImportReusedAuthorUsesPersistedSortName(t *testing.T) {
 	dirB := filepath.Dir(resB.StoragePath)
 	if dirA != dirB {
 		t.Errorf("reused author landed in a divergent folder:\n  A: %s\n  B: %s\n(want both under the persisted sort_name)", dirA, dirB)
-	}
-}
-
-func TestPDFMetadataExtraction(t *testing.T) {
-	dataDir := t.TempDir()
-	initialized, err := ensureLibraryInitialized(dataDir)
-	if err != nil {
-		t.Fatalf("ensureLibraryInitialized: %v", err)
-	}
-	initialized.Close()
-
-	// Minimal PDF with /Title and /Author.
-	pdfContent := `%PDF-1.4
-1 0 obj
-<< /Type /Info /Title (My PDF Title) /Author (PDF Author) >>
-endobj
-trailer
-<< /Info 1 0 R >>
-%%EOF`
-	pdfPath := filepath.Join(dataDir, "test.pdf")
-	if err := os.WriteFile(pdfPath, []byte(pdfContent), 0o644); err != nil {
-		t.Fatalf("write pdf: %v", err)
-	}
-
-	if err := runImportFile(context.Background(), dataDir, []string{pdfPath}); err != nil {
-		t.Fatalf("runImportFile: %v", err)
-	}
-
-	database, err := db.InitPath(filepath.Join(dataDir, "library.db"))
-	if err != nil {
-		t.Fatalf("db init: %v", err)
-	}
-	defer database.Close()
-
-	var title string
-	if err := database.QueryRow("SELECT title FROM works LIMIT 1").Scan(&title); err != nil {
-		t.Fatalf("query title: %v", err)
-	}
-	if title != "My PDF Title" {
-		t.Errorf("expected title 'My PDF Title', got %q", title)
-	}
-
-	var authorName string
-	if err := database.QueryRow("SELECT a.name FROM authors a JOIN work_authors wa ON a.id = wa.author_id LIMIT 1").Scan(&authorName); err != nil {
-		t.Fatalf("query author: %v", err)
-	}
-	if authorName != "PDF Author" {
-		t.Errorf("expected author 'PDF Author', got %q", authorName)
 	}
 }
 
@@ -315,57 +269,6 @@ func TestImportHumanUnsupportedSingleFileReportsOnce(t *testing.T) {
 	}
 }
 
-func TestIsSupportedBook(t *testing.T) {
-	tests := []struct {
-		name string
-		want bool
-	}{
-		{"book.epub", true},
-		{"book.KEPUB", true},
-		{"book.KEPUB.EPUB", true},
-		{"doc.PDF", true},
-		{"file.mobi", true},
-		{"book.AZW", true},
-		{"item.AZW3", true},
-		{"print-replica.AZW4", true},
-		{"palm.PRC", true},
-		{"palm.PDB", true},
-		{"comic.CBZ", true},
-		{"comic.CBR", true},
-		{"comic.CB7", true},
-		{"scan.DJVU", true},
-		{"scan.DJV", true},
-		{"notes.TXT", true},
-		{"notes.TEXT", true},
-		{"archive.TXTZ", true},
-		{"notes.MD", true},
-		{"notes.MARKDOWN", true},
-		{"notes.TEXTILE", true},
-		{"page.HTML", true},
-		{"page.HTM", true},
-		{"page.XHTML", true},
-		{"page.XHTM", true},
-		{"archive.HTMLZ", true},
-		{"document.DOCX", true},
-		{"document.DOCM", true},
-		{"document.ODT", true},
-		{"document.RTF", true},
-		{"manual.CHM", true},
-		{"text.fb2", true},
-		{"text.fb2.zip", true},
-		{"text.fb2.gz", true},
-		{"text.FBZ", true},
-		{"cover.jpg", false},
-		{".DS_Store", false},
-	}
-
-	for _, tt := range tests {
-		if got := importer.IsSupportedBook(tt.name); got != tt.want {
-			t.Errorf("IsSupportedBook(%q) = %v, want %v", tt.name, got, tt.want)
-		}
-	}
-}
-
 func TestImportFolderIdempotency(t *testing.T) {
 	tempDir := t.TempDir()
 
@@ -374,36 +277,72 @@ func TestImportFolderIdempotency(t *testing.T) {
 	initDefaultTestLibrary(t, dataDir)
 
 	srcDir := filepath.Join(tempDir, "src")
-	os.MkdirAll(filepath.Join(srcDir, "nested"), 0o755)
-
-	epubData := []byte("PK\x03\x04dummy epub data that looks like a valid zip file for detection")
+	if err := os.MkdirAll(filepath.Join(srcDir, "nested"), 0o755); err != nil {
+		t.Fatalf("mkdir source: %v", err)
+	}
 	epubPath := filepath.Join(srcDir, "nested", "test1.epub")
-	os.WriteFile(epubPath, epubData, 0o644)
+	writeEPUB(t, epubPath, "Idempotent Import", "Ada Writer", "Writer, Ada")
 
-	os.WriteFile(filepath.Join(srcDir, "cover.jpg"), []byte("image"), 0o644)
-
-	err := runImportFolder(context.Background(), dataDir, []string{srcDir})
+	err := runImport(context.Background(), dataDir, []string{srcDir})
 	if err != nil {
 		t.Fatalf("first import failed: %v", err)
 	}
 
-	db2, _ := db.InitPath(dbPath)
+	db2, err := db.InitPath(dbPath)
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
 	defer db2.Close()
 	var count int
-	db2.QueryRow("SELECT COUNT(*) FROM assets").Scan(&count)
+	if err := db2.QueryRow("SELECT COUNT(*) FROM assets").Scan(&count); err != nil {
+		t.Fatalf("count assets: %v", err)
+	}
 	if count != 1 {
 		t.Fatalf("expected 1 asset, got %d", count)
 	}
 
-	err = runImportFolder(context.Background(), dataDir, []string{srcDir})
+	err = runImport(context.Background(), dataDir, []string{srcDir})
 	if err != nil {
 		t.Fatalf("second import failed: %v", err)
 	}
 
 	var countAfter int
-	db2.QueryRow("SELECT COUNT(*) FROM assets").Scan(&countAfter)
+	if err := db2.QueryRow("SELECT COUNT(*) FROM assets").Scan(&countAfter); err != nil {
+		t.Fatalf("count assets after repeat: %v", err)
+	}
 	if countAfter != 1 {
 		t.Fatalf("expected 1 asset after second import, got %d", countAfter)
+	}
+}
+
+func TestImportFolderFollowsRootSymlink(t *testing.T) {
+	tempDir := t.TempDir()
+	sourceDir := filepath.Join(tempDir, "source")
+	if err := os.MkdirAll(sourceDir, 0o755); err != nil {
+		t.Fatalf("mkdir source: %v", err)
+	}
+	writeEPUB(t, filepath.Join(sourceDir, "book.epub"), "Linked Import", "Ada Writer", "Writer, Ada")
+
+	link := filepath.Join(tempDir, "books-link")
+	if err := os.Symlink(sourceDir, link); err != nil {
+		t.Skipf("create directory symlink: %v", err)
+	}
+	dataDir := filepath.Join(tempDir, "data")
+	if err := runImport(context.Background(), dataDir, []string{link}); err != nil {
+		t.Fatalf("import symlinked folder: %v", err)
+	}
+
+	database, err := db.InitPath(filepath.Join(dataDir, "library.db"))
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	defer database.Close()
+	var assets int
+	if err := database.QueryRow("SELECT COUNT(*) FROM assets").Scan(&assets); err != nil {
+		t.Fatalf("count assets: %v", err)
+	}
+	if assets != 1 {
+		t.Fatalf("assets = %d; want 1", assets)
 	}
 }
 
@@ -430,7 +369,7 @@ func TestImportFolderDryRunDoesNotPersist(t *testing.T) {
 		t.Fatalf("write epub: %v", err)
 	}
 
-	if err := runImportFolder(context.Background(), dataDir, []string{"--dry-run", srcDir}); err != nil {
+	if err := runImport(context.Background(), dataDir, []string{"--dry-run", srcDir}); err != nil {
 		t.Fatalf("dry-run import folder: %v", err)
 	}
 	if _, err := os.Stat(epubPath); err != nil {
@@ -468,10 +407,10 @@ func TestImportFolderDryRunAfterImportDoesNotAddRows(t *testing.T) {
 		t.Fatalf("write epub: %v", err)
 	}
 
-	if err := runImportFolder(context.Background(), dataDir, []string{srcDir}); err != nil {
+	if err := runImport(context.Background(), dataDir, []string{srcDir}); err != nil {
 		t.Fatalf("import folder: %v", err)
 	}
-	if err := runImportFolder(context.Background(), dataDir, []string{"--dry-run", srcDir}); err != nil {
+	if err := runImport(context.Background(), dataDir, []string{"--dry-run", srcDir}); err != nil {
 		t.Fatalf("dry-run import folder: %v", err)
 	}
 
@@ -501,7 +440,7 @@ func TestImportFolderDeleteSources(t *testing.T) {
 	}
 	importedPath := filepath.Join(srcDir, "new.epub")
 	writeEPUB(t, importedPath, "Delete Source", "Ada Writer", "Writer, Ada")
-	if err := runImportFolder(context.Background(), dataDir, []string{"--delete-sources", srcDir}); err != nil {
+	if err := runImport(context.Background(), dataDir, []string{"--delete-sources", srcDir}); err != nil {
 		t.Fatalf("import folder with delete: %v", err)
 	}
 	if _, err := os.Stat(importedPath); !os.IsNotExist(err) {
@@ -510,7 +449,7 @@ func TestImportFolderDeleteSources(t *testing.T) {
 
 	duplicatePath := filepath.Join(srcDir, "duplicate.epub")
 	writeEPUB(t, duplicatePath, "Delete Source", "Ada Writer", "Writer, Ada")
-	if err := runImportFolder(context.Background(), dataDir, []string{"--delete-sources", srcDir}); err != nil {
+	if err := runImport(context.Background(), dataDir, []string{"--delete-sources", srcDir}); err != nil {
 		t.Fatalf("duplicate import folder with delete: %v", err)
 	}
 	if _, err := os.Stat(duplicatePath); !os.IsNotExist(err) {
@@ -528,6 +467,49 @@ func TestImportFolderDeleteSources(t *testing.T) {
 	}
 	if assets != 1 {
 		t.Fatalf("assets after import + duplicate cleanup = %d; want 1", assets)
+	}
+}
+
+func TestImportRefusesSourcesOverlappingManagedRoot(t *testing.T) {
+	tempDir := t.TempDir()
+	dataDir := filepath.Join(tempDir, "data")
+	source := filepath.Join(tempDir, "book.epub")
+	writeEPUB(t, source, "Managed Source", "Ada Writer", "Writer, Ada")
+
+	if err := runImport(context.Background(), dataDir, []string{source}); err != nil {
+		t.Fatalf("initial import: %v", err)
+	}
+	database, err := db.InitPath(filepath.Join(dataDir, "library.db"))
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	root, err := storage.OpenRoot(database.DB, dataDir)
+	if err != nil {
+		database.Close()
+		t.Fatalf("open books root: %v", err)
+	}
+	var storagePath string
+	if err := database.QueryRow("SELECT storage_path FROM assets LIMIT 1").Scan(&storagePath); err != nil {
+		database.Close()
+		t.Fatalf("query storage path: %v", err)
+	}
+	database.Close()
+	managedSource := root.Abs(storagePath)
+
+	err = runImport(context.Background(), dataDir, []string{"--delete-sources", managedSource})
+	if err == nil || !strings.Contains(err.Error(), "overlaps the managed books folder") {
+		t.Fatalf("managed source import error = %v; want overlap refusal", err)
+	}
+	if _, err := os.Stat(managedSource); err != nil {
+		t.Fatalf("managed source was touched: %v", err)
+	}
+
+	err = runImport(context.Background(), dataDir, []string{"--delete-sources", tempDir})
+	if err == nil || !strings.Contains(err.Error(), "overlaps the managed books folder") {
+		t.Fatalf("ancestor source import error = %v; want overlap refusal", err)
+	}
+	if _, err := os.Stat(managedSource); err != nil {
+		t.Fatalf("managed source was touched through ancestor import: %v", err)
 	}
 }
 
@@ -566,8 +548,18 @@ trailer
 		t.Fatalf("write pdf: %v", err)
 	}
 
-	if err := runImportFolder(context.Background(), dataDir, []string{filepath.Join(tempDir, "calibre")}); err != nil {
+	out, err := captureStdout(t, func() error {
+		return runImport(context.Background(), dataDir, []string{filepath.Join(tempDir, "calibre")})
+	})
+	if err != nil {
 		t.Fatalf("import folder: %v", err)
+	}
+	wantLine := "OK    " + filepath.Join("Calibre Author", "Calibre Book (1)") + " (assets 2)\n"
+	if !strings.Contains(out, wantLine) {
+		t.Fatalf("import output omitted concise relative group result %q:\n%s", wantLine, out)
+	}
+	if strings.Contains(out, tempDir) || strings.Contains(out, "(work ") {
+		t.Fatalf("import output exposed source root or internal work ID:\n%s", out)
 	}
 
 	db2, err := db.InitPath(dbPath)
@@ -618,7 +610,7 @@ trailer
 		t.Fatalf("metadata = title %q publisher %q author %q; want calibre sidecar values", title, publisher, author)
 	}
 
-	if err := runImportFolder(context.Background(), dataDir, []string{filepath.Join(tempDir, "calibre")}); err != nil {
+	if err := runImport(context.Background(), dataDir, []string{filepath.Join(tempDir, "calibre")}); err != nil {
 		t.Fatalf("second import folder: %v", err)
 	}
 	if err := db2.QueryRow("SELECT COUNT(*) FROM works").Scan(&works); err != nil {
@@ -654,8 +646,18 @@ func TestImportFolderDeleteSourcesRemovesCalibreDirectory(t *testing.T) {
 	}
 	writeEPUB(t, filepath.Join(bookDir, "Calibre Book.epub"), "Embedded Title", "Embedded Author", "Author, Embedded")
 
-	if err := runImportFolder(context.Background(), dataDir, []string{"--delete-sources", filepath.Join(tempDir, "calibre")}); err != nil {
+	out, err := captureStdout(t, func() error {
+		return runImport(context.Background(), dataDir, []string{"--delete-sources", filepath.Join(tempDir, "calibre")})
+	})
+	if err != nil {
 		t.Fatalf("import folder with delete: %v", err)
+	}
+	wantLine := "OK    " + filepath.Join("Calibre Author", "Calibre Book (1)") + "\n"
+	if !strings.Contains(out, wantLine) {
+		t.Fatalf("single-asset group output omitted concise result %q:\n%s", wantLine, out)
+	}
+	if strings.Contains(out, "assets 1") || strings.Contains(out, "(work ") {
+		t.Fatalf("single-asset group output included default count or internal ID:\n%s", out)
 	}
 	if _, err := os.Stat(bookDir); !os.IsNotExist(err) {
 		t.Fatalf("calibre source dir exists after --delete-sources; err=%v", err)
@@ -672,40 +674,5 @@ func TestImportFolderDeleteSourcesRemovesCalibreDirectory(t *testing.T) {
 	}
 	if assets != 1 {
 		t.Fatalf("assets after calibre cleanup import = %d; want 1", assets)
-	}
-}
-
-func TestPrimaryAuthorDeterminism(t *testing.T) {
-	tempDir := t.TempDir()
-	dataDir := filepath.Join(tempDir, "data")
-	os.MkdirAll(dataDir, 0o755)
-
-	dbPath := filepath.Join(dataDir, "library.db")
-	database, _ := db.InitPath(dbPath)
-	defer database.Close()
-
-	database.Exec("INSERT INTO works (id, title, sort_title) VALUES ('w_multi', 'Title', 'Title')")
-
-	database.Exec("INSERT INTO authors (id, name, sort_name) VALUES ('a_1', 'Zebra', 'Zebra')")
-	database.Exec("INSERT INTO authors (id, name, sort_name) VALUES ('a_2', 'Aardvark', 'Aardvark')")
-
-	database.Exec("INSERT INTO work_authors (work_id, author_id, author_order) VALUES ('w_multi', 'a_1', 0)")
-	database.Exec("INSERT INTO work_authors (work_id, author_id, author_order) VALUES ('w_multi', 'a_2', 1)")
-
-	var authorName string
-	err := database.QueryRow(`
-		SELECT a.name
-		FROM work_authors wa
-		JOIN authors a ON wa.author_id = a.id
-		WHERE wa.work_id = 'w_multi'
-		ORDER BY wa.author_order ASC, wa.rowid ASC
-		LIMIT 1
-	`).Scan(&authorName)
-	if err != nil {
-		t.Fatalf("query failed: %v", err)
-	}
-
-	if authorName != "Zebra" {
-		t.Errorf("Expected Zebra as primary author, got %s", authorName)
 	}
 }

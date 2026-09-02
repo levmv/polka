@@ -27,7 +27,7 @@ func TestStorageTemplatePreviewDetectsCollisions(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(srcDir, "two.epub"), []byte("two epub bytes"), 0o644); err != nil {
 		t.Fatalf("write two: %v", err)
 	}
-	if err := runImportFolder(context.Background(), dataDir, []string{srcDir}); err != nil {
+	if err := runImport(context.Background(), dataDir, []string{srcDir}); err != nil {
 		t.Fatalf("import folder: %v", err)
 	}
 
@@ -51,7 +51,7 @@ func TestStorageTemplateApplyPersistsRelayoutsAndAffectsNewImports(t *testing.T)
 	if err := os.WriteFile(filepath.Join(srcDir, "one.epub"), []byte("one epub bytes"), 0o644); err != nil {
 		t.Fatalf("write one: %v", err)
 	}
-	if err := runImportFolder(context.Background(), dataDir, []string{srcDir}); err != nil {
+	if err := runImport(context.Background(), dataDir, []string{srcDir}); err != nil {
 		t.Fatalf("import folder: %v", err)
 	}
 
@@ -103,7 +103,7 @@ func TestStorageTemplateApplyPersistsRelayoutsAndAffectsNewImports(t *testing.T)
 	if err := os.WriteFile(filepath.Join(srcDir, "two.epub"), []byte("two epub bytes"), 0o644); err != nil {
 		t.Fatalf("write two: %v", err)
 	}
-	if err := runImportFile(context.Background(), dataDir, []string{filepath.Join(srcDir, "two.epub")}); err != nil {
+	if err := runImport(context.Background(), dataDir, []string{filepath.Join(srcDir, "two.epub")}); err != nil {
 		t.Fatalf("import after template apply: %v", err)
 	}
 	rows, err := database.Query("SELECT storage_path FROM assets")
@@ -139,7 +139,7 @@ func TestStorageTemplateImportRejectsPathCollision(t *testing.T) {
 	if err := os.WriteFile(first, []byte("one epub bytes"), 0o644); err != nil {
 		t.Fatalf("write one: %v", err)
 	}
-	if err := runImportFile(context.Background(), dataDir, []string{first}); err != nil {
+	if err := runImport(context.Background(), dataDir, []string{first}); err != nil {
 		t.Fatalf("first import: %v", err)
 	}
 	if err := runStorageTemplateApply(context.Background(), dataDir, []string{"books/collide.epub"}); err != nil {
@@ -148,7 +148,7 @@ func TestStorageTemplateImportRejectsPathCollision(t *testing.T) {
 	if err := os.WriteFile(second, []byte("two epub bytes"), 0o644); err != nil {
 		t.Fatalf("write two: %v", err)
 	}
-	if err := runImportFile(context.Background(), dataDir, []string{second}); err == nil || !strings.Contains(err.Error(), "storage path collision") {
+	if err := runImport(context.Background(), dataDir, []string{second}); err == nil || !strings.Contains(err.Error(), "storage path collision") {
 		t.Fatalf("second import error = %v; want storage path collision", err)
 	}
 }

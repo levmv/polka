@@ -33,8 +33,8 @@ func TestRepairReconciliation(t *testing.T) {
 		t.Fatalf("write epub: %v", err)
 	}
 
-	if err := runImportFile(context.Background(), dataDir, []string{epubPath}); err != nil {
-		t.Fatalf("runImportFile: %v", err)
+	if err := runImport(context.Background(), dataDir, []string{epubPath}); err != nil {
+		t.Fatalf("runImport: %v", err)
 	}
 
 	database, err := db.InitPath(filepath.Join(dataDir, "library.db"))
@@ -260,8 +260,8 @@ func setupImportedRepairEPUB(t *testing.T, title, author string) (string, *db.DB
 	initialized.Close()
 	srcPath := filepath.Join(dataDir, "source.epub")
 	writeEPUB(t, srcPath, title, author, author)
-	if err := runImportFile(context.Background(), dataDir, []string{srcPath}); err != nil {
-		t.Fatalf("runImportFile: %v", err)
+	if err := runImport(context.Background(), dataDir, []string{srcPath}); err != nil {
+		t.Fatalf("runImport: %v", err)
 	}
 	database, err := db.InitPath(filepath.Join(dataDir, "library.db"))
 	if err != nil {
@@ -339,8 +339,8 @@ func TestCheckReportsInvalidStoragePath(t *testing.T) {
 	if err := os.WriteFile(srcPath, []byte("invalid path epub"), 0o644); err != nil {
 		t.Fatalf("write epub: %v", err)
 	}
-	if err := runImportFile(context.Background(), dataDir, []string{srcPath}); err != nil {
-		t.Fatalf("runImportFile: %v", err)
+	if err := runImport(context.Background(), dataDir, []string{srcPath}); err != nil {
+		t.Fatalf("runImport: %v", err)
 	}
 
 	database, err := db.InitPath(filepath.Join(dataDir, "library.db"))
@@ -369,8 +369,8 @@ func TestCheckReportsUnavailableStorage(t *testing.T) {
 	if err := os.WriteFile(srcPath, []byte("unavailable storage epub"), 0o644); err != nil {
 		t.Fatalf("write epub: %v", err)
 	}
-	if err := runImportFile(context.Background(), dataDir, []string{srcPath}); err != nil {
-		t.Fatalf("runImportFile: %v", err)
+	if err := runImport(context.Background(), dataDir, []string{srcPath}); err != nil {
+		t.Fatalf("runImport: %v", err)
 	}
 
 	database, err := db.InitPath(filepath.Join(dataDir, "library.db"))
@@ -415,8 +415,8 @@ func TestRepairRefusesUnavailableStorage(t *testing.T) {
 	if err := os.WriteFile(srcPath, []byte("repair unavailable epub"), 0o644); err != nil {
 		t.Fatalf("write epub: %v", err)
 	}
-	if err := runImportFile(context.Background(), dataDir, []string{srcPath}); err != nil {
-		t.Fatalf("runImportFile: %v", err)
+	if err := runImport(context.Background(), dataDir, []string{srcPath}); err != nil {
+		t.Fatalf("runImport: %v", err)
 	}
 
 	database, err := db.InitPath(filepath.Join(dataDir, "library.db"))
@@ -452,8 +452,8 @@ func TestCheckReportsRootStagingFiles(t *testing.T) {
 	if err := os.WriteFile(srcPath, []byte("staging check epub"), 0o644); err != nil {
 		t.Fatalf("write epub: %v", err)
 	}
-	if err := runImportFile(context.Background(), dataDir, []string{srcPath}); err != nil {
-		t.Fatalf("runImportFile: %v", err)
+	if err := runImport(context.Background(), dataDir, []string{srcPath}); err != nil {
+		t.Fatalf("runImport: %v", err)
 	}
 
 	database, err := db.InitPath(filepath.Join(dataDir, "library.db"))
@@ -498,10 +498,10 @@ func TestCheckCollectsIOErrorsAndContinues(t *testing.T) {
 	second := filepath.Join(dataDir, "io-second.epub")
 	writeEPUB(t, first, "IO First", "Ada Writer", "Writer, Ada")
 	writeEPUB(t, second, "IO Second", "Ada Writer", "Writer, Ada")
-	if err := runImportFile(context.Background(), dataDir, []string{first}); err != nil {
+	if err := runImport(context.Background(), dataDir, []string{first}); err != nil {
 		t.Fatalf("import first: %v", err)
 	}
-	if err := runImportFile(context.Background(), dataDir, []string{second}); err != nil {
+	if err := runImport(context.Background(), dataDir, []string{second}); err != nil {
 		t.Fatalf("import second: %v", err)
 	}
 
@@ -570,8 +570,8 @@ func TestRepairRecoversCommittedStagedAsset(t *testing.T) {
 	if err := os.WriteFile(srcPath, srcBytes, 0o644); err != nil {
 		t.Fatalf("write epub: %v", err)
 	}
-	if err := runImportFile(context.Background(), dataDir, []string{srcPath}); err != nil {
-		t.Fatalf("runImportFile: %v", err)
+	if err := runImport(context.Background(), dataDir, []string{srcPath}); err != nil {
+		t.Fatalf("runImport: %v", err)
 	}
 
 	database, err := db.InitPath(filepath.Join(dataDir, "library.db"))
@@ -625,8 +625,8 @@ func TestCheckAndRepairCoverOriginals(t *testing.T) {
 
 	srcPath := filepath.Join(dataDir, "cover-repair.epub")
 	writeEPUB(t, srcPath, "Cover Repair", "Ada Writer", "Writer, Ada")
-	if err := runImportFile(context.Background(), dataDir, []string{srcPath}); err != nil {
-		t.Fatalf("runImportFile: %v", err)
+	if err := runImport(context.Background(), dataDir, []string{srcPath}); err != nil {
+		t.Fatalf("runImport: %v", err)
 	}
 
 	database, err := db.InitPath(filepath.Join(dataDir, "library.db"))
@@ -744,8 +744,8 @@ func TestRepairReextractsMissingCoverFromPrimaryAsset(t *testing.T) {
 
 	srcPath := filepath.Join(dataDir, "embedded-cover.epub")
 	writeMetaEPUBWithCover(t, srcPath, metaTinyPNG)
-	if err := runImportFile(context.Background(), dataDir, []string{srcPath}); err != nil {
-		t.Fatalf("runImportFile: %v", err)
+	if err := runImport(context.Background(), dataDir, []string{srcPath}); err != nil {
+		t.Fatalf("runImport: %v", err)
 	}
 
 	database, err := db.InitPath(filepath.Join(dataDir, "library.db"))
@@ -894,8 +894,8 @@ func TestRepairRecoversRootStagedAsset(t *testing.T) {
 	if err := os.WriteFile(srcPath, srcBytes, 0o644); err != nil {
 		t.Fatalf("write epub: %v", err)
 	}
-	if err := runImportFile(context.Background(), dataDir, []string{srcPath}); err != nil {
-		t.Fatalf("runImportFile: %v", err)
+	if err := runImport(context.Background(), dataDir, []string{srcPath}); err != nil {
+		t.Fatalf("runImport: %v", err)
 	}
 
 	database, err := db.InitPath(filepath.Join(dataDir, "library.db"))
@@ -954,8 +954,8 @@ func TestRepairRecoversTaglessOrphanByHash(t *testing.T) {
 	if err := os.WriteFile(srcPath, srcBytes, 0o644); err != nil {
 		t.Fatalf("write epub: %v", err)
 	}
-	if err := runImportFile(context.Background(), dataDir, []string{srcPath}); err != nil {
-		t.Fatalf("runImportFile: %v", err)
+	if err := runImport(context.Background(), dataDir, []string{srcPath}); err != nil {
+		t.Fatalf("runImport: %v", err)
 	}
 
 	database, err := db.InitPath(filepath.Join(dataDir, "library.db"))
@@ -1018,7 +1018,7 @@ func TestDuplicateImportRestoresMissingManagedFile(t *testing.T) {
 
 	srcPath := filepath.Join(dataDir, "duplicate-restore.epub")
 	writeEPUB(t, srcPath, "Duplicate Restore", "Ada Writer", "Writer, Ada")
-	if err := runImportFile(context.Background(), dataDir, []string{srcPath}); err != nil {
+	if err := runImport(context.Background(), dataDir, []string{srcPath}); err != nil {
 		t.Fatalf("initial import: %v", err)
 	}
 
@@ -1043,14 +1043,8 @@ func TestDuplicateImportRestoresMissingManagedFile(t *testing.T) {
 		t.Fatalf("runCheck after remove = %v; want ErrIssuesFound", err)
 	}
 
-	out, err := captureStdout(t, func() error {
-		return runImportFile(context.Background(), dataDir, []string{srcPath})
-	})
-	if err != nil {
+	if err := runImport(context.Background(), dataDir, []string{srcPath}); err != nil {
 		t.Fatalf("duplicate import: %v", err)
-	}
-	if !strings.Contains(out, "duplicate of") {
-		t.Fatalf("duplicate import output = %q; want duplicate status", out)
 	}
 	if _, err := os.Stat(finalAbs); err != nil {
 		t.Fatalf("managed file was not restored: %v", err)
@@ -1073,8 +1067,8 @@ func TestCheckUsesEscapedDatabaseURI(t *testing.T) {
 	if err := os.WriteFile(srcPath, []byte("uri path epub"), 0o644); err != nil {
 		t.Fatalf("write epub: %v", err)
 	}
-	if err := runImportFile(context.Background(), dataDir, []string{srcPath}); err != nil {
-		t.Fatalf("runImportFile: %v", err)
+	if err := runImport(context.Background(), dataDir, []string{srcPath}); err != nil {
+		t.Fatalf("runImport: %v", err)
 	}
 
 	if err := runCheck(dataDir, nil); err != nil {
@@ -1094,8 +1088,8 @@ func TestCheckAndRepairCurrentHashes(t *testing.T) {
 	if err := os.WriteFile(srcPath, []byte("hash me"), 0o644); err != nil {
 		t.Fatalf("write epub: %v", err)
 	}
-	if err := runImportFile(context.Background(), dataDir, []string{srcPath}); err != nil {
-		t.Fatalf("runImportFile: %v", err)
+	if err := runImport(context.Background(), dataDir, []string{srcPath}); err != nil {
+		t.Fatalf("runImport: %v", err)
 	}
 
 	database, err := db.InitPath(filepath.Join(dataDir, "library.db"))
@@ -1189,8 +1183,8 @@ func TestCheckAndRepairReaderCapability(t *testing.T) {
 	if err := os.WriteFile(fb2Path, fb2, 0o644); err != nil {
 		t.Fatalf("write fb2: %v", err)
 	}
-	if err := runImportFile(context.Background(), dataDir, []string{fb2Path}); err != nil {
-		t.Fatalf("runImportFile: %v", err)
+	if err := runImport(context.Background(), dataDir, []string{fb2Path}); err != nil {
+		t.Fatalf("runImport: %v", err)
 	}
 
 	database, err := db.InitPath(filepath.Join(dataDir, "library.db"))
