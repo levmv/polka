@@ -10,21 +10,28 @@ func TestParseQuery(t *testing.T) {
 		input    string
 		expected string
 	}{
-		{"author qualifier", "author:asimov", `authors:"asimov"`},
+		{"author qualifier", "author:asimov", `authors:"asimov"*`},
+		{"single alphabetic character stays exact", "a", `"a"`},
+		{"single number stays exact", "1", `"1"`},
+		{"two-character term uses prefix", "ab", `"ab"*`},
+		{"single Han character uses prefix", "地", `"地"*`},
+		{"single kana character uses prefix", "ね", `"ね"*`},
 		{"series quoted", `series:"Foundation"`, `series:"Foundation"`},
-		{"tag qualifier", "tag:scifi", `tags:"scifi"`},
-		{"title qualifier", "title:foo", `title:"foo"`},
-		{"mixed free and qualified", "author:asimov foundation", `authors:"asimov" "foundation"`},
+		{"tag qualifier", "tag:scifi", `tags:"scifi"*`},
+		{"title qualifier", "title:foo", `title:"foo"*`},
+		{"mixed free and qualified", "author:asimov foundation", `authors:"asimov" "foundation"*`},
 		{"mixed free and qualified quoted", `author:asimov "foundation base"`, `authors:"asimov" "foundation base"`},
+		{"unfinished quoted phrase uses prefix", `"foundation ba`, `"foundation ba"*`},
 		{"malformed qualifier with no value is ignored", "author:", ""},
-		{"malformed colon in text", "some:text", `"some:text"`},
-		{"multiple qualifiers", "author:asimov tag:scifi", `authors:"asimov" tags:"scifi"`},
+		{"malformed colon in text", "some:text", `"some:text"*`},
+		{"multiple qualifiers", "author:asimov tag:scifi", `authors:"asimov" tags:"scifi"*`},
 		{"escaped quote stays one phrase", `series:"The ""Best"" Books"`, `series:"The ""Best"" Books"`},
 		{"structural no filter has no FTS term", "no:cover", ""},
-		{"structural no filter mixes with free text", "no:cover foundation", `"foundation"`},
-		{"unsupported no filter is free text in lenient search", "no:format", `"no:format"`},
+		{"structural no filter mixes with free text", "no:cover foundation", `"foundation"*`},
+		{"trailing structural filter completes free text", "foundation no:cover", `"foundation"`},
+		{"unsupported no filter is free text in lenient search", "no:format", `"no:format"*`},
 		{"status filter has no FTS term", "status:reading", ""},
-		{"unsupported status is free text in lenient search", "status:paused", `"status:paused"`},
+		{"unsupported status is free text in lenient search", "status:paused", `"status:paused"*`},
 	}
 
 	for _, tt := range tests {

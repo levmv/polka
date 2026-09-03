@@ -257,7 +257,7 @@ func TestUpdateShelfEditsQueryAndVisibility(t *testing.T) {
 	if err != nil {
 		t.Fatalf("update shelf: %v", err)
 	}
-	if updated.Name != "School" || updated.Query != "tag:school" || updated.QueryMatch != `tags:"school"` {
+	if updated.Name != "School" || updated.Query != "tag:school" || updated.QueryMatch != `tags:"school"*` {
 		t.Fatalf("updated query shelf = %+v", updated)
 	}
 	if updated.OwnerID != admin.ID || updated.Visibility != ShelfShared {

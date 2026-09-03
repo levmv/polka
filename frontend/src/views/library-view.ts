@@ -39,13 +39,14 @@ import { createLibrarySelection, type LibrarySelection } from './library-selecti
 import { createReturnPosition, type ReturnPosition } from './return-position';
 
 const PAGE_SIZE = 50;
-const SORT_OPTIONS = [
+const BROWSE_SORT_OPTIONS = [
     { value: 'added', label: 'Recently added' },
     { value: 'title', label: 'Title' },
     { value: 'author', label: 'Author' },
     { value: 'year', label: 'Year' },
     { value: 'series', label: 'Series order' },
 ];
+const SEARCH_SORT_OPTIONS = [{ value: 'relevance', label: 'Relevance' }, ...BROWSE_SORT_OPTIONS];
 
 type LibraryViewMode = 'grid' | 'table';
 
@@ -111,6 +112,8 @@ function restoreSavedScroll(): void {
 export function initLibrary(root: HTMLElement): RouteController {
     const searchInput = root.querySelector<HTMLInputElement>('#search-input');
     const params = new URLSearchParams(window.location.search);
+    const initialQuery = params.get('q') || '';
+    if (searchInput) searchInput.value = initialQuery;
     const state: LibraryViewState = {
         root,
         phase: 'active',
@@ -149,7 +152,10 @@ export function initLibrary(root: HTMLElement): RouteController {
 
     addCleanup(() => state.rail.destroy());
 
-    let sortValue = normalizeSort(params.get('sort') || 'added');
+    let searching = initialQuery.trim() !== '';
+    const requestedSort = params.get('sort') || '';
+    let sortValue = normalizeSort(requestedSort, searching);
+    let sortOverridden = requestedSort !== '' && requestedSort === sortValue;
     const initialOffset = initialLibraryOffset(params, sortValue, state.shelfId);
 
     // Rebuild the retained view: same offset, and a limit covering everything
@@ -168,7 +174,7 @@ export function initLibrary(root: HTMLElement): RouteController {
             url.searchParams.set('q', searchInput.value.trim());
             replaceLocationURL(url);
         }
-        updateLibraryBrowseURL(sortValue, offset);
+        updateLibraryBrowseURL(sortOverridden ? sortValue : '', offset);
         return loadBooks(state, searchInput?.value || '', sortValue, offset);
     };
 
@@ -181,9 +187,42 @@ export function initLibrary(root: HTMLElement): RouteController {
     // from a detached library would rewrite the book page's URL.
     let cancelPendingSearch: (() => void) | null = null;
     let sortSelect: ManagedSelect | null = null;
+    const sortControl = root.querySelector('#sort-control');
+
+    const renderSortSelect = () => {
+        sortSelect?.destroy();
+        sortSelect = null;
+        if (!sortControl) return;
+        const select = createSelect({
+            ariaLabel: 'Sort books',
+            value: sortValue,
+            options: sortOptions(searching),
+            onChange: (value) => {
+                sortValue = value;
+                sortOverridden = true;
+                reload();
+            },
+        });
+        sortControl.replaceChildren(select.el);
+        sortSelect = select;
+    };
+
+    const syncSearchSort = () => {
+        const nextSearching = searchInput?.value.trim() !== '';
+        if (nextSearching === searching) return;
+        searching = nextSearching;
+        if (searching && !sortOverridden) {
+            sortValue = 'relevance';
+        } else if (!searching && sortValue === 'relevance') {
+            sortValue = 'added';
+            sortOverridden = false;
+        }
+        renderSortSelect();
+    };
 
     if (searchInput) {
         const handleSearchInput = debounce((_e: Event) => {
+            syncSearchSort();
             reload();
         }, 200);
         cancelPendingSearch = () => handleSearchInput.cancel();
@@ -192,30 +231,12 @@ export function initLibrary(root: HTMLElement): RouteController {
             searchInput.removeEventListener('input', handleSearchInput);
             handleSearchInput.cancel();
         });
-
-        const q = params.get('q');
-        if (q) {
-            searchInput.value = q;
-        }
         addCleanup(setupLibrarySearchShortcuts(state, searchInput));
         addCleanup(setupSaveSearchButton(root, searchInput));
     }
 
-    const sortControl = root.querySelector('#sort-control');
-    if (sortControl) {
-        const select = createSelect({
-            ariaLabel: 'Sort books',
-            value: sortValue,
-            options: SORT_OPTIONS,
-            onChange: (value) => {
-                sortValue = value;
-                reload();
-            },
-        });
-        sortControl.appendChild(select.el);
-        sortSelect = select;
-        addCleanup(() => select.destroy());
-    }
+    renderSortSelect();
+    addCleanup(() => sortSelect?.destroy());
 
     const libraryGrid = root.querySelector<HTMLElement>('#library-grid');
     if (libraryGrid) {
@@ -412,6 +433,7 @@ export function initLibrary(root: HTMLElement): RouteController {
             // A search typed in the debounce window before the book opened was
             // unscheduled rather than dropped; the reader's intent applies now.
             else if (searchInput && searchInput.value.trim() !== state.query.trim()) {
+                syncSearchSort();
                 void reload();
             }
         },
@@ -450,8 +472,13 @@ function readLibraryViewMode(): LibraryViewMode {
     return localStorage.getItem('polka-view-mode') === 'table' ? 'table' : 'grid';
 }
 
-function normalizeSort(value: string): string {
-    return SORT_OPTIONS.some((option) => option.value === value) ? value : 'added';
+function sortOptions(searching: boolean) {
+    return searching ? SEARCH_SORT_OPTIONS : BROWSE_SORT_OPTIONS;
+}
+
+function normalizeSort(value: string, searching: boolean): string {
+    if (sortOptions(searching).some((option) => option.value === value)) return value;
+    return searching ? 'relevance' : 'added';
 }
 
 function initialLibraryOffset(params: URLSearchParams, sort: string, shelfId: string): number {
@@ -462,7 +489,7 @@ function initialLibraryOffset(params: URLSearchParams, sort: string, shelfId: st
 
 function updateLibraryBrowseURL(sort: string, offset: number): void {
     const url = new URL(window.location.href);
-    if (sort === 'added') {
+    if (!sort) {
         url.searchParams.delete('sort');
     } else {
         url.searchParams.set('sort', sort);

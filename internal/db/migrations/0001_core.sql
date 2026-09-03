@@ -457,8 +457,8 @@ CREATE TABLE user_reader_preferences (
     updated_at          INTEGER NOT NULL DEFAULT (unixepoch())
 );
 
--- Denormalized FTS5 projection rebuilt by write paths that change searchable
--- metadata. The relational tables above remain authoritative.
+-- Contentless FTS5 projection rebuilt when searchable metadata changes. The
+-- relational tables remain authoritative; work_id is retained for joins.
 CREATE VIRTUAL TABLE search USING fts5(
     work_id UNINDEXED,
     title,
@@ -467,5 +467,12 @@ CREATE VIRTUAL TABLE search USING fts5(
     tags,
     description,
     identifiers,
-    filename
+    filename,
+    content='',
+    contentless_delete=1,
+    contentless_unindexed=1
 );
+
+-- Ignore work_id and prefer title, authors, then series. Remaining columns use
+-- the default weight of 1.
+INSERT INTO search(search, rank) VALUES ('rank', 'bm25(0.0, 10.0, 8.0, 4.0)');

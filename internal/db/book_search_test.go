@@ -70,10 +70,10 @@ func TestBookSearchConsumersSelectTheSameWorks(t *testing.T) {
 		query string
 		want  []string
 	}{
-		{query: "needle", want: []string{"w1", "w2"}},
+		{query: "need", want: []string{"w1", "w2"}},
 		{query: "no:cover", want: []string{"w1", "w3"}},
-		{query: "no:cover needle", want: []string{"w1"}},
-		{query: "status:finished needle", want: []string{"w2"}},
+		{query: "no:cover need", want: []string{"w1"}},
+		{query: "status:finished need", want: []string{"w2"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.query, func(t *testing.T) {
@@ -117,7 +117,74 @@ func TestBookSearchConsumersSelectTheSameWorks(t *testing.T) {
 	}
 }
 
-func TestUpdateSearchIndexCoalescesNullableFields(t *testing.T) {
+func TestSearchRelevancePrefersIdentityFields(t *testing.T) {
+	database := newTestDB(t)
+	if _, err := database.Exec(`
+		INSERT INTO works (id, title, sort_title) VALUES
+			('w_title', 'Needle', 'Needle'),
+			('w_author', 'Other', 'Other'),
+			('w_series', 'Different', 'Different'),
+			('w_description', 'Another', 'Another');
+		INSERT INTO search (work_id, title, authors, series, description) VALUES
+			('w_title', 'Needle', 'Other', '', ''),
+			('w_author', 'Other', 'Needle', '', ''),
+			('w_series', 'Different', 'Someone', 'Needle', ''),
+			('w_description', 'Another', 'Someone', '', 'Needle');
+	`); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	books, err := ListBooks(database, FullVisibilityScope(), "", "needle", SortRelevance, 10, 0)
+	if err != nil {
+		t.Fatalf("search books: %v", err)
+	}
+	want := []string{"w_title", "w_author", "w_series", "w_description"}
+	if got := bookIDs(books); !slices.Equal(got, want) {
+		t.Fatalf("relevance order = %v; want %v", got, want)
+	}
+}
+
+func TestSearchPrefixMatching(t *testing.T) {
+	database := newTestDB(t)
+	if _, err := database.Exec(`
+		INSERT INTO works (id, title, sort_title) VALUES
+			('w_latin', 'Foundation Base', 'Foundation Base'),
+			('w_han', '地球往事', '地球往事'),
+			('w_kana', 'ねこ物語', 'ねこ物語');
+		INSERT INTO search (work_id, title) VALUES
+			('w_latin', 'Foundation Base'),
+			('w_han', '地球往事'),
+			('w_kana', 'ねこ物語');
+	`); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	tests := []struct {
+		name  string
+		query string
+		want  []string
+	}{
+		{name: "single Latin character stays exact", query: "f"},
+		{name: "Latin prefix", query: "fo", want: []string{"w_latin"}},
+		{name: "trailing word prefix", query: "foundation ba", want: []string{"w_latin"}},
+		{name: "completed phrase stays exact", query: `"foundation ba"`},
+		{name: "single Han character prefix", query: "地", want: []string{"w_han"}},
+		{name: "single kana character prefix", query: "ね", want: []string{"w_kana"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			books, err := ListBooks(database, FullVisibilityScope(), "", tt.query, SortTitle, 10, 0)
+			if err != nil {
+				t.Fatalf("search books: %v", err)
+			}
+			if got := bookIDs(books); !slices.Equal(got, tt.want) {
+				t.Fatalf("book IDs = %v; want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestUpdateSearchIndexReplacesContentlessRow(t *testing.T) {
 	database := newTestDB(t)
 
 	if _, err := database.Exec("INSERT INTO works (id, title, sort_title) VALUES ('w_min', 'Minimal Book', 'Minimal Book')"); err != nil {
@@ -136,28 +203,37 @@ func TestUpdateSearchIndexCoalescesNullableFields(t *testing.T) {
 		t.Fatalf("commit: %v", err)
 	}
 
-	var title, authors, series, tags, description, identifiers, filename string
-	err = database.QueryRow(`
-		SELECT title, authors, series, tags, description, identifiers, filename
-		FROM search
-		WHERE work_id = 'w_min'
-	`).Scan(&title, &authors, &series, &tags, &description, &identifiers, &filename)
+	var workID string
+	if err := database.QueryRow(`SELECT work_id FROM search WHERE search MATCH 'minimal'`).Scan(&workID); err != nil {
+		t.Fatalf("find indexed work: %v", err)
+	}
+	if workID != "w_min" {
+		t.Fatalf("indexed work = %q; want w_min", workID)
+	}
+
+	if _, err := database.Exec("UPDATE works SET title = 'Renamed Book', sort_title = 'Renamed Book' WHERE id = 'w_min'"); err != nil {
+		t.Fatalf("rename work: %v", err)
+	}
+	tx, err = database.Begin()
 	if err != nil {
-		t.Fatalf("query search row: %v", err)
+		t.Fatalf("begin reindex: %v", err)
 	}
-	if title != "Minimal Book" {
-		t.Fatalf("title = %q, want Minimal Book", title)
+	if err := UpdateSearchIndex(tx, "w_min"); err != nil {
+		tx.Rollback()
+		t.Fatalf("reindex: %v", err)
 	}
-	for name, got := range map[string]string{
-		"authors":     authors,
-		"series":      series,
-		"tags":        tags,
-		"description": description,
-		"identifiers": identifiers,
-		"filename":    filename,
-	} {
-		if got != "" {
-			t.Fatalf("%s = %q, want empty string", name, got)
-		}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit reindex: %v", err)
+	}
+
+	var oldMatches, newMatches int
+	if err := database.QueryRow(`SELECT count(*) FROM search WHERE search MATCH 'minimal'`).Scan(&oldMatches); err != nil {
+		t.Fatalf("query old title: %v", err)
+	}
+	if err := database.QueryRow(`SELECT count(*) FROM search WHERE search MATCH 'renamed'`).Scan(&newMatches); err != nil {
+		t.Fatalf("query new title: %v", err)
+	}
+	if oldMatches != 0 || newMatches != 1 {
+		t.Fatalf("matches after reindex = old %d, new %d; want 0, 1", oldMatches, newMatches)
 	}
 }

@@ -89,8 +89,9 @@ const (
 )
 
 type searchTerm struct {
-	field searchField
-	value string
+	field  searchField
+	value  string
+	prefix bool
 }
 
 type searchFilterKind uint8
@@ -127,6 +128,9 @@ func (q parsedSearchQuery) ftsMatch() string {
 	parts := make([]string, 0, len(q.terms))
 	for _, term := range q.terms {
 		value := `"` + strings.ReplaceAll(term.value, `"`, `""`) + `"`
+		if term.prefix {
+			value += "*"
+		}
 		switch term.field {
 		case searchAuthors:
 			value = "authors:" + value
@@ -193,11 +197,14 @@ func parseSearchQuery(q string, lenient bool) (parsedSearchQuery, error) {
 	var parsed parsedSearchQuery
 	var currentToken strings.Builder
 	inQuote := false
+	tokenQuoted := false
 	var key string
 
-	flushToken := func() error {
+	flushToken := func(prefix bool) error {
 		value := currentToken.String()
 		currentToken.Reset()
+		prefix = prefix && (!tokenQuoted || inQuote) && searchPrefixEligible(value)
+		tokenQuoted = false
 		if value == "" {
 			if key == "" {
 				return nil
@@ -212,19 +219,19 @@ func parseSearchQuery(q string, lenient bool) (parsedSearchQuery, error) {
 
 		switch key {
 		case "author":
-			parsed.terms = append(parsed.terms, searchTerm{field: searchAuthors, value: value})
+			parsed.terms = append(parsed.terms, searchTerm{field: searchAuthors, value: value, prefix: prefix})
 		case "series":
-			parsed.terms = append(parsed.terms, searchTerm{field: searchSeries, value: value})
+			parsed.terms = append(parsed.terms, searchTerm{field: searchSeries, value: value, prefix: prefix})
 		case "tag":
-			parsed.terms = append(parsed.terms, searchTerm{field: searchTags, value: value})
+			parsed.terms = append(parsed.terms, searchTerm{field: searchTags, value: value, prefix: prefix})
 		case "title":
-			parsed.terms = append(parsed.terms, searchTerm{field: searchTitle, value: value})
+			parsed.terms = append(parsed.terms, searchTerm{field: searchTitle, value: value, prefix: prefix})
 		case "no":
 			kind, ok := missingFilterKind(value)
 			if ok {
 				parsed.filters = append(parsed.filters, searchFilter{kind: kind})
 			} else if lenient {
-				parsed.terms = append(parsed.terms, searchTerm{value: "no:" + value})
+				parsed.terms = append(parsed.terms, searchTerm{value: "no:" + value, prefix: prefix})
 			} else {
 				return fmt.Errorf("no:%s is not a supported filter", value)
 			}
@@ -233,12 +240,12 @@ func parseSearchQuery(q string, lenient bool) (parsedSearchQuery, error) {
 			if ValidReadingStatus(status) {
 				parsed.filters = append(parsed.filters, searchFilter{kind: searchReadingStatus, value: status})
 			} else if lenient {
-				parsed.terms = append(parsed.terms, searchTerm{value: "status:" + value})
+				parsed.terms = append(parsed.terms, searchTerm{value: "status:" + value, prefix: prefix})
 			} else {
 				return fmt.Errorf("status:%s is not a supported status", value)
 			}
 		default:
-			parsed.terms = append(parsed.terms, searchTerm{value: value})
+			parsed.terms = append(parsed.terms, searchTerm{value: value, prefix: prefix})
 		}
 		key = ""
 		return nil
@@ -248,6 +255,7 @@ func parseSearchQuery(q string, lenient bool) (parsedSearchQuery, error) {
 	for i := 0; i < len(runes); i++ {
 		r := runes[i]
 		if r == '"' {
+			tokenQuoted = true
 			// A doubled quote inside a quoted value is a literal quote. This is
 			// the inverse of QueryTerm and ftsMatch escaping.
 			if inQuote && i+1 < len(runes) && runes[i+1] == '"' {
@@ -260,7 +268,7 @@ func parseSearchQuery(q string, lenient bool) (parsedSearchQuery, error) {
 		}
 
 		if unicode.IsSpace(r) && !inQuote {
-			if err := flushToken(); err != nil && !lenient {
+			if err := flushToken(false); err != nil && !lenient {
 				return parsedSearchQuery{}, err
 			}
 			continue
@@ -280,10 +288,42 @@ func parseSearchQuery(q string, lenient bool) (parsedSearchQuery, error) {
 	if inQuote && !lenient {
 		return parsedSearchQuery{}, errors.New("Close the quote")
 	}
-	if err := flushToken(); err != nil && !lenient {
+	// Only the trailing term uses prefix matching; completed and explicitly
+	// quoted terms remain exact.
+	if err := flushToken(true); err != nil && !lenient {
 		return parsedSearchQuery{}, err
 	}
 	return parsed, nil
+}
+
+func searchPrefixEligible(value string) bool {
+	count := 0
+	var only rune
+	started := false
+	runes := []rune(value)
+	for i := len(runes) - 1; i >= 0; i-- {
+		r := runes[i]
+		switch {
+		case unicode.IsLetter(r) || unicode.IsNumber(r):
+			started = true
+			count++
+			only = r
+			if count >= 2 {
+				return true
+			}
+		case unicode.IsMark(r):
+			// Combining marks belong to the adjacent base character and do not
+			// make a one-letter prefix more selective.
+			continue
+		case started:
+			return count == 1 && isSingleCharacterPrefixScript(only)
+		}
+	}
+	return count == 1 && isSingleCharacterPrefixScript(only)
+}
+
+func isSingleCharacterPrefixScript(r rune) bool {
+	return unicode.In(r, unicode.Han, unicode.Hiragana, unicode.Katakana)
 }
 
 func isSearchQualifier(value string) bool {
