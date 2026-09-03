@@ -92,7 +92,9 @@ test.describe('Polka read-only browser tests', () => {
     await expect(page.locator('.book-card').first()).toBeVisible();
 
     const input = page.locator('#search-input');
+    const sort = page.getByRole('button', { name: 'Sort books' });
     await expect(input).toHaveAttribute('aria-keyshortcuts', '/');
+    await expect(sort).toContainText('Recently added');
 
     await page.evaluate(() => {
       if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
@@ -100,12 +102,26 @@ test.describe('Polka read-only browser tests', () => {
     await page.keyboard.press('/');
     await expect(input).toBeFocused();
 
-    await page.keyboard.type('No Cover');
-    await expect(input).toHaveValue('No Cover');
+    const relevanceRequest = page.waitForRequest((request) => {
+      const url = new URL(request.url());
+      return (
+        url.pathname === '/api/books' &&
+        url.searchParams.get('q') === 'No Cov' &&
+        url.searchParams.get('sort') === 'relevance'
+      );
+    });
+    await page.keyboard.type('No Cov');
+    await relevanceRequest;
+    await expect(input).toHaveValue('No Cov');
+    await expect(sort).toContainText('Relevance');
+    await expect(page.locator('.book-card', { hasText: 'No Cover Book' })).toBeVisible();
+    await expect(page.locator('.book-card')).toHaveCount(1);
     await expect(page.locator('#save-search-btn')).toBeVisible();
+    await page.screenshot({ path: 'screenshots/library-search.png', fullPage: true });
 
     await page.keyboard.press('Escape');
     await expect(input).toHaveValue('');
+    await expect(sort).toContainText('Recently added');
     await expect(input).toBeFocused();
     await expect(page.locator('#save-search-btn')).toBeHidden();
 

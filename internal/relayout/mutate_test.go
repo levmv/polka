@@ -46,12 +46,15 @@ func TestMutateWorksBumpsMetadataRevAndReindexes(t *testing.T) {
 		t.Fatalf("metadata_rev = %d; want 1", metadataRev)
 	}
 
-	var searchTitle string
-	if err := database.QueryRow("SELECT title FROM search WHERE work_id = 'w_1'").Scan(&searchTitle); err != nil {
-		t.Fatalf("query search title: %v", err)
+	var oldMatches, newMatches int
+	if err := database.QueryRow(`SELECT count(*) FROM search WHERE search MATCH 'title:"Old Title"' AND work_id = 'w_1'`).Scan(&oldMatches); err != nil {
+		t.Fatalf("query old search title: %v", err)
 	}
-	if searchTitle != "New Title" {
-		t.Fatalf("search title = %q; want New Title", searchTitle)
+	if err := database.QueryRow(`SELECT count(*) FROM search WHERE search MATCH 'title:"New Title"' AND work_id = 'w_1'`).Scan(&newMatches); err != nil {
+		t.Fatalf("query new search title: %v", err)
+	}
+	if oldMatches != 0 || newMatches != 1 {
+		t.Fatalf("title matches after mutation = old %d, new %d; want 0, 1", oldMatches, newMatches)
 	}
 
 	counts, err := db.CountDirtyMetadataWritebackAssets(database, db.FullVisibilityScope())
@@ -71,7 +74,6 @@ func TestMutateWorksRefreshesSearchFilenameAfterRelayout(t *testing.T) {
 
 	authorSort := bookmeta.AuthorSort("Jane Doe")
 	oldPath := relayoutTestPath(t, "Old Title", "Jane Doe", authorSort, "a_1", ".epub")
-	newPath := relayoutTestPath(t, "New Title", "Jane Doe", authorSort, "a_1", ".epub")
 	seedRelayoutWork(t, database, "w_1", "a_1", "Old Title", "Jane Doe", authorSort, ".epub", oldPath)
 	if err := os.MkdirAll(filepath.Dir(root.Abs(oldPath)), 0o755); err != nil {
 		t.Fatalf("mkdir old path: %v", err)
@@ -93,11 +95,14 @@ func TestMutateWorksRefreshesSearchFilenameAfterRelayout(t *testing.T) {
 		t.Fatalf("result = %+v; want one clean move", res)
 	}
 
-	var filename string
-	if err := database.QueryRow("SELECT filename FROM search WHERE work_id = 'w_1'").Scan(&filename); err != nil {
-		t.Fatalf("query search filename: %v", err)
+	var oldMatches, newMatches int
+	if err := database.QueryRow(`SELECT count(*) FROM search WHERE search MATCH 'filename:old' AND work_id = 'w_1'`).Scan(&oldMatches); err != nil {
+		t.Fatalf("query old search filename: %v", err)
 	}
-	if filename != filepath.Base(newPath) {
-		t.Fatalf("search filename = %q; want %q", filename, filepath.Base(newPath))
+	if err := database.QueryRow(`SELECT count(*) FROM search WHERE search MATCH 'filename:new' AND work_id = 'w_1'`).Scan(&newMatches); err != nil {
+		t.Fatalf("query new search filename: %v", err)
+	}
+	if oldMatches != 0 || newMatches != 1 {
+		t.Fatalf("filename matches after relayout = old %d, new %d; want 0, 1", oldMatches, newMatches)
 	}
 }

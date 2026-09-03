@@ -151,7 +151,7 @@ func TestVisibilityScopeQueryShelf(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
-	shelf, err := database.CreateShelf(user.ID, ShelfShared, "Kids query", ShelfQuery, "tag:kids")
+	shelf, err := database.CreateShelf(user.ID, ShelfShared, "Kids query", ShelfQuery, "tag:kid")
 	if err != nil {
 		t.Fatalf("create query shelf: %v", err)
 	}
