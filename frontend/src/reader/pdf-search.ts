@@ -1,6 +1,6 @@
 import type { PDFDocumentProxy, PDFPageProxy, TextLayer } from 'pdfjs-dist/legacy/build/pdf.mjs';
 
-import { focusReaderSurface, shouldIgnoreReaderShortcut } from './controls';
+import { focusReaderSurface, revealChrome, shouldIgnoreReaderShortcut } from './controls';
 import {
     appendExcerpt,
     createSearchPanel,
@@ -138,6 +138,7 @@ export function wirePDFSearch(
         controls.backdrop.hidden = true;
         controls.toggle.setAttribute('aria-expanded', 'false');
         clearPDFSearch(page, controls, state);
+        revealChrome(page);
         if (restoreFocus) focusReaderSurface(page);
     };
     const run = (query: string): void => {

@@ -3,6 +3,7 @@
 // IconName in sync with the <symbol id="i-..."> ids in the sprite.
 export type IconName =
     | 'bookmark'
+    | 'ink_highlighter'
     | 'sell'
     | 'person'
     | 'grid_view'

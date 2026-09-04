@@ -1,8 +1,14 @@
 import { clamp } from '../dom';
-import type { FoliateLoadDetail, FoliateViewElement } from './foliate-engine';
+import {
+    DEFAULT_READER_COLUMN_WIDTH,
+    type FoliateLoadDetail,
+    type FoliateViewElement,
+    readerTextColumnWidth,
+} from './foliate-engine';
 
-const EPUB_DOCUMENT_CLICK_DEDUPE_MS = 500;
-const DEFAULT_CONTENT_WIDTH = 760;
+const SYNTHETIC_MOUSE_DEDUPE_MS = 500;
+const READER_TAP_SLOP_PX = 10;
+const READER_CHROME_AUTO_HIDE_MS = 3_000;
 const MIN_SIDE_MARGIN_FOR_CLICK_TURN = 96;
 const MIN_PAGE_TURN_ZONE = 48;
 const MAX_PAGE_TURN_ZONE = 220;
@@ -20,15 +26,17 @@ export function wireReaderControls(
     view: FoliateViewElement,
     options: ReaderControlOptions = {},
 ): void {
+    const press = createPressTracker();
+    stage.addEventListener('pointerdown', (event) => press.start(event), true);
+
     view.addEventListener('pointerup', (event) => {
         const target = event.target instanceof Element ? event.target : null;
-        if (isInteractiveTarget(target)) return;
+        if (isInteractiveTarget(target) || !press.isTap(event)) return;
 
         const rect = view.getBoundingClientRect();
         const handled = handleReaderPointer(page, view, event.clientX - rect.left, rect.width, {
             onNavigate: options.onNavigate,
             pointerType: event.pointerType,
-            source: 'outer',
         });
         if (handled) {
             event.preventDefault();
@@ -38,13 +46,12 @@ export function wireReaderControls(
 
     stage.addEventListener('pointerup', (event) => {
         const target = event.target instanceof Element ? event.target : null;
-        if (isInteractiveTarget(target)) return;
+        if (isInteractiveTarget(target) || !press.isTap(event)) return;
 
         const rect = stage.getBoundingClientRect();
         const handled = handleReaderPointer(page, view, event.clientX - rect.left, rect.width, {
             onNavigate: options.onNavigate,
             pointerType: event.pointerType,
-            source: 'outer',
         });
         if (handled) event.preventDefault();
     });
@@ -72,33 +79,62 @@ export function wireEPUBDocumentControls(
     if (wiredEPUBDocuments.has(doc)) return;
     wiredEPUBDocuments.add(doc);
 
-    let lastHandledAt = -EPUB_DOCUMENT_CLICK_DEDUPE_MS;
-    const handlePoint = (
-        event: Event,
-        clientX: number,
-        width: number,
-        pointerType?: string,
-    ): void => {
+    // Deduplicate the immediate Pointer/Mouse/Click sequence by timestamp and
+    // iOS's delayed synthetic mouse events by elapsed time.
+    let lastHandledStamp = Number.NaN;
+    let lastHandledTouchAt = -SYNTHETIC_MOUSE_DEDUPE_MS;
+    const press = createPressTracker();
+    const handlePoint = (event: Event, point: ReaderPressPoint, pointerType?: string): void => {
         const target = event.target instanceof Element ? event.target : null;
         if (isInteractiveTarget(target) || hasTextSelection(doc)) return;
+        if (!press.isTap(point)) return;
         const now = window.performance.now();
-        if (now - lastHandledAt < EPUB_DOCUMENT_CLICK_DEDUPE_MS) return;
+        if (event.timeStamp === lastHandledStamp) return;
+        if (now - lastHandledTouchAt < SYNTHETIC_MOUSE_DEDUPE_MS) return;
 
-        const handled = handleReaderPointer(page, view, clientX, width, {
+        const rect = view.getBoundingClientRect();
+        const x = documentXToViewX(doc, point.clientX, rect);
+        const handled = handleReaderPointer(page, view, x, rect.width, {
             onNavigate: options.onNavigate,
             pointerType,
-            source: 'document',
         });
         if (handled) {
-            lastHandledAt = now;
+            lastHandledStamp = event.timeStamp;
+            if (pointerType === 'touch') lastHandledTouchAt = now;
             event.preventDefault();
         }
     };
 
+    doc.addEventListener('pointerdown', (event) => press.start(event), true);
+
+    doc.addEventListener(
+        'touchstart',
+        (event) => {
+            const touch = event.changedTouches[0];
+            if (touch) press.start(touch);
+        },
+        true,
+    );
+
+    // The full-stage iframe includes the visual side margins. Prevent selection
+    // from starting there and clear an existing selection before handling a click.
+    doc.addEventListener(
+        'mousedown',
+        (event) => {
+            if (event.button !== 0 || isInteractiveTarget(event.target as Element | null)) return;
+            const rect = view.getBoundingClientRect();
+            const x = documentXToViewX(doc, event.clientX, rect);
+            if (x === null || !isReaderPageMargin(view, x, rect.width)) return;
+            doc.getSelection()?.removeAllRanges();
+            event.preventDefault();
+        },
+        true,
+    );
+
     doc.addEventListener(
         'pointerup',
         (event) => {
-            handlePoint(event, event.clientX, doc.defaultView?.innerWidth || 0, event.pointerType);
+            handlePoint(event, event, event.pointerType);
         },
         true,
     );
@@ -106,7 +142,7 @@ export function wireEPUBDocumentControls(
     doc.addEventListener(
         'mouseup',
         (event) => {
-            handlePoint(event, event.clientX, doc.defaultView?.innerWidth || 0, 'mouse');
+            handlePoint(event, event, 'mouse');
         },
         true,
     );
@@ -114,7 +150,7 @@ export function wireEPUBDocumentControls(
     doc.addEventListener(
         'click',
         (event) => {
-            handlePoint(event, event.clientX, doc.defaultView?.innerWidth || 0, 'mouse');
+            handlePoint(event, event, 'mouse');
         },
         true,
     );
@@ -124,7 +160,7 @@ export function wireEPUBDocumentControls(
         (event) => {
             const touch = event.changedTouches[0];
             if (!touch) return;
-            handlePoint(event, touch.clientX, doc.defaultView?.innerWidth || 0, 'touch');
+            handlePoint(event, touch, 'touch');
         },
         true,
     );
@@ -138,16 +174,50 @@ export function wireEPUBDocumentControls(
     );
 }
 
+interface ReaderPressPoint {
+    clientX: number;
+    screenX: number;
+    screenY: number;
+}
+
+// Use screen coordinates because the iframe itself moves during a swipe,
+// making document-relative movement unreliable.
+function createPressTracker(): {
+    start(point: ReaderPressPoint): void;
+    isTap(point: ReaderPressPoint): boolean;
+} {
+    let origin: { screenX: number; screenY: number } | null = null;
+    return {
+        start(point) {
+            origin = { screenX: point.screenX, screenY: point.screenY };
+        },
+        isTap(point) {
+            if (!origin) return true;
+            return (
+                Math.abs(point.screenX - origin.screenX) <= READER_TAP_SLOP_PX &&
+                Math.abs(point.screenY - origin.screenY) <= READER_TAP_SLOP_PX
+            );
+        },
+    };
+}
+
+// Convert an iframe-relative x coordinate to the outer reader view.
+function documentXToViewX(doc: Document, clientX: number, viewRect: DOMRect): number | null {
+    const frame = doc.defaultView?.frameElement;
+    if (!frame) return null;
+    return clientX + frame.getBoundingClientRect().left - viewRect.left;
+}
+
 function handleReaderPointer(
     page: HTMLElement,
     view: FoliateViewElement,
-    x: number,
+    x: number | null,
     width: number,
-    options: { onNavigate?: () => void; pointerType?: string; source: 'outer' | 'document' },
+    options: { onNavigate?: () => void; pointerType?: string },
 ): boolean {
     if (width <= 0) return false;
 
-    if (options.source === 'outer' && options.pointerType !== 'touch') {
+    if (x !== null && options.pointerType !== 'touch') {
         const direction = readerTurnDirection(view, x, width);
         if (direction) {
             options.onNavigate?.();
@@ -239,12 +309,28 @@ function readerTurnDirection(
     return null;
 }
 
+function isReaderPageMargin(view: FoliateViewElement, x: number, width: number): boolean {
+    const sideMargin = readerSideMargin(view, width);
+    return x < sideMargin || x > width - sideMargin;
+}
+
+function readerSideMargin(view: FoliateViewElement, width: number): number {
+    if (view.dataset.readerWritingMode === 'vertical') {
+        // max-inline-size describes column height in vertical writing. The
+        // mounted iframe is the reliable horizontal extent in that mode.
+        const frame = view.renderer?.getContents?.().find(({ doc }) => doc)?.doc
+            ?.defaultView?.frameElement;
+        const frameWidth = frame?.getBoundingClientRect().width || 0;
+        return frameWidth > 0 ? Math.max(0, (width - Math.min(width, frameWidth)) / 2) : 0;
+    }
+    return Math.max(0, (width - currentReaderContentWidth(view, width)) / 2);
+}
+
 function readerTurnZones(
     view: FoliateViewElement,
     width: number,
 ): { leftEnd: number; rightStart: number } | null {
-    const contentWidth = currentReaderContentWidth(view, width);
-    const sideMargin = Math.max(0, (width - contentWidth) / 2);
+    const sideMargin = readerSideMargin(view, width);
     if (sideMargin < MIN_SIDE_MARGIN_FOR_CLICK_TURN) return null;
 
     const textGuard = clamp(sideMargin * 0.35, MIN_TEXT_GUARD_ZONE, MAX_TEXT_GUARD_ZONE);
@@ -261,8 +347,9 @@ function readerTurnZones(
 function currentReaderContentWidth(view: FoliateViewElement, width: number): number {
     const raw = view.renderer?.getAttribute('max-inline-size') || '';
     const parsed = Number.parseFloat(raw);
-    const contentWidth = Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_CONTENT_WIDTH;
-    return Math.min(contentWidth, width);
+    const columnWidth =
+        Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_READER_COLUMN_WIDTH;
+    return readerTextColumnWidth(width, columnWidth);
 }
 
 async function turnLeft(view: FoliateViewElement): Promise<void> {
@@ -304,7 +391,7 @@ export function revealChrome(page: HTMLElement, autoHide = true): void {
 
     const timer = window.setTimeout(() => {
         hideChrome(page);
-    }, 1800);
+    }, READER_CHROME_AUTO_HIDE_MS);
     page.dataset.chromeTimer = String(timer);
 }
 

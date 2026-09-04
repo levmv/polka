@@ -1,5 +1,5 @@
 import { iconElement } from '../icons';
-import { focusReaderSurface } from './controls';
+import { focusReaderSurface, revealChrome } from './controls';
 
 export interface ReaderTOCPanel {
     panel: HTMLElement;
@@ -70,6 +70,7 @@ export function createReaderTOCPanel(page: HTMLElement): ReaderTOCPanel | null {
         panel.hidden = true;
         backdrop.hidden = true;
         toggle.setAttribute('aria-expanded', 'false');
+        revealChrome(page);
         focusReaderSurface(page);
     };
     const handleKeydown = (event: KeyboardEvent): void => {
