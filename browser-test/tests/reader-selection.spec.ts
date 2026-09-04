@@ -83,7 +83,7 @@ test.describe('Reader selection toolbar', () => {
 
     const toolbar = page.locator('.reader-selection-toolbar');
     await expect(toolbar).toBeVisible();
-    await toolbar.getByRole('button', { name: 'Highlight' }).click();
+    await toolbar.getByRole('button', { name: 'Highlight', exact: true }).click();
     await expect(toolbar).toBeHidden();
 
     await expect
@@ -108,15 +108,36 @@ test.describe('Reader selection toolbar', () => {
       .toBe('true');
     await expect.poll(() => renderedHighlightCount(page)).toBeGreaterThan(0);
 
-    await showAnnotationPopover(page, annotation.cfi);
+    await selectFirstText(page);
+    await expect(toolbar).toBeVisible();
+    await expect(toolbar.getByRole('button', { name: 'Highlight', exact: true })).toBeHidden();
+    await expect(toolbar.getByRole('button', { name: 'Add note' })).toBeVisible();
+
+    await showAnnotationActions(page, annotation.cfi);
     const popover = page.locator('.reader-annotation-popover');
+    await expect(popover).toBeHidden();
+    await expect(toolbar.getByRole('button', { name: 'Highlight', exact: true })).toBeHidden();
+    await expect(toolbar.getByRole('button', { name: 'Search' })).toBeVisible();
+    await toolbar.getByRole('button', { name: 'Add note' }).click();
     await expect(popover).toBeVisible();
-    await popover.locator('.reader-annotation-note').fill('Reader note');
-    await popover.getByRole('button', { name: 'Save' }).click();
-    await expect(popover.locator('.reader-annotation-status')).toHaveText('Saved');
+    const note = popover.locator('.reader-annotation-note');
+    await note.focus();
+    await page.evaluate(() => {
+      window.dispatchEvent(new Event('resize'));
+      window.dispatchEvent(new Event('scroll'));
+    });
+    await expect(popover).toBeVisible();
+    await note.fill('Reader note');
+    await pointerDownInReaderDocument(page);
+    await expect(popover).toBeHidden();
     await expect.poll(async () => (await fetchAnnotations(page, assetId))[0]?.note).toBe(
       'Reader note',
     );
+
+    await showAnnotationActions(page, annotation.cfi);
+    await expect(toolbar.getByRole('button', { name: 'Edit note' })).toBeVisible();
+    await expect(toolbar).toHaveCSS('opacity', '1');
+    await page.screenshot({ path: 'screenshots/reader-highlight-actions.png', fullPage: true });
 
     await page.locator('.reader-annotations-toggle').click();
     const panel = page.locator('.reader-annotations-panel');
@@ -168,14 +189,74 @@ test.describe('Reader selection toolbar', () => {
     expect(markdown).toContain('### Note\n\nReader note');
   });
 
-  test('keeps a completed note save out of another highlight popover', async ({ page }) => {
+  test('opens the note editor directly from selected text', async ({ page }) => {
+    const assetId = await openReader(page, 'With Cover Book', openedAssets);
+    const selected = await selectFirstText(page);
+    const toolbar = page.locator('.reader-selection-toolbar');
+    await expect(toolbar).toBeVisible();
+
+    await toolbar.getByRole('button', { name: 'Add note' }).click();
+    const popover = page.locator('.reader-annotation-popover');
+    await expect(popover).toBeVisible();
+    await expect(popover.locator('.reader-annotation-quote')).toHaveText(
+      selected.replace(/\s+/g, ' ').trim().slice(0, 1200),
+    );
+    await page.screenshot({ path: 'screenshots/reader-note-popover.png', fullPage: true });
+
+    const annotations = await fetchAnnotations(page, assetId);
+    expect(annotations).toHaveLength(1);
+    const annotation = annotations[0];
+    createdAnnotations.push({ assetId, annotationId: annotation.id });
+
+    await popover.locator('.reader-annotation-note').fill('Direct note');
+    await popover.getByRole('button', { name: 'Done' }).click();
+    await expect(popover).toBeHidden();
+    await expect.poll(async () => (await fetchAnnotations(page, assetId))[0]?.note).toBe(
+      'Direct note',
+    );
+  });
+
+  test('deletes a highlight from its action toolbar after confirmation', async ({ page }) => {
+    const assetId = await openReader(page, 'With Cover Book', openedAssets);
+    await selectFirstText(page);
+    const toolbar = page.locator('.reader-selection-toolbar');
+    await expect(toolbar).toBeVisible();
+    await toolbar.getByRole('button', { name: 'Highlight', exact: true }).click();
+    await expect.poll(async () => (await fetchAnnotations(page, assetId)).length).toBe(1);
+    await expect.poll(() => renderedHighlightCount(page)).toBeGreaterThan(0);
+
+    const [annotation] = await fetchAnnotations(page, assetId);
+    createdAnnotations.push({ assetId, annotationId: annotation.id });
+    await showAnnotationActions(page, annotation.cfi);
+    const deleteButton = toolbar.getByRole('button', { name: 'Delete highlight' });
+    await expect(deleteButton).toBeVisible();
+
+    page.once('dialog', async (dialog) => {
+      expect(dialog.message()).toBe('Delete this highlight?');
+      await dialog.dismiss();
+    });
+    await deleteButton.click();
+    await expect(toolbar).toBeVisible();
+    await expect.poll(async () => (await fetchAnnotations(page, assetId)).length).toBe(1);
+
+    page.once('dialog', async (dialog) => {
+      expect(dialog.message()).toBe('Delete this highlight?');
+      await dialog.accept();
+    });
+    await deleteButton.click();
+    await expect(toolbar).toBeHidden();
+    await expect.poll(async () => (await fetchAnnotations(page, assetId)).length).toBe(0);
+    await expect.poll(() => renderedHighlightCount(page)).toBe(0);
+  });
+
+  test('waits for one note save before opening another editor', async ({ page }) => {
     const assetId = await openReader(page, 'With Cover Book', openedAssets);
     const selectedQuotes: string[] = [];
     for (const textIndex of [0, 1]) {
       selectedQuotes.push(await selectFirstText(page, textIndex));
       const toolbar = page.locator('.reader-selection-toolbar');
       await expect(toolbar).toBeVisible();
-      await toolbar.getByRole('button', { name: 'Highlight' }).click();
+      await toolbar.getByRole('button', { name: 'Highlight', exact: true }).click();
       await expect.poll(async () => (await fetchAnnotations(page, assetId)).length).toBe(
         textIndex + 1,
       );
@@ -223,16 +304,17 @@ test.describe('Reader selection toolbar', () => {
     await showAnnotationPopover(page, first.cfi);
     const popover = page.locator('.reader-annotation-popover');
     await popover.locator('.reader-annotation-note').fill('First note');
-    await popover.getByRole('button', { name: 'Save' }).click();
+    await popover.getByRole('button', { name: 'Done' }).click();
     await expect.poll(() => noteRequestHeld).toBe(true);
 
-    await showAnnotationPopover(page, second.cfi);
-    await expect(popover.locator('.reader-annotation-quote')).toHaveText(second.quote);
-    await expect(popover.locator('.reader-annotation-note')).toHaveValue('');
+    await showAnnotationActions(page, second.cfi);
+    const toolbar = page.locator('.reader-selection-toolbar');
+    await expect(toolbar).toBeHidden();
 
     releaseResponse();
     await responseDelivered;
-    await page.waitForTimeout(50);
+    await expect(toolbar).toBeVisible();
+    await toolbar.getByRole('button', { name: 'Add note' }).click();
     await expect(popover.locator('.reader-annotation-quote')).toHaveText(second.quote);
     await expect(popover.locator('.reader-annotation-note')).toHaveValue('');
     await page.unroute(noteURL);
@@ -295,6 +377,23 @@ async function stubClipboard(page: Page): Promise<void> {
   });
 }
 
+async function pointerDownInReaderDocument(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const view = document.querySelector('foliate-view') as HTMLElement & {
+      renderer?: { getContents?: () => Array<{ doc?: Document }> };
+    };
+    const doc = view.renderer?.getContents?.().find((content) => content.doc)?.doc;
+    if (!doc) return;
+    doc.body.dispatchEvent(
+      new doc.defaultView!.PointerEvent('pointerdown', {
+        bubbles: true,
+        pointerType: 'touch',
+        isPrimary: true,
+      }),
+    );
+  });
+}
+
 // Select the first meaningful block of text inside a mounted Foliate section
 // document, mirroring a real user drag closely enough to trigger the toolbar.
 async function selectFirstText(page: Page, targetIndex = 0): Promise<string> {
@@ -348,13 +447,21 @@ async function fetchAnnotations(
   return (await res.json()) as Array<{ id: string; cfi: string; quote: string; note?: string }>;
 }
 
-async function showAnnotationPopover(page: Page, cfi: string): Promise<void> {
+async function showAnnotationActions(page: Page, cfi: string): Promise<void> {
   await page.evaluate(async (value) => {
     const view = document.querySelector('foliate-view') as HTMLElement & {
       showAnnotation?: (annotation: { value: string; kind: string }) => Promise<unknown>;
     };
     await view.showAnnotation?.({ value, kind: 'highlight' });
   }, cfi);
+}
+
+async function showAnnotationPopover(page: Page, cfi: string): Promise<void> {
+  await showAnnotationActions(page, cfi);
+  const toolbar = page.locator('.reader-selection-toolbar');
+  await expect(toolbar).toBeVisible();
+  await toolbar.getByRole('button', { name: /^(Add|Edit) note$/ }).click();
+  await expect(page.locator('.reader-annotation-popover')).toBeVisible();
 }
 
 async function renderedHighlightCount(page: Page): Promise<number> {

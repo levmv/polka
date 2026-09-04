@@ -1,4 +1,4 @@
-import { focusReaderSurface, shouldIgnoreReaderShortcut } from './controls';
+import { focusReaderSurface, revealChrome, shouldIgnoreReaderShortcut } from './controls';
 import type { FoliateSearchResult, FoliateSearchYield, FoliateViewElement } from './foliate-engine';
 import {
     appendExcerpt,
@@ -137,6 +137,7 @@ function closeSearch(
     controls.backdrop.hidden = true;
     controls.toggle.setAttribute('aria-expanded', 'false');
     clearSearch(view, controls, state);
+    revealChrome(page);
     if (restoreFocus) focusReaderSurface(page);
 }
 

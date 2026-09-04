@@ -1,15 +1,17 @@
 import { clamp } from '../dom';
 import { iconElement } from '../icons';
-import type { FoliateLoadDetail, FoliateViewElement } from './foliate-engine';
-
-// First reader interaction slice: a tiny copy-only toolbar over live text
-// selections inside the Foliate section iframes. It proves the selection
-// plumbing (real in-iframe selection detection, viewport-mapped popup
-// coordinates, and a Foliate CFI for the range) that later annotation/search
-// slices build on, but it persists nothing yet.
+import type {
+    FoliateLoadDetail,
+    FoliateRendererRelocateDetail,
+    FoliateViewElement,
+} from './foliate-engine';
 
 const TOOLBAR_GAP = 8;
 const TOOLBAR_MARGIN = 8;
+// WebKit can finalize a touch selection over several event-loop turns. Retry
+// until one refresh sees the range; a successful refresh cancels the rest.
+const TOUCH_SELECTION_SETTLE_DELAYS = [100, 300, 700];
+const TOUCH_SELECTION_FALLBACK_DELAYS = [250, 600, 1000];
 const QUOTE_MAX_LENGTH = 1200;
 const CONTEXT_MAX_LENGTH = 500;
 
@@ -19,6 +21,7 @@ interface ActiveSelection {
     range: Range;
     text: string;
     payload?: ReaderSelectionPayload;
+    annotation?: ReaderAnnotationReference;
 }
 
 export interface ReaderSelectionPayload {
@@ -28,32 +31,59 @@ export interface ReaderSelectionPayload {
     context_after: string;
 }
 
+export interface ReaderAnnotationReference {
+    cfi: string;
+    hasNote: boolean;
+}
+
+export interface ReaderAnnotationActionTarget extends ReaderAnnotationReference {
+    doc: Document;
+    index?: number;
+    range: Range;
+    quote: string;
+}
+
 export interface ReaderSelectionOptions {
     onSearchSelection?: (text: string) => void;
     onHighlightSelection?: (payload: ReaderSelectionPayload) => void;
+    onNoteSelection?: (payload: ReaderSelectionPayload) => void;
+    onEditAnnotation?: (cfi: string) => void;
+    onDeleteAnnotation?: (cfi: string) => void;
+    annotationAt?: (doc: Document, range: Range) => ReaderAnnotationReference | undefined;
+}
+
+export interface ReaderSelectionController {
+    showAnnotationActions(target: ReaderAnnotationActionTarget): void;
 }
 
 export function wireReaderSelection(
     page: HTMLElement,
     view: FoliateViewElement,
     options: ReaderSelectionOptions = {},
-): void {
+): ReaderSelectionController {
     const wiredDocuments = new WeakSet<Document>();
-    const { toolbar, highlightButton, copyButton, searchButton } = buildToolbar({
-        includeHighlight: Boolean(options.onHighlightSelection),
-        includeSearch: Boolean(options.onSearchSelection),
-    });
+    const { toolbar, highlightButton, noteButton, deleteButton, copyButton, searchButton } =
+        buildToolbar({
+            includeHighlight: Boolean(options.onHighlightSelection),
+            includeNote: Boolean(options.onNoteSelection || options.onEditAnnotation),
+            includeDelete: Boolean(options.onDeleteAnnotation),
+            includeSearch: Boolean(options.onSearchSelection),
+        });
     page.append(toolbar);
 
     let active: ActiveSelection | null = null;
     let pointerDown = false;
+    let touchGesture = false;
     let refreshHandle = 0;
+    let touchRefreshTimers: number[] = [];
+    let annotationActionsPending = false;
 
-    const hide = (): void => {
-        if (refreshHandle) {
-            window.cancelAnimationFrame(refreshHandle);
-            refreshHandle = 0;
-        }
+    const clearTouchRefreshes = (): void => {
+        for (const timer of touchRefreshTimers) window.clearTimeout(timer);
+        touchRefreshTimers = [];
+    };
+
+    const clearToolbar = (): void => {
         if (!active) return;
         active = null;
         toolbar.classList.remove('reader-selection-toolbar--visible');
@@ -61,26 +91,39 @@ export function wireReaderSelection(
         delete toolbar.dataset.readerSelectionCfi;
     };
 
+    const hide = (): void => {
+        if (refreshHandle) {
+            window.cancelAnimationFrame(refreshHandle);
+            refreshHandle = 0;
+        }
+        clearTouchRefreshes();
+        annotationActionsPending = false;
+        clearToolbar();
+    };
+
     const refresh = (doc: Document, index?: number): void => {
         const selection = doc.getSelection();
         if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
-            hide();
+            clearToolbar();
             return;
         }
         const text = selection.toString();
         if (!text.trim()) {
-            hide();
+            clearToolbar();
             return;
         }
         const range = selection.getRangeAt(0).cloneRange();
+        clearTouchRefreshes();
+        const annotation = options.annotationAt?.(doc, range);
         active = {
             doc,
             index,
             range,
             text,
-            payload: selectionPayload(doc, view, index, range, text),
+            annotation,
+            payload: annotation ? undefined : selectionPayload(doc, view, index, range, text),
         };
-        showToolbar(page, toolbar, active);
+        showToolbar(page, toolbar, active, highlightButton, noteButton, deleteButton);
     };
 
     const scheduleRefresh = (doc: Document, index?: number): void => {
@@ -91,30 +134,111 @@ export function wireReaderSelection(
         });
     };
 
+    const scheduleTouchRefreshes = (
+        doc: Document,
+        index?: number,
+        delays = TOUCH_SELECTION_SETTLE_DELAYS,
+    ): void => {
+        clearTouchRefreshes();
+        touchRefreshTimers = delays.map((delay) =>
+            window.setTimeout(() => scheduleRefresh(doc, index), delay),
+        );
+    };
+
     const attach = (doc: Document, index?: number): void => {
         if (wiredDocuments.has(doc)) return;
         wiredDocuments.add(doc);
         doc.addEventListener(
             'pointerdown',
-            () => {
+            (event) => {
                 pointerDown = true;
+                touchGesture = event.pointerType === 'touch';
                 hide();
+                if (touchGesture)
+                    scheduleTouchRefreshes(doc, index, TOUCH_SELECTION_FALLBACK_DELAYS);
             },
             true,
         );
         doc.addEventListener(
             'pointerup',
-            () => {
+            (event) => {
                 pointerDown = false;
-                scheduleRefresh(doc, index);
+                touchGesture = false;
+                if (event.pointerType === 'touch') scheduleTouchRefreshes(doc, index);
+                else scheduleRefresh(doc, index);
             },
             true,
         );
-        doc.addEventListener('touchend', () => scheduleRefresh(doc, index), true);
+        doc.addEventListener(
+            'pointercancel',
+            () => {
+                pointerDown = false;
+                touchGesture = false;
+                scheduleTouchRefreshes(doc, index);
+            },
+            true,
+        );
+        // Keep Touch Events as a fallback: WebKit does not consistently end
+        // native selection gestures with the matching Pointer Event.
+        doc.addEventListener(
+            'touchstart',
+            () => {
+                pointerDown = true;
+                touchGesture = true;
+                hide();
+                scheduleTouchRefreshes(doc, index, TOUCH_SELECTION_FALLBACK_DELAYS);
+            },
+            true,
+        );
+        doc.addEventListener(
+            'touchend',
+            () => {
+                pointerDown = false;
+                touchGesture = false;
+                scheduleTouchRefreshes(doc, index);
+            },
+            true,
+        );
+        doc.addEventListener(
+            'touchcancel',
+            () => {
+                pointerDown = false;
+                touchGesture = false;
+                scheduleTouchRefreshes(doc, index);
+            },
+            true,
+        );
         doc.addEventListener('selectionchange', () => {
-            if (!pointerDown) scheduleRefresh(doc, index);
+            if (annotationActionsPending || (active?.annotation && active.doc === doc)) return;
+            if (!pointerDown) {
+                scheduleRefresh(doc, index);
+                return;
+            }
+            if (!touchGesture) return;
+            clearToolbar();
+            scheduleTouchRefreshes(doc, index, TOUCH_SELECTION_FALLBACK_DELAYS);
         });
-        doc.addEventListener('scroll', hide, true);
+        doc.addEventListener(
+            'contextmenu',
+            (event) => {
+                const selection = doc.getSelection();
+                const touch = doc.defaultView?.matchMedia(
+                    '(hover: none), (pointer: coarse)',
+                ).matches;
+                if (touch && selection && !selection.isCollapsed) event.preventDefault();
+            },
+            true,
+        );
+        doc.addEventListener(
+            'scroll',
+            () => {
+                if (pointerDown) clearToolbar();
+                else if (active?.annotation && active.doc === doc)
+                    showToolbar(page, toolbar, active, highlightButton, noteButton, deleteButton);
+                else scheduleRefresh(doc, index);
+            },
+            true,
+        );
     };
 
     copyButton.addEventListener('click', () => {
@@ -138,12 +262,47 @@ export function wireReaderSelection(
         doc.getSelection()?.removeAllRanges();
         hide();
     });
+    noteButton?.addEventListener('click', () => {
+        if (!active) return;
+        const { annotation, doc, payload } = active;
+        if (annotation) {
+            if (!options.onEditAnnotation) return;
+            options.onEditAnnotation(annotation.cfi);
+        } else if (payload && options.onNoteSelection) {
+            options.onNoteSelection(payload);
+        } else return;
+        doc.getSelection()?.removeAllRanges();
+        hide();
+    });
+    deleteButton?.addEventListener('click', () => {
+        if (!active?.annotation) return;
+        if (!window.confirm('Delete this highlight?')) return;
+        const { cfi } = active.annotation;
+        active.doc.getSelection()?.removeAllRanges();
+        hide();
+        options.onDeleteAnnotation?.(cfi);
+    });
 
     view.addEventListener('load', (event) => {
         const detail = (event as CustomEvent<FoliateLoadDetail>).detail;
         attach(detail.doc, detail.index);
     });
-    view.addEventListener('relocate', hide);
+    view.renderer?.addEventListener('relocate', (event) => {
+        if (annotationActionsPending) return;
+        const detail = (event as CustomEvent<FoliateRendererRelocateDetail>).detail;
+        if (detail.reason === 'snap') {
+            if (active?.annotation) return;
+            const content = (view.renderer?.getContents?.() || []).find(({ doc }) => {
+                const selection = doc?.getSelection();
+                return selection && selection.rangeCount > 0 && !selection.isCollapsed;
+            });
+            if (content?.doc) {
+                scheduleRefresh(content.doc, content.index);
+                return;
+            }
+        }
+        hide();
+    });
 
     document.addEventListener(
         'pointerdown',
@@ -164,18 +323,52 @@ export function wireReaderSelection(
         },
         true,
     );
-    window.addEventListener('scroll', hide, true);
-    window.addEventListener('resize', hide);
+    const refreshActive = (): void => {
+        if (!active) return;
+        if (active.annotation)
+            showToolbar(page, toolbar, active, highlightButton, noteButton, deleteButton);
+        else scheduleRefresh(active.doc, active.index);
+    };
+    window.addEventListener('scroll', refreshActive, true);
+    window.addEventListener('resize', refreshActive);
+    window.visualViewport?.addEventListener('scroll', refreshActive);
+    window.visualViewport?.addEventListener('resize', refreshActive);
 
     // Sections already mounted before wiring (e.g. the first one on open).
     for (const content of view.renderer?.getContents?.() || []) {
         if (content.doc) attach(content.doc, content.index);
     }
+
+    return {
+        showAnnotationActions(target: ReaderAnnotationActionTarget): void {
+            hide();
+            annotationActionsPending = true;
+            refreshHandle = window.requestAnimationFrame(() => {
+                refreshHandle = 0;
+                annotationActionsPending = false;
+                active = {
+                    doc: target.doc,
+                    index: target.index,
+                    range: target.range.cloneRange(),
+                    text: target.quote,
+                    annotation: { cfi: target.cfi, hasNote: target.hasNote },
+                };
+                showToolbar(page, toolbar, active, highlightButton, noteButton, deleteButton);
+            });
+        },
+    };
 }
 
-function buildToolbar(options: { includeHighlight: boolean; includeSearch: boolean }): {
+function buildToolbar(options: {
+    includeHighlight: boolean;
+    includeNote: boolean;
+    includeDelete: boolean;
+    includeSearch: boolean;
+}): {
     toolbar: HTMLElement;
     highlightButton?: HTMLButtonElement;
+    noteButton?: HTMLButtonElement;
+    deleteButton?: HTMLButtonElement;
     copyButton: HTMLButtonElement;
     searchButton?: HTMLButtonElement;
 } {
@@ -185,17 +378,52 @@ function buildToolbar(options: { includeHighlight: boolean; includeSearch: boole
     toolbar.setAttribute('aria-label', 'Selection actions');
     toolbar.dataset.readerSelectionActive = 'false';
 
+    const copyButton = document.createElement('button');
+    copyButton.className = 'reader-selection-action';
+    copyButton.type = 'button';
+    copyButton.dataset.readerSelectionCopy = 'true';
+    copyButton.title = 'Copy';
+    copyButton.setAttribute('aria-label', 'Copy');
+    copyButton.append(iconElement('content_copy'));
+    toolbar.append(copyButton);
+
     let highlightButton: HTMLButtonElement | undefined;
     if (options.includeHighlight) {
         highlightButton = document.createElement('button');
         highlightButton.className = 'reader-selection-action';
         highlightButton.type = 'button';
         highlightButton.dataset.readerSelectionHighlight = 'true';
-        highlightButton.append(iconElement('bookmark'));
-        const highlightLabel = document.createElement('span');
-        highlightLabel.textContent = 'Highlight';
-        highlightButton.append(highlightLabel);
+        highlightButton.title = 'Highlight';
+        highlightButton.setAttribute('aria-label', 'Highlight');
+        highlightButton.append(iconElement('ink_highlighter'));
         toolbar.append(highlightButton);
+    }
+
+    let noteButton: HTMLButtonElement | undefined;
+    if (options.includeNote) {
+        noteButton = document.createElement('button');
+        noteButton.className = 'reader-selection-action';
+        noteButton.type = 'button';
+        noteButton.dataset.readerSelectionNote = 'true';
+        noteButton.title = 'Add note';
+        noteButton.setAttribute('aria-label', 'Add note');
+        const noteLabel = document.createElement('span');
+        noteLabel.className = 'reader-selection-action-label';
+        noteLabel.textContent = 'Note';
+        noteButton.append(noteLabel);
+        toolbar.append(noteButton);
+    }
+
+    let deleteButton: HTMLButtonElement | undefined;
+    if (options.includeDelete) {
+        deleteButton = document.createElement('button');
+        deleteButton.className = 'reader-selection-action';
+        deleteButton.type = 'button';
+        deleteButton.hidden = true;
+        deleteButton.dataset.readerSelectionDelete = 'true';
+        deleteButton.title = 'Delete highlight';
+        deleteButton.setAttribute('aria-label', 'Delete highlight');
+        deleteButton.append(iconElement('delete'));
     }
 
     let searchButton: HTMLButtonElement | undefined;
@@ -204,27 +432,36 @@ function buildToolbar(options: { includeHighlight: boolean; includeSearch: boole
         searchButton.className = 'reader-selection-action';
         searchButton.type = 'button';
         searchButton.dataset.readerSelectionSearch = 'true';
+        searchButton.title = 'Search';
+        searchButton.setAttribute('aria-label', 'Search');
         searchButton.append(iconElement('search'));
-        const searchLabel = document.createElement('span');
-        searchLabel.textContent = 'Search';
-        searchButton.append(searchLabel);
         toolbar.append(searchButton);
     }
 
-    const copyButton = document.createElement('button');
-    copyButton.className = 'reader-selection-action';
-    copyButton.type = 'button';
-    copyButton.dataset.readerSelectionCopy = 'true';
-    copyButton.append(iconElement('content_copy'));
-    const label = document.createElement('span');
-    label.textContent = 'Copy';
-    copyButton.append(label);
-
-    toolbar.append(copyButton);
-    return { toolbar, highlightButton, copyButton, searchButton };
+    if (deleteButton) toolbar.append(deleteButton);
+    return { toolbar, highlightButton, noteButton, deleteButton, copyButton, searchButton };
 }
 
-function showToolbar(page: HTMLElement, toolbar: HTMLElement, active: ActiveSelection): void {
+function showToolbar(
+    page: HTMLElement,
+    toolbar: HTMLElement,
+    active: ActiveSelection,
+    highlightButton?: HTMLButtonElement,
+    noteButton?: HTMLButtonElement,
+    deleteButton?: HTMLButtonElement,
+): void {
+    const annotation = active.annotation;
+    if (highlightButton) highlightButton.hidden = Boolean(annotation);
+    if (deleteButton) deleteButton.hidden = !annotation;
+    if (noteButton) {
+        const action = annotation?.hasNote ? 'Edit note' : 'Add note';
+        noteButton.title = action;
+        noteButton.setAttribute('aria-label', action);
+        const visibleLabel = noteButton.querySelector('.reader-selection-action-label');
+        if (visibleLabel) visibleLabel.textContent = annotation ? action : 'Note';
+    }
+    toolbar.setAttribute('aria-label', annotation ? 'Highlight actions' : 'Selection actions');
+
     const frame = active.doc.defaultView?.frameElement as HTMLElement | null;
     const frameRect = frame?.getBoundingClientRect();
     const offsetX = frameRect?.left ?? 0;
@@ -252,7 +489,8 @@ function showToolbar(page: HTMLElement, toolbar: HTMLElement, active: ActiveSele
     toolbar.classList.add('reader-selection-toolbar--visible');
     toolbar.dataset.readerSelectionActive = 'true';
 
-    if (active.payload?.cfi) toolbar.dataset.readerSelectionCfi = active.payload.cfi;
+    const cfi = active.payload?.cfi || active.annotation?.cfi;
+    if (cfi) toolbar.dataset.readerSelectionCfi = cfi;
 }
 
 function selectionPayload(

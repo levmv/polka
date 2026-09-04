@@ -2,9 +2,10 @@ import { saveReaderPreferences } from '../api';
 import { clamp } from '../dom';
 import { iconElement } from '../icons';
 import type { ReaderFlow, ReaderPreferences } from '../types';
-import { focusReaderSurface } from './controls';
+import { focusReaderSurface, revealChrome } from './controls';
 import {
     applyFoliateDisplay,
+    DEFAULT_READER_COLUMN_WIDTH,
     DEFAULT_READER_DISPLAY_STYLE,
     type FoliateViewElement,
     normalizeReaderDisplayStyle,
@@ -16,7 +17,7 @@ export { DEFAULT_READER_DISPLAY_STYLE, normalizeReaderDisplayStyle } from './fol
 
 export const DEFAULT_READER_FLOW: ReaderFlow = 'paginated';
 export const DEFAULT_READER_FONT_SCALE = 0;
-export const DEFAULT_READER_CUSTOM_COLUMN_WIDTH = 760;
+export const DEFAULT_READER_CUSTOM_COLUMN_WIDTH = DEFAULT_READER_COLUMN_WIDTH;
 export const DEFAULT_READER_CUSTOM_LINE_HEIGHT = 1.72;
 
 export const DEFAULT_READER_PREFERENCES: ReaderPreferences = {
@@ -98,10 +99,20 @@ export function wireReaderPreferences(
         commitPreference({ font_scale: clamp(currentPreferences.font_scale + 1, -4, 6) });
     });
     controls.widthInput.addEventListener('input', () => {
-        previewPreference({ custom_column_width: readNumber(controls.widthInput, 760) });
+        previewPreference({
+            custom_column_width: readNumber(
+                controls.widthInput,
+                DEFAULT_READER_CUSTOM_COLUMN_WIDTH,
+            ),
+        });
     });
     controls.widthInput.addEventListener('change', () => {
-        commitPreference({ custom_column_width: readNumber(controls.widthInput, 760) });
+        commitPreference({
+            custom_column_width: readNumber(
+                controls.widthInput,
+                DEFAULT_READER_CUSTOM_COLUMN_WIDTH,
+            ),
+        });
     });
     controls.lineInput.addEventListener('input', () => {
         previewPreference({ custom_line_height: readNumber(controls.lineInput, 1.72) });
@@ -396,6 +407,7 @@ function closeDisplayPanel(
     controls.panel.hidden = true;
     controls.backdrop.hidden = true;
     controls.toggle.setAttribute('aria-expanded', 'false');
+    revealChrome(page);
     if (restoreFocus) focusReaderSurface(page);
 }
 

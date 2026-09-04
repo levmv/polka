@@ -87,9 +87,10 @@ function buildEPUB(
   title: string,
   author: string,
   name: string,
-  chapterName = 'chapter.xhtml',
-  description = '',
+  options: { chapterName?: string; description?: string; verticalWriting?: boolean } = {},
 ): UploadFile {
+  const chapterName = options.chapterName || 'chapter.xhtml';
+  const description = options.description || '';
   const t = xmlEscape(title);
   const a = xmlEscape(author);
   const desc = description ? `\n    <dc:description>${xmlEscape(description)}</dc:description>` : '';
@@ -99,13 +100,19 @@ function buildEPUB(
     <dc:identifier id="bookid">urn:uuid:${name}</dc:identifier>
     <dc:title>${t}</dc:title>
     <dc:creator>${a}</dc:creator>
-    <dc:language>en</dc:language>${desc}
+    <dc:language>${options.verticalWriting ? 'ja' : 'en'}</dc:language>${desc}
   </metadata>
   <manifest><item id="chapter" href="${xmlEscape(chapterName)}" media-type="application/xhtml+xml"/></manifest>
   <spine><itemref idref="chapter"/></spine>
 </package>`;
+  const verticalStyle = options.verticalWriting
+    ? '<style>body { writing-mode: vertical-rl; }</style>'
+    : '';
+  const body = options.verticalWriting
+    ? `<h1>${t}</h1><p>縦書きの合成テスト本文です。ページの高さと余白を確認します。</p><p>${a}</p>`
+    : `<p>${a}</p>`;
   const chapter = `<?xml version="1.0" encoding="utf-8"?>
-<html xmlns="http://www.w3.org/1999/xhtml"><head><title>${t}</title></head><body><p>${a}</p></body></html>`;
+<html xmlns="http://www.w3.org/1999/xhtml"><head><title>${t}</title>${verticalStyle}</head><body>${body}</body></html>`;
   const buffer = zipStore([
     { name: 'mimetype', data: Buffer.from('application/epub+zip') },
     {
@@ -126,7 +133,11 @@ export function epub(
   name: string,
   description = '',
 ): UploadFile {
-  return buildEPUB(title, author, name, 'chapter.xhtml', description);
+  return buildEPUB(title, author, name, { description });
+}
+
+export function epubWithVerticalWriting(title: string, author: string, name: string): UploadFile {
+  return buildEPUB(title, author, name, { verticalWriting: true });
 }
 
 export function epubWithNonstandardZIPSignature(
@@ -150,7 +161,7 @@ export function epubWithUnmarkedUTF8Entry(
 ): UploadFile {
   // The filename bytes are valid UTF-8, but the tiny ZIP writer deliberately
   // leaves the language-encoding flag clear, matching a real producer defect.
-  return buildEPUB(title, author, name, '章.xhtml');
+  return buildEPUB(title, author, name, { chapterName: '章.xhtml' });
 }
 
 export function fb2(title: string, author: string, name: string, body: string): UploadFile {

@@ -4,9 +4,13 @@ import { createAnnotation, deleteAnnotation, fetchAnnotations, updateAnnotationN
 import { clamp } from '../dom';
 import { iconElement } from '../icons';
 import type { Annotation } from '../types';
-import { focusReaderSurface } from './controls';
-import type { FoliateAnnotation, FoliateViewElement } from './foliate-engine';
-import type { ReaderSelectionPayload } from './selection';
+import { focusReaderSurface, revealChrome } from './controls';
+import type { FoliateAnnotation, FoliateLoadDetail, FoliateViewElement } from './foliate-engine';
+import type {
+    ReaderAnnotationActionTarget,
+    ReaderAnnotationReference,
+    ReaderSelectionPayload,
+} from './selection';
 
 const HIGHLIGHT_COLOR = '#f2d46b';
 const POPOVER_GAP = 8;
@@ -14,6 +18,7 @@ const POPOVER_MARGIN = 8;
 
 interface AnnotationOptions {
     onNavigate?: () => void;
+    onShowActions?: (target: ReaderAnnotationActionTarget) => void;
 }
 
 interface AnnotationPopover {
@@ -21,8 +26,13 @@ interface AnnotationPopover {
     quote: HTMLElement;
     note: HTMLTextAreaElement;
     status: HTMLElement;
-    saveButton: HTMLButtonElement;
-    deleteButton: HTMLButtonElement;
+    doneButton: HTMLButtonElement;
+}
+
+interface RenderedAnnotation {
+    doc: Document;
+    index?: number;
+    range: Range;
 }
 
 interface AnnotationPanel {
@@ -35,7 +45,10 @@ interface AnnotationPanel {
 
 export interface AnnotationController {
     hydrate(): Promise<void>;
-    createHighlight(payload: ReaderSelectionPayload): void;
+    createHighlight(payload: ReaderSelectionPayload, editNote?: boolean): void;
+    editNote(cfi: string): void;
+    deleteHighlight(cfi: string): void;
+    annotationAt(doc: Document, range: Range): ReaderAnnotationReference | undefined;
 }
 
 export function wireAnnotations(
@@ -46,10 +59,14 @@ export function wireAnnotations(
 ): AnnotationController {
     const annotations = new Map<string, Annotation>();
     const sections = new Map<string, number>();
+    const renderedAnnotations = new Map<string, RenderedAnnotation>();
+    const wiredDocuments = new WeakSet<Document>();
     const panel = createAnnotationPanel(page);
     const popover = buildPopover();
     page.append(popover.root);
     let activePopoverAnnotation: Annotation | null = null;
+    let pendingNoteSave: Promise<boolean> | null = null;
+    let pendingNoteEditorCFI: string | null = null;
     const persistedAnnotations = fetchAnnotations(assetId).then(
         (rows) => ({ ok: true as const, rows }),
         (error: unknown) => ({ ok: false as const, error }),
@@ -68,7 +85,7 @@ export function wireAnnotations(
 
     const renderList = (): void => {
         if (!panel) return;
-        renderAnnotationList(page, panel, sortedAnnotations(), view, options);
+        renderAnnotationList(page, panel, sortedAnnotations(), options, requestNoteEditor);
     };
 
     const replaceAnnotation = (annotation: Annotation): void => {
@@ -93,83 +110,227 @@ export function wireAnnotations(
         }
     };
 
+    const saveAndClosePopover = (restoreFocus = false): Promise<boolean> => {
+        if (!activePopoverAnnotation) return Promise.resolve(true);
+        if (pendingNoteSave) return pendingNoteSave;
+        const annotation = activePopoverAnnotation;
+        const note = popover.note.value;
+        if (note === (annotation.note || '')) {
+            hidePopover();
+            if (restoreFocus) focusReaderSurface(page);
+            return Promise.resolve(true);
+        }
+
+        setPopoverBusy(popover, true, 'Saving...');
+        const request = updateAnnotationNote(assetId, annotation.id, note)
+            .then((updated) => {
+                replaceAnnotation(updated);
+                if (activePopoverAnnotation?.id === annotation.id) {
+                    hidePopover();
+                    if (restoreFocus) focusReaderSurface(page);
+                }
+                return true;
+            })
+            .catch((e) => {
+                console.error('Failed to update annotation:', e);
+                if (activePopoverAnnotation?.id === annotation.id) {
+                    popover.status.textContent = 'Could not save note.';
+                }
+                return false;
+            })
+            .finally(() => {
+                if (activePopoverAnnotation?.id === annotation.id) {
+                    setPopoverBusy(popover, false);
+                }
+                if (pendingNoteSave === request) pendingNoteSave = null;
+            });
+        pendingNoteSave = request;
+        return request;
+    };
+
+    function openNoteEditor(cfi: string, navigate = false): void {
+        const annotation = annotations.get(cfi);
+        if (!annotation) return;
+        const rendered = renderedAnnotations.get(cfi);
+        if (!navigate && rendered) {
+            pendingNoteEditorCFI = null;
+            activePopoverAnnotation = annotation;
+            markActiveAnnotation(panel, annotation.id);
+            showPopover(page, view, popover, annotation, rendered.range, rendered.index);
+            return;
+        }
+
+        pendingNoteEditorCFI = cfi;
+        const target = foliateAnnotation(annotation);
+        const navigation = view.showAnnotation
+            ? view.showAnnotation(target)
+            : view.goTo(annotation.cfi);
+        void Promise.resolve(navigation).then(
+            () => {
+                if (pendingNoteEditorCFI === cfi) pendingNoteEditorCFI = null;
+            },
+            (e) => {
+                if (pendingNoteEditorCFI === cfi) pendingNoteEditorCFI = null;
+                console.error('Failed to navigate annotation:', e);
+            },
+        );
+    }
+
+    function requestNoteEditor(cfi: string, navigate = false): void {
+        if (!activePopoverAnnotation) {
+            openNoteEditor(cfi, navigate);
+            return;
+        }
+        void saveAndClosePopover().then((saved) => {
+            if (saved) openNoteEditor(cfi, navigate);
+        });
+    }
+
     view.addEventListener('draw-annotation', (event) => {
         const detail = (
             event as CustomEvent<{
                 draw?: (func: unknown, options?: unknown) => void;
                 annotation?: FoliateAnnotation;
+                doc?: Document;
+                range?: Range;
             }>
         ).detail;
-        if (!detail?.draw || detail.annotation?.kind !== 'highlight') return;
+        if (
+            !detail?.draw ||
+            detail.annotation?.kind !== 'highlight' ||
+            !detail.doc ||
+            !detail.range
+        )
+            return;
+        const index = view.renderer?.getContents?.().find((item) => item.doc === detail.doc)?.index;
+        renderedAnnotations.set(detail.annotation.value, {
+            doc: detail.doc,
+            index,
+            range: detail.range.cloneRange(),
+        });
         detail.draw(Overlayer.highlight, { color: HIGHLIGHT_COLOR, padding: 1 });
     });
     view.addEventListener('show-annotation', (event) => {
         const detail = (event as CustomEvent<{ value?: string; index?: number; range?: Range }>)
             .detail;
         if (!detail?.value || !detail.range) return;
-        const annotation = annotations.get(detail.value);
+        const value = detail.value;
+        const annotation = annotations.get(value);
         if (!annotation) return;
-        activePopoverAnnotation = annotation;
-        markActiveAnnotation(panel, annotation.id);
-        showPopover(page, view, popover, annotation, detail.range, detail.index);
+        const range = detail.range;
+        const doc = annotationDocument(view, range, detail.index);
+        if (!doc) return;
+        const showAnnotationActions = options.onShowActions;
+        const editRequested = pendingNoteEditorCFI === annotation.cfi || !showAnnotationActions;
+        if (pendingNoteEditorCFI === annotation.cfi) pendingNoteEditorCFI = null;
+        const showAnnotationUI = (): void => {
+            const current = annotations.get(value);
+            if (!current) return;
+            markActiveAnnotation(panel, current.id);
+            if (editRequested || !showAnnotationActions) {
+                activePopoverAnnotation = current;
+                showPopover(page, view, popover, current, range, detail.index);
+                return;
+            }
+            showAnnotationActions({
+                cfi: current.cfi,
+                quote: current.quote,
+                hasNote: Boolean(current.note),
+                doc,
+                index: detail.index,
+                range,
+            });
+        };
+        if (activePopoverAnnotation) {
+            void saveAndClosePopover().then((saved) => {
+                if (saved) showAnnotationUI();
+            });
+            return;
+        }
+        showAnnotationUI();
     });
     view.addEventListener('create-overlay', (event) => {
         const index = (event as CustomEvent<{ index?: number }>).detail?.index;
         if (typeof index === 'number') renderSection(index);
     });
-    view.addEventListener('relocate', hidePopover);
+    view.addEventListener('relocate', () => void saveAndClosePopover());
 
     document.addEventListener(
         'pointerdown',
         (event) => {
             const target = event.target;
             if (target instanceof Node && popover.root.contains(target)) return;
-            hidePopover();
+            void saveAndClosePopover();
         },
         true,
     );
-    window.addEventListener('resize', hidePopover);
-    window.addEventListener('scroll', hidePopover, true);
+    const wireDocument = (doc: Document): void => {
+        if (wiredDocuments.has(doc)) return;
+        wiredDocuments.add(doc);
+        doc.addEventListener('pointerdown', () => void saveAndClosePopover(), true);
+    };
+    view.addEventListener('load', (event) => {
+        // Reflowable books replace their section iframe on every load. Do not
+        // retain ranges (and their detached documents) from earlier sections.
+        if (!view.isFixedLayout) renderedAnnotations.clear();
+        wireDocument((event as CustomEvent<FoliateLoadDetail>).detail.doc);
+    });
+    for (const content of view.renderer?.getContents?.() || []) {
+        if (content.doc) wireDocument(content.doc);
+    }
+    document.addEventListener('keydown', (event) => {
+        if (event.key !== 'Escape' || popover.root.hidden) return;
+        event.preventDefault();
+        void saveAndClosePopover(true);
+    });
+    const hidePopoverForViewportChange = (): void => {
+        const focused = document.activeElement;
+        if (focused instanceof Node && popover.root.contains(focused)) return;
+        void saveAndClosePopover();
+    };
+    window.addEventListener('resize', hidePopoverForViewportChange);
+    window.addEventListener('scroll', hidePopoverForViewportChange, true);
 
     popover.note.addEventListener('input', () => {
         popover.status.textContent = '';
     });
-    popover.saveButton.addEventListener('click', () => {
-        if (!activePopoverAnnotation) return;
-        const annotation = activePopoverAnnotation;
-        setPopoverBusy(popover, true, 'Saving...');
-        updateAnnotationNote(assetId, annotation.id, popover.note.value)
-            .then((updated) => {
-                replaceAnnotation(updated);
-                if (activePopoverAnnotation?.id !== annotation.id) return;
-                popover.note.value = updated.note || '';
-                popover.status.textContent = 'Saved';
-            })
-            .catch((e) => {
-                console.error('Failed to update annotation:', e);
-                if (activePopoverAnnotation?.id === annotation.id) {
-                    popover.status.textContent = 'Could not save';
-                }
-            })
-            .finally(() => {
-                if (activePopoverAnnotation?.id === annotation.id) {
-                    setPopoverBusy(popover, false);
-                }
-            });
-    });
-    popover.deleteButton.addEventListener('click', () => {
-        if (!activePopoverAnnotation) return;
-        const annotation = activePopoverAnnotation;
-        hidePopover();
+    popover.doneButton.addEventListener('click', () => void saveAndClosePopover(true));
+    const deleteHighlight = (cfi: string): void => {
+        const annotation = annotations.get(cfi);
+        if (!annotation) return;
+        if (activePopoverAnnotation?.id === annotation.id) hidePopover();
         deleteAnnotation(assetId, annotation.id)
             .then(() => {
                 annotations.delete(annotation.cfi);
                 sections.delete(annotation.id);
+                renderedAnnotations.delete(annotation.cfi);
                 renderList();
                 return view.deleteAnnotation?.(foliateAnnotation(annotation));
             })
             .catch((e) => console.error('Failed to delete annotation:', e));
-    });
+    };
+
+    const persistHighlight = (payload: ReaderSelectionPayload, editNote: boolean): void => {
+        createAnnotation(assetId, {
+            kind: 'highlight',
+            cfi: payload.cfi,
+            quote: payload.quote,
+            context_before: payload.context_before,
+            context_after: payload.context_after,
+            color: 'yellow',
+        })
+            .then(async (annotation) => {
+                const previous = annotations.get(annotation.cfi);
+                if (previous) {
+                    sections.delete(previous.id);
+                    renderedAnnotations.delete(previous.cfi);
+                    void view.deleteAnnotation?.(foliateAnnotation(previous));
+                }
+                await renderAnnotation(annotation);
+                if (editNote) openNoteEditor(annotation.cfi);
+            })
+            .catch((e) => console.error('Failed to create annotation:', e));
+    };
 
     if (panel) wireAnnotationPanel(page, panel, () => renderList());
 
@@ -192,27 +353,49 @@ export function wireAnnotations(
             });
             return hydration;
         },
-        createHighlight(payload: ReaderSelectionPayload): void {
-            createAnnotation(assetId, {
-                kind: 'highlight',
-                cfi: payload.cfi,
-                quote: payload.quote,
-                context_before: payload.context_before,
-                context_after: payload.context_after,
-                color: 'yellow',
-            })
-                .then((annotation) => {
-                    hidePopover();
-                    const previous = annotations.get(annotation.cfi);
-                    if (previous) {
-                        sections.delete(previous.id);
-                        void view.deleteAnnotation?.(foliateAnnotation(previous));
-                    }
-                    return renderAnnotation(annotation);
-                })
-                .catch((e) => console.error('Failed to create annotation:', e));
+        createHighlight(payload: ReaderSelectionPayload, editNote = false): void {
+            if (!activePopoverAnnotation) {
+                persistHighlight(payload, editNote);
+                return;
+            }
+            void saveAndClosePopover().then((saved) => {
+                if (saved) persistHighlight(payload, editNote);
+            });
+        },
+        editNote(cfi: string): void {
+            requestNoteEditor(cfi);
+        },
+        deleteHighlight,
+        annotationAt(doc: Document, range: Range): ReaderAnnotationReference | undefined {
+            for (const [cfi, rendered] of renderedAnnotations) {
+                if (rendered.doc !== doc || !rangesIntersect(range, rendered.range)) continue;
+                const annotation = annotations.get(cfi);
+                if (annotation) return { cfi, hasNote: Boolean(annotation.note) };
+            }
+            return undefined;
         },
     };
+}
+
+function rangesIntersect(a: Range, b: Range): boolean {
+    const doc = a.startContainer.ownerDocument;
+    if (!doc || b.startContainer.ownerDocument !== doc) return false;
+
+    const aStart = collapsedRange(doc, a.startContainer, a.startOffset);
+    const aEnd = collapsedRange(doc, a.endContainer, a.endOffset);
+    const bStart = collapsedRange(doc, b.startContainer, b.startOffset);
+    const bEnd = collapsedRange(doc, b.endContainer, b.endOffset);
+    return (
+        aStart.compareBoundaryPoints(Range.START_TO_START, bEnd) < 0 &&
+        aEnd.compareBoundaryPoints(Range.START_TO_START, bStart) > 0
+    );
+}
+
+function collapsedRange(doc: Document, node: Node, offset: number): Range {
+    const range = doc.createRange();
+    range.setStart(node, offset);
+    range.collapse(true);
+    return range;
 }
 
 function foliateAnnotation(annotation: Annotation): FoliateAnnotation {
@@ -235,7 +418,7 @@ function createAnnotationPanel(page: HTMLElement): AnnotationPanel | null {
     toggle.setAttribute('aria-label', 'Highlights');
     toggle.setAttribute('aria-controls', panelID);
     toggle.setAttribute('aria-expanded', 'false');
-    toggle.append(iconElement('bookmark'));
+    toggle.append(iconElement('ink_highlighter'));
 
     const backdrop = document.createElement('button');
     backdrop.className = 'reader-annotations-backdrop';
@@ -324,6 +507,7 @@ function closeAnnotationPanel(
     controls.panel.hidden = true;
     controls.backdrop.hidden = true;
     controls.toggle.setAttribute('aria-expanded', 'false');
+    revealChrome(page);
     if (restoreFocus) focusReaderSurface(page);
 }
 
@@ -331,8 +515,8 @@ function renderAnnotationList(
     page: HTMLElement,
     controls: AnnotationPanel,
     rows: Annotation[],
-    view: FoliateViewElement,
     options: AnnotationOptions,
+    openNoteEditor: (cfi: string, navigate?: boolean) => void,
 ): void {
     controls.list.replaceChildren();
     controls.panel.dataset.readerAnnotationsCount = String(rows.length);
@@ -366,13 +550,7 @@ function renderAnnotationList(
             options.onNavigate?.();
             markActiveAnnotation(controls, annotation.id);
             closeAnnotationPanel(page, controls, false);
-            const target = foliateAnnotation(annotation);
-            const navigate = view.showAnnotation
-                ? view.showAnnotation(target)
-                : view.goTo(annotation.cfi);
-            Promise.resolve(navigate).catch((e) =>
-                console.error('Failed to navigate annotation:', e),
-            );
+            openNoteEditor(annotation.cfi, true);
         });
         item.append(button);
         controls.list.append(item);
@@ -396,7 +574,7 @@ function buildPopover(): AnnotationPopover {
     root.className = 'reader-annotation-popover';
     root.hidden = true;
     root.setAttribute('role', 'dialog');
-    root.setAttribute('aria-label', 'Highlight');
+    root.setAttribute('aria-label', 'Highlight note');
 
     const quote = document.createElement('div');
     quote.className = 'reader-annotation-quote';
@@ -412,33 +590,20 @@ function buildPopover(): AnnotationPopover {
     status.className = 'reader-annotation-status';
     status.setAttribute('aria-live', 'polite');
 
-    const actions = document.createElement('div');
-    actions.className = 'reader-annotation-actions';
+    const doneButton = document.createElement('button');
+    doneButton.className = 'reader-annotation-action';
+    doneButton.type = 'button';
+    doneButton.title = 'Done';
+    doneButton.setAttribute('aria-label', 'Done');
+    doneButton.append(iconElement('check'));
 
-    const saveButton = document.createElement('button');
-    saveButton.className = 'reader-annotation-action reader-annotation-action--primary';
-    saveButton.type = 'button';
-    saveButton.append(iconElement('check'));
-    const saveLabel = document.createElement('span');
-    saveLabel.textContent = 'Save';
-    saveButton.append(saveLabel);
-
-    const deleteButton = document.createElement('button');
-    deleteButton.className = 'reader-annotation-action';
-    deleteButton.type = 'button';
-    deleteButton.append(iconElement('delete'));
-    const deleteLabel = document.createElement('span');
-    deleteLabel.textContent = 'Delete';
-    deleteButton.append(deleteLabel);
-
-    actions.append(saveButton, deleteButton);
-    root.append(quote, note, status, actions);
-    return { root, quote, note, status, saveButton, deleteButton };
+    root.append(quote, note, status, doneButton);
+    return { root, quote, note, status, doneButton };
 }
 
 function setPopoverBusy(popover: AnnotationPopover, busy: boolean, status?: string): void {
-    popover.saveButton.disabled = busy;
-    popover.deleteButton.disabled = busy;
+    popover.note.disabled = busy;
+    popover.doneButton.disabled = busy;
     if (status !== undefined) popover.status.textContent = status;
 }
 

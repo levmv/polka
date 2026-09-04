@@ -1,10 +1,77 @@
 import {
   epubWithNonstandardZIPSignature,
   epubWithUnmarkedUTF8Entry,
+  epubWithVerticalWriting,
 } from '../book-fixtures';
 import { expect, test } from '../fixtures';
 
 test.describe('Reader', () => {
+  test('Vertical EPUB fills the stage without changing its column length', async ({
+    page,
+  }) => {
+    const stamp = Date.now().toString(36);
+    const title = `Vertical EPUB ${stamp}`;
+    await page.goto('/');
+    await page.locator('#book-upload-input').setInputFiles(
+      epubWithVerticalWriting(title, `Vertical Author ${stamp}`, `vertical-epub-${stamp}`),
+    );
+
+    const card = page.locator('.book-card', { hasText: title });
+    await expect(card).toBeVisible();
+    const href = await card.locator('.book-title-link').getAttribute('href');
+    const workId = href?.split('/').pop()?.split('?')[0];
+    if (!workId) throw new Error('missing vertical EPUB work id');
+
+    try {
+      await page.goto(`/read/${workId}`);
+      await expect
+        .poll(async () => page.locator('.reader-epub-stage').getAttribute('data-reader-ready'))
+        .toBe('true');
+      await expect
+        .poll(() =>
+          page.evaluate(() => {
+            const view = document.querySelector('foliate-view') as HTMLElement & {
+              renderer?: HTMLElement & { getContents?: () => Array<{ doc?: Document }> };
+            };
+            const doc = view.renderer?.getContents?.()[0]?.doc;
+            const stage = document.querySelector('.reader-epub-stage')?.getBoundingClientRect();
+            if (!doc?.defaultView || !stage) return null;
+            const maxInlineSize = Number.parseFloat(
+              view.renderer?.getAttribute('max-inline-size') || '',
+            );
+            const renderedColumnLength = Number.parseFloat(
+              doc.defaultView.getComputedStyle(doc.documentElement).columnWidth,
+            );
+            const baseMargin = Math.round(
+              Math.min(48, Math.max(28, window.innerHeight * 0.055)),
+            );
+            const expectedColumnLength =
+              Math.min(maxInlineSize, stage.height - 2 * baseMargin) - baseMargin;
+            return {
+              writingMode: view.dataset.readerWritingMode,
+              pageSpansStage:
+                Math.abs(doc.documentElement.getBoundingClientRect().height - stage.height) < 2,
+              columnLengthPreserved:
+                Math.abs(renderedColumnLength - Math.trunc(expectedColumnLength)) < 2,
+            };
+          }),
+        )
+        .toEqual({
+          writingMode: 'vertical',
+          pageSpansStage: true,
+          columnLengthPreserved: true,
+        });
+      await page.screenshot({ path: 'screenshots/reader-vertical.png', fullPage: true });
+    } finally {
+      const trash = await page.request.post('/api/books/bulk/trash', {
+        data: { ids: [workId] },
+      });
+      expect(trash.ok()).toBeTruthy();
+      const purge = await page.request.delete(`/api/books/${encodeURIComponent(workId)}/purge`);
+      expect(purge.status()).toBe(204);
+    }
+  });
+
   test('EPUB reader supports controls and persists reading state', async ({ page }) => {
     const reader = page.locator('.reader-page');
     const displayToggle = page.locator('[data-reader-display-toggle]');
@@ -55,6 +122,32 @@ test.describe('Reader', () => {
           }),
         )
         .toBeLessThanOrEqual(48);
+
+      // The expanded page spans the stage while the gap preserves column width.
+      await expect
+        .poll(async () =>
+          page.evaluate(() => {
+            const view = document.querySelector('foliate-view') as HTMLElement & {
+              renderer?: HTMLElement & { getContents?: () => Array<{ doc?: Document }> };
+            };
+            const doc = view.renderer?.getContents?.()[0]?.doc;
+            const stage = document.querySelector('.reader-epub-stage')?.getBoundingClientRect();
+            if (!doc?.defaultView || !stage) return null;
+            const root = doc.documentElement;
+            const maxInlineSize = Number.parseFloat(
+              view.renderer?.getAttribute('max-inline-size') || '',
+            );
+            const renderedColumnWidth = Number.parseFloat(
+              doc.defaultView.getComputedStyle(root).columnWidth,
+            );
+            return {
+              pageSpansStage: Math.abs(root.getBoundingClientRect().width - stage.width) < 2,
+              columnWidthPreserved:
+                renderedColumnWidth > maxInlineSize * 0.9 && renderedColumnWidth <= maxInlineSize,
+            };
+          }),
+        )
+        .toEqual({ pageSpansStage: true, columnWidthPreserved: true });
 
       const progressLabel = page.locator('[data-reader-progress]');
       await expect(progressLabel).toHaveText('1 / 2');
@@ -132,6 +225,28 @@ test.describe('Reader', () => {
           ),
         )
         .toEqual({ left: 1, right: 0 });
+
+      // A drag must not turn a page or toggle the chrome.
+      const chromeHiddenBeforeDrag = await reader.evaluate((el) =>
+        el.classList.contains('reader-chrome-hidden'),
+      );
+      await page.mouse.move(240, nearTextLeft.y);
+      await page.mouse.down();
+      for (const x of [200, 160, 120, 60]) await page.mouse.move(x, nearTextLeft.y);
+      await page.mouse.up();
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () =>
+              (window as unknown as { __readerTurnCalls: { left: number; right: number } })
+                .__readerTurnCalls,
+          ),
+        )
+        .toEqual({ left: 1, right: 0 });
+      await expect
+        .poll(() => reader.evaluate((el) => el.classList.contains('reader-chrome-hidden')))
+        .toBe(chromeHiddenBeforeDrag);
+
       await page.keyboard.press('Space');
       await expect
         .poll(() =>

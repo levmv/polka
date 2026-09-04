@@ -10,14 +10,17 @@ import {
 } from './controls';
 import {
     applyFoliateDisplay,
+    applyReaderCanvasColor,
     createFoliateView,
     type FoliateLoadDetail,
     type FoliateViewElement,
     fetchFoliateBookFile,
     fitFoliateCoverDocument,
     openFoliateBookFile,
+    readerDisplayPalette,
     setFoliateDocumentJustification,
     suppressTransientFoliateRenderErrors,
+    syncFoliateWritingMode,
     waitForRendererContents,
     wireCurrentFoliateDocuments,
 } from './foliate-engine';
@@ -75,6 +78,8 @@ async function initFoliateReader(
     page.dataset.readerFlow = preferences.epub_flow;
     page.dataset.readerStyle = preferences.display_style;
     page.dataset.readerFontScale = String(preferences.font_scale);
+    // Apply before loading the book to avoid flashing the app background.
+    applyReaderCanvasColor(readerDisplayPalette(preferences.display_style).background);
     const view: FoliateViewElement = await openFoliateBookWithFallback(
         page,
         stage,
@@ -86,11 +91,17 @@ async function initFoliateReader(
     const search = wireReaderSearch(page, view, {
         onNavigate: () => positionSaver.markUserNavigation(),
     });
+    let selectionController: ReturnType<typeof wireReaderSelection> | undefined;
     const annotations = wireAnnotations(page, assetId, view, {
         onNavigate: () => positionSaver.markUserNavigation(),
+        onShowActions: (target) => selectionController?.showAnnotationActions(target),
     });
-    wireReaderSelection(page, view, {
+    selectionController = wireReaderSelection(page, view, {
         onHighlightSelection: annotations.createHighlight,
+        onNoteSelection: (payload) => annotations.createHighlight(payload, true),
+        onEditAnnotation: annotations.editNote,
+        onDeleteAnnotation: annotations.deleteHighlight,
+        annotationAt: annotations.annotationAt,
         onSearchSelection: search.openWithQuery,
     });
     applyFoliateDisplay(view, preferences);
@@ -182,5 +193,6 @@ function wireFoliateDocumentStyling(page: HTMLElement, view: FoliateViewElement)
         const sectionID = view.book?.sections?.[detail.index ?? -1]?.id;
         fitFoliateCoverDocument(detail.doc, sectionID, detail.index);
         setFoliateDocumentJustification(detail.doc, page.dataset.readerStyle !== 'original');
+        syncFoliateWritingMode(view, detail.doc);
     });
 }

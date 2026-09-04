@@ -14,6 +14,7 @@ import { clampNumber } from '../dom';
 import type { ReaderDisplayStyle, ReaderPreferences } from '../types';
 
 export const DEFAULT_READER_DISPLAY_STYLE: ReaderDisplayStyle = 'paper';
+export const DEFAULT_READER_COLUMN_WIDTH = 760;
 
 export function normalizeReaderDisplayStyle(style: unknown): ReaderDisplayStyle {
     return style === 'original' || style === 'custom' ? style : DEFAULT_READER_DISPLAY_STYLE;
@@ -122,6 +123,10 @@ export interface FoliateRelocateDetail {
     };
 }
 
+export interface FoliateRendererRelocateDetail {
+    reason?: string;
+}
+
 export interface FoliateLoadDetail {
     doc: Document;
     index?: number;
@@ -153,8 +158,10 @@ Overlayer.outline = (rects: unknown[]): SVGElement => {
 export function createFoliateView(stage: HTMLElement): FoliateViewElement {
     const view = document.createElement('foliate-view') as FoliateViewElement;
     view.className = 'reader-epub-view';
+    view.dataset.readerWritingMode = 'horizontal';
     view.setAttribute('autohide-cursor', '');
     stage.append(view);
+    observeReaderLayoutMetrics(view);
     return view;
 }
 
@@ -432,10 +439,11 @@ function tuneRenderer(view: FoliateViewElement): void {
     const renderer = view.renderer;
     if (!renderer) return;
 
-    renderer.setAttribute('max-inline-size', '760px');
-    renderer.setAttribute('max-column-count', '1');
-    renderer.setAttribute('margin', `${readerMargin()}px`);
-    renderer.setAttribute('gap', '7%');
+    // Keep Foliate's snap animation so a released swipe visibly settles.
+    if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        renderer.setAttribute('animated', '');
+    }
+    applyReaderLayoutMetrics(view, DEFAULT_READER_COLUMN_WIDTH);
 }
 
 export function applyFoliateDisplay(view: FoliateViewElement, prefs: ReaderPreferences): void {
@@ -446,30 +454,121 @@ export function applyFoliateDisplay(view: FoliateViewElement, prefs: ReaderPrefe
     const palette = readerDisplayPalette(style);
     const columnWidth =
         style === 'custom'
-            ? clampNumber(prefs.custom_column_width, 560, 920, 760)
+            ? clampNumber(prefs.custom_column_width, 560, 920, DEFAULT_READER_COLUMN_WIDTH)
             : style === 'original'
               ? 820
-              : 760;
+              : DEFAULT_READER_COLUMN_WIDTH;
 
     renderer.style.setProperty('--theme-bg-color', palette.background);
     renderer.style.background = palette.background;
-    renderer.setAttribute('max-inline-size', `${columnWidth}px`);
-    renderer.setAttribute('max-column-count', '1');
-    renderer.setAttribute('margin', `${readerMargin()}px`);
-    renderer.setAttribute('gap', '7%');
+    applyReaderLayoutMetrics(view, columnWidth);
     renderer.setStyles?.(readerContentCSS(style, prefs, palette));
+    applyReaderCanvasColor(palette.background);
+}
+
+// Safari can expose the page canvas around its chrome, so keep the theme color
+// and root canvas aligned with the active reader background.
+export function applyReaderCanvasColor(background: string): void {
+    for (const meta of document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')) {
+        meta.content = background;
+    }
+    document.documentElement.style.setProperty('--reader-canvas-color', background);
+}
+
+// CSS expands Foliate's clipped paginated container along the inline axis so
+// swipes cross the full viewport. Preserve Foliate's text extent inside it.
+const READER_OUTER_GAP = 0.07;
+
+export function readerTextColumnWidth(viewWidth: number, columnWidth: number): number {
+    if (!(viewWidth > 0)) return columnWidth;
+    // Foliate holds its container at `max-inline-size`, or at the view minus
+    // the outer gap once the view is narrower than that, and then spends
+    // `gap / (1 - gap)` of the container on the two page margins.
+    const container = Math.min(columnWidth, viewWidth * (1 - READER_OUTER_GAP));
+    return container * (1 - READER_OUTER_GAP / (1 - READER_OUTER_GAP));
+}
+
+function readerColumnGapPercent(viewWidth: number, columnWidth: number): number {
+    if (!(viewWidth > 0)) return READER_OUTER_GAP * 100;
+    // Invert the margin the paginator derives from `gap`, so a page as wide as
+    // the whole view still renders the text column at its intended width.
+    const margins = Math.max(0, viewWidth - readerTextColumnWidth(viewWidth, columnWidth));
+    const fraction = margins / viewWidth;
+    return (100 * fraction) / (1 + fraction);
+}
+
+export function syncFoliateWritingMode(view: FoliateViewElement, doc: Document): void {
+    const writingMode = doc.defaultView?.getComputedStyle(doc.body).writingMode || '';
+    const mode =
+        writingMode === 'vertical-rl' || writingMode === 'vertical-lr' ? 'vertical' : 'horizontal';
+    if (view.dataset.readerWritingMode === mode) return;
+    view.dataset.readerWritingMode = mode;
+    applyReaderLayoutMetrics(view, currentReaderMaxInlineSize(view));
+}
+
+function applyReaderLayoutMetrics(view: FoliateViewElement, maxInlineSize: number): void {
+    const renderer = view.renderer;
+    if (!renderer) return;
+
+    const baseMargin = readerMargin();
+    const paginated = renderer.getAttribute('flow') !== 'scrolled';
+    const vertical = view.dataset.readerWritingMode === 'vertical';
+    setRendererAttribute(renderer, 'max-inline-size', `${maxInlineSize}px`);
+    setRendererAttribute(renderer, 'max-column-count', '1');
+    setRendererAttribute(
+        renderer,
+        'margin',
+        `${vertical && paginated ? compensatedVerticalMargin(view.clientHeight, maxInlineSize, baseMargin) : baseMargin}px`,
+    );
+    // Gap compensation applies only to horizontal pagination. In scrolled flow
+    // it becomes document padding; vertical pagination keeps its original width.
+    const gap =
+        !paginated || vertical
+            ? READER_OUTER_GAP * 100
+            : readerColumnGapPercent(view.clientWidth, maxInlineSize);
+    setRendererAttribute(renderer, 'gap', `${gap.toFixed(3)}%`);
+}
+
+function compensatedVerticalMargin(
+    viewHeight: number,
+    maxInlineSize: number,
+    baseMargin: number,
+): number {
+    if (!(viewHeight > 0)) return baseMargin;
+    // Foliate's default container is min(maxInlineSize, height - 2 * margin),
+    // then one more margin is subtracted from the vertical column length.
+    const oldContainerHeight = Math.min(maxInlineSize, Math.max(0, viewHeight - 2 * baseMargin));
+    const oldTextHeight = Math.max(0, oldContainerHeight - baseMargin);
+    return Math.max(baseMargin, viewHeight - oldTextHeight);
+}
+
+// Gap and vertical compensation depend on viewport size. Attribute guards in
+// applyReaderLayoutMetrics avoid unnecessary Foliate renders after a resize.
+function observeReaderLayoutMetrics(view: FoliateViewElement): void {
+    if (typeof ResizeObserver === 'undefined') return;
+    new ResizeObserver(() =>
+        applyReaderLayoutMetrics(view, currentReaderMaxInlineSize(view)),
+    ).observe(view);
+}
+
+function currentReaderMaxInlineSize(view: FoliateViewElement): number {
+    const parsed = Number.parseFloat(view.renderer?.getAttribute('max-inline-size') || '');
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_READER_COLUMN_WIDTH;
+}
+
+function setRendererAttribute(renderer: FoliateRendererElement, name: string, value: string): void {
+    if (renderer.getAttribute(name) === value) return;
+    renderer.setAttribute(name, value);
 }
 
 function readerMargin(): number {
-    // Foliate uses this as the paginated head/footer row height as well as the
-    // page margin. Keep it close to our overlay chrome instead of letting tall
-    // desktop viewports grow empty 64px bands above and below the book.
+    // Foliate uses this for both page margins and header/footer tracks.
     return Math.round(clampNumber(window.innerHeight * 0.055, 28, 48, 40));
 }
 
 export function readerDisplayPalette(style: ReaderDisplayStyle): ReaderDisplayPalette {
     if (style === 'paper') {
-        return { background: '#fbf7ef', text: '#241f1a' };
+        return { background: '#efeeec', text: '#232120' };
     }
     return {
         background: rootCSSVariable('--bg-color', '#fcfcfc'),
@@ -482,9 +581,15 @@ function readerContentCSS(
     prefs: ReaderPreferences,
     palette: ReaderDisplayPalette,
 ): string {
-    const rootFontSize = (1.05 + clampNumber(prefs.font_scale, -4, 6, 0) * 0.06).toFixed(2);
+    const rootFontSize = (1.15 + clampNumber(prefs.font_scale, -4, 6, 0) * 0.06).toFixed(2);
     if (style === 'original') {
         return `
+html,
+body,
+body * {
+    -webkit-touch-callout: none !important;
+}
+
 html {
     --theme-bg-color: ${palette.background};
     background: ${palette.background} !important;
@@ -503,6 +608,12 @@ body {
         style === 'custom' ? clampNumber(prefs.custom_line_height, 1.2, 2.2, 1.72) : 1.72;
 
     return `
+html,
+body,
+body * {
+    -webkit-touch-callout: none !important;
+}
+
 html {
     --theme-bg-color: ${palette.background};
     background: ${palette.background} !important;

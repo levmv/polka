@@ -1,4 +1,4 @@
-import { expect, test } from './fixtures';
+import { expect, type Page, test } from './fixtures';
 
 // Runs under the iPad-sized projects against the small fixture library on
 // :8099. Covers responsive layout/JS below the tablet breakpoints in both
@@ -58,6 +58,63 @@ test.describe('Responsive layout (iPad viewport)', () => {
     await expect(page.locator('.settings-modal')).toBeVisible();
     await expect(sidebar).not.toHaveClass(/open/);
     await expect(overlay).not.toHaveClass(/open/);
+  });
+
+  test('Closing a reader panel reveals the touch chrome', async ({ page }) => {
+    await openReadOnlyReader(page);
+    const reader = page.locator('.reader-page');
+
+    const panels = [
+      {
+        toggle: 'Display settings',
+        panel: '#reader-display-panel',
+        close: 'Close display settings',
+      },
+      { toggle: 'Search in book', panel: '#reader-search-panel', close: 'Close search' },
+      { toggle: 'Highlights', panel: '#reader-annotations-panel', close: 'Close highlights' },
+    ];
+    for (const item of panels) {
+      await page.getByRole('button', { name: item.toggle }).click();
+      const panel = page.locator(item.panel);
+      await expect(panel).toBeVisible();
+      await reader.evaluate((element) => element.classList.add('reader-chrome-hidden'));
+      await panel.getByRole('button', { name: item.close }).click();
+      await expect(panel).toBeHidden();
+      await expect(reader).not.toHaveClass(/reader-chrome-hidden/);
+    }
+  });
+
+  test('Reader selection survives a pagination snap', async ({ page }) => {
+    await openReadOnlyReader(page);
+    const selected = await page.evaluate(() => {
+      const view = document.querySelector('foliate-view') as HTMLElement & {
+        renderer?: { getContents?: () => Array<{ doc?: Document }> };
+      };
+      const doc = view.renderer?.getContents?.().find(({ doc }) => doc)?.doc;
+      const target = doc?.querySelector('p');
+      if (!doc || !target) return '';
+
+      const range = doc.createRange();
+      range.selectNodeContents(target);
+      const selection = doc.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      doc.dispatchEvent(new doc.defaultView!.Event('selectionchange'));
+      return selection?.toString() || '';
+    });
+
+    expect(selected.trim().length).toBeGreaterThan(3);
+    const toolbar = page.locator('.reader-selection-toolbar');
+    await expect(toolbar).toBeVisible();
+
+    await page.evaluate(() => {
+      const view = document.querySelector('foliate-view') as HTMLElement & {
+        renderer?: { snap?: (vx: number, vy: number) => void };
+      };
+      view.renderer?.snap?.(0, 0);
+    });
+
+    await expect(toolbar).toBeVisible();
   });
 
   test('Sidebar drawer breakpoint covers portrait iPad Air but not large portrait tablets', async ({
@@ -203,3 +260,25 @@ test.describe('Responsive layout (iPad viewport)', () => {
     expect(railBox!.y).toBeLessThan(descBox!.y);
   });
 });
+
+async function openReadOnlyReader(page: Page): Promise<void> {
+  await page.goto('/?q=With%20Cover');
+  const href = await page
+    .locator('.book-card', { hasText: 'With Cover Book' })
+    .locator('.book-title-link')
+    .getAttribute('href');
+  const workId = href?.split('/').pop()?.split('?')[0];
+  if (!workId) throw new Error('missing reader work id');
+
+  // Responsive projects share a read-only catalog. Return the current state
+  // for the reader's best-effort touch instead of updating it.
+  await page.route('**/api/reader/assets/*/touch', async (route) => {
+    const stateURL = route.request().url().replace(/\/touch$/, '/state');
+    const response = await page.request.get(stateURL);
+    await route.fulfill({ response });
+  });
+  await page.goto(`/read/${workId}`);
+  await expect
+    .poll(async () => page.locator('.reader-epub-stage').getAttribute('data-reader-ready'))
+    .toBe('true');
+}
