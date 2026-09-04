@@ -6,24 +6,22 @@ import { confirmModal } from '../modal';
 import { showToast } from '../toast';
 import type { TrashedBook } from '../types';
 
-export async function initTrash(root: HTMLElement): Promise<void> {
+export async function initTrash(root: HTMLElement, signal: AbortSignal): Promise<void> {
     const container = root.querySelector<HTMLElement>('#trash-content');
     if (!container) return;
 
     // Role gates the irreversible "Delete permanently" action; the server
     // enforces it too, so a non-admin simply never sees the button.
-    let isAdmin = false;
-    try {
-        const me = await fetchCurrentUser();
-        isAdmin = me.role === 'admin';
-    } catch {
-        /* fall back to non-admin view */
-    }
+    const currentUser = fetchCurrentUser().catch(() => null);
 
     try {
-        const books = await fetchTrash();
+        const books = await fetchTrash(signal);
+        const me = await currentUser;
+        if (signal.aborted) return;
+        const isAdmin = me?.role === 'admin';
         renderTrash(container, books, isAdmin);
     } catch (_e) {
+        if (signal.aborted) return;
         container.innerHTML = `<p class="error">Failed to load trash</p>`;
     }
 }

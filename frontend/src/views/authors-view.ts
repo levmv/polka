@@ -14,7 +14,7 @@ interface AuthorsViewState {
     destroyed: boolean;
 }
 
-export async function initAuthors(root: HTMLElement) {
+export async function initAuthors(root: HTMLElement, signal: AbortSignal) {
     const container = root.querySelector<HTMLElement>('#authors-content');
     if (!container) return;
 
@@ -29,11 +29,11 @@ export async function initAuthors(root: HTMLElement) {
 
     const reload = async () => {
         try {
-            const page = await fetchAuthorPage();
-            if (state.destroyed) return;
-            renderAuthors(state, page.items, page.next_cursor || '', reload);
+            const page = await fetchAuthorPage('', signal);
+            if (state.destroyed || signal.aborted) return;
+            renderAuthors(state, page.items, page.next_cursor || '', reload, signal);
         } catch (_err) {
-            if (state.destroyed) return;
+            if (state.destroyed || signal.aborted) return;
             container.innerHTML = `<p class="error">Failed to load authors</p>`;
         }
     };
@@ -85,6 +85,7 @@ function renderAuthors(
     authors: AuthorAdmin[],
     initialNextCursor: string,
     reload: () => void,
+    signal: AbortSignal,
 ) {
     const { container } = state;
     state.activeEditCancel?.();
@@ -139,13 +140,13 @@ function renderAuthors(
         loadMoreBtn.disabled = true;
         loadMoreBtn.textContent = 'Loading...';
         try {
-            const page = await fetchAuthorPage(nextCursor);
+            const page = await fetchAuthorPage(nextCursor, signal);
             if (state.destroyed) return;
             appendAuthors(page.items);
             nextCursor = page.next_cursor || '';
             loadMoreWrap.hidden = !nextCursor;
         } catch {
-            if (state.destroyed) return;
+            if (state.destroyed || signal.aborted) return;
             showStatus(state, 'Failed to load more authors');
         } finally {
             if (!state.destroyed) {

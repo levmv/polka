@@ -33,6 +33,10 @@ type KoboState = AsyncLoadState & {
     koboConnection: KoboConnection | null;
 };
 
+// App passwords identify their account without the Basic-auth username. Keep
+// this value fixed because Basic authentication cannot encode ':' in a user ID.
+const appPasswordBasicUsername = 'polka';
+
 export function createAppsPanel(currentUser: CurrentUser): (root: HTMLElement) => void {
     const state: AppsState = {
         loaded: false,
@@ -74,20 +78,20 @@ function renderAppsPanel(
     const passwords = document.createElement('section');
     passwords.className = 'settings-app-passwords settings-block';
     root.append(passwords);
-    renderAppPasswords(passwords, currentUser, state);
+    renderAppPasswords(passwords, state);
     root.append(createReadingAppConnections(currentUser));
 }
 
-function renderAppPasswords(root: HTMLElement, currentUser: CurrentUser, state: AppsState): void {
+function renderAppPasswords(root: HTMLElement, state: AppsState): void {
     root.replaceChildren();
 
-    const rerender = () => renderAppPasswords(root, currentUser, state);
+    const rerender = () => renderAppPasswords(root, state);
 
     const action = document.createElement('div');
     action.className = 'settings-section-action';
     action.append(
         buttonEl('settings-btn settings-primary-btn', 'New app password', () =>
-            openCreateAppPasswordModal(currentUser, state, rerender),
+            openCreateAppPasswordModal(state, rerender),
         ),
     );
 
@@ -292,11 +296,7 @@ function openKoboSecretModal(setupURL: string): void {
     );
 }
 
-function openCreateAppPasswordModal(
-    currentUser: CurrentUser,
-    state: AppsState,
-    rerender: () => void,
-): void {
+function openCreateAppPasswordModal(state: AppsState, rerender: () => void): void {
     const fields = fieldGroup();
     const name = makeInput('text', 'off');
     name.placeholder = 'e.g. KOReader on phone';
@@ -322,7 +322,7 @@ function openCreateAppPasswordModal(
                 }
                 state.loaded = true;
                 rerender();
-                openSecretModal(currentUser, created.name, created.token);
+                openSecretModal(created.name, created.token);
                 return true;
             } catch (err) {
                 showToast(errorMessage(err, 'Create app password failed'), { type: 'error' });
@@ -333,17 +333,16 @@ function openCreateAppPasswordModal(
 }
 
 // Shown right after creation — polka stores only a hash, so this is the one
-// place where the password and the complete credential-bearing KOSync URL can
-// be copied. Stable OPDS details are repeated here to make setup one contained
-// flow instead of sending the user back through the settings panel.
-function openSecretModal(currentUser: CurrentUser, name: string, token: string): void {
+// place where secret-bearing connection details can be copied. Stable OPDS
+// details are repeated here to keep setup in one contained flow.
+function openSecretModal(name: string, token: string): void {
     const body = document.createElement('div');
     body.className = 'settings-submodal-fields';
 
     const hint = textEl(
         'div',
         'settings-submodal-hint',
-        "Finish setup now — polka keeps only a secure hash, so this password and sync URL aren't shown again.",
+        "Finish setup now — polka keeps only a hash, so the password and URLs containing it aren't shown again.",
     );
     const password = createReadonlyCopyField('App password', token, {
         copyLabel: 'Copy app password',
@@ -353,20 +352,23 @@ function openSecretModal(currentUser: CurrentUser, name: string, token: string):
     catalog.className = 'settings-connect-method';
     catalog.append(
         textEl('h4', 'settings-connect-title', 'Browse and download'),
-        textEl(
-            'p',
-            'settings-block-hint',
-            'Add the OPDS catalog in your reading app, then sign in with this username and app password.',
-        ),
         createReadonlyCopyField('Catalog URL', opdsCatalogURL(), {
             inputClass: 'settings-opds-url',
             copyLabel: 'Copy OPDS catalog URL',
         }),
     );
     catalog.append(
-        createReadonlyCopyField('Username', currentUser.username, {
+        createReadonlyCopyField('Username', appPasswordBasicUsername, {
             copyLabel: 'Copy username',
         }),
+        createReadonlyCopyField(
+            'Complete URL (includes password)',
+            opdsCatalogURLWithAppPassword(token),
+            {
+                inputClass: 'settings-opds-url',
+                copyLabel: 'Copy complete OPDS URL',
+            },
+        ),
     );
 
     const progress = document.createElement('section');
@@ -464,6 +466,13 @@ function createReadingAppConnections(currentUser: CurrentUser): HTMLElement {
 
 function opdsCatalogURL(): string {
     return new URL('/opds', window.location.origin).toString();
+}
+
+function opdsCatalogURLWithAppPassword(password: string): string {
+    const url = new URL('/opds', window.location.origin);
+    url.username = appPasswordBasicUsername;
+    url.password = password;
+    return url.toString();
 }
 
 function koSyncServerURL(token: string): string {

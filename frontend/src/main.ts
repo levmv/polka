@@ -69,8 +69,8 @@ const routes: Route<unknown>[] = [
         title: 'Cleanup - polka',
         match: (path) => (path === '/cleanup' ? true : null),
         render: () => renderCleanupPage(),
-        mount: async (_match, root) => {
-            await initCleanup(root);
+        mount: async (_match, root, context) => {
+            await initCleanup(root, context.signal);
             return undefined;
         },
     },
@@ -80,7 +80,7 @@ const routes: Route<unknown>[] = [
         title: 'Series - polka',
         match: (path) => (path === '/series' ? true : null),
         render: () => renderSeriesPage(),
-        mount: (_match, root) => initSeries(root),
+        mount: (_match, root, context) => initSeries(root, context.signal),
     },
     {
         navId: 'nav-authors',
@@ -88,8 +88,8 @@ const routes: Route<unknown>[] = [
         title: 'Authors - polka',
         match: (path) => (path === '/authors' ? true : null),
         render: () => renderAuthorsPage(),
-        mount: async (_match, root) => {
-            return await initAuthors(root);
+        mount: async (_match, root, context) => {
+            return await initAuthors(root, context.signal);
         },
     },
     {
@@ -98,8 +98,8 @@ const routes: Route<unknown>[] = [
         title: 'Trash - polka',
         match: (path) => (path === '/trash' ? true : null),
         render: () => renderTrashPage(),
-        mount: async (_match, root) => {
-            await initTrash(root);
+        mount: async (_match, root, context) => {
+            await initTrash(root, context.signal);
             return undefined;
         },
     },

@@ -5,7 +5,10 @@ import type { RouteCleanup } from '../router';
 import { seriesLibraryURL } from '../search-query';
 import type { SeriesSummary } from '../types';
 
-export async function initSeries(root: HTMLElement): Promise<RouteCleanup | undefined> {
+export async function initSeries(
+    root: HTMLElement,
+    signal: AbortSignal,
+): Promise<RouteCleanup | undefined> {
     const grid = root.querySelector<HTMLElement>('#series-grid');
     const loadMoreWrap = root.querySelector<HTMLElement>('#series-load-more');
     const loadMoreButton = root.querySelector('#series-load-more-btn');
@@ -27,13 +30,13 @@ export async function initSeries(root: HTMLElement): Promise<RouteCleanup | unde
         loadMoreButton.disabled = true;
         loadMoreButton.textContent = 'Loading...';
         try {
-            const page = await fetchSeriesPage(nextCursor);
-            if (destroyed) return;
+            const page = await fetchSeriesPage(nextCursor, '', undefined, signal);
+            if (destroyed || signal.aborted) return;
             appendPage(page.items);
             nextCursor = page.next_cursor || '';
             loadMoreWrap.hidden = !nextCursor;
         } catch (error) {
-            if (destroyed) return;
+            if (destroyed || signal.aborted) return;
             console.error('Failed to load more series:', error);
         } finally {
             if (!destroyed) {
@@ -45,8 +48,8 @@ export async function initSeries(root: HTMLElement): Promise<RouteCleanup | unde
     loadMoreButton.addEventListener('click', () => void loadMore());
 
     try {
-        const page = await fetchSeriesPage();
-        if (destroyed) return;
+        const page = await fetchSeriesPage('', '', undefined, signal);
+        if (destroyed || signal.aborted) return;
         if (page.items.length === 0) {
             grid.innerHTML = `<p class="series-grid-message">No series yet.</p>`;
         } else {
@@ -55,7 +58,7 @@ export async function initSeries(root: HTMLElement): Promise<RouteCleanup | unde
         nextCursor = page.next_cursor || '';
         loadMoreWrap.hidden = !nextCursor;
     } catch (e) {
-        if (destroyed) return;
+        if (destroyed || signal.aborted) return;
         console.error('Failed to load series:', e);
         grid.innerHTML = `<p class="series-grid-message error">Failed to load series</p>`;
     }

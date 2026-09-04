@@ -56,9 +56,19 @@ import type {
 let currentUserPromise: Promise<CurrentUser> | null = null;
 let userSettingsPromise: Promise<UserSettings> | null = null;
 
+// Catalog reads are local and normally complete in milliseconds. A deadline is
+// still necessary because fetch has none of its own: a browser can otherwise
+// leave a request pending forever after trying to reuse a stale connection.
+// Safe reads get one fresh attempt after the first connection failure.
+const READ_ATTEMPT_TIMEOUT_MS = 12_000;
+const READ_ATTEMPTS = 2;
+
 class APIConnectionError extends Error {
-    constructor(public readonly cause: unknown) {
-        super('Cannot reach server');
+    constructor(
+        public readonly cause: unknown,
+        message = 'Cannot reach server',
+    ) {
+        super(message);
         this.name = 'APIConnectionError';
     }
 }
@@ -73,12 +83,134 @@ function isAbortError(error: unknown): boolean {
     return name === 'AbortError';
 }
 
-async function fetchResponse(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+function isNetworkError(error: unknown): boolean {
+    if (error instanceof TypeError) return true;
+    return error instanceof DOMException && error.name === 'NetworkError';
+}
+
+interface RequestDeadline {
+    signal: AbortSignal;
+    throwIfInterrupted(): void;
+    waitFor<T>(operation: Promise<T>): Promise<T>;
+    clear(): void;
+}
+
+function requestDeadline(callerSignal: AbortSignal | null | undefined): RequestDeadline {
+    const controller = new AbortController();
+
+    // WebKit can leave the fetch promise pending even after its signal is
+    // aborted when a suspended page resumes onto a stale connection. Keep an
+    // independent rejection path so application navigation and retries do not
+    // depend on the networking process acknowledging abort.
+    let rejectInterruption: (reason: unknown) => void = () => {};
+    let interrupted = false;
+    let interruptionReason: unknown;
+    const interruption = new Promise<never>((_resolve, reject) => {
+        rejectInterruption = reject;
+    });
+    const interrupt = (reason: unknown) => {
+        if (interrupted) return;
+        interrupted = true;
+        interruptionReason = reason;
+        rejectInterruption(reason);
+    };
+
+    const abortFromCaller = () => {
+        interrupt(
+            callerSignal?.reason ?? new DOMException('The operation was aborted', 'AbortError'),
+        );
+        controller.abort();
+    };
+    if (callerSignal?.aborted) {
+        abortFromCaller();
+    } else {
+        callerSignal?.addEventListener('abort', abortFromCaller, { once: true });
+    }
+
+    const timer = globalThis.setTimeout(() => {
+        interrupt(
+            new APIConnectionError(
+                new DOMException('The request timed out', 'TimeoutError'),
+                'Server did not respond',
+            ),
+        );
+        controller.abort();
+    }, READ_ATTEMPT_TIMEOUT_MS);
+
+    return {
+        signal: controller.signal,
+        throwIfInterrupted(): void {
+            if (interrupted) throw interruptionReason;
+        },
+        waitFor: async <T>(operation: Promise<T>) => await Promise.race([operation, interruption]),
+        clear(): void {
+            globalThis.clearTimeout(timer);
+            callerSignal?.removeEventListener('abort', abortFromCaller);
+        },
+    };
+}
+
+function requestMethod(input: RequestInfo | URL, init?: RequestInit): string {
+    if (init?.method) return init.method.toUpperCase();
+    if (typeof Request !== 'undefined' && input instanceof Request) {
+        return input.method.toUpperCase();
+    }
+    return 'GET';
+}
+
+async function requestResult<T>(
+    input: RequestInfo | URL,
+    init: RequestInit | undefined,
+    consume: (response: Response) => Promise<T>,
+): Promise<T> {
+    const safeRead = ['GET', 'HEAD'].includes(requestMethod(input, init));
+    const attempts = safeRead ? READ_ATTEMPTS : 1;
+
+    for (let attempt = 0; attempt < attempts; attempt++) {
+        try {
+            return await requestAttempt(input, init, consume, safeRead);
+        } catch (error) {
+            if (init?.signal?.aborted) throw error;
+            if (!(error instanceof APIConnectionError) || attempt === attempts - 1) throw error;
+        }
+    }
+    throw new Error('unreachable');
+}
+
+async function requestAttempt<T>(
+    input: RequestInfo | URL,
+    init: RequestInit | undefined,
+    consume: (response: Response) => Promise<T>,
+    withDeadline: boolean,
+): Promise<T> {
+    const deadline = withDeadline ? requestDeadline(init?.signal) : null;
+    const requestInit = deadline ? { ...init, signal: deadline.signal } : init;
+    const operation = (async () => {
+        let response: Response;
+        try {
+            response = await fetch(input, requestInit);
+        } catch (error) {
+            deadline?.throwIfInterrupted();
+            if (isAbortError(error)) throw error;
+            throw new APIConnectionError(error);
+        }
+        // A broken networking process may deliver a late response after the
+        // application has already timed out or left the route. Do not parse it
+        // or perform response-side effects such as a 401 redirect.
+        deadline?.throwIfInterrupted();
+
+        try {
+            return await consume(response);
+        } catch (error) {
+            deadline?.throwIfInterrupted();
+            if (isNetworkError(error)) throw new APIConnectionError(error);
+            throw error;
+        }
+    })();
     try {
-        return await fetch(input, init);
-    } catch (err) {
-        if (isAbortError(err)) throw err;
-        throw new APIConnectionError(err);
+        return await (deadline ? deadline.waitFor(operation) : operation);
+    } finally {
+        deadline?.clear();
     }
 }
 
@@ -93,11 +225,15 @@ async function apiFetch(
     fallback: string | ((res: Response) => string),
     init?: RequestInit,
 ): Promise<Response> {
-    const res = await fetchResponse(input, init);
-    if (!res.ok) {
-        throw await responseError(res, typeof fallback === 'function' ? fallback(res) : fallback);
-    }
-    return res;
+    return await requestResult(input, init, async (res) => {
+        if (!res.ok) {
+            throw await responseError(
+                res,
+                typeof fallback === 'function' ? fallback(res) : fallback,
+            );
+        }
+        return res;
+    });
 }
 
 async function fetchJSON<T>(
@@ -105,8 +241,15 @@ async function fetchJSON<T>(
     fallback: string | ((res: Response) => string),
     init?: RequestInit,
 ): Promise<T> {
-    const res = await apiFetch(input, fallback, init);
-    return await res.json();
+    return await requestResult(input, init, async (res) => {
+        if (!res.ok) {
+            throw await responseError(
+                res,
+                typeof fallback === 'function' ? fallback(res) : fallback,
+            );
+        }
+        return await res.json();
+    });
 }
 
 function jsonBody(method: string, payload: unknown): RequestInit {
@@ -485,6 +628,7 @@ export async function fetchSeriesPage(
     cursor: string = '',
     query: string = '',
     limit?: number,
+    signal?: AbortSignal,
 ): Promise<CursorPage<SeriesSummary>> {
     const params = new URLSearchParams();
     if (cursor) params.set('cursor', cursor);
@@ -493,6 +637,7 @@ export async function fetchSeriesPage(
     return await fetchJSON<CursorPage<SeriesSummary>>(
         `/api/series${params.size ? `?${params.toString()}` : ''}`,
         'Failed to fetch series',
+        signal ? { signal } : undefined,
     );
 }
 
@@ -614,8 +759,12 @@ export async function purgeBook(workId: string): Promise<void> {
     );
 }
 
-export async function fetchTrash(): Promise<TrashedBook[]> {
-    return await fetchJSON<TrashedBook[]>('/api/trash', 'Failed to load trash');
+export async function fetchTrash(signal?: AbortSignal): Promise<TrashedBook[]> {
+    return await fetchJSON<TrashedBook[]>(
+        '/api/trash',
+        'Failed to load trash',
+        signal ? { signal } : undefined,
+    );
 }
 
 // Permanently delete every trashed work and its files. Admin-only
@@ -927,8 +1076,12 @@ export async function fetchTags(query: string = ''): Promise<string[]> {
     );
 }
 
-export async function fetchCleanup(): Promise<Cleanup> {
-    return await fetchJSON<Cleanup>('/api/cleanup', 'Failed to fetch cleanup items');
+export async function fetchCleanup(signal?: AbortSignal): Promise<Cleanup> {
+    return await fetchJSON<Cleanup>(
+        '/api/cleanup',
+        'Failed to fetch cleanup items',
+        signal ? { signal } : undefined,
+    );
 }
 
 export async function mergeCleanupDuplicates(
@@ -950,12 +1103,16 @@ export async function dismissCleanupDuplicates(workIds: string[]): Promise<void>
     );
 }
 
-export async function fetchAuthorPage(cursor: string = ''): Promise<CursorPage<AuthorAdmin>> {
+export async function fetchAuthorPage(
+    cursor: string = '',
+    signal?: AbortSignal,
+): Promise<CursorPage<AuthorAdmin>> {
     const params = new URLSearchParams();
     if (cursor) params.set('cursor', cursor);
     return await fetchJSON<CursorPage<AuthorAdmin>>(
         `/api/authors/list${params.size ? `?${params.toString()}` : ''}`,
         'Failed to fetch authors',
+        signal ? { signal } : undefined,
     );
 }
 
@@ -963,10 +1120,15 @@ export async function fetchAuthorPage(cursor: string = ''): Promise<CursorPage<A
 // or null when no such author exists (404). Book edit uses the count for
 // author-sort scope hints and conservative rename convergence prompts.
 export async function fetchAuthorInfo(name: string): Promise<AuthorAdmin | null> {
-    const res = await fetchResponse(`/api/authors/info?name=${encodeURIComponent(name)}`);
-    if (res.status === 404) return null;
-    if (!res.ok) throw await responseError(res, 'Failed to fetch author');
-    return await res.json();
+    return await requestResult(
+        `/api/authors/info?name=${encodeURIComponent(name)}`,
+        undefined,
+        async (res) => {
+            if (res.status === 404) return null;
+            if (!res.ok) throw await responseError(res, 'Failed to fetch author');
+            return await res.json();
+        },
+    );
 }
 
 export interface AuthorOpResult {
