@@ -189,7 +189,7 @@ test.describe('Reader selection toolbar', () => {
     expect(markdown).toContain('### Note\n\nReader note');
   });
 
-  test('opens the note editor directly from selected text', async ({ page }) => {
+  test('saves a directly-created note before closing the reader', async ({ page }) => {
     const assetId = await openReader(page, 'With Cover Book', openedAssets);
     const selected = await selectFirstText(page);
     const toolbar = page.locator('.reader-selection-toolbar');
@@ -208,9 +208,31 @@ test.describe('Reader selection toolbar', () => {
     const annotation = annotations[0];
     createdAnnotations.push({ assetId, annotationId: annotation.id });
 
+    let releaseResponse = () => {};
+    const responseReleased = new Promise<void>((resolve) => {
+      releaseResponse = resolve;
+    });
+    let noteRequestHeld = false;
+    const noteURL = `**/api/reader/assets/${encodeURIComponent(assetId)}/annotations/${encodeURIComponent(annotation.id)}`;
+    await page.route(noteURL, async (route) => {
+      if (route.request().method() !== 'PATCH') {
+        await route.continue();
+        return;
+      }
+      noteRequestHeld = true;
+      const response = await route.fetch();
+      await responseReleased;
+      await route.fulfill({ response });
+    });
+
     await popover.locator('.reader-annotation-note').fill('Direct note');
-    await popover.getByRole('button', { name: 'Done' }).click();
-    await expect(popover).toBeHidden();
+    const closeClick = page.locator('.reader-close').click();
+    await expect.poll(() => noteRequestHeld).toBe(true);
+    await expect(page.locator('.reader-page')).toBeVisible();
+
+    releaseResponse();
+    await closeClick;
+    await expect(page.locator('.detail-title')).toHaveText('With Cover Book');
     await expect.poll(async () => (await fetchAnnotations(page, assetId))[0]?.note).toBe(
       'Direct note',
     );

@@ -18,6 +18,7 @@ const wiredEPUBDocuments = new WeakSet<Document>();
 
 export interface ReaderControlOptions {
     onNavigate?: () => void;
+    beforeClose?: () => Promise<boolean>;
 }
 
 export function wireReaderControls(
@@ -26,6 +27,22 @@ export function wireReaderControls(
     view: FoliateViewElement,
     options: ReaderControlOptions = {},
 ): void {
+    const closeLink = page.querySelector<HTMLAnchorElement>('.reader-close[href]');
+    closeLink?.addEventListener('click', (event) => {
+        if (
+            !options.beforeClose ||
+            event.button !== 0 ||
+            event.metaKey ||
+            event.ctrlKey ||
+            event.shiftKey ||
+            event.altKey
+        ) {
+            return;
+        }
+        event.preventDefault();
+        closeReader(page, options.beforeClose);
+    });
+
     const press = createPressTracker();
     stage.addEventListener('pointerdown', (event) => press.start(event), true);
 
@@ -270,7 +287,7 @@ function handleReaderKey(
             focusReaderSurface(page);
             return;
         }
-        closeReader(page);
+        closeReader(page, options.beforeClose);
     }
 }
 
@@ -406,10 +423,16 @@ function shouldAutoHideChrome(): boolean {
     return window.matchMedia('(hover: none), (pointer: coarse)').matches;
 }
 
-export function closeReader(page: HTMLElement): void {
+export function closeReader(page: HTMLElement, beforeClose?: () => Promise<boolean>): void {
     const closeLink = page.querySelector<HTMLAnchorElement>('.reader-close[href]');
     if (!closeLink) return;
-    window.location.href = closeLink.href;
+    if (!beforeClose) {
+        window.location.href = closeLink.href;
+        return;
+    }
+    void beforeClose().then((ready) => {
+        if (ready) window.location.href = closeLink.href;
+    });
 }
 
 export function showReaderError(page: HTMLElement, message: string): void {

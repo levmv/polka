@@ -45,6 +45,7 @@ interface AnnotationPanel {
 
 export interface AnnotationController {
     hydrate(): Promise<void>;
+    savePendingNote(): Promise<boolean>;
     createHighlight(payload: ReaderSelectionPayload, editNote?: boolean): void;
     editNote(cfi: string): void;
     deleteHighlight(cfi: string): void;
@@ -352,6 +353,9 @@ export function wireAnnotations(
                 renderList();
             });
             return hydration;
+        },
+        savePendingNote(): Promise<boolean> {
+            return saveAndClosePopover();
         },
         createHighlight(payload: ReaderSelectionPayload, editNote = false): void {
             if (!activePopoverAnnotation) {
