@@ -108,6 +108,7 @@ async function initFoliateReader(
     await annotations.hydrate();
     wireReaderControls(page, stage, view, {
         onNavigate: () => positionSaver.markUserNavigation(),
+        beforeClose: annotations.savePendingNote,
     });
     wireReaderTOC(page, view, {
         onNavigate: () => positionSaver.markUserNavigation(),
