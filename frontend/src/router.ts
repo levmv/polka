@@ -56,6 +56,10 @@ export interface RouteMountContext {
     // client navigation replaces the page silently, and that is the only case
     // where a view has to move focus deliberately.
     clientNavigation: boolean;
+    // Aborted as soon as this route is superseded or destroyed. Async mounts
+    // pass it to their reads so an abandoned page cannot occupy a browser
+    // connection or keep the global loading indicator alive.
+    signal: AbortSignal;
 }
 
 export interface Route<TMatch> {
@@ -109,7 +113,13 @@ const ROUTE_ROOT_CLASS = 'route-root';
 export function initRouter(routes: Route<unknown>[]): Router {
     let activeRoot: HTMLElement | null = null;
     let activeController: RouteController | null = null;
-    let retained: { key: string; root: HTMLElement; controller: RouteController } | null = null;
+    let activeAbort: AbortController | null = null;
+    let retained: {
+        key: string;
+        root: HTMLElement;
+        controller: RouteController;
+        abort: AbortController;
+    } | null = null;
     let destroyed = false;
     let mountSeq = 0;
     let activeNavId: string | undefined;
@@ -120,8 +130,11 @@ export function initRouter(routes: Route<unknown>[]): Router {
     const releaseActive = (): void => {
         const controller = activeController;
         const root = activeRoot;
+        const abort = activeAbort;
         activeController = null;
         activeRoot = null;
+        activeAbort = null;
+        abort?.abort();
         controller?.destroy();
         root?.remove();
     };
@@ -129,6 +142,7 @@ export function initRouter(routes: Route<unknown>[]): Router {
     const releaseRetained = (): void => {
         const slot = retained;
         retained = null;
+        slot?.abort.abort();
         slot?.controller.destroy();
         slot?.root.remove();
     };
@@ -139,16 +153,18 @@ export function initRouter(routes: Route<unknown>[]): Router {
     const retainActive = (key: string): void => {
         const root = activeRoot;
         const controller = activeController;
-        if (!root || !controller) {
+        const abort = activeAbort;
+        if (!root || !controller || !abort) {
             releaseActive();
             return;
         }
         releaseRetained();
         activeRoot = null;
         activeController = null;
+        activeAbort = null;
         controller.suspend?.();
         root.remove();
-        retained = { key, root, controller };
+        retained = { key, root, controller, abort };
     };
 
     const applyChrome = (matched: MatchedRoute<unknown> | null): void => {
@@ -181,6 +197,7 @@ export function initRouter(routes: Route<unknown>[]): Router {
                 host.replaceChildren(slot.root);
                 activeRoot = slot.root;
                 activeController = slot.controller;
+                activeAbort = slot.abort;
                 slot.controller.resume?.(retention.scroll);
                 return true;
             }
@@ -201,19 +218,24 @@ export function initRouter(routes: Route<unknown>[]): Router {
             if (matched.route.render) root.innerHTML = matched.route.render(matched.match);
             host.replaceChildren(root);
             activeRoot = root;
+            const abort = new AbortController();
+            activeAbort = abort;
 
             try {
                 const result = await matched.route.mount(matched.match, root, {
                     clientNavigation: opts.clientNavigation ?? false,
+                    signal: abort.signal,
                 });
                 const controller = normalizeController(result);
                 if (destroyed || seq !== mountSeq) {
+                    abort.abort();
                     controller?.destroy();
                     return false;
                 }
                 activeController = controller;
                 return true;
             } catch (error: unknown) {
+                if (abort.signal.aborted || destroyed || seq !== mountSeq) return false;
                 console.error('Failed to mount page:', error);
                 return false;
             }

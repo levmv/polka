@@ -142,6 +142,7 @@ function renderShelfRow(
         return li;
     }
 
+    a.classList.add('shelf-nav-item--actions');
     const actions = document.createElement('button');
     actions.type = 'button';
     actions.className = 'sidebar-icon-btn shelf-actions-btn';

@@ -223,6 +223,16 @@ func Serve(ctx context.Context, cfg Config) error {
 		return fmt.Errorf("listen on %s: %w", server.Addr, err)
 	}
 	log.Printf("Server listening on http://%s (data: %s)", listener.Addr(), cfg.DataDir)
+	discovery, err := startOPDSDiscovery(listener)
+	if err != nil {
+		log.Printf("WARNING: OPDS local discovery unavailable: %v", err)
+	} else if discovery != nil {
+		defer func() {
+			if err := discovery.Close(); err != nil {
+				log.Printf("WARNING: stop OPDS local discovery: %v", err)
+			}
+		}()
+	}
 
 	errc := make(chan error, 1)
 	go func() {

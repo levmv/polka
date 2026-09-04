@@ -174,10 +174,8 @@ device in Settings → Reading apps. An app password can read the catalog and
 update that account's reading progress, but cannot sign into the web app or
 edit and administer the shared library.
 
-The password is shown once. Its setup screen also provides the OPDS URL and a
-complete KOReader sync URL; copy anything you need before closing it. Use these
-credentials over plain HTTP only on a trusted network, and use HTTPS or a VPN
-elsewhere.
+The password is shown once. Use it over plain HTTP only on a trusted network,
+and use HTTPS or a VPN elsewhere.
 
 ### OPDS
 

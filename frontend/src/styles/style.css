@@ -186,8 +186,10 @@ a:hover {
     display: flex;
     flex-direction: column;
     height: 100vh;
+    /* biome-ignore lint/suspicious/noDuplicateProperties: dvh overrides the legacy viewport fallback when supported. */
+    height: 100dvh;
     overflow-x: hidden;
-    overflow-y: auto;
+    overflow-y: hidden;
     position: sticky;
     top: 0;
     box-sizing: border-box;
@@ -269,8 +271,8 @@ a:hover {
 }
 
 /* Library maintenance is deliberately secondary navigation. Match the shelf
-   action pattern: reveal it when the row is in use, and keep it available on
-   the Cleanup and Trash routes through the router-owned active class. */
+   action pattern: keep it on the active row, and reveal it on hover-capable
+   devices when the row is in use. */
 .library-actions-btn,
 .shelf-actions-btn {
     position: absolute;
@@ -287,16 +289,32 @@ a:hover {
     display: none;
 }
 
-.library-nav-row:hover .library-actions-btn,
-.library-nav-row:focus-within .library-actions-btn,
 #nav-library.active + .library-actions-btn,
 .library-actions-btn[aria-expanded="true"] {
     opacity: 1;
     pointer-events: auto;
 }
 
+@media (hover: hover) {
+    .library-nav-row:hover .library-actions-btn,
+    .library-nav-row:focus-within .library-actions-btn {
+        opacity: 1;
+        pointer-events: auto;
+    }
+}
+
 .sidebar-section {
     margin-top: 1.5rem;
+}
+
+/* Keep the account actions in the viewport and give only the variable-length
+   shelf list the remaining space. This matters especially in Safari, where
+   the visible viewport changes as the browser toolbar expands and collapses. */
+.sidebar-shelves-section {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
 }
 
 .sidebar-section-header {
@@ -350,8 +368,11 @@ a:hover {
 }
 
 .sidebar-shelves {
+    flex: 1 1 auto;
+    min-height: 0;
     margin-inline: -0.75rem;
     gap: 0.25rem;
+    overflow-y: auto;
 }
 
 .shelf-nav-item {
@@ -399,22 +420,35 @@ a:hover {
     position: relative;
 }
 
-/* Kebab actions stay hidden until the row is hovered/focused or its menu is
-   open, so the resting sidebar stays clean. Their geometry is shared with the
-   Library action above. */
-.shelf-nav-row:hover .shelf-actions-btn,
-.shelf-nav-row:focus-within .shelf-actions-btn,
+/* Kebab actions stay on the selected shelf. Hover-capable devices may also
+   reveal them while another row is in use; touch devices must leave the whole
+   inactive row as a one-tap navigation target. */
+.shelf-nav-item.active + .shelf-actions-btn,
 .shelf-actions-btn[aria-expanded="true"] {
     opacity: 1;
     pointer-events: auto;
 }
 
+@media (hover: hover) {
+    .shelf-nav-row:hover .shelf-actions-btn,
+    .shelf-nav-row:focus-within .shelf-actions-btn {
+        opacity: 1;
+        pointer-events: auto;
+    }
+}
+
 /* Reserve room on the right only while the kebab is showing, so it never
    overlaps a long shelf name. */
-.shelf-nav-row:hover .shelf-nav-item,
-.shelf-nav-row:focus-within .shelf-nav-item,
+.shelf-nav-item--actions.active,
 .shelf-nav-row--menu-open .shelf-nav-item {
     padding-right: 1.95rem;
+}
+
+@media (hover: hover) {
+    .shelf-nav-row:hover .shelf-nav-item,
+    .shelf-nav-row:focus-within .shelf-nav-item {
+        padding-right: 1.95rem;
+    }
 }
 
 /* A confirm bar replaces its row in place, so it is pinned to that row's height:

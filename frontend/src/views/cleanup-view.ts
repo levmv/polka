@@ -7,17 +7,19 @@ import { confirmModal } from '../modal';
 import { showToast } from '../toast';
 import type { Asset, BookSummary, Cleanup, DuplicateGroup } from '../types';
 
-export async function initCleanup(root: HTMLElement) {
+export async function initCleanup(root: HTMLElement, signal: AbortSignal) {
     const container = root.querySelector<HTMLElement>('#cleanup-content');
     if (!container) return;
-    await loadCleanup(container);
+    await loadCleanup(container, signal);
 }
 
-async function loadCleanup(container: HTMLElement): Promise<void> {
+async function loadCleanup(container: HTMLElement, signal?: AbortSignal): Promise<void> {
     try {
-        const cleanup = await fetchCleanup();
+        const cleanup = await fetchCleanup(signal);
+        if (signal?.aborted) return;
         renderCleanup(container, cleanup);
     } catch (err) {
+        if (signal?.aborted) return;
         console.error('Failed to load cleanup items:', err);
         container.innerHTML = `<p class="error">Failed to load cleanup items</p>`;
     }

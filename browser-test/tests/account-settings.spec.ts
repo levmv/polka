@@ -82,7 +82,13 @@ test.describe('Account settings', () => {
       .inputValue();
     expect(secretValue).toMatch(/^[0-9a-f]{32}$/);
     await expect(submodal.getByRole('textbox', { name: 'Catalog URL' })).toHaveValue(/\/opds$/);
-    await expect(submodal.getByRole('textbox', { name: 'Username' })).toHaveValue('admin');
+    await expect(submodal.getByRole('textbox', { name: 'Username' })).toHaveValue('polka');
+    const completeURL = new URL(
+      await submodal.getByRole('textbox', { name: 'Complete URL (includes password)' }).inputValue(),
+    );
+    expect(completeURL.username).toBe('polka');
+    expect(completeURL.password).toBe(secretValue);
+    expect(completeURL.pathname).toBe('/opds');
     await expect(submodal.getByRole('textbox', { name: 'Sync server URL' })).toHaveValue(
       new RegExp(`/kosync/${secretValue}$`),
     );
@@ -123,10 +129,10 @@ test.describe('Account settings', () => {
     const error = modal.locator('.settings-note-error');
     await expect(error).toContainText('Cannot reach server');
 
-    // The failure must not start the next attempt: that turned an unreachable
-    // server into a render loop hammering it.
+    // One automatic retry is bounded. Once both connection attempts fail, the
+    // panel must rest on its explicit Retry instead of entering a render loop.
     await page.waitForTimeout(400);
-    expect(attempts).toBe(1);
+    expect(attempts).toBe(2);
     await expect(error).toBeVisible();
 
     await page.unroute('**/api/users');
