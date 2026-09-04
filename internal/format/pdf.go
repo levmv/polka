@@ -440,16 +440,18 @@ func pdfHexDigit(c byte) (byte, bool) {
 }
 
 func decodePDFString(b []byte) string {
+	var decoded string
 	switch {
 	case len(b) >= 2 && b[0] == 0xFE && b[1] == 0xFF:
-		return decodePDFUTF16(b[2:], binary.BigEndian)
+		decoded = decodePDFUTF16(b[2:], binary.BigEndian)
 	case len(b) >= 2 && b[0] == 0xFF && b[1] == 0xFE:
-		return decodePDFUTF16(b[2:], binary.LittleEndian)
+		decoded = decodePDFUTF16(b[2:], binary.LittleEndian)
 	case len(b) >= 3 && b[0] == 0xEF && b[1] == 0xBB && b[2] == 0xBF:
-		return strings.ToValidUTF8(string(b[3:]), string(utf8.RuneError))
+		decoded = strings.ToValidUTF8(string(b[3:]), string(utf8.RuneError))
 	default:
-		return decodePDFDocEncoding(b)
+		decoded = decodePDFDocEncoding(b)
 	}
+	return decodeLegacyHexWrappedText(decoded)
 }
 
 func decodePDFUTF16(b []byte, order binary.ByteOrder) string {
@@ -666,7 +668,7 @@ func pdfXMPMetadataPacket(packet []byte) *Metadata {
 }
 
 func appendPDFXMPText(values []string, text string) []string {
-	text = strings.TrimSpace(text)
+	text = decodeLegacyHexWrappedText(strings.TrimSpace(text))
 	if text == "" {
 		return values
 	}

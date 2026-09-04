@@ -6,6 +6,7 @@ require (
 	github.com/bodgit/sevenzip v1.6.4
 	github.com/gen2brain/avif v0.6.0
 	github.com/klippa-app/go-pdfium v1.19.6
+	github.com/levmv/chardet v0.0.0-20260904160209-c59c280970fd
 	github.com/nwaples/rardecode/v2 v2.3.0
 	github.com/tetratelabs/wazero v1.12.0
 	golang.org/x/crypto v0.54.0

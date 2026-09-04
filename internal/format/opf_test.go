@@ -82,6 +82,23 @@ func TestParseOPFCalibreTimestampProperty(t *testing.T) {
 	}
 }
 
+func TestParseOPFDecodesLegacyHexWrappedTitle(t *testing.T) {
+	const opf = `<package xmlns="http://www.idpf.org/2007/opf">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>&lt;D1F2E0F0EEE520EDE0E7E2E0EDE8E520EAEDE8E3E8&gt;</dc:title>
+    <meta name="calibre:title_sort" content="&lt;D1F2E0F0EEE520EDE0E7E2E0EDE8E520EAEDE8E3E8&gt;"/>
+  </metadata>
+</package>`
+
+	meta, err := ParseOPF(strings.NewReader(opf))
+	if err != nil {
+		t.Fatalf("ParseOPF: %v", err)
+	}
+	if meta.Title != "Старое название книги" || meta.SortTitle != "Старое название книги" {
+		t.Fatalf("title fields = %q / %q; want decoded legacy text", meta.Title, meta.SortTitle)
+	}
+}
+
 func TestParseOPFTrimsMetadataFields(t *testing.T) {
 	const opf = `<?xml version='1.0' encoding='utf-8'?>
 <package xmlns="http://www.idpf.org/2007/opf" version="2.0">

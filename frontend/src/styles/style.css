@@ -1709,6 +1709,10 @@ body.busy .busy__loader {
     vertical-align: middle;
 }
 
+.library-table td {
+    overflow-wrap: anywhere;
+}
+
 .library-table th {
     font-weight: 600;
     color: var(--text-muted);
@@ -1739,6 +1743,10 @@ body.busy .busy__loader {
 }
 
 .table-title-link {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
     font-weight: 600;
     color: var(--text-main);
     text-decoration: none;

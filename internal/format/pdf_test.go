@@ -90,6 +90,12 @@ endobj`),
 			wantTitle:  "Hex UTF16 Title",
 			wantAuthor: "Unicode Author",
 		},
+		{
+			name:       "legacy hex serialized as literal text",
+			input:      []byte("<< /Title (<D1F2E0F0EEE520EDE0E7E2E0EDE8E520EAEDE8E3E8>) /Author (Fixture Author) >>"),
+			wantTitle:  "Старое название книги",
+			wantAuthor: "Fixture Author",
+		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			meta := testExtractPDFMetadata(t, tt.input)
