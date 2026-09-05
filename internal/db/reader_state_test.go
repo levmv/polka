@@ -18,14 +18,14 @@ func TestReaderStateLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create other user: %v", err)
 	}
-	database.Exec("INSERT INTO works (id, title, sort_title) VALUES ('w1', 'T1', 'T1')")
-	database.Exec("INSERT INTO assets (id, work_id, storage_path, filename, extension, is_primary) VALUES ('asset_1', 'w1', 'books/a.epub', 'a.epub', '.epub', 1)")
+	database.Exec("INSERT INTO books (id, title, sort_title) VALUES ('w1', 'T1', 'T1')")
+	database.Exec("INSERT INTO assets (id, book_id, storage_path, filename, extension, is_primary) VALUES ('asset_1', 'w1', 'books/a.epub', 'a.epub', '.epub', 1)")
 
 	state, err := database.GetReaderState(user.ID, "asset_1")
 	if err != nil {
 		t.Fatalf("GetReaderState default: %v", err)
 	}
-	if state.WorkID != "w1" || state.Progress != 0 || state.Locator.String() != "{}" || state.LastReadAt != 0 {
+	if state.BookID != "w1" || state.Progress != 0 || state.Locator.String() != "{}" || state.LastReadAt != 0 {
 		t.Fatalf("default reader state = %+v", state)
 	}
 
@@ -109,11 +109,11 @@ func TestTouchReaderStateAndAdvanceStatusRollsBackTogether(t *testing.T) {
 		t.Fatalf("create user: %v", err)
 	}
 	if _, err := database.Exec(`
-		INSERT INTO works (id, title, sort_title) VALUES ('w1', 'Book', 'Book');
-		INSERT INTO assets (id, work_id, storage_path, filename, extension)
+		INSERT INTO books (id, title, sort_title) VALUES ('w1', 'Book', 'Book');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension)
 		VALUES ('a1', 'w1', 'book.epub', 'book.epub', '.epub');
 		CREATE TRIGGER fail_reader_open_status
-		BEFORE INSERT ON user_work_reading_events
+		BEFORE INSERT ON user_book_reading_events
 		BEGIN
 			SELECT RAISE(ABORT, 'status write failed');
 		END;
@@ -143,11 +143,11 @@ func TestSaveReaderStateAndStatusCommitTogether(t *testing.T) {
 		t.Fatalf("create user: %v", err)
 	}
 	if _, err := database.Exec(`
-		INSERT INTO works (id, title, sort_title) VALUES ('w_atomic', 'Atomic', 'Atomic');
-		INSERT INTO assets (id, work_id, storage_path, filename, extension)
+		INSERT INTO books (id, title, sort_title) VALUES ('w_atomic', 'Atomic', 'Atomic');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension)
 		VALUES ('a_atomic', 'w_atomic', 'atomic.epub', 'atomic.epub', '.epub');
 		CREATE TRIGGER reject_atomic_status
-		BEFORE INSERT ON user_work_reading_events
+		BEFORE INSERT ON user_book_reading_events
 		BEGIN
 			SELECT RAISE(ABORT, 'status write rejected');
 		END;
@@ -201,8 +201,8 @@ func TestAnnotationsLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create bob: %v", err)
 	}
-	database.Exec("INSERT INTO works (id, title, sort_title) VALUES ('w1', 'T1', 'T1')")
-	database.Exec("INSERT INTO assets (id, work_id, storage_path, filename, extension, is_primary) VALUES ('asset_1', 'w1', 'books/a.epub', 'a.epub', '.epub', 1)")
+	database.Exec("INSERT INTO books (id, title, sort_title) VALUES ('w1', 'T1', 'T1')")
+	database.Exec("INSERT INTO assets (id, book_id, storage_path, filename, extension, is_primary) VALUES ('asset_1', 'w1', 'books/a.epub', 'a.epub', '.epub', 1)")
 
 	created, err := database.CreateAnnotation(alice.ID, "asset_1", AnnotationCreate{
 		CFI:           " epubcfi(/6/2!/4/2) ",
@@ -323,19 +323,19 @@ func TestListContinueReading(t *testing.T) {
 	}
 
 	mustExec("INSERT INTO authors (id, name, sort_name) VALUES ('a1', 'Author One', 'Author One')")
-	mustExec("INSERT INTO works (id, title, sort_title, deleted_at) VALUES ('w1', 'Newest per Work', 'Newest per Work', NULL)")
-	mustExec("INSERT INTO works (id, title, sort_title, deleted_at) VALUES ('w2', 'Opened at Start', 'Opened at Start', NULL)")
-	mustExec("INSERT INTO works (id, title, sort_title, deleted_at) VALUES ('w_done', 'Done', 'Done', NULL)")
-	mustExec("INSERT INTO works (id, title, sort_title, deleted_at) VALUES ('w_deleted', 'Deleted', 'Deleted', 123)")
-	for _, workID := range []string{"w1", "w2", "w_done", "w_deleted"} {
-		mustExec("INSERT INTO work_authors (work_id, author_id, author_order) VALUES (?, 'a1', 0)", workID)
+	mustExec("INSERT INTO books (id, title, sort_title, deleted_at) VALUES ('w1', 'Newest per Book', 'Newest per Book', NULL)")
+	mustExec("INSERT INTO books (id, title, sort_title, deleted_at) VALUES ('w2', 'Opened at Start', 'Opened at Start', NULL)")
+	mustExec("INSERT INTO books (id, title, sort_title, deleted_at) VALUES ('w_done', 'Done', 'Done', NULL)")
+	mustExec("INSERT INTO books (id, title, sort_title, deleted_at) VALUES ('w_deleted', 'Deleted', 'Deleted', 123)")
+	for _, bookID := range []string{"w1", "w2", "w_done", "w_deleted"} {
+		mustExec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES (?, 'a1', 0)", bookID)
 	}
-	mustExec("INSERT INTO assets (id, work_id, storage_path, filename, extension) VALUES ('asset_old', 'w1', 'old.epub', 'old.epub', '.epub')")
-	mustExec("INSERT INTO assets (id, work_id, storage_path, filename, extension) VALUES ('asset_new', 'w1', 'new.fb2', 'new.fb2', '.fb2')")
-	mustExec("INSERT INTO assets (id, work_id, storage_path, filename, extension) VALUES ('asset_zero', 'w2', 'zero.pdf', 'zero.pdf', '.pdf')")
-	mustExec("INSERT INTO assets (id, work_id, storage_path, filename, extension) VALUES ('asset_done_incomplete', 'w_done', 'done.pdf', 'done.pdf', '.pdf')")
-	mustExec("INSERT INTO assets (id, work_id, storage_path, filename, extension) VALUES ('asset_done', 'w_done', 'done.epub', 'done.epub', '.epub')")
-	mustExec("INSERT INTO assets (id, work_id, storage_path, filename, extension) VALUES ('asset_deleted', 'w_deleted', 'deleted.epub', 'deleted.epub', '.epub')")
+	mustExec("INSERT INTO assets (id, book_id, storage_path, filename, extension) VALUES ('asset_old', 'w1', 'old.epub', 'old.epub', '.epub')")
+	mustExec("INSERT INTO assets (id, book_id, storage_path, filename, extension) VALUES ('asset_new', 'w1', 'new.fb2', 'new.fb2', '.fb2')")
+	mustExec("INSERT INTO assets (id, book_id, storage_path, filename, extension) VALUES ('asset_zero', 'w2', 'zero.pdf', 'zero.pdf', '.pdf')")
+	mustExec("INSERT INTO assets (id, book_id, storage_path, filename, extension) VALUES ('asset_done_incomplete', 'w_done', 'done.pdf', 'done.pdf', '.pdf')")
+	mustExec("INSERT INTO assets (id, book_id, storage_path, filename, extension) VALUES ('asset_done', 'w_done', 'done.epub', 'done.epub', '.epub')")
+	mustExec("INSERT INTO assets (id, book_id, storage_path, filename, extension) VALUES ('asset_deleted', 'w_deleted', 'deleted.epub', 'deleted.epub', '.epub')")
 
 	mustExec("INSERT INTO user_asset_state (user_id, asset_id, progress, locator, last_read_at, updated_at) VALUES (?, 'asset_old', 0.2, '{\"engine\":\"test\",\"id\":\"old\"}', 10, 10)", alice.ID)
 	mustExec("INSERT INTO user_asset_state (user_id, asset_id, progress, locator, last_read_at, updated_at) VALUES (?, 'asset_new', 0.4, '{\"engine\":\"test\",\"id\":\"new\"}', 20, 20)", alice.ID)
@@ -344,11 +344,11 @@ func TestListContinueReading(t *testing.T) {
 	mustExec("INSERT INTO user_asset_state (user_id, asset_id, progress, locator, last_read_at, updated_at) VALUES (?, 'asset_done', 1, '{\"engine\":\"test\",\"id\":\"done\"}', 40, 40)", alice.ID)
 	mustExec("INSERT INTO user_asset_state (user_id, asset_id, progress, locator, last_read_at, updated_at) VALUES (?, 'asset_deleted', 0.5, '{\"engine\":\"test\",\"id\":\"deleted\"}', 50, 50)", alice.ID)
 	mustExec("INSERT INTO user_asset_state (user_id, asset_id, progress, locator, last_read_at, updated_at) VALUES (?, 'asset_new', 0.8, '{\"engine\":\"test\",\"id\":\"bob\"}', 60, 60)", bob.ID)
-	mustExec("INSERT INTO user_work_reading_state (user_id, work_id, status) VALUES (?, 'w1', 'reading')", alice.ID)
-	mustExec("INSERT INTO user_work_reading_state (user_id, work_id, status) VALUES (?, 'w2', 'reading')", alice.ID)
-	mustExec("INSERT INTO user_work_reading_state (user_id, work_id, status) VALUES (?, 'w_done', 'finished')", alice.ID)
-	mustExec("INSERT INTO user_work_reading_state (user_id, work_id, status) VALUES (?, 'w_deleted', 'reading')", alice.ID)
-	mustExec("INSERT INTO user_work_reading_state (user_id, work_id, status) VALUES (?, 'w1', 'reading')", bob.ID)
+	mustExec("INSERT INTO user_book_reading_state (user_id, book_id, status) VALUES (?, 'w1', 'reading')", alice.ID)
+	mustExec("INSERT INTO user_book_reading_state (user_id, book_id, status) VALUES (?, 'w2', 'reading')", alice.ID)
+	mustExec("INSERT INTO user_book_reading_state (user_id, book_id, status) VALUES (?, 'w_done', 'finished')", alice.ID)
+	mustExec("INSERT INTO user_book_reading_state (user_id, book_id, status) VALUES (?, 'w_deleted', 'reading')", alice.ID)
+	mustExec("INSERT INTO user_book_reading_state (user_id, book_id, status) VALUES (?, 'w1', 'reading')", bob.ID)
 
 	rows, err := ListContinueReading(database, FullVisibilityScope(), alice.ID, 10)
 	if err != nil {
@@ -364,84 +364,15 @@ func TestListContinueReading(t *testing.T) {
 		t.Fatalf("second row = %+v, want latest asset for w1", rows[1])
 	}
 
-	// Starting a reread makes the work eligible again while preserving the
+	// Starting a reread makes the book eligible again while preserving the
 	// truthful per-format positions. The completed EPUB stays at 100%, and the
 	// latest incomplete asset becomes the continuation target.
-	mustExec("UPDATE user_work_reading_state SET status = 'reading' WHERE user_id = ? AND work_id = 'w_done'", alice.ID)
+	mustExec("UPDATE user_book_reading_state SET status = 'reading' WHERE user_id = ? AND book_id = 'w_done'", alice.ID)
 	rows, err = ListContinueReading(database, FullVisibilityScope(), alice.ID, 10)
 	if err != nil {
 		t.Fatalf("ListContinueReading after reread: %v", err)
 	}
 	if len(rows) != 3 || rows[0].ID != "w_done" || rows[0].AssetID != "asset_done_incomplete" || rows[0].Progress != 0.8 {
 		t.Fatalf("reread rows = %+v, want incomplete w_done asset first", rows)
-	}
-}
-
-func TestReaderPreferencesLifecycle(t *testing.T) {
-	database := newTestDB(t)
-
-	alice, err := database.CreateUser("alice", "pw", RoleMember)
-	if err != nil {
-		t.Fatalf("create alice: %v", err)
-	}
-	bob, err := database.CreateUser("bob", "pw", RoleMember)
-	if err != nil {
-		t.Fatalf("create bob: %v", err)
-	}
-
-	prefs, err := database.GetReaderPreferences(alice.ID)
-	if err != nil {
-		t.Fatalf("GetReaderPreferences default: %v", err)
-	}
-	if prefs.EPUBFlow != ReaderFlowPaginated ||
-		prefs.DisplayStyle != ReaderStylePaper ||
-		prefs.FontScale != 0 ||
-		prefs.CustomColumnWidth != DefaultReaderCustomColumnWidth ||
-		prefs.CustomLineHeight != DefaultReaderCustomLineHeight ||
-		prefs.UpdatedAt != 0 {
-		t.Fatalf("default reader preferences = %+v", prefs)
-	}
-
-	prefs, err = database.SaveReaderPreferences(alice.ID, ReaderPreferences{
-		EPUBFlow:          ReaderFlowScrolled,
-		DisplayStyle:      ReaderStyleCustom,
-		FontScale:         2,
-		CustomColumnWidth: 820,
-		CustomLineHeight:  1.9,
-	})
-	if err != nil {
-		t.Fatalf("SaveReaderPreferences: %v", err)
-	}
-	if prefs.EPUBFlow != ReaderFlowScrolled ||
-		prefs.DisplayStyle != ReaderStyleCustom ||
-		prefs.FontScale != 2 ||
-		prefs.CustomColumnWidth != 820 ||
-		prefs.CustomLineHeight != 1.9 ||
-		prefs.UpdatedAt == 0 {
-		t.Fatalf("saved reader preferences = %+v", prefs)
-	}
-
-	bobPrefs, err := database.GetReaderPreferences(bob.ID)
-	if err != nil {
-		t.Fatalf("GetReaderPreferences bob: %v", err)
-	}
-	if bobPrefs.EPUBFlow != ReaderFlowPaginated {
-		t.Fatalf("reader preferences leaked across users: %+v", bobPrefs)
-	}
-
-	if _, err := database.SaveReaderPreferences(alice.ID, ReaderPreferences{EPUBFlow: "sideways"}); !errors.Is(err, ErrInvalidReaderInput) {
-		t.Fatalf("invalid flow err = %v, want invalid reader input", err)
-	}
-	if _, err := database.SaveReaderPreferences(alice.ID, ReaderPreferences{EPUBFlow: ReaderFlowPaginated, DisplayStyle: "neon"}); !errors.Is(err, ErrInvalidReaderInput) {
-		t.Fatalf("invalid style err = %v, want invalid reader input", err)
-	}
-	if _, err := database.SaveReaderPreferences(alice.ID, ReaderPreferences{EPUBFlow: ReaderFlowPaginated, FontScale: 12}); !errors.Is(err, ErrInvalidReaderInput) {
-		t.Fatalf("invalid font scale err = %v, want invalid reader input", err)
-	}
-	if _, err := database.SaveReaderPreferences(alice.ID, ReaderPreferences{EPUBFlow: ReaderFlowPaginated, CustomColumnWidth: 200}); !errors.Is(err, ErrInvalidReaderInput) {
-		t.Fatalf("invalid width err = %v, want invalid reader input", err)
-	}
-	if _, err := database.SaveReaderPreferences(alice.ID, ReaderPreferences{EPUBFlow: ReaderFlowPaginated, CustomLineHeight: 3}); !errors.Is(err, ErrInvalidReaderInput) {
-		t.Fatalf("invalid line height err = %v, want invalid reader input", err)
 	}
 }

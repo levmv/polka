@@ -109,7 +109,7 @@ func (s *Server) allowKOReaderDocument(w http.ResponseWriter, r *http.Request, d
 		serverError(w, err)
 		return false
 	}
-	if target.WorkID == "" || target.Ambiguous {
+	if target.BookID == "" || target.Ambiguous {
 		return true
 	}
 	_, accessOK := s.requireAssetAccess(w, r, target.AssetID)

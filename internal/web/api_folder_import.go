@@ -214,7 +214,7 @@ func (p *FolderImportPreviewDTO) addProbe(ctx context.Context, path, rootPath st
 	}
 	if probe.Duplicate {
 		p.Duplicates++
-		if probe.Existing.WorkTrashed {
+		if probe.Existing.BookTrashed {
 			p.Trashed++
 		}
 	} else {
@@ -292,7 +292,7 @@ func (s *Server) importFolder(ctx context.Context, rootPath string, root storage
 func (r *FolderImportResultDTO) addImportResult(res importer.Result) {
 	if res.Status == importer.StatusDuplicate {
 		r.Duplicates++
-		if res.WorkTrashed {
+		if res.BookTrashed {
 			r.Trashed++
 		}
 	} else {

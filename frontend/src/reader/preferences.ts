@@ -1,4 +1,4 @@
-import { saveReaderPreferences } from '../api';
+import { saveUserSettings } from '../api';
 import { clamp } from '../dom';
 import { iconElement } from '../icons';
 import type { ReaderFlow, ReaderPreferences } from '../types';
@@ -16,16 +16,15 @@ import {
 export { DEFAULT_READER_DISPLAY_STYLE, normalizeReaderDisplayStyle } from './foliate-engine';
 
 export const DEFAULT_READER_FLOW: ReaderFlow = 'paginated';
-export const DEFAULT_READER_FONT_SCALE = 0;
-export const DEFAULT_READER_CUSTOM_COLUMN_WIDTH = DEFAULT_READER_COLUMN_WIDTH;
-export const DEFAULT_READER_CUSTOM_LINE_HEIGHT = 1.72;
+export const DEFAULT_READER_FONT_SIZE = 0;
+export const DEFAULT_READER_LINE_HEIGHT = 1.72;
 
 export const DEFAULT_READER_PREFERENCES: ReaderPreferences = {
-    epub_flow: DEFAULT_READER_FLOW,
-    display_style: DEFAULT_READER_DISPLAY_STYLE,
-    font_scale: DEFAULT_READER_FONT_SCALE,
-    custom_column_width: DEFAULT_READER_CUSTOM_COLUMN_WIDTH,
-    custom_line_height: DEFAULT_READER_CUSTOM_LINE_HEIGHT,
+    reader_flow: DEFAULT_READER_FLOW,
+    reader_style: DEFAULT_READER_DISPLAY_STYLE,
+    reader_font_size: DEFAULT_READER_FONT_SIZE,
+    reader_column_width: DEFAULT_READER_COLUMN_WIDTH,
+    reader_line_height: DEFAULT_READER_LINE_HEIGHT,
 };
 
 interface DisplayPanelControls {
@@ -83,42 +82,40 @@ export function wireReaderPreferences(
     for (const button of controls.styleButtons) {
         button.addEventListener('click', () => {
             commitPreference({
-                display_style: normalizeReaderDisplayStyle(button.dataset.readerStyleOption),
+                reader_style: normalizeReaderDisplayStyle(button.dataset.readerStyleOption),
             });
         });
     }
     for (const button of controls.flowButtons) {
         button.addEventListener('click', () => {
-            commitPreference({ epub_flow: normalizeReaderFlow(button.dataset.readerFlowOption) });
+            commitPreference({ reader_flow: normalizeReaderFlow(button.dataset.readerFlowOption) });
         });
     }
     controls.smallerButton.addEventListener('click', () => {
-        commitPreference({ font_scale: clamp(currentPreferences.font_scale - 1, -4, 6) });
+        commitPreference({
+            reader_font_size: clamp(currentPreferences.reader_font_size - 1, -4, 6),
+        });
     });
     controls.largerButton.addEventListener('click', () => {
-        commitPreference({ font_scale: clamp(currentPreferences.font_scale + 1, -4, 6) });
+        commitPreference({
+            reader_font_size: clamp(currentPreferences.reader_font_size + 1, -4, 6),
+        });
     });
     controls.widthInput.addEventListener('input', () => {
         previewPreference({
-            custom_column_width: readNumber(
-                controls.widthInput,
-                DEFAULT_READER_CUSTOM_COLUMN_WIDTH,
-            ),
+            reader_column_width: readNumber(controls.widthInput, DEFAULT_READER_COLUMN_WIDTH),
         });
     });
     controls.widthInput.addEventListener('change', () => {
         commitPreference({
-            custom_column_width: readNumber(
-                controls.widthInput,
-                DEFAULT_READER_CUSTOM_COLUMN_WIDTH,
-            ),
+            reader_column_width: readNumber(controls.widthInput, DEFAULT_READER_COLUMN_WIDTH),
         });
     });
     controls.lineInput.addEventListener('input', () => {
-        previewPreference({ custom_line_height: readNumber(controls.lineInput, 1.72) });
+        previewPreference({ reader_line_height: readNumber(controls.lineInput, 1.72) });
     });
     controls.lineInput.addEventListener('change', () => {
-        commitPreference({ custom_line_height: readNumber(controls.lineInput, 1.72) });
+        commitPreference({ reader_line_height: readNumber(controls.lineInput, 1.72) });
     });
 
     function previewPreference(partial: Partial<ReaderPreferences>): void {
@@ -135,7 +132,7 @@ export function wireReaderPreferences(
 
         const request = saveChain
             .catch(() => savedPreferences)
-            .then(() => saveReaderPreferences(partial));
+            .then(() => saveUserSettings(partial));
         saveChain = request;
 
         request
@@ -162,36 +159,35 @@ export function applyReaderPreferences(
     preferences: ReaderPreferences,
 ): void {
     const normalized = normalizeReaderPreferences(preferences);
-    const palette = readerDisplayPalette(normalized.display_style);
-    setReaderFlow(page, view, normalized.epub_flow);
-    page.dataset.readerStyle = normalized.display_style;
-    page.dataset.readerFontScale = String(normalized.font_scale);
-    page.dataset.readerColumnWidth = String(normalized.custom_column_width);
-    page.dataset.readerLineHeight = String(normalized.custom_line_height);
+    const palette = readerDisplayPalette(normalized.reader_style);
+    setReaderFlow(page, view, normalized.reader_flow);
+    page.dataset.readerStyle = normalized.reader_style;
+    page.dataset.readerFontScale = String(normalized.reader_font_size);
+    page.dataset.readerColumnWidth = String(normalized.reader_column_width);
+    page.dataset.readerLineHeight = String(normalized.reader_line_height);
     page.style.setProperty('--reader-bg-color', palette.background);
     page.style.setProperty('--reader-text-color', palette.text);
     applyFoliateDisplay(view, normalized);
-    setCurrentFoliateDocumentJustification(view, normalized.display_style !== 'original');
+    setCurrentFoliateDocumentJustification(view, normalized.reader_style !== 'original');
 }
 
 export function normalizeReaderPreferences(
     preferences: Partial<ReaderPreferences>,
 ): ReaderPreferences {
     return {
-        epub_flow: normalizeReaderFlow(preferences.epub_flow),
-        display_style: normalizeReaderDisplayStyle(preferences.display_style),
-        font_scale: clamp(preferences.font_scale ?? DEFAULT_READER_FONT_SCALE, -4, 6),
-        custom_column_width: clamp(
-            preferences.custom_column_width ?? DEFAULT_READER_CUSTOM_COLUMN_WIDTH,
+        reader_flow: normalizeReaderFlow(preferences.reader_flow),
+        reader_style: normalizeReaderDisplayStyle(preferences.reader_style),
+        reader_font_size: clamp(preferences.reader_font_size ?? DEFAULT_READER_FONT_SIZE, -4, 6),
+        reader_column_width: clamp(
+            preferences.reader_column_width ?? DEFAULT_READER_COLUMN_WIDTH,
             560,
             920,
         ),
-        custom_line_height: clamp(
-            preferences.custom_line_height ?? DEFAULT_READER_CUSTOM_LINE_HEIGHT,
+        reader_line_height: clamp(
+            preferences.reader_line_height ?? DEFAULT_READER_LINE_HEIGHT,
             1.2,
             2.2,
         ),
-        updated_at: preferences.updated_at,
     };
 }
 
@@ -308,32 +304,32 @@ function renderDisplayPanel(
     preferences: ReaderPreferences,
 ): void {
     for (const button of controls.styleButtons) {
-        const selected = button.dataset.readerStyleOption === preferences.display_style;
+        const selected = button.dataset.readerStyleOption === preferences.reader_style;
         setOptionSelected(button, selected);
     }
     for (const button of controls.flowButtons) {
-        const selected = button.dataset.readerFlowOption === preferences.epub_flow;
+        const selected = button.dataset.readerFlowOption === preferences.reader_flow;
         setOptionSelected(button, selected);
     }
 
-    controls.smallerButton.disabled = preferences.font_scale <= -4;
-    controls.largerButton.disabled = preferences.font_scale >= 6;
+    controls.smallerButton.disabled = preferences.reader_font_size <= -4;
+    controls.largerButton.disabled = preferences.reader_font_size >= 6;
     controls.scaleValue.textContent =
-        preferences.font_scale === 0
+        preferences.reader_font_size === 0
             ? '100%'
-            : `${Math.round((1 + preferences.font_scale * 0.06) * 100)}%`;
+            : `${Math.round((1 + preferences.reader_font_size * 0.06) * 100)}%`;
 
-    controls.customSection.hidden = preferences.display_style !== 'custom';
-    controls.widthInput.value = String(preferences.custom_column_width);
-    controls.widthValue.textContent = `${preferences.custom_column_width}px`;
-    controls.lineInput.value = preferences.custom_line_height.toFixed(2);
-    controls.lineValue.textContent = preferences.custom_line_height.toFixed(2);
+    controls.customSection.hidden = preferences.reader_style !== 'custom';
+    controls.widthInput.value = String(preferences.reader_column_width);
+    controls.widthValue.textContent = `${preferences.reader_column_width}px`;
+    controls.lineInput.value = preferences.reader_line_height.toFixed(2);
+    controls.lineValue.textContent = preferences.reader_line_height.toFixed(2);
 
-    page.dataset.readerFlow = preferences.epub_flow;
-    page.dataset.readerStyle = preferences.display_style;
-    page.dataset.readerFontScale = String(preferences.font_scale);
-    page.dataset.readerColumnWidth = String(preferences.custom_column_width);
-    page.dataset.readerLineHeight = String(preferences.custom_line_height);
+    page.dataset.readerFlow = preferences.reader_flow;
+    page.dataset.readerStyle = preferences.reader_style;
+    page.dataset.readerFontScale = String(preferences.reader_font_size);
+    page.dataset.readerColumnWidth = String(preferences.reader_column_width);
+    page.dataset.readerLineHeight = String(preferences.reader_line_height);
     if (!view.isFixedLayout) controls.toggle.hidden = false;
 }
 

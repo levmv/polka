@@ -15,6 +15,7 @@ import (
 	"github.com/levmv/polka/internal/covers"
 	"github.com/levmv/polka/internal/db"
 	"github.com/levmv/polka/internal/format"
+	"github.com/levmv/polka/internal/id"
 	"github.com/levmv/polka/internal/storage"
 )
 
@@ -73,7 +74,7 @@ func runRepair(parent context.Context, dataDir string, args []string) (retErr er
 	if err != nil {
 		return err
 	}
-	workCovers, err := db.AllWorkCovers(database)
+	bookCovers, err := db.AllBookCovers(database)
 	if err != nil {
 		return err
 	}
@@ -82,12 +83,12 @@ func runRepair(parent context.Context, dataDir string, args []string) (retErr er
 	if err != nil {
 		return err
 	}
-	coverRepair, err := repairCovers(ctx, database, root, dataRoot, workCovers, assetRepair.VerifiedHashes)
+	coverRepair, err := repairCovers(ctx, database, root, dataRoot, bookCovers, assetRepair.VerifiedHashes)
 	if err != nil {
 		return err
 	}
 
-	// Delete authors no longer referenced by any work.
+	// Delete authors no longer referenced by any book.
 	if err := context.Cause(ctx); err != nil {
 		return err
 	}
@@ -358,7 +359,7 @@ type coverRepairResult struct {
 	StagedRemoved          int
 }
 
-func repairCovers(ctx context.Context, database *db.DB, booksRoot, coverRoot storage.Root, works []db.WorkCoverRow, verifiedAssetHashes map[string]struct{}) (coverRepairResult, error) {
+func repairCovers(ctx context.Context, database *db.DB, booksRoot, coverRoot storage.Root, books []db.BookCoverRow, verifiedAssetHashes map[string]struct{}) (coverRepairResult, error) {
 	recoverable := newRecoverableCoverIndex(ctx, coverRoot)
 	summary := coverRepairResult{}
 
@@ -366,55 +367,55 @@ func repairCovers(ctx context.Context, database *db.DB, booksRoot, coverRoot sto
 	// assets, stale originals and impossible cover_version flags are safe to
 	// clear so check converges back to the DB truth.
 	expectedOriginals := make(map[string]bool)
-	for _, work := range works {
+	for _, book := range books {
 		if err := context.Cause(ctx); err != nil {
 			return summary, err
 		}
-		if work.CoverVersion <= 0 {
+		if book.CoverVersion <= 0 {
 			continue
 		}
-		coverRel := covers.OriginalPath(work.ID)
+		coverRel := covers.OriginalPath(book.ID)
 		coverAbs, err := coverRoot.Resolve(coverRel)
 		if err != nil {
-			fmt.Printf("Invalid cover path for %s (%s): %v\n", work.ID, coverRel, err)
+			fmt.Printf("Invalid cover path for %s (%s): %v\n", book.ID, coverRel, err)
 			continue
 		}
 		expectedOriginals[coverAbs] = true
 		if info, err := os.Stat(coverAbs); err == nil && !info.IsDir() {
 			continue
 		} else if err == nil && info.IsDir() {
-			fmt.Printf("Cover original is a directory: %s (%s)\n", work.ID, coverRel)
+			fmt.Printf("Cover original is a directory: %s (%s)\n", book.ID, coverRel)
 			continue
 		} else if err != nil && !os.IsNotExist(err) {
-			fmt.Printf("Failed to stat cover for %s: %v\n", work.ID, err)
+			fmt.Printf("Failed to stat cover for %s: %v\n", book.ID, err)
 			continue
 		}
 
-		foundAbs := recoverable.find(work.ID)
+		foundAbs := recoverable.find(book.ID)
 		if err := context.Cause(ctx); err != nil {
 			return summary, err
 		}
 		if foundAbs != "" {
 			foundRel, err := filepath.Rel(coverRoot.Path, foundAbs)
 			if err != nil {
-				fmt.Printf("Failed to resolve staged cover for %s: %v\n", work.ID, err)
+				fmt.Printf("Failed to resolve staged cover for %s: %v\n", book.ID, err)
 				continue
 			}
 			if err := storage.Move(coverRoot, filepath.ToSlash(foundRel), coverRel); err != nil {
-				fmt.Printf("Failed to restore cover for %s: %v\n", work.ID, err)
+				fmt.Printf("Failed to restore cover for %s: %v\n", book.ID, err)
 				continue
 			}
-			covers.RemoveDerived(coverRoot, work.ID)
+			covers.RemoveDerived(coverRoot, book.ID)
 			summary.Restored++
 			continue
 		}
 
-		extracted, fallback, err := restoreCoverFromPrimaryAsset(ctx, database, booksRoot, coverRoot, work, verifiedAssetHashes)
+		extracted, fallback, err := restoreCoverFromPrimaryAsset(ctx, database, booksRoot, coverRoot, book, verifiedAssetHashes)
 		if err != nil {
 			if cause := context.Cause(ctx); cause != nil {
 				return summary, cause
 			}
-			fmt.Printf("Failed to extract cover for %s: %v\n", work.ID, err)
+			fmt.Printf("Failed to extract cover for %s: %v\n", book.ID, err)
 			continue
 		}
 		if extracted {
@@ -426,12 +427,12 @@ func repairCovers(ctx context.Context, database *db.DB, booksRoot, coverRoot sto
 			continue
 		}
 
-		if _, err := database.Exec("UPDATE works SET cover_version = 0, updated_at = unixepoch() WHERE id = ?", work.ID); err != nil {
-			fmt.Printf("Failed to clear missing cover for %s: %v\n", work.ID, err)
+		if _, err := database.Exec("UPDATE books SET cover_version = 0, updated_at = unixepoch() WHERE id = ?", book.ID); err != nil {
+			fmt.Printf("Failed to clear missing cover for %s: %v\n", book.ID, err)
 			continue
 		}
 		delete(expectedOriginals, coverAbs)
-		covers.RemoveDerived(coverRoot, work.ID)
+		covers.RemoveDerived(coverRoot, book.ID)
 		summary.VersionCleared++
 	}
 
@@ -499,7 +500,7 @@ func printRepairSummary(items []repairSummaryItem) {
 	}
 }
 
-func restoreCoverFromPrimaryAsset(ctx context.Context, database *db.DB, booksRoot, coverRoot storage.Root, w db.WorkCoverRow, verifiedAssetHashes map[string]struct{}) (extracted bool, fallback bool, err error) {
+func restoreCoverFromPrimaryAsset(ctx context.Context, database *db.DB, booksRoot, coverRoot storage.Root, w db.BookCoverRow, verifiedAssetHashes map[string]struct{}) (extracted bool, fallback bool, err error) {
 	asset, ok, err := primaryAssetForCoverRecovery(database, w.ID)
 	if err != nil {
 		return false, false, err
@@ -547,7 +548,7 @@ func restoreCoverFromPrimaryAsset(ctx context.Context, database *db.DB, booksRoo
 			delete(overrides, "cover")
 		}
 		_, err := database.Exec(`
-			UPDATE works
+			UPDATE books
 			SET cover_version = cover_version + 1,
 			    metadata_rev = metadata_rev + 1,
 			    manual_overrides = ?,
@@ -580,15 +581,15 @@ func validateCoverRecoveryAssetBytes(ctx context.Context, asset coverRecoveryAss
 	return nil
 }
 
-func primaryAssetForCoverRecovery(queryer db.Queryer, workID string) (coverRecoveryAsset, bool, error) {
+func primaryAssetForCoverRecovery(queryer db.Queryer, bookID string) (coverRecoveryAsset, bool, error) {
 	var asset coverRecoveryAsset
 	var formatKey string
 	err := queryer.QueryRow(`
 		SELECT id, storage_path, COALESCE(format, ''), COALESCE(current_sha256, ''), current_size
 		FROM assets
-		WHERE work_id = ? AND is_primary = 1
+		WHERE book_id = ? AND is_primary = 1
 		LIMIT 1
-	`, workID).Scan(&asset.ID, &asset.StoragePath, &formatKey, &asset.CurrentSHA256, &asset.CurrentSize)
+	`, bookID).Scan(&asset.ID, &asset.StoragePath, &formatKey, &asset.CurrentSHA256, &asset.CurrentSize)
 	if errors.Is(err, sql.ErrNoRows) {
 		return coverRecoveryAsset{}, false, nil
 	}
@@ -753,7 +754,7 @@ func (idx *recoverableAssetHashIndex) build() error {
 	})
 }
 
-// recoverableCoverIndex maps crash-left cover temp names to the work whose
+// recoverableCoverIndex maps crash-left cover temp names to the book whose
 // cover they contain: importer Stage files in .staging, and Place/adjacent
 // replacement files in covers/. Staging is indexed before covers/ so an
 // explicitly staged importer file wins. Within a directory filepath.Walk's
@@ -761,24 +762,24 @@ func (idx *recoverableAssetHashIndex) build() error {
 type recoverableCoverIndex struct {
 	ctx    context.Context
 	root   storage.Root
-	byWork map[string]string
+	byBook map[string]string
 	built  bool
 }
 
 func newRecoverableCoverIndex(ctx context.Context, root storage.Root) *recoverableCoverIndex {
-	return &recoverableCoverIndex{ctx: ctx, root: root, byWork: make(map[string]string)}
+	return &recoverableCoverIndex{ctx: ctx, root: root, byBook: make(map[string]string)}
 }
 
-func (idx *recoverableCoverIndex) find(workID string) string {
+func (idx *recoverableCoverIndex) find(bookID string) string {
 	if !idx.built {
-		idx.indexDir(idx.root.StagingDir(), stagedCoverWorkID)
-		idx.indexDir(idx.root.Abs("covers"), coverDirTempWorkID)
+		idx.indexDir(idx.root.StagingDir(), stagedCoverBookID)
+		idx.indexDir(idx.root.Abs("covers"), coverDirTempBookID)
 		idx.built = true
 	}
-	return idx.byWork[workID]
+	return idx.byBook[bookID]
 }
 
-func (idx *recoverableCoverIndex) indexDir(dir string, parseWorkID func(string) (string, bool)) {
+func (idx *recoverableCoverIndex) indexDir(dir string, parseBookID func(string) (string, bool)) {
 	_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if cause := context.Cause(idx.ctx); cause != nil {
 			return cause
@@ -786,18 +787,18 @@ func (idx *recoverableCoverIndex) indexDir(dir string, parseWorkID func(string) 
 		if err != nil || info.IsDir() {
 			return nil
 		}
-		id, ok := parseWorkID(info.Name())
+		id, ok := parseBookID(info.Name())
 		if !ok {
 			return nil
 		}
-		if _, exists := idx.byWork[id]; !exists {
-			idx.byWork[id] = path
+		if _, exists := idx.byBook[id]; !exists {
+			idx.byBook[id] = path
 		}
 		return nil
 	})
 }
 
-func stagedCoverWorkID(name string) (string, bool) {
+func stagedCoverBookID(name string) (string, bool) {
 	rest, ok := strings.CutPrefix(name, ".tmp-")
 	if !ok {
 		return "", false
@@ -806,17 +807,17 @@ func stagedCoverWorkID(name string) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	if !strings.HasPrefix(label, "w_") || !strings.HasSuffix(label, "-cover") {
+	if !strings.HasPrefix(label, string(id.Book)) || !strings.HasSuffix(label, "-cover") {
 		return "", false
 	}
 	return strings.TrimSuffix(label, "-cover"), true
 }
 
-func coverDirTempWorkID(name string) (string, bool) {
+func coverDirTempBookID(name string) (string, bool) {
 	if rest, ok := strings.CutPrefix(name, ".tmp-"); ok {
-		if _, workID, ok := strings.Cut(rest, "-"); ok {
-			if strings.HasPrefix(workID, "w_") {
-				return workID, true
+		if _, bookID, ok := strings.Cut(rest, "-"); ok {
+			if strings.HasPrefix(bookID, string(id.Book)) {
+				return bookID, true
 			}
 		}
 		return "", false
@@ -830,7 +831,7 @@ func coverDirTempWorkID(name string) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	if !strings.HasPrefix(label, "w_") || !strings.HasSuffix(label, "-cover") {
+	if !strings.HasPrefix(label, string(id.Book)) || !strings.HasSuffix(label, "-cover") {
 		return "", false
 	}
 	return strings.TrimSuffix(label, "-cover"), true
@@ -859,7 +860,7 @@ func removeStaleStagedCovers(ctx context.Context, root storage.Root) (int, error
 }
 
 func isStagedCoverFileName(name string) bool {
-	_, ok := stagedCoverWorkID(name)
+	_, ok := stagedCoverBookID(name)
 	return ok
 }
 

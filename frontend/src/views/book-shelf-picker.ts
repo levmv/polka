@@ -15,7 +15,7 @@ const SHELF_SEARCH_THRESHOLD = 7;
 export function renderShelfPicker(
     panel: HTMLElement,
     popover: ManagedPopover,
-    workId: string,
+    bookId: string,
 ): void {
     panel.classList.add('shelf-popover');
     // Arrow-key nav reads the live DOM, so bind once even though the popover
@@ -28,8 +28,8 @@ export function renderShelfPicker(
 
     void (async () => {
         try {
-            const memberships = await fetchBookShelves(workId);
-            buildShelfPicker(panel, popover, workId, memberships);
+            const memberships = await fetchBookShelves(bookId);
+            buildShelfPicker(panel, popover, bookId, memberships);
             // Focus here, not via the popover's initial focus — that fires while
             // this panel still shows "Loading…", before the controls exist.
             popover.reposition();
@@ -74,7 +74,7 @@ function handleShelfNav(event: KeyboardEvent): void {
 function buildShelfPicker(
     panel: HTMLElement,
     popover: ManagedPopover,
-    workId: string,
+    bookId: string,
     memberships: BookShelfMembership[],
 ): void {
     panel.replaceChildren();
@@ -100,7 +100,7 @@ function buildShelfPicker(
         list.appendChild(empty);
     } else {
         for (const membership of memberships) {
-            list.appendChild(shelfPickerRow(membership, workId));
+            list.appendChild(shelfPickerRow(membership, bookId));
         }
     }
 
@@ -113,10 +113,10 @@ function buildShelfPicker(
         });
     }
 
-    panel.appendChild(buildCreateRow(popover, workId));
+    panel.appendChild(buildCreateRow(popover, bookId));
 }
 
-function shelfPickerRow(membership: BookShelfMembership, workId: string): HTMLElement {
+function shelfPickerRow(membership: BookShelfMembership, bookId: string): HTMLElement {
     const label = document.createElement('label');
     label.className = 'shelf-picker-row';
     label.dataset.name = membership.name.toLowerCase();
@@ -142,9 +142,9 @@ function shelfPickerRow(membership: BookShelfMembership, workId: string): HTMLEl
         const checked = checkbox.checked;
         try {
             if (checked) {
-                await addBookToShelf(membership.id, workId);
+                await addBookToShelf(membership.id, bookId);
             } else {
-                await removeBookFromShelf(membership.id, workId);
+                await removeBookFromShelf(membership.id, bookId);
             }
             // A shelf-scoped list may no longer contain this book, and only that
             // list knows which shelf it shows.
@@ -169,7 +169,7 @@ function shelfPickerRow(membership: BookShelfMembership, workId: string): HTMLEl
 
 // The create affordance opens the normal shelf dialog. Close this popover first
 // so the floating panel cannot sit above the modal.
-function buildCreateRow(popover: ManagedPopover, workId: string): HTMLElement {
+function buildCreateRow(popover: ManagedPopover, bookId: string): HTMLElement {
     const wrap = document.createElement('div');
     wrap.className = 'shelf-popover-create';
 
@@ -186,7 +186,7 @@ function buildCreateRow(popover: ManagedPopover, workId: string): HTMLElement {
             const currentUser = await fetchCurrentUser();
             const shelf = await openCreateShelfDialog({ currentUser, kind: 'manual' });
             if (!shelf) return;
-            await addBookToShelf(shelf.id, workId);
+            await addBookToShelf(shelf.id, bookId);
             notifyShelvesChanged();
             notifyCatalogChanged();
         } catch (e) {

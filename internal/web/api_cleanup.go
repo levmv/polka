@@ -15,12 +15,12 @@ import (
 )
 
 type cleanupDuplicateDismissRequest struct {
-	WorkIDs []string `json:"work_ids"`
+	BookIDs []string `json:"book_ids"`
 }
 
 type cleanupDuplicateMergeRequest struct {
 	SurvivorID string   `json:"survivor_id"`
-	WorkIDs    []string `json:"work_ids"`
+	BookIDs    []string `json:"book_ids"`
 }
 
 type cleanupDuplicateMergeResponse struct {
@@ -108,7 +108,7 @@ func (s *Server) handleAPICleanupDuplicateDismiss(w http.ResponseWriter, r *http
 	if !readJSON(w, r, &req) {
 		return
 	}
-	ids := dedupStrings(req.WorkIDs)
+	ids := dedupStrings(req.BookIDs)
 	if len(ids) < 2 {
 		http.Error(w, "at least two book ids are required", http.StatusBadRequest)
 		return
@@ -137,7 +137,7 @@ func (s *Server) handleAPICleanupDuplicateMerge(w http.ResponseWriter, r *http.R
 		return
 	}
 	req.SurvivorID = strings.TrimSpace(req.SurvivorID)
-	ids := dedupStrings(req.WorkIDs)
+	ids := dedupStrings(req.BookIDs)
 	if req.SurvivorID == "" || len(ids) < 2 {
 		http.Error(w, "survivor_id and at least two book ids are required", http.StatusBadRequest)
 		return
@@ -192,11 +192,11 @@ func (s *Server) handleAPICleanupDuplicateMerge(w http.ResponseWriter, r *http.R
 	}
 	defer releaseStorageSlot()
 
-	mutation, err := relayout.MutateWorks(r.Context(), s.db, s.managedRoot(), func(tx *sql.Tx) (relayout.Changed, error) {
+	mutation, err := relayout.MutateBooks(r.Context(), s.db, s.managedRoot(), func(tx *sql.Tx) (relayout.Changed, error) {
 		var err error
-		result, err = db.MergeDuplicateWorks(tx, scope, db.DuplicateMergeRequest{
+		result, err = db.MergeDuplicateBooks(tx, scope, db.DuplicateMergeRequest{
 			SurvivorID:  req.SurvivorID,
-			WorkIDs:     ids,
+			BookIDs:     ids,
 			DeletedBy:   u.ID,
 			CoverFromID: coverFromID,
 		})
@@ -253,16 +253,16 @@ func (s *Server) handleAPICleanupDuplicateMerge(w http.ResponseWriter, r *http.R
 	})
 }
 
-func (s *Server) readDuplicateCover(workID string) ([]byte, bool) {
-	coverPath, err := s.dataRoot().Resolve(covers.OriginalPath(workID))
+func (s *Server) readDuplicateCover(bookID string) ([]byte, bool) {
+	coverPath, err := s.dataRoot().Resolve(covers.OriginalPath(bookID))
 	if err != nil {
-		log.Printf("duplicate merge cover source %s: %v", workID, err)
+		log.Printf("duplicate merge cover source %s: %v", bookID, err)
 		return nil, false
 	}
 	b, err := os.ReadFile(coverPath)
 	if err != nil {
 		if !os.IsNotExist(err) {
-			log.Printf("duplicate merge cover source %s: %v", workID, err)
+			log.Printf("duplicate merge cover source %s: %v", bookID, err)
 		}
 		return nil, false
 	}

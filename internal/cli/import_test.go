@@ -131,7 +131,7 @@ func TestImportJSONSingleFile(t *testing.T) {
 		t.Fatalf("items = %d, want 1", len(report.Items))
 	}
 	item := report.Items[0]
-	if item.Status != "imported" || item.AssetID == "" || item.WorkID == "" {
+	if item.Status != "imported" || item.AssetID == "" || item.BookID == "" {
 		t.Fatalf("item status/ids = %+v", item)
 	}
 	if item.Title != "JSON Import" || item.Format != "epub" {
@@ -145,9 +145,9 @@ func TestImportJSONSingleFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reopen library: %v", err)
 	}
-	if _, err := database.Exec("UPDATE works SET deleted_at = unixepoch()"); err != nil {
+	if _, err := database.Exec("UPDATE books SET deleted_at = unixepoch()"); err != nil {
 		database.Close()
-		t.Fatalf("trash imported work: %v", err)
+		t.Fatalf("trash imported book: %v", err)
 	}
 	database.Close()
 
@@ -561,8 +561,8 @@ trailer
 	if !strings.Contains(out, wantLine) {
 		t.Fatalf("import output omitted concise relative group result %q:\n%s", wantLine, out)
 	}
-	if strings.Contains(out, tempDir) || strings.Contains(out, "(work ") {
-		t.Fatalf("import output exposed source root or internal work ID:\n%s", out)
+	if strings.Contains(out, tempDir) || strings.Contains(out, "(book ") {
+		t.Fatalf("import output exposed source root or internal book ID:\n%s", out)
 	}
 
 	db2, err := db.InitPath(dbPath)
@@ -571,18 +571,18 @@ trailer
 	}
 	defer db2.Close()
 
-	var works, assets, distinctWorks int
-	if err := db2.QueryRow("SELECT COUNT(*) FROM works").Scan(&works); err != nil {
-		t.Fatalf("count works: %v", err)
+	var books, assets, distinctBooks int
+	if err := db2.QueryRow("SELECT COUNT(*) FROM books").Scan(&books); err != nil {
+		t.Fatalf("count books: %v", err)
 	}
 	if err := db2.QueryRow("SELECT COUNT(*) FROM assets").Scan(&assets); err != nil {
 		t.Fatalf("count assets: %v", err)
 	}
-	if err := db2.QueryRow("SELECT COUNT(DISTINCT work_id) FROM assets").Scan(&distinctWorks); err != nil {
-		t.Fatalf("count asset works: %v", err)
+	if err := db2.QueryRow("SELECT COUNT(DISTINCT book_id) FROM assets").Scan(&distinctBooks); err != nil {
+		t.Fatalf("count asset books: %v", err)
 	}
-	if works != 1 || assets != 2 || distinctWorks != 1 {
-		t.Fatalf("counts works/assets/distinct asset works = %d/%d/%d; want 1/2/1", works, assets, distinctWorks)
+	if books != 1 || assets != 2 || distinctBooks != 1 {
+		t.Fatalf("counts books/assets/distinct asset books = %d/%d/%d; want 1/2/1", books, assets, distinctBooks)
 	}
 	var primaryAssets int
 	if err := db2.QueryRow("SELECT COUNT(*) FROM assets WHERE is_primary = 1").Scan(&primaryAssets); err != nil {
@@ -601,10 +601,10 @@ trailer
 
 	var title, publisher, author string
 	if err := db2.QueryRow(`
-		SELECT w.title, w.publisher, a.name
-		FROM works w
-		JOIN work_authors wa ON wa.work_id = w.id
-		JOIN authors a ON a.id = wa.author_id
+		SELECT b.title, b.publisher, a.name
+		FROM books b
+		JOIN book_authors ba ON ba.book_id = b.id
+		JOIN authors a ON a.id = ba.author_id
 		LIMIT 1
 	`).Scan(&title, &publisher, &author); err != nil {
 		t.Fatalf("query metadata: %v", err)
@@ -616,14 +616,14 @@ trailer
 	if err := runImport(context.Background(), dataDir, []string{filepath.Join(tempDir, "calibre")}); err != nil {
 		t.Fatalf("second import folder: %v", err)
 	}
-	if err := db2.QueryRow("SELECT COUNT(*) FROM works").Scan(&works); err != nil {
-		t.Fatalf("count works after second import: %v", err)
+	if err := db2.QueryRow("SELECT COUNT(*) FROM books").Scan(&books); err != nil {
+		t.Fatalf("count books after second import: %v", err)
 	}
 	if err := db2.QueryRow("SELECT COUNT(*) FROM assets").Scan(&assets); err != nil {
 		t.Fatalf("count assets after second import: %v", err)
 	}
-	if works != 1 || assets != 2 {
-		t.Fatalf("after second import works/assets = %d/%d; want 1/2", works, assets)
+	if books != 1 || assets != 2 {
+		t.Fatalf("after second import books/assets = %d/%d; want 1/2", books, assets)
 	}
 }
 
@@ -659,7 +659,7 @@ func TestImportFolderDeleteSourcesRemovesCalibreDirectory(t *testing.T) {
 	if !strings.Contains(out, wantLine) {
 		t.Fatalf("single-asset group output omitted concise result %q:\n%s", wantLine, out)
 	}
-	if strings.Contains(out, "assets 1") || strings.Contains(out, "(work ") {
+	if strings.Contains(out, "assets 1") || strings.Contains(out, "(book ") {
 		t.Fatalf("single-asset group output included default count or internal ID:\n%s", out)
 	}
 	if _, err := os.Stat(bookDir); !os.IsNotExist(err) {

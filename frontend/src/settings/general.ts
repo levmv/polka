@@ -111,9 +111,9 @@ function renderGeneralPanel(
 
     const continueToggle = createToggle({
         ariaLabel: 'Show Continue reading rail',
-        checked: !settings.hide_continue_reading,
+        checked: settings.show_continue_reading,
         onChange: (checked) => {
-            void persist({ hide_continue_reading: !checked }, () =>
+            void persist({ show_continue_reading: checked }, () =>
                 continueToggle.setChecked(!checked),
             );
         },

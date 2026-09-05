@@ -15,7 +15,7 @@ type AssetRow struct {
 	Format           format.Format
 	StoragePath      string
 	OriginalFilename string
-	WorkID           string
+	BookID           string
 	IsPrimary        bool
 	CanRead          bool
 	// Size is COALESCE(current_size, original_size, 0) from the row, so UI/list
@@ -32,7 +32,7 @@ type PrimaryAssetRow struct {
 
 type AssetWithAuthorRow struct {
 	ID               string
-	WorkID           string
+	BookID           string
 	StoragePath      string
 	OriginalFilename string
 	Extension        string
@@ -63,20 +63,20 @@ func RecordAssetRestore(database Execer, assetID, sha256 string, size int64) err
 	return err
 }
 
-// EnsureReadablePrimaryAsset keeps one primary asset for a work while
+// EnsureReadablePrimaryAsset keeps one primary asset for a book while
 // preferring something the browser can actually open. An existing readable
 // primary is stable; an unreadable primary is replaced only when a readable
 // candidate exists. If every asset is unreadable, the existing primary remains
 // the least surprising download/default-format choice.
-func EnsureReadablePrimaryAsset(tx *sql.Tx, workID string) error {
+func EnsureReadablePrimaryAsset(tx *sql.Tx, bookID string) error {
 	var selectedID string
 	err := tx.QueryRow(`
 		SELECT id
 		FROM assets
-		WHERE work_id = ?
+		WHERE book_id = ?
 		ORDER BY can_read DESC, is_primary DESC, created_at ASC, id ASC
 		LIMIT 1
-	`, workID).Scan(&selectedID)
+	`, bookID).Scan(&selectedID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -87,8 +87,8 @@ func EnsureReadablePrimaryAsset(tx *sql.Tx, workID string) error {
 	if _, err := tx.Exec(`
 		UPDATE assets
 		SET is_primary = 0, updated_at = unixepoch()
-		WHERE work_id = ? AND is_primary = 1 AND id <> ?
-	`, workID, selectedID); err != nil {
+		WHERE book_id = ? AND is_primary = 1 AND id <> ?
+	`, bookID, selectedID); err != nil {
 		return fmt.Errorf("demote old primary asset: %w", err)
 	}
 	if _, err := tx.Exec(`
@@ -101,44 +101,44 @@ func EnsureReadablePrimaryAsset(tx *sql.Tx, workID string) error {
 	return nil
 }
 
-func AssetsByWorkIDs(queryer Queryer, workIDs []string) ([]AssetRow, error) {
-	if len(workIDs) == 0 {
+func AssetsByBookIDs(queryer Queryer, bookIDs []string) ([]AssetRow, error) {
+	if len(bookIDs) == 0 {
 		return nil, nil
 	}
 
-	placeholders := strings.Repeat("?,", len(workIDs))
+	placeholders := strings.Repeat("?,", len(bookIDs))
 	placeholders = placeholders[:len(placeholders)-1]
 
-	args := make([]any, len(workIDs))
-	for i, id := range workIDs {
+	args := make([]any, len(bookIDs))
+	for i, id := range bookIDs {
 		args[i] = id
 	}
 
 	query := `
-				SELECT a.work_id, a.id, a.extension, a.format, a.storage_path, COALESCE(a.original_filename, ''), a.is_primary, a.can_read,
+				SELECT a.book_id, a.id, a.extension, a.format, a.storage_path, COALESCE(a.original_filename, ''), a.is_primary, a.can_read,
 				       COALESCE(a.current_size, a.original_size, 0)
 			FROM assets a
-			WHERE a.work_id IN (` + placeholders + `)
-			ORDER BY a.work_id, a.is_primary DESC, a.extension COLLATE NOCASE ASC, a.id ASC
+			WHERE a.book_id IN (` + placeholders + `)
+			ORDER BY a.book_id, a.is_primary DESC, a.extension COLLATE NOCASE ASC, a.id ASC
 		`
 	rows, err := queryer.Query(query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("assets by works query: %w", err)
+		return nil, fmt.Errorf("assets by books query: %w", err)
 	}
-	return scanAssetRows(rows, "assets by works")
+	return scanAssetRows(rows, "assets by books")
 }
 
-// AssetsForTrashedWorks returns every asset whose work is currently in Trash.
+// AssetsForTrashedBooks returns every asset whose book is currently in Trash.
 // Empty-trash uses this dedicated projection so its SQL shape stays constant at
-// large-library scale instead of expanding one host parameter per work.
-func AssetsForTrashedWorks(queryer Queryer) ([]AssetRow, error) {
+// large-library scale instead of expanding one host parameter per book.
+func AssetsForTrashedBooks(queryer Queryer) ([]AssetRow, error) {
 	rows, err := queryer.Query(`
-		SELECT a.work_id, a.id, a.extension, a.format, a.storage_path, COALESCE(a.original_filename, ''), a.is_primary, a.can_read,
+		SELECT a.book_id, a.id, a.extension, a.format, a.storage_path, COALESCE(a.original_filename, ''), a.is_primary, a.can_read,
 		       COALESCE(a.current_size, a.original_size, 0)
 		FROM assets a
-		JOIN works w ON w.id = a.work_id
-		WHERE w.deleted_at IS NOT NULL
-		ORDER BY a.work_id, a.is_primary DESC, a.extension COLLATE NOCASE ASC, a.id ASC
+		JOIN books b ON b.id = a.book_id
+		WHERE b.deleted_at IS NOT NULL
+		ORDER BY a.book_id, a.is_primary DESC, a.extension COLLATE NOCASE ASC, a.id ASC
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("trashed assets query: %w", err)
@@ -154,7 +154,7 @@ func scanAssetRows(rows *sql.Rows, operation string) ([]AssetRow, error) {
 		var a AssetRow
 		var formatKey string
 		var isPrimary, canRead int
-		if err := rows.Scan(&a.WorkID, &a.ID, &a.Extension, &formatKey, &a.StoragePath, &a.OriginalFilename, &isPrimary, &canRead, &a.Size); err != nil {
+		if err := rows.Scan(&a.BookID, &a.ID, &a.Extension, &formatKey, &a.StoragePath, &a.OriginalFilename, &isPrimary, &canRead, &a.Size); err != nil {
 			return nil, fmt.Errorf("%s scan: %w", operation, err)
 		}
 		a.Format = format.FormatFromKey(formatKey)
@@ -168,19 +168,19 @@ func scanAssetRows(rows *sql.Rows, operation string) ([]AssetRow, error) {
 	return assets, nil
 }
 
-func PrimaryAssetForWork(queryer Queryer, scope VisibilityScope, workID string) (PrimaryAssetRow, error) {
+func PrimaryAssetForBook(queryer Queryer, scope VisibilityScope, bookID string) (PrimaryAssetRow, error) {
 	var a PrimaryAssetRow
 	var formatKey string
 	var isPrimary, canRead int
-	where, args := scope.AppendWorkWhere("w.id = ? AND w.deleted_at IS NULL AND a.is_primary = 1", "w.id", workID)
+	where, args := scope.AppendBookWhere("b.id = ? AND b.deleted_at IS NULL AND a.is_primary = 1", "b.id", bookID)
 	err := queryer.QueryRow(`
-			SELECT w.id, w.title, a.id, a.extension, a.format, a.storage_path, a.filename, a.is_primary, a.can_read,
+			SELECT b.id, b.title, a.id, a.extension, a.format, a.storage_path, a.filename, a.is_primary, a.can_read,
 			       COALESCE(a.current_sha256, '')
-			FROM works w
-			JOIN assets a ON a.work_id = w.id
+			FROM books b
+			JOIN assets a ON a.book_id = b.id
 			WHERE `+where+`
 			LIMIT 1
-	`, args...).Scan(&a.WorkID, &a.Title, &a.ID, &a.Extension, &formatKey, &a.StoragePath, &a.Filename, &isPrimary, &canRead, &a.CurrentSHA256)
+	`, args...).Scan(&a.BookID, &a.Title, &a.ID, &a.Extension, &formatKey, &a.StoragePath, &a.Filename, &isPrimary, &canRead, &a.CurrentSHA256)
 	if err != nil {
 		return PrimaryAssetRow{}, err
 	}
@@ -192,15 +192,15 @@ func PrimaryAssetForWork(queryer Queryer, scope VisibilityScope, workID string) 
 
 func AllAssetsWithPrimaryAuthor(queryer Queryer) ([]AssetWithAuthorRow, error) {
 	rows, err := queryer.Query(`
-		SELECT a.id, a.work_id, a.storage_path, COALESCE(a.original_filename, ''), a.extension, COALESCE(a.format, ''), COALESCE(a.can_read, 0),
+		SELECT a.id, a.book_id, a.storage_path, COALESCE(a.original_filename, ''), a.extension, COALESCE(a.format, ''), COALESCE(a.can_read, 0),
 		       COALESCE(a.original_sha256, ''), COALESCE(a.current_sha256, ''),
 		       a.original_size, a.current_size,
-		       w.title, COALESCE(w.sort_title, ''), COALESCE(w.series, ''),
-		       CASE WHEN w.series_index IS NULL THEN '' ELSE CAST(w.series_index AS TEXT) END,
-		       (SELECT name FROM authors WHERE id = (SELECT author_id FROM work_authors WHERE work_id = w.id ORDER BY author_order ASC, rowid ASC LIMIT 1)) as author_name,
-		       (SELECT sort_name FROM authors WHERE id = (SELECT author_id FROM work_authors WHERE work_id = w.id ORDER BY author_order ASC, rowid ASC LIMIT 1)) as author_sort_name
+		       b.title, COALESCE(b.sort_title, ''), COALESCE(b.series, ''),
+		       CASE WHEN b.series_index IS NULL THEN '' ELSE CAST(b.series_index AS TEXT) END,
+		       (SELECT name FROM authors WHERE id = (SELECT author_id FROM book_authors WHERE book_id = b.id ORDER BY author_order ASC, rowid ASC LIMIT 1)) as author_name,
+		       (SELECT sort_name FROM authors WHERE id = (SELECT author_id FROM book_authors WHERE book_id = b.id ORDER BY author_order ASC, rowid ASC LIMIT 1)) as author_sort_name
 		FROM assets a
-		JOIN works w ON a.work_id = w.id
+		JOIN books b ON a.book_id = b.id
 		ORDER BY a.id
 	`)
 	if err != nil {
@@ -213,7 +213,7 @@ func AllAssetsWithPrimaryAuthor(queryer Queryer) ([]AssetWithAuthorRow, error) {
 		var a AssetWithAuthorRow
 		var formatKey string
 		var canRead int
-		if err := rows.Scan(&a.ID, &a.WorkID, &a.StoragePath, &a.OriginalFilename, &a.Extension, &formatKey, &canRead, &a.OriginalSHA256, &a.CurrentSHA256, &a.OriginalSize, &a.CurrentSize, &a.Title, &a.SortTitle, &a.Series, &a.SeriesIndex, &a.AuthorName, &a.AuthorSortName); err != nil {
+		if err := rows.Scan(&a.ID, &a.BookID, &a.StoragePath, &a.OriginalFilename, &a.Extension, &formatKey, &canRead, &a.OriginalSHA256, &a.CurrentSHA256, &a.OriginalSize, &a.CurrentSize, &a.Title, &a.SortTitle, &a.Series, &a.SeriesIndex, &a.AuthorName, &a.AuthorSortName); err != nil {
 			return nil, fmt.Errorf("scan all assets: %w", err)
 		}
 		a.Format = format.FormatFromKey(formatKey)
@@ -234,18 +234,18 @@ func HasAnyAsset(q Queryer) (bool, error) {
 	return exists, nil
 }
 
-// LibraryStorageStats reports the number of live works and the total on-disk
+// LibraryStorageStats reports the number of live books and the total on-disk
 // size of their asset files, for the Storage settings health line. Size uses
 // the current bytes, falling back to the imported size for assets never
-// rewritten; trashed works are excluded because their files are pending purge.
+// rewritten; trashed books are excluded because their files are pending purge.
 func LibraryStorageStats(q Queryer) (books int, sizeBytes int64, err error) {
 	row := q.QueryRow(`
 		SELECT
-			(SELECT COUNT(*) FROM works WHERE deleted_at IS NULL),
+			(SELECT COUNT(*) FROM books WHERE deleted_at IS NULL),
 			(SELECT COALESCE(SUM(COALESCE(a.current_size, a.original_size, 0)), 0)
 			   FROM assets a
-			   JOIN works w ON w.id = a.work_id
-			  WHERE w.deleted_at IS NULL)`)
+			   JOIN books b ON b.id = a.book_id
+			  WHERE b.deleted_at IS NULL)`)
 	if err := row.Scan(&books, &sizeBytes); err != nil {
 		return 0, 0, fmt.Errorf("library storage stats: %w", err)
 	}

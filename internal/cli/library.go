@@ -33,7 +33,7 @@ func printLibraryUsage() {
 	fmt.Fprintf(os.Stderr, `Usage:
   polka library authors <command> [args]
   polka library shelves <command> [args]
-  polka library writeback [--all|<work-id>...] [--dry-run] [--limit N] [--force]
+  polka library writeback [--all|<book-id>...] [--dry-run] [--limit N] [--force]
 
 Commands:
   authors   Manage authors (rename, merge)

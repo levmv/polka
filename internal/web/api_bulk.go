@@ -16,7 +16,7 @@ import (
 // the cap just bounds a single transaction and guards against a pathological body.
 const bulkEditMaxIDs = 1000
 
-// bulkEditRequest is the body of PATCH /api/books/bulk: a set of works plus an
+// bulkEditRequest is the body of PATCH /api/books/bulk: a set of books plus an
 // ordered list of operations applied to each. Operations are deliberately typed,
 // not a generic BookUpdate, so a bulk edit can never accidentally overwrite a
 // field it did not mean to touch.
@@ -55,14 +55,14 @@ type bulkEditResponse struct {
 	Books            []BookSummaryDTO `json:"books"`
 }
 
-// bulkWritePlan is the resolved column set for one changed work.
+// bulkWritePlan is the resolved column set for one changed book.
 type bulkWritePlan struct {
 	tags      sql.NullString
 	series    sql.NullString
 	index     sql.NullFloat64
 	overrides string
-	// authors, when non-nil, replaces the work's authors with this
-	// (semicolon-separated) list via replaceWorkAuthors inside the same tx.
+	// authors, when non-nil, replaces the book's authors with this
+	// (semicolon-separated) list via replaceBookAuthors inside the same tx.
 	authors  *string
 	relayout bool
 }
@@ -109,14 +109,14 @@ func (s *Server) handleAPIBulkEdit(w http.ResponseWriter, r *http.Request) {
 
 	// Authors live in their own table, so the current value each author op
 	// compares against is loaded separately and passed into the plan.
-	authorsByWork, err := db.AuthorsByWorkIDs(s.db, ids)
+	authorsByBook, err := db.AuthorsByBookIDs(s.db, ids)
 	if err != nil {
 		serverError(w, err)
 		return
 	}
 
 	// Walk ids in request (visible) order so "assign" numbering is stable and the
-	// selection count is well defined. Works no longer visible are skipped.
+	// selection count is well defined. Books no longer visible are skipped.
 	plans := make(map[string]bulkWritePlan)
 	changedIDs := make([]string, 0, len(ids))
 	selected := 0
@@ -130,7 +130,7 @@ func (s *Server) handleAPIBulkEdit(w http.ResponseWriter, r *http.Request) {
 		pos := position
 		position++
 
-		curAuthors := formatAuthorRows(authorsByWork[id])
+		curAuthors := formatAuthorRows(authorsByBook[id])
 		plan, changed := resolveBulkPlan(row, curAuthors, req.Operations, pos)
 		if !changed {
 			continue
@@ -148,12 +148,12 @@ func (s *Server) handleAPIBulkEdit(w http.ResponseWriter, r *http.Request) {
 		}
 		defer releaseStorageSlot()
 
-		mutation, err := relayout.MutateWorks(r.Context(), s.db, s.managedRoot(), func(tx *sql.Tx) (relayout.Changed, error) {
+		mutation, err := relayout.MutateBooks(r.Context(), s.db, s.managedRoot(), func(tx *sql.Tx) (relayout.Changed, error) {
 			pathIDs := make([]string, 0, len(changedIDs))
 			for _, id := range changedIDs {
 				p := plans[id]
 				if _, err := tx.Exec(`
-					UPDATE works SET
+					UPDATE books SET
 						tags = ?, series = ?, series_index = ?,
 						manual_overrides = ?, updated_at = unixepoch()
 					WHERE id = ?
@@ -163,7 +163,7 @@ func (s *Server) handleAPIBulkEdit(w http.ResponseWriter, r *http.Request) {
 				// Re-link authors before reindexing so the search index picks up
 				// the new author names in the same pass.
 				if p.authors != nil {
-					if err := replaceWorkAuthors(tx, id, *p.authors); err != nil {
+					if err := replaceBookAuthors(tx, id, *p.authors); err != nil {
 						return relayout.Changed{}, fmt.Errorf("bulk authors %s: %w", id, err)
 					}
 				}
@@ -183,7 +183,7 @@ func (s *Server) handleAPIBulkEdit(w http.ResponseWriter, r *http.Request) {
 		relayoutWarnings = len(mutation.Warnings)
 	}
 
-	// Return summaries only for works that actually changed; unchanged selected
+	// Return summaries only for books that actually changed; unchanged selected
 	// rows already match what the client rendered, so re-sending them would just
 	// make the client rebuild identical DOM.
 	summaryRows, err := db.BookSummaryRowsByIDs(s.db, scope, changedIDs)
@@ -206,7 +206,7 @@ func (s *Server) handleAPIBulkEdit(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// bulkTrashRequest is the body of POST /api/books/bulk/trash: the selected works
+// bulkTrashRequest is the body of POST /api/books/bulk/trash: the selected books
 // to move to Trash.
 type bulkTrashRequest struct {
 	IDs []string `json:"ids"`
@@ -217,7 +217,7 @@ type bulkTrashResponse struct {
 	IDs     []string `json:"ids"`
 }
 
-// handleAPIBulkTrash soft-deletes (moves to Trash) every selected work the caller
+// handleAPIBulkTrash soft-deletes (moves to Trash) every selected book the caller
 // can see. Like the single delete it is a catalog mutation (member/admin) that
 // leaves files in place until an admin purges the trash; stale or out-of-scope
 // ids are skipped rather than failing the batch.
@@ -242,7 +242,7 @@ func (s *Server) handleAPIBulkTrash(w http.ResponseWriter, r *http.Request) {
 		serverError(w, err)
 		return
 	}
-	// BooksForBulkEdit returns only the live works visible in scope, so trashing
+	// BooksForBulkEdit returns only the live books visible in scope, so trashing
 	// its result never touches an unknown, already-trashed, or hidden book.
 	rows, err := db.BooksForBulkEdit(s.db, scope, ids)
 	if err != nil {
@@ -263,7 +263,7 @@ func (s *Server) handleAPIBulkTrash(w http.ResponseWriter, r *http.Request) {
 	if len(trashed) > 0 {
 		if err := s.db.Transact(r.Context(), func(tx *sql.Tx) error {
 			for _, id := range trashed {
-				if err := db.SoftDeleteWork(tx, id, u.ID); err != nil {
+				if err := db.SoftDeleteBook(tx, id, u.ID); err != nil {
 					return fmt.Errorf("bulk trash %s: %w", id, err)
 				}
 			}
@@ -277,10 +277,10 @@ func (s *Server) handleAPIBulkTrash(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, bulkTrashResponse{Trashed: len(trashed), IDs: trashed})
 }
 
-// resolveBulkPlan applies the operations to one work's current state and returns
+// resolveBulkPlan applies the operations to one book's current state and returns
 // the columns to write plus whether anything actually changed. curAuthors is the
-// work's current authors formatted with bookmeta.FormatAuthorList, so an author op
-// compares like-for-like. pos is the work's zero-based position in the visible
+// book's current authors formatted with bookmeta.FormatAuthorList, so an author op
+// compares like-for-like. pos is the book's zero-based position in the visible
 // selection, used by "assign" numbering.
 func resolveBulkPlan(row db.BulkEditRow, curAuthors string, ops []bulkOperation, pos int) (bulkWritePlan, bool) {
 	overrides := bookmeta.ParseOverrides(row.Overrides.String)
@@ -371,12 +371,12 @@ func resolveBulkPlan(row db.BulkEditRow, curAuthors string, ops []bulkOperation,
 		overrides: bookmeta.MarshalOverrides(overrides),
 		// Authors are part of the default canonical path, and series/series_index
 		// feed it when a storage template opts them in, so a change to any of them
-		// must relayout the work.
+		// must relayout the book.
 		relayout: seriesChanged || indexChanged || authorsChanged,
 	}, true
 }
 
-// formatAuthorRows renders a work's current authors in the editor grammar so an
+// formatAuthorRows renders a book's current authors in the editor grammar so an
 // author op can compare its target against them like-for-like.
 func formatAuthorRows(rows []db.AuthorRow) string {
 	names := make([]string, 0, len(rows))

@@ -267,8 +267,8 @@ async function openReadOnlyReader(page: Page): Promise<void> {
     .locator('.book-card', { hasText: 'With Cover Book' })
     .locator('.book-title-link')
     .getAttribute('href');
-  const workId = href?.split('/').pop()?.split('?')[0];
-  if (!workId) throw new Error('missing reader work id');
+  const bookId = href?.split('/').pop()?.split('?')[0];
+  if (!bookId) throw new Error('missing reader book id');
 
   // Responsive projects share a read-only catalog. Return the current state
   // for the reader's best-effort touch instead of updating it.
@@ -277,7 +277,7 @@ async function openReadOnlyReader(page: Page): Promise<void> {
     const response = await page.request.get(stateURL);
     await route.fulfill({ response });
   });
-  await page.goto(`/read/${workId}`);
+  await page.goto(`/read/${bookId}`);
   await expect
     .poll(async () => page.locator('.reader-epub-stage').getAttribute('data-reader-ready'))
     .toBe('true');

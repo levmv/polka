@@ -89,8 +89,8 @@ type fetchedPublicImage struct {
 }
 
 func (s *Server) handleAPICoverSearch(w http.ResponseWriter, r *http.Request) {
-	workID := r.PathValue("id")
-	if _, ok := s.requireWorkAccess(w, r, workID); !ok {
+	bookID := r.PathValue("id")
+	if _, ok := s.requireBookAccess(w, r, bookID); !ok {
 		return
 	}
 
@@ -123,7 +123,7 @@ func (s *Server) handleAPICoverSearch(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, coverSearchResultDTO{
 			Token:      token,
-			PreviewURL: "/api/books/" + url.PathEscape(workID) + "/cover-search/preview?token=" + url.QueryEscape(token),
+			PreviewURL: "/api/books/" + url.PathEscape(bookID) + "/cover-search/preview?token=" + url.QueryEscape(token),
 			Source:     result.Source,
 			Width:      result.Width,
 			Height:     result.Height,
@@ -133,8 +133,8 @@ func (s *Server) handleAPICoverSearch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAPICoverSearchPreview(w http.ResponseWriter, r *http.Request) {
-	workID := r.PathValue("id")
-	if _, ok := s.requireWorkAccess(w, r, workID); !ok {
+	bookID := r.PathValue("id")
+	if _, ok := s.requireBookAccess(w, r, bookID); !ok {
 		return
 	}
 
@@ -160,8 +160,8 @@ func (s *Server) handleAPICoverSearchPreview(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *Server) handleAPICoverSearchApply(w http.ResponseWriter, r *http.Request) {
-	workID := r.PathValue("id")
-	if _, ok := s.requireWorkAccess(w, r, workID); !ok {
+	bookID := r.PathValue("id")
+	if _, ok := s.requireBookAccess(w, r, bookID); !ok {
 		return
 	}
 
@@ -181,7 +181,7 @@ func (s *Server) handleAPICoverSearchApply(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "Remote image unavailable", http.StatusBadRequest)
 		return
 	}
-	s.storeCoverAndReturnBook(w, r, workID, image.Bytes)
+	s.storeCoverAndReturnBook(w, r, bookID, image.Bytes)
 }
 
 func (s *Server) searchWebCoverCandidates(ctx context.Context, title, author string) ([]coverSearchCandidate, error) {

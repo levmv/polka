@@ -457,7 +457,7 @@ export function openBulkAuthorsDialog(books: BookSummary[], onApplied: OnApplied
 
 // --- Shelves dialog ---
 
-// Bulk shelves is a per-user membership action, not a work edit: pick one manual
+// Bulk shelves is a per-user membership action, not a book edit: pick one manual
 // shelf and add or remove the whole selection to/from it. It returns how many
 // memberships changed rather than updated book summaries.
 export function openBulkShelvesDialog(

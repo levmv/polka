@@ -23,7 +23,7 @@ const (
 	ModeAuto   Mode = "auto"
 )
 
-const modeSettingKey = "metadata_writeback"
+const modeSettingKey = "writeback.mode"
 
 var ErrInvalidMode = errors.New("unsupported metadata write-back mode")
 

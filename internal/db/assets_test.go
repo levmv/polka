@@ -55,12 +55,12 @@ func TestEnsureReadablePrimaryAsset(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			database := newTestDB(t)
-			if _, err := database.Exec("INSERT INTO works (id, title, sort_title) VALUES ('w1', 'Book', 'Book')"); err != nil {
-				t.Fatalf("insert work: %v", err)
+			if _, err := database.Exec("INSERT INTO books (id, title, sort_title) VALUES ('w1', 'Book', 'Book')"); err != nil {
+				t.Fatalf("insert book: %v", err)
 			}
 			for _, asset := range tt.assets {
 				if _, err := database.Exec(`
-					INSERT INTO assets (id, work_id, storage_path, filename, extension, can_read, is_primary, created_at)
+					INSERT INTO assets (id, book_id, storage_path, filename, extension, can_read, is_primary, created_at)
 					VALUES (?, 'w1', ?, ?, '.book', ?, ?, ?)
 				`, asset.id, asset.id+".book", asset.id+".book", asset.canRead, asset.isPrimary, asset.createdAt); err != nil {
 					t.Fatalf("insert asset %s: %v", asset.id, err)
@@ -74,7 +74,7 @@ func TestEnsureReadablePrimaryAsset(t *testing.T) {
 			}
 
 			var got string
-			if err := database.QueryRow("SELECT id FROM assets WHERE work_id = 'w1' AND is_primary = 1").Scan(&got); err != nil {
+			if err := database.QueryRow("SELECT id FROM assets WHERE book_id = 'w1' AND is_primary = 1").Scan(&got); err != nil {
 				t.Fatalf("query primary: %v", err)
 			}
 			if got != tt.want {

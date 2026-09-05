@@ -233,7 +233,7 @@ func TestReaderCannotMutateSharedShelfOrAddOutOfScopeBook(t *testing.T) {
 	}
 
 	var count int
-	if err := database.QueryRow(`SELECT COUNT(*) FROM shelf_books WHERE shelf_id = ? AND work_id = 'w_2'`, privateShelf.ID).Scan(&count); err != nil {
+	if err := database.QueryRow(`SELECT COUNT(*) FROM shelf_books WHERE shelf_id = ? AND book_id = 'w_2'`, privateShelf.ID).Scan(&count); err != nil {
 		t.Fatalf("count private shelf w_2: %v", err)
 	}
 	if count != 0 {

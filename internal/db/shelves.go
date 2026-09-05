@@ -426,7 +426,7 @@ func (db *DB) DeleteShelf(shelfID string, viewerID int64) error {
 	return nil
 }
 
-func (db *DB) AddBookToShelf(shelfID string, viewerID int64, workID string) error {
+func (db *DB) AddBookToShelf(shelfID string, viewerID int64, bookID string) error {
 	shelf, err := db.GetShelf(shelfID, viewerID)
 	if err != nil {
 		return err
@@ -435,21 +435,21 @@ func (db *DB) AddBookToShelf(shelfID string, viewerID int64, workID string) erro
 		return ErrQueryShelf
 	}
 	_, err = db.Exec(`
-		INSERT INTO shelf_books (shelf_id, work_id, position)
+		INSERT INTO shelf_books (shelf_id, book_id, position)
 		VALUES (?, ?, COALESCE((SELECT MAX(position) + 1 FROM shelf_books WHERE shelf_id = ?), 0))
-		ON CONFLICT(shelf_id, work_id) DO NOTHING
-	`, shelfID, workID, shelfID)
+		ON CONFLICT(shelf_id, book_id) DO NOTHING
+	`, shelfID, bookID, shelfID)
 	if err != nil {
 		return fmt.Errorf("add book to shelf: %w", err)
 	}
 	return nil
 }
 
-// AddBooksToShelf adds every workID to the manual shelf in one transaction,
+// AddBooksToShelf adds every bookID to the manual shelf in one transaction,
 // skipping any already present, and returns how many rows were newly inserted.
 // Each insert recomputes the next position, so the selection is appended in the
 // given order after whatever the shelf already held.
-func (db *DB) AddBooksToShelf(ctx context.Context, shelfID string, viewerID int64, workIDs []string) (int, error) {
+func (db *DB) AddBooksToShelf(ctx context.Context, shelfID string, viewerID int64, bookIDs []string) (int, error) {
 	shelf, err := db.GetShelf(shelfID, viewerID)
 	if err != nil {
 		return 0, err
@@ -457,22 +457,22 @@ func (db *DB) AddBooksToShelf(ctx context.Context, shelfID string, viewerID int6
 	if shelf.Kind != ShelfManual {
 		return 0, ErrQueryShelf
 	}
-	if len(workIDs) == 0 {
+	if len(bookIDs) == 0 {
 		return 0, nil
 	}
 	changed := 0
 	err = db.Transact(ctx, func(tx *sql.Tx) error {
 		stmt, err := tx.PrepareContext(ctx, `
-			INSERT INTO shelf_books (shelf_id, work_id, position)
+			INSERT INTO shelf_books (shelf_id, book_id, position)
 			VALUES (?, ?, COALESCE((SELECT MAX(position) + 1 FROM shelf_books WHERE shelf_id = ?), 0))
-			ON CONFLICT(shelf_id, work_id) DO NOTHING
+			ON CONFLICT(shelf_id, book_id) DO NOTHING
 		`)
 		if err != nil {
 			return err
 		}
 		defer stmt.Close()
-		for _, workID := range workIDs {
-			res, err := stmt.ExecContext(ctx, shelfID, workID, shelfID)
+		for _, bookID := range bookIDs {
+			res, err := stmt.ExecContext(ctx, shelfID, bookID, shelfID)
 			if err != nil {
 				return err
 			}
@@ -488,9 +488,9 @@ func (db *DB) AddBooksToShelf(ctx context.Context, shelfID string, viewerID int6
 	return changed, nil
 }
 
-// RemoveBooksFromShelf drops every workID from the manual shelf in one statement
+// RemoveBooksFromShelf drops every bookID from the manual shelf in one statement
 // and returns how many rows were actually removed.
-func (db *DB) RemoveBooksFromShelf(shelfID string, viewerID int64, workIDs []string) (int, error) {
+func (db *DB) RemoveBooksFromShelf(shelfID string, viewerID int64, bookIDs []string) (int, error) {
 	shelf, err := db.GetShelf(shelfID, viewerID)
 	if err != nil {
 		return 0, err
@@ -498,13 +498,13 @@ func (db *DB) RemoveBooksFromShelf(shelfID string, viewerID int64, workIDs []str
 	if shelf.Kind != ShelfManual {
 		return 0, ErrQueryShelf
 	}
-	if len(workIDs) == 0 {
+	if len(bookIDs) == 0 {
 		return 0, nil
 	}
-	placeholders, args := idPlaceholders(workIDs)
+	placeholders, args := idPlaceholders(bookIDs)
 	args = append([]any{shelfID}, args...)
 	res, err := db.Exec(
-		"DELETE FROM shelf_books WHERE shelf_id = ? AND work_id IN ("+placeholders+")", args...,
+		"DELETE FROM shelf_books WHERE shelf_id = ? AND book_id IN ("+placeholders+")", args...,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("remove books from shelf: %w", err)
@@ -513,7 +513,7 @@ func (db *DB) RemoveBooksFromShelf(shelfID string, viewerID int64, workIDs []str
 	return int(n), nil
 }
 
-func (db *DB) RemoveBookFromShelf(shelfID string, viewerID int64, workID string) error {
+func (db *DB) RemoveBookFromShelf(shelfID string, viewerID int64, bookID string) error {
 	shelf, err := db.GetShelf(shelfID, viewerID)
 	if err != nil {
 		return err
@@ -521,23 +521,23 @@ func (db *DB) RemoveBookFromShelf(shelfID string, viewerID int64, workID string)
 	if shelf.Kind != ShelfManual {
 		return ErrQueryShelf
 	}
-	if _, err := db.Exec("DELETE FROM shelf_books WHERE shelf_id = ? AND work_id = ?", shelfID, workID); err != nil {
+	if _, err := db.Exec("DELETE FROM shelf_books WHERE shelf_id = ? AND book_id = ?", shelfID, bookID); err != nil {
 		return fmt.Errorf("remove book from shelf: %w", err)
 	}
 	return nil
 }
 
-// ListBookShelfMemberships returns visible manual shelves and whether the work
+// ListBookShelfMemberships returns visible manual shelves and whether the book
 // is currently assigned to each. Query shelves are omitted because they cannot
 // be hand-edited.
-func (db *DB) ListBookShelfMemberships(viewerID int64, workID string) ([]ShelfMembership, error) {
+func (db *DB) ListBookShelfMemberships(viewerID int64, bookID string) ([]ShelfMembership, error) {
 	query := `
 			SELECT s.id, s.name, s.kind, s.query, s.query_match, s.owner_id, s.visibility, s.position, s.created_at, s.updated_at,
-			       CASE WHEN sb.work_id IS NULL THEN 0 ELSE 1 END AS in_shelf
+			       CASE WHEN sb.book_id IS NULL THEN 0 ELSE 1 END AS in_shelf
 			FROM shelves s
-			LEFT JOIN shelf_books sb ON sb.shelf_id = s.id AND sb.work_id = ?
+			LEFT JOIN shelf_books sb ON sb.shelf_id = s.id AND sb.book_id = ?
 			WHERE s.kind = 'manual' AND (s.visibility = ?`
-	args := []any{workID, string(ShelfShared)}
+	args := []any{bookID, string(ShelfShared)}
 	if viewerID > 0 {
 		query += ` OR s.owner_id = ?`
 		args = append(args, viewerID)

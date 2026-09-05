@@ -369,10 +369,10 @@ async function openReader(page: Page, title: string, openedAssets: string[]): Pr
   const card = page.locator('.book-card', { hasText: title });
   await expect(card).toBeVisible();
   const href = await card.locator('.book-title-link').getAttribute('href');
-  const workId = href?.split('/').pop()?.split('?')[0];
-  if (!workId) throw new Error(`missing work id for ${title}`);
+  const bookId = href?.split('/').pop()?.split('?')[0];
+  if (!bookId) throw new Error(`missing book id for ${title}`);
 
-  await page.goto(`/read/${workId}`);
+  await page.goto(`/read/${bookId}`);
   await expect(page.locator('.reader-epub-stage')).toBeVisible();
   await expect
     .poll(async () => page.locator('.reader-epub-stage').getAttribute('data-reader-ready'))

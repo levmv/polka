@@ -243,10 +243,10 @@ func TestRepairMergedWritebackAttemptLeavesSurvivorMetadataPending(t *testing.T)
 			}
 			// The former revision must reach the survivor's revision after merge:
 			// otherwise repair would leave the file dirty even without invalidation.
-			if _, err := database.Exec(`UPDATE works SET publisher = ?, metadata_rev = metadata_rev + 1 WHERE id = ?`, "Former publisher", row.WorkID); err != nil {
+			if _, err := database.Exec(`UPDATE books SET publisher = ?, metadata_rev = metadata_rev + 1 WHERE id = ?`, "Former publisher", row.BookID); err != nil {
 				t.Fatal(err)
 			}
-			snapshot, err := db.LoadMetadataWritebackSnapshot(database, row.WorkID)
+			snapshot, err := db.LoadMetadataWritebackSnapshot(database, row.BookID)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -255,7 +255,7 @@ func TestRepairMergedWritebackAttemptLeavesSurvivorMetadataPending(t *testing.T)
 				t.Fatal(err)
 			}
 			// Model interruption on either side of replacement. The pending hash
-			// is still needed for recovery even after this asset changes work.
+			// is still needed for recovery even after this asset changes book.
 			tempRel, err := storage.WriteAdjacentTempWith(root, storagePath, assetID, func(w io.Writer) error {
 				return format.RewriteEPUBMetadataTo(w, bytes.NewReader(original), int64(len(original)), snapshot.Metadata, time.Unix(snapshot.UpdatedAt, 0))
 			})
@@ -280,14 +280,14 @@ func TestRepairMergedWritebackAttemptLeavesSurvivorMetadataPending(t *testing.T)
 				t.Fatal(err)
 			}
 			if err := database.Transact(context.Background(), func(tx *sql.Tx) error {
-				_, err := db.MergeDuplicateWorks(tx, db.FullVisibilityScope(), db.DuplicateMergeRequest{
-					SurvivorID: survivor.WorkID, WorkIDs: []string{survivor.WorkID, row.WorkID},
+				_, err := db.MergeDuplicateBooks(tx, db.FullVisibilityScope(), db.DuplicateMergeRequest{
+					SurvivorID: survivor.BookID, BookIDs: []string{survivor.BookID, row.BookID},
 					DeletedBy: user.ID,
 				})
 				if err != nil {
 					return err
 				}
-				return db.BumpMetadataRev(tx, []string{survivor.WorkID})
+				return db.BumpMetadataRev(tx, []string{survivor.BookID})
 			}); err != nil {
 				t.Fatal(err)
 			}
@@ -295,7 +295,7 @@ func TestRepairMergedWritebackAttemptLeavesSurvivorMetadataPending(t *testing.T)
 			if err != nil || repaired.Finalized+repaired.Replaced != 1 || repaired.Errors != 0 {
 				t.Fatalf("repair = %+v, %v; want one recovered write-back", repaired, err)
 			}
-			state, err := db.GetWorkWritebackState(database, survivor.WorkID)
+			state, err := db.GetBookWritebackState(database, survivor.BookID)
 			if err != nil || state.Dirty != 2 {
 				t.Fatalf("writeback state after merge/repair = %+v, %v; want both assets dirty", state, err)
 			}
@@ -364,12 +364,12 @@ func setupImportedRepairEPUB(t *testing.T, title, author string) (string, *db.DB
 		database.Close()
 		t.Fatalf("OpenRoot: %v", err)
 	}
-	var assetID, storagePath, workID string
-	if err := database.QueryRow("SELECT id, storage_path, work_id FROM assets LIMIT 1").Scan(&assetID, &storagePath, &workID); err != nil {
+	var assetID, storagePath, bookID string
+	if err := database.QueryRow("SELECT id, storage_path, book_id FROM assets LIMIT 1").Scan(&assetID, &storagePath, &bookID); err != nil {
 		database.Close()
 		t.Fatalf("query asset: %v", err)
 	}
-	if _, err := database.Exec("UPDATE works SET metadata_rev = 2 WHERE id = ?", workID); err != nil {
+	if _, err := database.Exec("UPDATE books SET metadata_rev = 2 WHERE id = ?", bookID); err != nil {
 		database.Close()
 		t.Fatalf("update metadata_rev: %v", err)
 	}
@@ -733,14 +733,14 @@ func TestCheckAndRepairCoverOriginals(t *testing.T) {
 	// Covers (and their staging) live in the app data dir, not the books root.
 	dataRoot := storage.NewRoot(dataDir)
 
-	var workID string
-	if err := database.QueryRow("SELECT id FROM works LIMIT 1").Scan(&workID); err != nil {
-		t.Fatalf("query work: %v", err)
+	var bookID string
+	if err := database.QueryRow("SELECT id FROM books LIMIT 1").Scan(&bookID); err != nil {
+		t.Fatalf("query book: %v", err)
 	}
-	if _, err := database.Exec("UPDATE works SET cover_version = 1 WHERE id = ?", workID); err != nil {
+	if _, err := database.Exec("UPDATE books SET cover_version = 1 WHERE id = ?", bookID); err != nil {
 		t.Fatalf("set cover_version: %v", err)
 	}
-	stagedCover := filepath.Join(dataRoot.StagingDir(), ".tmp-deadbeef-"+workID+"-cover")
+	stagedCover := filepath.Join(dataRoot.StagingDir(), ".tmp-deadbeef-"+bookID+"-cover")
 	if err := os.MkdirAll(filepath.Dir(stagedCover), 0o755); err != nil {
 		t.Fatalf("mkdir staging: %v", err)
 	}
@@ -767,7 +767,7 @@ func TestCheckAndRepairCoverOriginals(t *testing.T) {
 	if err := runRepair(context.Background(), dataDir, nil); err != nil {
 		t.Fatalf("runRepair staged cover: %v", err)
 	}
-	coverAbs := dataRoot.Abs(covers.OriginalPath(workID))
+	coverAbs := dataRoot.Abs(covers.OriginalPath(bookID))
 	if got, err := os.ReadFile(coverAbs); err != nil {
 		t.Fatalf("read restored cover: %v", err)
 	} else if string(got) != "cover bytes" {
@@ -793,7 +793,7 @@ func TestCheckAndRepairCoverOriginals(t *testing.T) {
 		t.Fatalf("runRepair missing cover: %v", err)
 	}
 	var coverVersion int
-	if err := database.QueryRow("SELECT cover_version FROM works WHERE id = ?", workID).Scan(&coverVersion); err != nil {
+	if err := database.QueryRow("SELECT cover_version FROM books WHERE id = ?", bookID).Scan(&coverVersion); err != nil {
 		t.Fatalf("query cover_version: %v", err)
 	}
 	if coverVersion != 0 {
@@ -846,18 +846,18 @@ func TestRepairReextractsMissingCoverFromPrimaryAsset(t *testing.T) {
 	}
 	defer database.Close()
 
-	var workID string
+	var bookID string
 	var initialCoverVersion int
 	var initialMetadataRev int64
-	if err := database.QueryRow("SELECT id, cover_version, metadata_rev FROM works LIMIT 1").Scan(&workID, &initialCoverVersion, &initialMetadataRev); err != nil {
-		t.Fatalf("query work cover: %v", err)
+	if err := database.QueryRow("SELECT id, cover_version, metadata_rev FROM books LIMIT 1").Scan(&bookID, &initialCoverVersion, &initialMetadataRev); err != nil {
+		t.Fatalf("query book cover: %v", err)
 	}
 	if initialCoverVersion <= 0 {
 		t.Fatalf("initial cover_version = %d; want imported cover", initialCoverVersion)
 	}
 
 	dataRoot := storage.NewRoot(dataDir)
-	coverAbs := dataRoot.Abs(covers.OriginalPath(workID))
+	coverAbs := dataRoot.Abs(covers.OriginalPath(bookID))
 	if got, err := os.ReadFile(coverAbs); err != nil {
 		t.Fatalf("read imported cover: %v", err)
 	} else if !bytes.Equal(got, metaTinyPNG) {
@@ -893,7 +893,7 @@ func TestRepairReextractsMissingCoverFromPrimaryAsset(t *testing.T) {
 	}
 	var coverVersion int
 	var metadataRev int64
-	if err := database.QueryRow("SELECT cover_version, metadata_rev FROM works WHERE id = ?", workID).Scan(&coverVersion, &metadataRev); err != nil {
+	if err := database.QueryRow("SELECT cover_version, metadata_rev FROM books WHERE id = ?", bookID).Scan(&coverVersion, &metadataRev); err != nil {
 		t.Fatalf("query repaired cover_version: %v", err)
 	}
 	if coverVersion <= initialCoverVersion {
@@ -906,7 +906,7 @@ func TestRepairReextractsMissingCoverFromPrimaryAsset(t *testing.T) {
 		t.Fatalf("runCheck after cover re-extract: %v", err)
 	}
 
-	if _, err := database.Exec("UPDATE works SET manual_overrides = ? WHERE id = ?", bookmeta.MarshalOverrides(map[string]bool{"cover": true, "title": true}), workID); err != nil {
+	if _, err := database.Exec("UPDATE books SET manual_overrides = ? WHERE id = ?", bookmeta.MarshalOverrides(map[string]bool{"cover": true, "title": true}), bookID); err != nil {
 		t.Fatalf("set cover override: %v", err)
 	}
 	if err := os.Remove(coverAbs); err != nil {
@@ -928,7 +928,7 @@ func TestRepairReextractsMissingCoverFromPrimaryAsset(t *testing.T) {
 	}
 	var rawOverrides string
 	var fallbackMetadataRev int64
-	if err := database.QueryRow("SELECT manual_overrides, metadata_rev FROM works WHERE id = ?", workID).Scan(&rawOverrides, &fallbackMetadataRev); err != nil {
+	if err := database.QueryRow("SELECT manual_overrides, metadata_rev FROM books WHERE id = ?", bookID).Scan(&rawOverrides, &fallbackMetadataRev); err != nil {
 		t.Fatalf("query fallback overrides: %v", err)
 	}
 	if fallbackMetadataRev <= metadataRev {

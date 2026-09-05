@@ -38,20 +38,20 @@ type writebackRetryResultDTO struct {
 	Storage AdminStorageDTO `json:"storage"`
 }
 
-// handleAPIBookWriteback runs the "Write metadata to file" action for one work:
+// handleAPIBookWriteback runs the "Write metadata to file" action for one book:
 // it embeds the current metadata snapshot into every writable asset. Admin-only
 // (route role), synchronous, and mode-agnostic like the CLI — the mode governs
 // UI affordances, not an explicit operator action.
 func (s *Server) handleAPIBookWriteback(w http.ResponseWriter, r *http.Request) {
-	workID := r.PathValue("id")
+	bookID := r.PathValue("id")
 
 	scope, err := s.visibilityScope(r)
 	if err != nil {
 		serverError(w, err)
 		return
 	}
-	// Confirm the work exists and is visible before touching files.
-	if _, err := db.GetBook(s.db, scope, workID); errors.Is(err, sql.ErrNoRows) {
+	// Confirm the book exists and is visible before touching files.
+	if _, err := db.GetBook(s.db, scope, bookID); errors.Is(err, sql.ErrNoRows) {
 		http.Error(w, "Book not found", http.StatusNotFound)
 		return
 	} else if err != nil {
@@ -71,7 +71,7 @@ func (s *Server) handleAPIBookWriteback(w http.ResponseWriter, r *http.Request) 
 	}
 
 	summary, err := writeback.Run(r.Context(), s.db, root, writeback.Options{
-		WorkIDs:   []string{workID},
+		BookIDs:   []string{bookID},
 		Scope:     scope,
 		CoverRoot: storage.NewRoot(s.dataDir),
 		WorkQueue: s.storageQueue,
@@ -81,7 +81,7 @@ func (s *Server) handleAPIBookWriteback(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	refreshed, err := s.bookDetailDTO(scope, UserID(r.Context()), workID, true)
+	refreshed, err := s.bookDetailDTO(scope, UserID(r.Context()), bookID, true)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -130,13 +130,13 @@ func (s *Server) handleAPIBulkWriteback(w http.ResponseWriter, r *http.Request) 
 	for _, row := range rows {
 		visible[row.ID] = struct{}{}
 	}
-	workIDs := make([]string, 0, len(rows))
+	bookIDs := make([]string, 0, len(rows))
 	for _, id := range ids {
 		if _, ok := visible[id]; ok {
-			workIDs = append(workIDs, id)
+			bookIDs = append(bookIDs, id)
 		}
 	}
-	assetRows, err := db.ListMetadataWritebackAssetsByWorkIDs(s.db, scope, workIDs, 0)
+	assetRows, err := db.ListMetadataWritebackAssetsByBookIDs(s.db, scope, bookIDs, 0)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -149,7 +149,7 @@ func (s *Server) handleAPIBulkWriteback(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		if !s.startWritebackRun(root, writeback.Options{
-			WorkIDs:   workIDs,
+			BookIDs:   bookIDs,
 			Scope:     scope,
 			CoverRoot: s.dataRoot(),
 			WorkQueue: s.storageQueue,
@@ -160,7 +160,7 @@ func (s *Server) handleAPIBulkWriteback(w http.ResponseWriter, r *http.Request) 
 		statusCode = http.StatusAccepted
 	}
 	writeJSON(w, statusCode, bulkWritebackResultDTO{
-		Selected: len(workIDs),
+		Selected: len(bookIDs),
 		Queued:   len(assetRows),
 	})
 }

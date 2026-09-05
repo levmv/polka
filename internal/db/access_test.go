@@ -2,21 +2,21 @@ package db
 
 import "testing"
 
-func seedAccessWorks(t *testing.T, database *DB) {
+func seedAccessBooks(t *testing.T, database *DB) {
 	t.Helper()
 	if _, err := database.Exec(`
-		INSERT INTO works (id, title, sort_title, tags) VALUES ('w_kid', 'Kid Book', 'Kid Book', 'kids');
-		INSERT INTO works (id, title, sort_title, tags) VALUES ('w_adult', 'Adult Book', 'Adult Book', 'adult');
-		INSERT INTO search (work_id, title, tags) VALUES ('w_kid', 'Kid Book', 'kids');
-		INSERT INTO search (work_id, title, tags) VALUES ('w_adult', 'Adult Book', 'adult');
+		INSERT INTO books (id, title, sort_title, tags) VALUES ('w_kid', 'Kid Book', 'Kid Book', 'kids');
+		INSERT INTO books (id, title, sort_title, tags) VALUES ('w_adult', 'Adult Book', 'Adult Book', 'adult');
+		INSERT INTO search (book_id, title, tags) VALUES ('w_kid', 'Kid Book', 'kids');
+		INSERT INTO search (book_id, title, tags) VALUES ('w_adult', 'Adult Book', 'adult');
 	`); err != nil {
-		t.Fatalf("seed works: %v", err)
+		t.Fatalf("seed books: %v", err)
 	}
 }
 
 func TestVisibilityScopeManualShelf(t *testing.T) {
 	database := newTestDB(t)
-	seedAccessWorks(t, database)
+	seedAccessBooks(t, database)
 	user, err := database.CreateUser("reader", "pw", RoleReader)
 	if err != nil {
 		t.Fatalf("create user: %v", err)
@@ -36,10 +36,10 @@ func TestVisibilityScopeManualShelf(t *testing.T) {
 	if err != nil {
 		t.Fatalf("visibility scope: %v", err)
 	}
-	if ok, err := CanAccessWork(database, scope, "w_kid"); err != nil || !ok {
+	if ok, err := CanAccessBook(database, scope, "w_kid"); err != nil || !ok {
 		t.Fatalf("kid access = %v, %v; want true, nil", ok, err)
 	}
-	if ok, err := CanAccessWork(database, scope, "w_adult"); err != nil || ok {
+	if ok, err := CanAccessBook(database, scope, "w_adult"); err != nil || ok {
 		t.Fatalf("adult access = %v, %v; want false, nil", ok, err)
 	}
 
@@ -69,7 +69,7 @@ func TestVisibilityScopeManualShelf(t *testing.T) {
 
 func TestVisibilityScopeIgnoresPrivateScopeShelfRows(t *testing.T) {
 	database := newTestDB(t)
-	seedAccessWorks(t, database)
+	seedAccessBooks(t, database)
 	user, err := database.CreateUser("reader", "pw", RoleReader)
 	if err != nil {
 		t.Fatalf("create user: %v", err)
@@ -92,14 +92,14 @@ func TestVisibilityScopeIgnoresPrivateScopeShelfRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("visibility scope: %v", err)
 	}
-	if ok, err := CanAccessWork(database, scope, "w_kid"); err != nil || ok {
+	if ok, err := CanAccessBook(database, scope, "w_kid"); err != nil || ok {
 		t.Fatalf("private scope shelf access = %v, %v; want false, nil", ok, err)
 	}
 }
 
 func TestVisibilityScopePrivateCuratorShelf(t *testing.T) {
 	database := newTestDB(t)
-	seedAccessWorks(t, database)
+	seedAccessBooks(t, database)
 	curator, err := database.CreateUser("admin", "pw", RoleAdmin)
 	if err != nil {
 		t.Fatalf("create curator: %v", err)
@@ -128,10 +128,10 @@ func TestVisibilityScopePrivateCuratorShelf(t *testing.T) {
 	if err != nil {
 		t.Fatalf("visibility scope: %v", err)
 	}
-	if ok, err := CanAccessWork(database, scope, "w_kid"); err != nil || !ok {
+	if ok, err := CanAccessBook(database, scope, "w_kid"); err != nil || !ok {
 		t.Fatalf("private curator shelf access = %v, %v; want true, nil", ok, err)
 	}
-	if ok, err := CanAccessWork(database, scope, "w_adult"); err != nil || ok {
+	if ok, err := CanAccessBook(database, scope, "w_adult"); err != nil || ok {
 		t.Fatalf("adult access = %v, %v; want false, nil", ok, err)
 	}
 
@@ -146,7 +146,7 @@ func TestVisibilityScopePrivateCuratorShelf(t *testing.T) {
 
 func TestVisibilityScopeQueryShelf(t *testing.T) {
 	database := newTestDB(t)
-	seedAccessWorks(t, database)
+	seedAccessBooks(t, database)
 	user, err := database.CreateUser("reader", "pw", RoleReader)
 	if err != nil {
 		t.Fatalf("create user: %v", err)
@@ -171,10 +171,10 @@ func TestVisibilityScopeQueryShelf(t *testing.T) {
 	if err != nil {
 		t.Fatalf("visibility scope: %v", err)
 	}
-	if ok, err := CanAccessWork(database, scope, "w_kid"); err != nil || !ok {
+	if ok, err := CanAccessBook(database, scope, "w_kid"); err != nil || !ok {
 		t.Fatalf("kid access = %v, %v; want true, nil", ok, err)
 	}
-	if ok, err := CanAccessWork(database, scope, "w_adult"); err != nil || ok {
+	if ok, err := CanAccessBook(database, scope, "w_adult"); err != nil || ok {
 		t.Fatalf("adult access = %v, %v; want false, nil", ok, err)
 	}
 	rows, err := ListBooks(database, scope, 0, "", SortAdded, 10, 0)
@@ -200,7 +200,7 @@ func TestVisibilityScopeQueryShelf(t *testing.T) {
 
 func TestVisibilityScopeTrash(t *testing.T) {
 	database := newTestDB(t)
-	seedAccessWorks(t, database)
+	seedAccessBooks(t, database)
 	user, err := database.CreateUser("reader", "pw", RoleReader)
 	if err != nil {
 		t.Fatalf("create user: %v", err)
@@ -215,10 +215,10 @@ func TestVisibilityScopeTrash(t *testing.T) {
 	if _, err := database.UpdateUserAccess(user.ID, UserAccess{Role: RoleReader, ContentScope: ContentScopeShelves, ShelfIDs: []string{shelf.ID}}); err != nil {
 		t.Fatalf("update access: %v", err)
 	}
-	if err := SoftDeleteWork(database, "w_kid", user.ID); err != nil {
+	if err := SoftDeleteBook(database, "w_kid", user.ID); err != nil {
 		t.Fatalf("trash kid: %v", err)
 	}
-	if err := SoftDeleteWork(database, "w_adult", user.ID); err != nil {
+	if err := SoftDeleteBook(database, "w_adult", user.ID); err != nil {
 		t.Fatalf("trash adult: %v", err)
 	}
 
@@ -226,14 +226,14 @@ func TestVisibilityScopeTrash(t *testing.T) {
 	if err != nil {
 		t.Fatalf("visibility scope: %v", err)
 	}
-	if ok, err := CanAccessTrashedWork(database, scope, "w_kid"); err != nil || !ok {
+	if ok, err := CanAccessTrashedBook(database, scope, "w_kid"); err != nil || !ok {
 		t.Fatalf("trashed kid access = %v, %v; want true, nil", ok, err)
 	}
-	if ok, err := CanAccessTrashedWork(database, scope, "w_adult"); err != nil || ok {
+	if ok, err := CanAccessTrashedBook(database, scope, "w_adult"); err != nil || ok {
 		t.Fatalf("trashed adult access = %v, %v; want false, nil", ok, err)
 	}
 
-	rows, err := ListTrashedWorks(database, scope)
+	rows, err := ListTrashedBooks(database, scope)
 	if err != nil {
 		t.Fatalf("list scoped trash: %v", err)
 	}

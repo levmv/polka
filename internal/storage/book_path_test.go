@@ -170,7 +170,7 @@ func TestRenderBookPathTemplate(t *testing.T) {
 		Series:      "Dune",
 		SeriesIndex: "02",
 		AssetID:     "a_123",
-		WorkID:      "w_123",
+		BookID:      "w_123",
 		Ext:         ".EPUB",
 	}
 	got, err := RenderBookPathTemplate(

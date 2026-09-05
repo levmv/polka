@@ -42,22 +42,22 @@ func TestSearchFilterAccessScopeReasons(t *testing.T) {
 	}
 }
 
-func TestBookSearchConsumersSelectTheSameWorks(t *testing.T) {
+func TestBookSearchConsumersSelectTheSameBooks(t *testing.T) {
 	database := newTestDB(t)
 	user, err := database.CreateUser("search-reader", "pw", RoleReader)
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
 	if _, err := database.Exec(`
-		INSERT INTO works (id, title, sort_title, cover_version) VALUES
+		INSERT INTO books (id, title, sort_title, cover_version) VALUES
 			('w1', 'Alpha Needle', 'Alpha Needle', 0),
 			('w2', 'Beta Needle', 'Beta Needle', 1),
 			('w3', 'Gamma', 'Gamma', 0);
-		INSERT INTO assets (id, work_id, storage_path, filename, extension) VALUES
+		INSERT INTO assets (id, book_id, storage_path, filename, extension) VALUES
 			('a1', 'w1', 'a.epub', 'a.epub', '.epub'),
 			('a2', 'w2', 'b.epub', 'b.epub', '.epub'),
 			('a3', 'w3', 'c.epub', 'c.epub', '.epub');
-		INSERT INTO search (work_id, title, authors) VALUES
+		INSERT INTO search (book_id, title, authors) VALUES
 			('w1', 'Alpha Needle', ''), ('w2', 'Beta Needle', ''), ('w3', 'Gamma', '');
 	`); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -120,12 +120,12 @@ func TestBookSearchConsumersSelectTheSameWorks(t *testing.T) {
 func TestSearchRelevancePrefersIdentityFields(t *testing.T) {
 	database := newTestDB(t)
 	if _, err := database.Exec(`
-		INSERT INTO works (id, title, sort_title) VALUES
+		INSERT INTO books (id, title, sort_title) VALUES
 			('w_title', 'Needle', 'Needle'),
 			('w_author', 'Other', 'Other'),
 			('w_series', 'Different', 'Different'),
 			('w_description', 'Another', 'Another');
-		INSERT INTO search (work_id, title, authors, series, description) VALUES
+		INSERT INTO search (book_id, title, authors, series, description) VALUES
 			('w_title', 'Needle', 'Other', '', ''),
 			('w_author', 'Other', 'Needle', '', ''),
 			('w_series', 'Different', 'Someone', 'Needle', ''),
@@ -147,11 +147,11 @@ func TestSearchRelevancePrefersIdentityFields(t *testing.T) {
 func TestSearchPrefixMatching(t *testing.T) {
 	database := newTestDB(t)
 	if _, err := database.Exec(`
-		INSERT INTO works (id, title, sort_title) VALUES
+		INSERT INTO books (id, title, sort_title) VALUES
 			('w_latin', 'Foundation Base', 'Foundation Base'),
 			('w_han', '地球往事', '地球往事'),
 			('w_kana', 'ねこ物語', 'ねこ物語');
-		INSERT INTO search (work_id, title) VALUES
+		INSERT INTO search (book_id, title) VALUES
 			('w_latin', 'Foundation Base'),
 			('w_han', '地球往事'),
 			('w_kana', 'ねこ物語');
@@ -187,8 +187,8 @@ func TestSearchPrefixMatching(t *testing.T) {
 func TestUpdateSearchIndexReplacesContentlessRow(t *testing.T) {
 	database := newTestDB(t)
 
-	if _, err := database.Exec("INSERT INTO works (id, title, sort_title) VALUES ('w_min', 'Minimal Book', 'Minimal Book')"); err != nil {
-		t.Fatalf("insert work: %v", err)
+	if _, err := database.Exec("INSERT INTO books (id, title, sort_title) VALUES ('w_min', 'Minimal Book', 'Minimal Book')"); err != nil {
+		t.Fatalf("insert book: %v", err)
 	}
 
 	tx, err := database.Begin()
@@ -203,16 +203,16 @@ func TestUpdateSearchIndexReplacesContentlessRow(t *testing.T) {
 		t.Fatalf("commit: %v", err)
 	}
 
-	var workID string
-	if err := database.QueryRow(`SELECT work_id FROM search WHERE search MATCH 'minimal'`).Scan(&workID); err != nil {
-		t.Fatalf("find indexed work: %v", err)
+	var bookID string
+	if err := database.QueryRow(`SELECT book_id FROM search WHERE search MATCH 'minimal'`).Scan(&bookID); err != nil {
+		t.Fatalf("find indexed book: %v", err)
 	}
-	if workID != "w_min" {
-		t.Fatalf("indexed work = %q; want w_min", workID)
+	if bookID != "w_min" {
+		t.Fatalf("indexed book = %q; want w_min", bookID)
 	}
 
-	if _, err := database.Exec("UPDATE works SET title = 'Renamed Book', sort_title = 'Renamed Book' WHERE id = 'w_min'"); err != nil {
-		t.Fatalf("rename work: %v", err)
+	if _, err := database.Exec("UPDATE books SET title = 'Renamed Book', sort_title = 'Renamed Book' WHERE id = 'w_min'"); err != nil {
+		t.Fatalf("rename book: %v", err)
 	}
 	tx, err = database.Begin()
 	if err != nil {

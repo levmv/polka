@@ -17,7 +17,7 @@ func TestAPIAnnotationExportIsStandaloneEscapedAndUserScoped(t *testing.T) {
 	alice := mustUser(t, database, "alice-export", db.RoleMember)
 	bob := mustUser(t, database, "bob-export", db.RoleMember)
 	if _, err := database.Exec(`
-		UPDATE works SET title = 'A/B: <Book>' WHERE id = 'w_1';
+		UPDATE books SET title = 'A/B: <Book>' WHERE id = 'w_1';
 		UPDATE authors SET name = 'Writer & <script>Co</script>' WHERE id = 'a_1';
 		UPDATE assets SET format = 'epub', can_read = 1, is_primary = 1 WHERE id = 'asset_1';
 	`); err != nil {

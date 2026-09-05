@@ -85,7 +85,7 @@ function createSeriesCard(series: SeriesSummary): HTMLElement {
 
     card.innerHTML = `
         <span class="series-card-cover-slot">
-            <img src="${coverUrl(series.cover_work_id, series.cover_version, 'thumb')}" loading="lazy" draggable="false" class="series-card-cover-image" alt="">
+            <img src="${coverUrl(series.cover_book_id, series.cover_version, 'thumb')}" loading="lazy" draggable="false" class="series-card-cover-image" alt="">
             ${progressHtml}
             <span class="series-card-count" title="${escapeHtml(badge.title)}" aria-hidden="true">${escapeHtml(badge.text)}</span>
         </span>

@@ -124,8 +124,8 @@ func TestAPIImportUploadRestoresTrashedDuplicate(t *testing.T) {
 		t.Fatalf("initial response missing ids: %+v", imported)
 	}
 
-	if err := db.SoftDeleteWork(database, imported.Book.ID, u.ID); err != nil {
-		t.Fatalf("soft delete imported work: %v", err)
+	if err := db.SoftDeleteBook(database, imported.Book.ID, u.ID); err != nil {
+		t.Fatalf("soft delete imported book: %v", err)
 	}
 
 	req = uploadBookRequest(t, "restore-upload.epub", epub)
@@ -141,12 +141,12 @@ func TestAPIImportUploadRestoresTrashedDuplicate(t *testing.T) {
 		t.Fatalf("decode restore response: %v", err)
 	}
 	if restored.Status != "restored" || restored.Book.ID != imported.Book.ID || restored.AssetID != imported.AssetID {
-		t.Fatalf("restore response = %+v; want restored original work/asset", restored)
+		t.Fatalf("restore response = %+v; want restored original book/asset", restored)
 	}
 
 	var deletedAt sql.NullInt64
-	if err := database.QueryRow("SELECT deleted_at FROM works WHERE id = ?", imported.Book.ID).Scan(&deletedAt); err != nil {
-		t.Fatalf("query restored work: %v", err)
+	if err := database.QueryRow("SELECT deleted_at FROM books WHERE id = ?", imported.Book.ID).Scan(&deletedAt); err != nil {
+		t.Fatalf("query restored book: %v", err)
 	}
 	if deletedAt.Valid {
 		t.Fatalf("deleted_at = %d, want NULL after duplicate upload restore", deletedAt.Int64)
@@ -229,12 +229,12 @@ func TestAPIImportUploadRejectsUnsupportedFilename(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusBadRequest, w.Body.String())
 	}
-	var works int
-	if err := database.QueryRow("SELECT COUNT(*) FROM works").Scan(&works); err != nil {
-		t.Fatalf("count works: %v", err)
+	var books int
+	if err := database.QueryRow("SELECT COUNT(*) FROM books").Scan(&books); err != nil {
+		t.Fatalf("count books: %v", err)
 	}
-	if works != 0 {
-		t.Fatalf("works = %d, want 0", works)
+	if books != 0 {
+		t.Fatalf("books = %d, want 0", books)
 	}
 }
 
@@ -266,8 +266,8 @@ func TestAPIImportRequiresLayoutBeforeWrite(t *testing.T) {
 					t.Fatalf("EnsureLayout: %v", err)
 				}
 				if _, err := database.Exec(
-					`INSERT INTO works (id, title, sort_title) VALUES ('w_seed', 'Seed', 'Seed');
-					 INSERT INTO assets (id, work_id, storage_path, filename, extension)
+					`INSERT INTO books (id, title, sort_title) VALUES ('w_seed', 'Seed', 'Seed');
+					 INSERT INTO assets (id, book_id, storage_path, filename, extension)
 					   VALUES ('a_seed', 'w_seed', 'Seed/a_seed.epub', 'a_seed.epub', '.epub');`,
 				); err != nil {
 					t.Fatalf("seed catalog asset: %v", err)

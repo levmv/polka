@@ -16,7 +16,7 @@ const DuplicateReasonTitleAuthor = "title_author"
 var ErrInvalidDuplicateGroup = errors.New("duplicate group is no longer valid")
 
 // Duplicate detection is intentionally conservative: the current detector groups
-// live works by normalized title + primary author only. GetPossibleDuplicates
+// live books by normalized title + primary author only. GetPossibleDuplicates
 // returns the total number of non-dismissed groups before maxGroups pagination,
 // then materializes up to maxGroups of those groups for display.
 type DuplicateGroup struct {
@@ -25,7 +25,7 @@ type DuplicateGroup struct {
 	Books  []BookSummaryRow
 }
 
-// GetPossibleDuplicates scans live works and groups normalized keys in Go
+// GetPossibleDuplicates scans live books and groups normalized keys in Go
 // rather than in SQL — exact SQL grouping would need a denormalized
 // Unicode-aware dedup key column. Deliberate; revisit only if duplicate
 // suggestions prove hot on a large real library, not as a drive-by rewrite.
@@ -88,7 +88,7 @@ func GetPossibleDuplicates(queryer Queryer, scope VisibilityScope, maxGroups int
 
 type DuplicateMergeRequest struct {
 	SurvivorID  string
-	WorkIDs     []string
+	BookIDs     []string
 	DeletedBy   int64
 	CoverFromID string
 }
@@ -106,7 +106,7 @@ type duplicateCandidate struct {
 	primaryAuthor string
 }
 
-type duplicateWork struct {
+type duplicateBook struct {
 	id            string
 	title         string
 	primaryAuthor string
@@ -118,25 +118,25 @@ type duplicateSet struct {
 	reason string
 	key    string
 	ids    []string
-	works  map[string]duplicateWork
+	books  map[string]duplicateBook
 }
 
 type duplicateReadingState struct {
 	userID      int64
-	workID      string
+	bookID      string
 	status      string
 	lastEventID sql.NullString
 	updatedAt   int64
 }
 
 func queryDuplicateCandidates(queryer Queryer, scope VisibilityScope) (*sql.Rows, error) {
-	where, args := scope.AppendWorkWhere("w.deleted_at IS NULL", "w.id")
+	where, args := scope.AppendBookWhere("b.deleted_at IS NULL", "b.id")
 	rows, err := queryer.Query(fmt.Sprintf(`
-		SELECT w.id, w.title,
+		SELECT b.id, b.title,
 		       COALESCE(%s, '') as primary_author
-		FROM works w
+		FROM books b
 		WHERE %s
-		ORDER BY w.added_at DESC
+		ORDER BY b.added_at DESC
 	`, subPrimaryAuthorName, where), args...)
 	if err != nil {
 		return nil, fmt.Errorf("query duplicate candidates: %w", err)
@@ -178,22 +178,22 @@ func duplicateCandidateGroups(queryer Queryer, scope VisibilityScope) ([]string,
 	return keys, groups, nil
 }
 
-func DuplicateMergeCoverSource(queryer Queryer, scope VisibilityScope, survivorID string, workIDs []string) (string, error) {
-	set, err := validateDuplicateSet(queryer, scope, survivorID, workIDs)
+func DuplicateMergeCoverSource(queryer Queryer, scope VisibilityScope, survivorID string, bookIDs []string) (string, error) {
+	set, err := validateDuplicateSet(queryer, scope, survivorID, bookIDs)
 	if err != nil {
 		return "", err
 	}
 
-	survivor := set.works[survivorID]
+	survivor := set.books[survivorID]
 	if survivor.coverVersion > 0 {
 		return "", nil
 	}
-	for _, workID := range set.ids {
-		if workID == survivorID {
+	for _, bookID := range set.ids {
+		if bookID == survivorID {
 			continue
 		}
-		if set.works[workID].coverVersion > 0 {
-			return workID, nil
+		if set.books[bookID].coverVersion > 0 {
+			return bookID, nil
 		}
 	}
 	return "", nil
@@ -203,15 +203,15 @@ func DuplicateMergeCoverSource(queryer Queryer, scope VisibilityScope, survivorI
 // later metadata edit or import changes the key/member set and should surface a
 // fresh cleanup item; dismissals are not broad "never show this title again"
 // suppressions.
-func DismissDuplicateGroup(tx *sql.Tx, scope VisibilityScope, workIDs []string, userID int64) error {
-	set, err := validateDuplicateSet(tx, scope, "", workIDs)
+func DismissDuplicateGroup(tx *sql.Tx, scope VisibilityScope, bookIDs []string, userID int64) error {
+	set, err := validateDuplicateSet(tx, scope, "", bookIDs)
 	if err != nil {
 		return err
 	}
 	ids := append([]string(nil), set.ids...)
 	slices.Sort(ids)
 	_, err = tx.Exec(`
-		INSERT INTO duplicate_dismissals (id, reason, detector_key, work_ids, created_by)
+		INSERT INTO duplicate_dismissals (id, reason, detector_key, book_ids, created_by)
 		VALUES (?, ?, ?, ?, ?)
 	`, id.New(id.DuplicateDismissal), set.reason, set.key, strings.Join(ids, "\n"), sql.NullInt64{Int64: userID, Valid: userID > 0})
 	if err != nil {
@@ -220,16 +220,16 @@ func DismissDuplicateGroup(tx *sql.Tx, scope VisibilityScope, workIDs []string, 
 	return nil
 }
 
-func MergeDuplicateWorks(tx *sql.Tx, scope VisibilityScope, req DuplicateMergeRequest) (DuplicateMergeResult, error) {
-	set, err := validateDuplicateSet(tx, scope, req.SurvivorID, req.WorkIDs)
+func MergeDuplicateBooks(tx *sql.Tx, scope VisibilityScope, req DuplicateMergeRequest) (DuplicateMergeResult, error) {
+	set, err := validateDuplicateSet(tx, scope, req.SurvivorID, req.BookIDs)
 	if err != nil {
 		return DuplicateMergeResult{}, err
 	}
 
 	loserIDs := make([]string, 0, len(set.ids)-1)
-	for _, workID := range set.ids {
-		if workID != req.SurvivorID {
-			loserIDs = append(loserIDs, workID)
+	for _, bookID := range set.ids {
+		if bookID != req.SurvivorID {
+			loserIDs = append(loserIDs, bookID)
 		}
 	}
 	if len(loserIDs) == 0 {
@@ -241,15 +241,15 @@ func MergeDuplicateWorks(tx *sql.Tx, scope VisibilityScope, req DuplicateMergeRe
 		TrashedIDs: append([]string(nil), loserIDs...),
 	}
 
-	survivor := set.works[req.SurvivorID]
+	survivor := set.books[req.SurvivorID]
 	if strings.TrimSpace(survivor.description.String) == "" {
-		for _, workID := range loserIDs {
-			desc := strings.TrimSpace(set.works[workID].description.String)
+		for _, bookID := range loserIDs {
+			desc := strings.TrimSpace(set.books[bookID].description.String)
 			if desc == "" {
 				continue
 			}
 			if _, err := tx.Exec(`
-				UPDATE works
+				UPDATE books
 				SET description = ?, updated_at = unixepoch()
 				WHERE id = ?
 			`, desc, req.SurvivorID); err != nil {
@@ -261,12 +261,12 @@ func MergeDuplicateWorks(tx *sql.Tx, scope VisibilityScope, req DuplicateMergeRe
 	}
 
 	if req.CoverFromID != "" {
-		source, ok := set.works[req.CoverFromID]
+		source, ok := set.books[req.CoverFromID]
 		if !ok || req.CoverFromID == req.SurvivorID || source.coverVersion <= 0 || survivor.coverVersion > 0 {
 			return DuplicateMergeResult{}, ErrInvalidDuplicateGroup
 		}
 		res, err := tx.Exec(`
-			UPDATE works
+			UPDATE books
 			SET cover_version = cover_version + 1, updated_at = unixepoch()
 			WHERE id = ? AND cover_version <= 0
 		`, req.SurvivorID)
@@ -284,19 +284,19 @@ func MergeDuplicateWorks(tx *sql.Tx, scope VisibilityScope, req DuplicateMergeRe
 	if _, err := tx.Exec(`
 		UPDATE assets
 		SET is_primary = 0, updated_at = unixepoch()
-		WHERE work_id IN (`+loserPlaceholders+`)
+		WHERE book_id IN (`+loserPlaceholders+`)
 	`, loserArgs...); err != nil {
 		return DuplicateMergeResult{}, fmt.Errorf("demote duplicate loser assets: %w", err)
 	}
 
-	// Revisions belong to one work; acknowledgement from the former work says
+	// Revisions belong to one book; acknowledgement from the former book says
 	// nothing about whether these files contain the survivor's metadata.
 	// Pending writes must retain their hashes for byte recovery, but repair must
-	// not restore acknowledgement of the former work's revision either.
+	// not restore acknowledgement of the former book's revision either.
 	if _, err := tx.Exec(`
 		UPDATE metadata_writeback_attempts
 		SET metadata_rev = 0
-		WHERE asset_id IN (SELECT id FROM assets WHERE work_id IN (`+loserPlaceholders+`))
+		WHERE asset_id IN (SELECT id FROM assets WHERE book_id IN (`+loserPlaceholders+`))
 	`, loserArgs...); err != nil {
 		return DuplicateMergeResult{}, fmt.Errorf("invalidate duplicate writeback attempts: %w", err)
 	}
@@ -304,8 +304,8 @@ func MergeDuplicateWorks(tx *sql.Tx, scope VisibilityScope, req DuplicateMergeRe
 	args := append([]any{req.SurvivorID}, loserArgs...)
 	if _, err := tx.Exec(`
 		UPDATE assets
-		SET work_id = ?, writeback_rev = 0, writeback_error = NULL, updated_at = unixepoch()
-		WHERE work_id IN (`+loserPlaceholders+`)
+		SET book_id = ?, writeback_rev = 0, writeback_error = NULL, updated_at = unixepoch()
+		WHERE book_id IN (`+loserPlaceholders+`)
 	`, args...); err != nil {
 		return DuplicateMergeResult{}, fmt.Errorf("move duplicate assets: %w", err)
 	}
@@ -316,16 +316,16 @@ func MergeDuplicateWorks(tx *sql.Tx, scope VisibilityScope, req DuplicateMergeRe
 
 	args = append([]any{req.SurvivorID}, loserArgs...)
 	if _, err := tx.Exec(`
-		INSERT OR IGNORE INTO shelf_books (shelf_id, work_id, position, added_at)
+		INSERT OR IGNORE INTO shelf_books (shelf_id, book_id, position, added_at)
 		SELECT shelf_id, ?, position, added_at
 		FROM shelf_books
-		WHERE work_id IN (`+loserPlaceholders+`)
+		WHERE book_id IN (`+loserPlaceholders+`)
 	`, args...); err != nil {
 		return DuplicateMergeResult{}, fmt.Errorf("merge duplicate shelf memberships: %w", err)
 	}
 	if _, err := tx.Exec(`
 		DELETE FROM shelf_books
-		WHERE work_id IN (`+loserPlaceholders+`)
+		WHERE book_id IN (`+loserPlaceholders+`)
 	`, loserArgs...); err != nil {
 		return DuplicateMergeResult{}, fmt.Errorf("delete duplicate loser shelf memberships: %w", err)
 	}
@@ -333,8 +333,8 @@ func MergeDuplicateWorks(tx *sql.Tx, scope VisibilityScope, req DuplicateMergeRe
 	args = append([]any{req.SurvivorID}, loserArgs...)
 	if _, err := tx.Exec(`
 		UPDATE delivery_jobs
-		SET work_id = ?, updated_at = unixepoch()
-		WHERE work_id IN (`+loserPlaceholders+`)
+		SET book_id = ?, updated_at = unixepoch()
+		WHERE book_id IN (`+loserPlaceholders+`)
 	`, args...); err != nil {
 		return DuplicateMergeResult{}, fmt.Errorf("merge duplicate delivery jobs: %w", err)
 	}
@@ -343,9 +343,9 @@ func MergeDuplicateWorks(tx *sql.Tx, scope VisibilityScope, req DuplicateMergeRe
 		return DuplicateMergeResult{}, err
 	}
 
-	for _, workID := range loserIDs {
-		if err := SoftDeleteWork(tx, workID, req.DeletedBy); err != nil {
-			return DuplicateMergeResult{}, fmt.Errorf("trash duplicate loser %s: %w", workID, err)
+	for _, bookID := range loserIDs {
+		if err := SoftDeleteBook(tx, bookID, req.DeletedBy); err != nil {
+			return DuplicateMergeResult{}, fmt.Errorf("trash duplicate loser %s: %w", bookID, err)
 		}
 	}
 	return result, nil
@@ -353,16 +353,16 @@ func MergeDuplicateWorks(tx *sql.Tx, scope VisibilityScope, req DuplicateMergeRe
 
 // mergeDuplicateReadingData retains every event history while choosing one
 // current state per user. The newest updated state wins; the selected survivor
-// wins an exact timestamp tie, followed by stable work-id order. Event chains
-// carry explicit predecessors, so moving independent histories onto one work
+// wins an exact timestamp tie, followed by stable book-id order. Event chains
+// carry explicit predecessors, so moving independent histories onto one book
 // does not make Undo jump from the selected history into another one.
 func mergeDuplicateReadingData(tx *sql.Tx, survivorID string, loserIDs []string) error {
-	workIDs := append([]string{survivorID}, loserIDs...)
-	placeholders, args := idPlaceholders(workIDs)
+	bookIDs := append([]string{survivorID}, loserIDs...)
+	placeholders, args := idPlaceholders(bookIDs)
 	rows, err := tx.Query(`
-		SELECT user_id, work_id, status, last_event_id, updated_at
-		FROM user_work_reading_state
-		WHERE work_id IN (`+placeholders+`)
+		SELECT user_id, book_id, status, last_event_id, updated_at
+		FROM user_book_reading_state
+		WHERE book_id IN (`+placeholders+`)
 	`, args...)
 	if err != nil {
 		return fmt.Errorf("query duplicate reading states: %w", err)
@@ -371,7 +371,7 @@ func mergeDuplicateReadingData(tx *sql.Tx, survivorID string, loserIDs []string)
 	winners := make(map[int64]duplicateReadingState)
 	for rows.Next() {
 		var candidate duplicateReadingState
-		if err := rows.Scan(&candidate.userID, &candidate.workID, &candidate.status, &candidate.lastEventID, &candidate.updatedAt); err != nil {
+		if err := rows.Scan(&candidate.userID, &candidate.bookID, &candidate.status, &candidate.lastEventID, &candidate.updatedAt); err != nil {
 			rows.Close()
 			return fmt.Errorf("scan duplicate reading state: %w", err)
 		}
@@ -391,25 +391,25 @@ func mergeDuplicateReadingData(tx *sql.Tx, survivorID string, loserIDs []string)
 	loserPlaceholders, loserArgs := idPlaceholders(loserIDs)
 	eventArgs := append([]any{survivorID}, loserArgs...)
 	if _, err := tx.Exec(`
-		UPDATE user_work_reading_events
-		SET work_id = ?
-		WHERE work_id IN (`+loserPlaceholders+`)
+		UPDATE user_book_reading_events
+		SET book_id = ?
+		WHERE book_id IN (`+loserPlaceholders+`)
 	`, eventArgs...); err != nil {
 		return fmt.Errorf("merge duplicate reading events: %w", err)
 	}
 	if _, err := tx.Exec(`
-		DELETE FROM user_work_reading_state
-		WHERE work_id IN (`+loserPlaceholders+`)
+		DELETE FROM user_book_reading_state
+		WHERE book_id IN (`+loserPlaceholders+`)
 	`, loserArgs...); err != nil {
 		return fmt.Errorf("delete duplicate loser reading states: %w", err)
 	}
 
 	for _, state := range winners {
 		if _, err := tx.Exec(`
-			INSERT INTO user_work_reading_state
-				(user_id, work_id, status, last_event_id, updated_at)
+			INSERT INTO user_book_reading_state
+				(user_id, book_id, status, last_event_id, updated_at)
 			VALUES (?, ?, ?, ?, ?)
-			ON CONFLICT(user_id, work_id) DO UPDATE SET
+			ON CONFLICT(user_id, book_id) DO UPDATE SET
 				status = excluded.status,
 				last_event_id = excluded.last_event_id,
 				updated_at = excluded.updated_at
@@ -424,17 +424,17 @@ func preferDuplicateReadingState(candidate, current duplicateReadingState, survi
 	if candidate.updatedAt != current.updatedAt {
 		return candidate.updatedAt > current.updatedAt
 	}
-	if candidate.workID == survivorID || current.workID == survivorID {
-		return candidate.workID == survivorID
+	if candidate.bookID == survivorID || current.bookID == survivorID {
+		return candidate.bookID == survivorID
 	}
-	return candidate.workID < current.workID
+	return candidate.bookID < current.bookID
 }
 
 // validateDuplicateSet re-checks the detector contract at mutation time so a
-// stale UI cannot merge/dismiss arbitrary work IDs. Every supplied live work
+// stale UI cannot merge/dismiss arbitrary book IDs. Every supplied live book
 // must still be visible in scope and must still share the same detector key.
-func validateDuplicateSet(q Queryer, scope VisibilityScope, survivorID string, workIDs []string) (duplicateSet, error) {
-	ids := dedupWorkIDs(workIDs)
+func validateDuplicateSet(q Queryer, scope VisibilityScope, survivorID string, bookIDs []string) (duplicateSet, error) {
+	ids := dedupBookIDs(bookIDs)
 	if len(ids) < 2 {
 		return duplicateSet{}, ErrInvalidDuplicateGroup
 	}
@@ -442,26 +442,26 @@ func validateDuplicateSet(q Queryer, scope VisibilityScope, survivorID string, w
 		return duplicateSet{}, ErrInvalidDuplicateGroup
 	}
 
-	works, err := duplicateWorksForIDs(q, scope, ids)
+	books, err := duplicateBooksForIDs(q, scope, ids)
 	if err != nil {
 		return duplicateSet{}, err
 	}
-	if len(works) != len(ids) {
+	if len(books) != len(ids) {
 		return duplicateSet{}, ErrInvalidDuplicateGroup
 	}
 
 	var key string
-	for _, workID := range ids {
-		work, ok := works[workID]
+	for _, bookID := range ids {
+		book, ok := books[bookID]
 		if !ok {
 			return duplicateSet{}, ErrInvalidDuplicateGroup
 		}
-		workKey := duplicateMatchKey(work.title, work.primaryAuthor)
+		bookKey := duplicateMatchKey(book.title, book.primaryAuthor)
 		if key == "" {
-			key = workKey
+			key = bookKey
 			continue
 		}
-		if workKey != key {
+		if bookKey != key {
 			return duplicateSet{}, ErrInvalidDuplicateGroup
 		}
 	}
@@ -472,39 +472,39 @@ func validateDuplicateSet(q Queryer, scope VisibilityScope, survivorID string, w
 		reason: DuplicateReasonTitleAuthor,
 		key:    key,
 		ids:    ids,
-		works:  works,
+		books:  books,
 	}, nil
 }
 
-func duplicateWorksForIDs(queryer Queryer, scope VisibilityScope, ids []string) (map[string]duplicateWork, error) {
+func duplicateBooksForIDs(queryer Queryer, scope VisibilityScope, ids []string) (map[string]duplicateBook, error) {
 	placeholders, args := idPlaceholders(ids)
-	where := "w.deleted_at IS NULL AND w.id IN (" + placeholders + ")"
-	where, args = scope.AppendWorkWhere(where, "w.id", args...)
+	where := "b.deleted_at IS NULL AND b.id IN (" + placeholders + ")"
+	where, args = scope.AppendBookWhere(where, "b.id", args...)
 
 	rows, err := queryer.Query(fmt.Sprintf(`
-		SELECT w.id, w.title,
+		SELECT b.id, b.title,
 		       COALESCE(%s, '') AS primary_author,
-		       w.description, w.cover_version
-		FROM works w
+		       b.description, b.cover_version
+		FROM books b
 		WHERE %s
 	`, subPrimaryAuthorName, where), args...)
 	if err != nil {
-		return nil, fmt.Errorf("query duplicate works: %w", err)
+		return nil, fmt.Errorf("query duplicate books: %w", err)
 	}
 	defer rows.Close()
 
-	works := make(map[string]duplicateWork, len(ids))
+	books := make(map[string]duplicateBook, len(ids))
 	for rows.Next() {
-		var work duplicateWork
-		if err := rows.Scan(&work.id, &work.title, &work.primaryAuthor, &work.description, &work.coverVersion); err != nil {
-			return nil, fmt.Errorf("scan duplicate work: %w", err)
+		var book duplicateBook
+		if err := rows.Scan(&book.id, &book.title, &book.primaryAuthor, &book.description, &book.coverVersion); err != nil {
+			return nil, fmt.Errorf("scan duplicate book: %w", err)
 		}
-		works[work.id] = work
+		books[book.id] = book
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("duplicate work rows: %w", err)
+		return nil, fmt.Errorf("duplicate book rows: %w", err)
 	}
-	return works, nil
+	return books, nil
 }
 
 type duplicateDismissal struct {
@@ -513,7 +513,7 @@ type duplicateDismissal struct {
 
 func duplicateDismissals(queryer Queryer) (map[string][]duplicateDismissal, error) {
 	rows, err := queryer.Query(`
-		SELECT reason, detector_key, work_ids
+		SELECT reason, detector_key, book_ids
 		FROM duplicate_dismissals
 	`)
 	if err != nil {
@@ -571,7 +571,7 @@ func duplicateDismissalMapKey(reason, key string) string {
 	return reason + "\x00" + key
 }
 
-func dedupWorkIDs(in []string) []string {
+func dedupBookIDs(in []string) []string {
 	seen := make(map[string]struct{}, len(in))
 	out := make([]string, 0, len(in))
 	for _, s := range in {
@@ -610,8 +610,8 @@ func bookSummariesByIDs(queryer Queryer, ids []string) (map[string]BookSummaryRo
 
 		rows, err := queryer.Query(fmt.Sprintf(`
 			SELECT %s
-			FROM works w
-			WHERE w.id IN (`+placeholders+`)
+			FROM books b
+			WHERE b.id IN (`+placeholders+`)
 		`, bookSummaryColumns), args...)
 		if err != nil {
 			return nil, fmt.Errorf("query duplicate summaries: %w", err)

@@ -22,7 +22,7 @@ type BookPathData struct {
 	Series           string
 	SeriesIndex      string
 	AssetID          string
-	WorkID           string
+	BookID           string
 	Ext              string
 	OriginalFilename string
 }
@@ -198,8 +198,8 @@ func (d BookPathData) bookPathField(name string, useDefault bool) (string, bool)
 		return authorBucket(v), true
 	case "asset_id":
 		return strings.TrimSpace(d.AssetID), true
-	case "work_id":
-		return strings.TrimSpace(d.WorkID), true
+	case "book_id":
+		return strings.TrimSpace(d.BookID), true
 	case "original_filename":
 		return strings.TrimSpace(d.OriginalFilename), true
 	case "ext":

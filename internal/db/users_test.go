@@ -49,7 +49,7 @@ func TestUserLifecycle(t *testing.T) {
 		t.Fatalf("set password: %v", err)
 	}
 	if got, _ := database.Authenticate("alice", "s3cret"); got != nil {
-		t.Errorf("old password still works after change")
+		t.Errorf("old password still books after change")
 	}
 	if got, _ := database.Authenticate("alice", "newpass"); got == nil {
 		t.Errorf("new password rejected after change")
@@ -101,18 +101,18 @@ func TestLastAdminCannotBeDemotedOrDeleted(t *testing.T) {
 	}
 }
 
-func TestDeleteUserPreservesTrashedWorkWithoutAttribution(t *testing.T) {
+func TestDeleteUserPreservesTrashedBookWithoutAttribution(t *testing.T) {
 	database := newTestDB(t)
 
 	member, err := database.CreateUser("deleter", "pw", RoleMember)
 	if err != nil {
 		t.Fatalf("create member: %v", err)
 	}
-	if _, err := database.Exec(`INSERT INTO works (id, title, sort_title) VALUES ('w-trash', 'Trashed', 'Trashed')`); err != nil {
-		t.Fatalf("insert work: %v", err)
+	if _, err := database.Exec(`INSERT INTO books (id, title, sort_title) VALUES ('w-trash', 'Trashed', 'Trashed')`); err != nil {
+		t.Fatalf("insert book: %v", err)
 	}
-	if err := SoftDeleteWork(database, "w-trash", member.ID); err != nil {
-		t.Fatalf("soft delete work: %v", err)
+	if err := SoftDeleteBook(database, "w-trash", member.ID); err != nil {
+		t.Fatalf("soft delete book: %v", err)
 	}
 	if err := database.DeleteUser(member.ID); err != nil {
 		t.Fatalf("delete attributed user: %v", err)
@@ -121,7 +121,7 @@ func TestDeleteUserPreservesTrashedWorkWithoutAttribution(t *testing.T) {
 	var deletedAtSet, attributionCleared bool
 	if err := database.QueryRow(`
 		SELECT deleted_at IS NOT NULL, deleted_by IS NULL
-		FROM works WHERE id = 'w-trash'
+		FROM books WHERE id = 'w-trash'
 	`).Scan(&deletedAtSet, &attributionCleared); err != nil {
 		t.Fatalf("query preserved trash row: %v", err)
 	}

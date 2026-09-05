@@ -10,7 +10,7 @@ func TestBuildSyncItemPinsNewEntitlementShape(t *testing.T) {
 	seriesIndex := 2.5
 	item := BuildSyncItem(Change{
 		AssetID:       "a_book",
-		WorkID:        "w_book",
+		BookID:        "w_book",
 		Size:          123,
 		Title:         "A Book",
 		Description:   "Description",
@@ -52,6 +52,9 @@ func TestBuildSyncItemPinsNewEntitlementShape(t *testing.T) {
 	encoded, err := json.Marshal(item)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"WorkId":"a_book"`) {
+		t.Errorf("Kobo metadata must expose asset identity as WorkId: %s", encoded)
 	}
 	for _, key := range []string{"NewEntitlement", "BookEntitlement", "BookMetadata", "DownloadUrls", "CoverImageId"} {
 		if !strings.Contains(string(encoded), `"`+key+`"`) {

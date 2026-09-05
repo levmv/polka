@@ -30,8 +30,8 @@ type Options struct {
 	FailedOnly bool
 	Limit      int
 	Scope      db.VisibilityScope
-	WorkIDs    []string
-	// CoverRoot points at the app data dir, where covers/<work_id> originals
+	BookIDs    []string
+	// CoverRoot points at the app data dir, where covers/<book_id> originals
 	// live. When unset, Run falls back to root for package-level tests.
 	CoverRoot storage.Root
 	WorkQueue *workslot.Queue
@@ -49,7 +49,7 @@ const (
 
 type Result struct {
 	AssetID     string
-	WorkID      string
+	BookID      string
 	StoragePath string
 	Status      Status
 	Error       string
@@ -73,7 +73,7 @@ func Run(ctx context.Context, database *db.DB, root storage.Root, opts Options) 
 	if opts.FailedOnly {
 		selectedModes++
 	}
-	if len(opts.WorkIDs) > 0 {
+	if len(opts.BookIDs) > 0 {
 		selectedModes++
 	}
 	if selectedModes > 1 {
@@ -94,7 +94,7 @@ func Run(ctx context.Context, database *db.DB, root storage.Root, opts Options) 
 			summary.WouldWrite++
 			summary.Results = append(summary.Results, Result{
 				AssetID:     row.AssetID,
-				WorkID:      row.WorkID,
+				BookID:      row.BookID,
 				StoragePath: row.StoragePath,
 				Status:      StatusWouldWrite,
 			})
@@ -145,8 +145,8 @@ func appendResult(summary *Summary, result Result) {
 }
 
 func planAssets(database *db.DB, opts Options) ([]db.MetadataWritebackAssetRow, error) {
-	if len(opts.WorkIDs) > 0 {
-		return db.ListMetadataWritebackAssetsByWorkIDs(database, opts.Scope, opts.WorkIDs, opts.Limit)
+	if len(opts.BookIDs) > 0 {
+		return db.ListMetadataWritebackAssetsByBookIDs(database, opts.Scope, opts.BookIDs, opts.Limit)
 	}
 	if opts.All {
 		return db.ListAllMetadataWritebackAssets(database, opts.Scope, opts.Limit)
@@ -170,8 +170,8 @@ func writeAsset(ctx context.Context, database *db.DB, root storage.Root, assetID
 		return fail(ctx, database, result, err)
 	}
 
-	result := Result{AssetID: row.AssetID, WorkID: row.WorkID, StoragePath: row.StoragePath}
-	force := opts.All || len(opts.WorkIDs) > 0
+	result := Result{AssetID: row.AssetID, BookID: row.BookID, StoragePath: row.StoragePath}
+	force := opts.All || len(opts.BookIDs) > 0
 	if !force && row.WritebackRev >= row.MetadataRev {
 		result.Status = StatusSkipped
 		return result, nil
@@ -208,7 +208,7 @@ func writeAsset(ctx context.Context, database *db.DB, root storage.Root, assetID
 		return fail(ctx, database, result, err)
 	}
 
-	snapshot, err := db.LoadMetadataWritebackSnapshot(database, row.WorkID)
+	snapshot, err := db.LoadMetadataWritebackSnapshot(database, row.BookID)
 	if err != nil {
 		return fail(ctx, database, result, fmt.Errorf("load metadata snapshot: %w", err))
 	}
@@ -221,7 +221,7 @@ func writeAsset(ctx context.Context, database *db.DB, root storage.Root, assetID
 			return fail(ctx, database, result, err)
 		}
 	}
-	// EPUB3 requires dcterms:modified; use the durable work timestamp so
+	// EPUB3 requires dcterms:modified; use the durable book timestamp so
 	// repeated --all write-back passes render byte-identical metadata.
 	modified := time.Unix(snapshot.UpdatedAt, 0).UTC()
 
@@ -352,16 +352,16 @@ func loadWritebackCover(root storage.Root, snapshot db.MetadataWritebackSnapshot
 	if snapshot.CoverVersion <= 0 {
 		return nil, nil
 	}
-	fullPath, err := root.Resolve(covers.OriginalPath(snapshot.WorkID))
+	fullPath, err := root.Resolve(covers.OriginalPath(snapshot.BookID))
 	if err != nil {
 		return nil, err
 	}
 	coverBytes, err := os.ReadFile(fullPath)
 	if err != nil {
-		return nil, fmt.Errorf("read cover original for %s: %w", snapshot.WorkID, err)
+		return nil, fmt.Errorf("read cover original for %s: %w", snapshot.BookID, err)
 	}
 	if _, err := covers.Validate(coverBytes); err != nil {
-		return nil, fmt.Errorf("validate cover original for %s: %w", snapshot.WorkID, err)
+		return nil, fmt.Errorf("validate cover original for %s: %w", snapshot.BookID, err)
 	}
 	return coverBytes, nil
 }

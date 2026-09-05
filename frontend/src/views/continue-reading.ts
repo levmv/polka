@@ -38,7 +38,7 @@ export function createContinueReadingRail(
         if (!button || !section) return;
         button.disabled = true;
         try {
-            const settings = await saveUserSettings({ hide_continue_reading: true });
+            const settings = await saveUserSettings({ show_continue_reading: false });
             window.dispatchEvent(new CustomEvent('polka:user-settings', { detail: settings }));
             visible = false;
             loaded = true;

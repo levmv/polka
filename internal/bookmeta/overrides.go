@@ -2,7 +2,7 @@ package bookmeta
 
 import "encoding/json/v2"
 
-// ParseOverrides decodes the works.manual_overrides JSON column: the set of
+// ParseOverrides decodes the books.manual_overrides JSON column: the set of
 // field names the user has manually edited.
 // A blank or malformed value yields an empty (non-nil) map.
 func ParseOverrides(s string) map[string]bool {

@@ -34,8 +34,8 @@ func TestAPIAdminStorageImportFolderPreview(t *testing.T) {
 	if _, err := importer.ImportFile(context.Background(), database, root, seedPath, nil, importer.Options{CoverRoot: root}); err != nil {
 		t.Fatalf("seed import: %v", err)
 	}
-	if _, err := database.Exec("UPDATE works SET deleted_at = unixepoch()"); err != nil {
-		t.Fatalf("trash seed work: %v", err)
+	if _, err := database.Exec("UPDATE books SET deleted_at = unixepoch()"); err != nil {
+		t.Fatalf("trash seed book: %v", err)
 	}
 
 	sourceDir := t.TempDir()

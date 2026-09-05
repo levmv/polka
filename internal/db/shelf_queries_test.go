@@ -5,11 +5,11 @@ import "testing"
 func TestShelvesVisibilityAndMembership(t *testing.T) {
 	database := newTestDB(t)
 
-	database.Exec("INSERT INTO works (id, title, sort_title, added_at) VALUES ('w1', 'One', 'One', 1)")
-	database.Exec("INSERT INTO works (id, title, sort_title, added_at) VALUES ('w2', 'Two', 'Two', 2)")
+	database.Exec("INSERT INTO books (id, title, sort_title, added_at) VALUES ('w1', 'One', 'One', 1)")
+	database.Exec("INSERT INTO books (id, title, sort_title, added_at) VALUES ('w2', 'Two', 'Two', 2)")
 	database.Exec("INSERT INTO authors (id, name, sort_name) VALUES ('a1', 'Author', 'Author')")
-	database.Exec("INSERT INTO work_authors (work_id, author_id, author_order) VALUES ('w1', 'a1', 0)")
-	database.Exec("INSERT INTO work_authors (work_id, author_id, author_order) VALUES ('w2', 'a1', 0)")
+	database.Exec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES ('w1', 'a1', 0)")
+	database.Exec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES ('w2', 'a1', 0)")
 
 	user, err := database.CreateUser("alice", "pw", RoleMember)
 	if err != nil {

@@ -181,7 +181,7 @@ func conversionDependsOnlyOnSource(from format.Format, target converter.Target) 
 
 type assetFileRow struct {
 	StoragePath   string
-	WorkID        string
+	BookID        string
 	Filename      string
 	Extension     string
 	Format        format.Format
@@ -205,19 +205,19 @@ func (s *Server) assetFile(assetID string) (assetFileRow, error) {
 	var formatKey string
 	var canRead int
 	err := s.db.QueryRow(`
-		SELECT a.storage_path, a.work_id, a.filename, a.extension, a.format, a.can_read,
+		SELECT a.storage_path, a.book_id, a.filename, a.extension, a.format, a.can_read,
 		       COALESCE(a.current_sha256, ''),
 		       COALESCE(a.koreader_hash, ''),
-		       w.title, w.sort_title, COALESCE(w.language, ''),
-		       COALESCE(w.description, ''), COALESCE(w.publisher, ''),
-		       COALESCE(w.published_date, ''), COALESCE(w.identifiers, ''),
-		       COALESCE(w.series, ''), COALESCE(w.series_index, 0),
-		       COALESCE(w.tags, '')
+		       b.title, b.sort_title, COALESCE(b.language, ''),
+		       COALESCE(b.description, ''), COALESCE(b.publisher, ''),
+		       COALESCE(b.published_date, ''), COALESCE(b.identifiers, ''),
+		       COALESCE(b.series, ''), COALESCE(b.series_index, 0),
+		       COALESCE(b.tags, '')
 		FROM assets a
-		JOIN works w ON w.id = a.work_id
+		JOIN books b ON b.id = a.book_id
 		WHERE a.id = ?
 	`, assetID).Scan(
-		&a.StoragePath, &a.WorkID, &a.Filename, &a.Extension, &formatKey, &canRead, &a.CurrentSHA256, &a.KOReaderHash,
+		&a.StoragePath, &a.BookID, &a.Filename, &a.Extension, &formatKey, &canRead, &a.CurrentSHA256, &a.KOReaderHash,
 		&a.Title, &a.SortTitle, &a.Language, &a.Description, &a.Publisher,
 		&a.Date, &a.Identifier, &a.Series, &a.SeriesIndex, &a.Tags,
 	)
@@ -228,12 +228,12 @@ func (s *Server) assetFile(assetID string) (assetFileRow, error) {
 
 func (s *Server) assetConversionOptions(asset assetFileRow) (converter.ConversionOptions, error) {
 	meta := asset.conversionMetadata()
-	if asset.WorkID != "" {
-		authorsByWork, err := db.AuthorsByWorkIDs(s.db, []string{asset.WorkID})
+	if asset.BookID != "" {
+		authorsByBook, err := db.AuthorsByBookIDs(s.db, []string{asset.BookID})
 		if err != nil {
 			return converter.ConversionOptions{}, err
 		}
-		for _, author := range authorsByWork[asset.WorkID] {
+		for _, author := range authorsByBook[asset.BookID] {
 			name := strings.TrimSpace(author.Name)
 			if name == "" {
 				continue

@@ -10,7 +10,7 @@ import (
 	"github.com/levmv/polka/internal/storage"
 )
 
-// Changed is the bookkeeping a work-metadata mutation owes after its own SQL
+// Changed is the bookkeeping a book-metadata mutation owes after its own SQL
 // writes. BumpMetadataRev marks user-visible metadata changes, Relayout marks
 // canonical-path input changes, and Reindex covers searchable refreshes that do
 // not themselves bump write-back dirtiness.
@@ -22,25 +22,25 @@ type Changed struct {
 
 // MutationResult summarizes the post-commit storage maintenance. Warnings are
 // non-fatal relayout or post-relayout reindex errors: the metadata commit
-// already happened, and relayout.Work keeps DB/disk consistent for each failed
+// already happened, and relayout.Book keeps DB/disk consistent for each failed
 // move.
 type MutationResult struct {
 	Moved    int
 	Warnings []error
 }
 
-// MutateWorks runs a work-metadata mutation with the shared catalog
+// MutateBooks runs a book-metadata mutation with the shared catalog
 // bookkeeping, in the order the storage/write-back invariants require:
 //
 //	tx:    caller writes, metadata_rev bump, search-index refresh
 //	commit
-//	after: relayout path-sensitive works, refresh filename search terms,
+//	after: relayout path-sensitive books, refresh filename search terms,
 //	       with warning semantics
 //
 // A returned error means the transaction did not commit. Relayout failures are
 // returned as warnings because the metadata change is durable and repair can
 // recover any remaining storage drift.
-func MutateWorks(ctx context.Context, database *db.DB, root storage.Root, apply func(tx *sql.Tx) (Changed, error)) (MutationResult, error) {
+func MutateBooks(ctx context.Context, database *db.DB, root storage.Root, apply func(tx *sql.Tx) (Changed, error)) (MutationResult, error) {
 	var changed Changed
 
 	err := database.Transact(ctx, func(tx *sql.Tx) error {
@@ -48,16 +48,16 @@ func MutateWorks(ctx context.Context, database *db.DB, root storage.Root, apply 
 		if err != nil {
 			return err
 		}
-		next.BumpMetadataRev = dedupWorkIDs(next.BumpMetadataRev)
-		next.Relayout = dedupWorkIDs(next.Relayout)
-		next.Reindex = dedupWorkIDs(next.Reindex)
+		next.BumpMetadataRev = dedupBookIDs(next.BumpMetadataRev)
+		next.Relayout = dedupBookIDs(next.Relayout)
+		next.Reindex = dedupBookIDs(next.Reindex)
 
 		if err := db.BumpMetadataRev(tx, next.BumpMetadataRev); err != nil {
 			return err
 		}
-		for _, workID := range dedupWorkIDs(slices.Concat(next.BumpMetadataRev, next.Reindex)) {
-			if err := db.UpdateSearchIndex(tx, workID); err != nil {
-				return fmt.Errorf("update search index %s: %w", workID, err)
+		for _, bookID := range dedupBookIDs(slices.Concat(next.BumpMetadataRev, next.Reindex)) {
+			if err := db.UpdateSearchIndex(tx, bookID); err != nil {
+				return fmt.Errorf("update search index %s: %w", bookID, err)
 			}
 		}
 		changed = next
@@ -67,19 +67,19 @@ func MutateWorks(ctx context.Context, database *db.DB, root storage.Root, apply 
 		return MutationResult{}, err
 	}
 
-	return relayoutWorks(context.WithoutCancel(ctx), database, root, changed.Relayout), nil
+	return relayoutBooks(context.WithoutCancel(ctx), database, root, changed.Relayout), nil
 }
 
-func relayoutWorks(ctx context.Context, database *db.DB, root storage.Root, workIDs []string) MutationResult {
+func relayoutBooks(ctx context.Context, database *db.DB, root storage.Root, bookIDs []string) MutationResult {
 	var result MutationResult
-	for _, workID := range workIDs {
-		n, err := Work(database, root, workID)
+	for _, bookID := range bookIDs {
+		n, err := Book(database, root, bookID)
 		result.Moved += n
 		if err != nil {
-			result.Warnings = append(result.Warnings, fmt.Errorf("relayout %s: %w", workID, err))
+			result.Warnings = append(result.Warnings, fmt.Errorf("relayout %s: %w", bookID, err))
 		}
 		if n > 0 {
-			if err := refreshSearchAfterRelayout(ctx, database, workID); err != nil {
+			if err := refreshSearchAfterRelayout(ctx, database, bookID); err != nil {
 				result.Warnings = append(result.Warnings, err)
 			}
 		}
@@ -87,16 +87,16 @@ func relayoutWorks(ctx context.Context, database *db.DB, root storage.Root, work
 	return result
 }
 
-func refreshSearchAfterRelayout(ctx context.Context, database *db.DB, workID string) error {
+func refreshSearchAfterRelayout(ctx context.Context, database *db.DB, bookID string) error {
 	return database.Transact(ctx, func(tx *sql.Tx) error {
-		if err := db.UpdateSearchIndex(tx, workID); err != nil {
-			return fmt.Errorf("update search index after relayout %s: %w", workID, err)
+		if err := db.UpdateSearchIndex(tx, bookID); err != nil {
+			return fmt.Errorf("update search index after relayout %s: %w", bookID, err)
 		}
 		return nil
 	})
 }
 
-func dedupWorkIDs(in []string) []string {
+func dedupBookIDs(in []string) []string {
 	seen := make(map[string]struct{}, len(in))
 	out := make([]string, 0, len(in))
 	for _, id := range in {

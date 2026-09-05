@@ -52,7 +52,7 @@ func runCheck(dataDir string, args []string) error {
 	if err != nil {
 		return err
 	}
-	workCovers, err := db.AllWorkCovers(database)
+	bookCovers, err := db.AllBookCovers(database)
 	if err != nil {
 		return err
 	}
@@ -133,7 +133,7 @@ func runCheck(dataDir string, args []string) error {
 		}
 	}
 
-	for _, w := range workCovers {
+	for _, w := range bookCovers {
 		rel := covers.OriginalPath(w.ID)
 		absPath, err := dataRoot.Resolve(rel)
 		if err != nil {

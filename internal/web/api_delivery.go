@@ -114,7 +114,7 @@ type SendOptionsDTO struct {
 }
 
 type createDeliveryRequest struct {
-	WorkID   string `json:"work_id"`
+	BookID   string `json:"book_id"`
 	DeviceID string `json:"device_id"`
 	AssetID  string `json:"asset_id"`
 	Target   string `json:"target"`
@@ -126,7 +126,7 @@ type DeliveryJobDTO struct {
 	DeviceName  string `json:"device_name"`
 	DeviceEmail string `json:"device_email"`
 	Preset      string `json:"preset"`
-	WorkID      string `json:"work_id"`
+	BookID      string `json:"book_id"`
 	AssetID     string `json:"asset_id,omitempty"`
 	Title       string `json:"title"`
 	Target      string `json:"target,omitempty"`
@@ -324,9 +324,9 @@ func (s *Server) handleAPIDeliveryDeviceDelete(w http.ResponseWriter, r *http.Re
 }
 
 func (s *Server) handleAPISendOptions(w http.ResponseWriter, r *http.Request) {
-	workID := strings.TrimSpace(r.URL.Query().Get("work"))
-	if workID == "" {
-		http.Error(w, "Missing work id", http.StatusBadRequest)
+	bookID := strings.TrimSpace(r.URL.Query().Get("book"))
+	if bookID == "" {
+		http.Error(w, "Missing book id", http.StatusBadRequest)
 		return
 	}
 	enabled, err := delivery.Enabled(s.db)
@@ -351,11 +351,11 @@ func (s *Server) handleAPISendOptions(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, SendOptionsDTO{Configured: false, Devices: deviceOptionsWithoutPlans(devices), Reason: deliveryMessageNotConfigured})
 		return
 	}
-	work, assets, ok := s.deliveryWorkForRequest(w, r, workID)
+	book, assets, ok := s.deliveryBookForRequest(w, r, bookID)
 	if !ok {
 		return
 	}
-	dwork := deliveryWork(work, assets)
+	dwork := deliveryBook(book, assets)
 	options := make([]SendOptionDTO, 0, len(devices))
 	for _, device := range devices {
 		planOpts := delivery.PlanOptions{
@@ -374,8 +374,8 @@ func (s *Server) handleAPIDeliveryCreate(w http.ResponseWriter, r *http.Request)
 	if !readJSON(w, r, &req) {
 		return
 	}
-	if strings.TrimSpace(req.WorkID) == "" {
-		http.Error(w, "Missing work id", http.StatusBadRequest)
+	if strings.TrimSpace(req.BookID) == "" {
+		http.Error(w, "Missing book id", http.StatusBadRequest)
 		return
 	}
 	// Turning sending off must actually stop sends, not merely hide the button:
@@ -409,11 +409,11 @@ func (s *Server) handleAPIDeliveryCreate(w http.ResponseWriter, r *http.Request)
 	if writeDeliveryError(w, err) {
 		return
 	}
-	work, assets, ok := s.deliveryWorkForRequest(w, r, req.WorkID)
+	book, assets, ok := s.deliveryBookForRequest(w, r, req.BookID)
 	if !ok {
 		return
 	}
-	plan := delivery.PlanDelivery(deliveryWork(work, assets), delivery.PlanOptions{
+	plan := delivery.PlanDelivery(deliveryBook(book, assets), delivery.PlanOptions{
 		Preset:            delivery.Preset(device.Preset),
 		AttachmentLimitMB: cfg.AttachmentLimitMB,
 		RequestedAssetID:  strings.TrimSpace(req.AssetID),
@@ -429,9 +429,9 @@ func (s *Server) handleAPIDeliveryCreate(w http.ResponseWriter, r *http.Request)
 		DeviceName:  device.Name,
 		DeviceEmail: device.Email,
 		Preset:      device.Preset,
-		WorkID:      work.ID,
+		BookID:      book.ID,
 		AssetID:     sql.NullString{String: plan.AssetID, Valid: true},
-		Title:       work.Title,
+		Title:       book.Title,
 		Target:      sql.NullString{String: string(plan.Target), Valid: plan.Target != ""},
 		Filename:    plan.Filename,
 		SizeBytes:   sql.NullInt64{Int64: plan.SizeBytes, Valid: plan.SizeBytes > 0},
@@ -545,7 +545,7 @@ func deliveryJobDTO(job db.DeliveryJob) DeliveryJobDTO {
 		DeviceName:  job.DeviceName,
 		DeviceEmail: job.DeviceEmail,
 		Preset:      job.Preset,
-		WorkID:      job.WorkID,
+		BookID:      job.BookID,
 		Title:       job.Title,
 		Filename:    job.Filename,
 		Status:      job.Status,
@@ -579,29 +579,29 @@ func deviceOptionsWithoutPlans(devices []db.DeliveryDevice) []SendOptionDTO {
 	return options
 }
 
-func (s *Server) deliveryWorkForRequest(w http.ResponseWriter, r *http.Request, workID string) (db.DeliveryWorkRow, []db.DeliveryAssetRow, bool) {
+func (s *Server) deliveryBookForRequest(w http.ResponseWriter, r *http.Request, bookID string) (db.DeliveryBookRow, []db.DeliveryAssetRow, bool) {
 	scope, err := s.visibilityScope(r)
 	if err != nil {
 		serverError(w, err)
-		return db.DeliveryWorkRow{}, nil, false
+		return db.DeliveryBookRow{}, nil, false
 	}
-	work, assets, err := s.db.DeliveryWorkForPlan(scope, workID)
+	book, assets, err := s.db.DeliveryBookForPlan(scope, bookID)
 	if errors.Is(err, sql.ErrNoRows) {
 		http.Error(w, "Book not found", http.StatusNotFound)
-		return db.DeliveryWorkRow{}, nil, false
+		return db.DeliveryBookRow{}, nil, false
 	}
 	if err != nil {
 		serverError(w, err)
-		return db.DeliveryWorkRow{}, nil, false
+		return db.DeliveryBookRow{}, nil, false
 	}
-	return work, assets, true
+	return book, assets, true
 }
 
-func deliveryWork(work db.DeliveryWorkRow, assets []db.DeliveryAssetRow) delivery.Work {
-	out := delivery.Work{
-		ID:      work.ID,
-		Title:   work.Title,
-		Authors: work.Authors,
+func deliveryBook(book db.DeliveryBookRow, assets []db.DeliveryAssetRow) delivery.Book {
+	out := delivery.Book{
+		ID:      book.ID,
+		Title:   book.Title,
+		Authors: book.Authors,
 		Assets:  make([]delivery.Asset, 0, len(assets)),
 	}
 	for _, asset := range assets {

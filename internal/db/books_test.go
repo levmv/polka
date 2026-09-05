@@ -11,7 +11,7 @@ func TestListBookJumpsUsesVisibleSortBoundaries(t *testing.T) {
 	database := newTestDB(t)
 
 	if _, err := database.Exec(`
-		INSERT INTO works (id, title, sort_title, primary_author_sort) VALUES
+		INSERT INTO books (id, title, sort_title, primary_author_sort) VALUES
 			('w_num', '1 Book', '1 Book', 'Zulu'),
 			('w_a1', 'alpha', 'alpha', ''),
 			('w_a2', 'Apple', 'Apple', 'Amy'),
@@ -19,9 +19,9 @@ func TestListBookJumpsUsesVisibleSortBoundaries(t *testing.T) {
 			('w_lower', 'lower title', 'lower title', 'alpha'),
 			('w_cyr', 'Ёж', 'Ёж', 'Ёлкин'),
 			('w_deleted', 'Deleted', 'Deleted', 'Deleted');
-		UPDATE works SET deleted_at = unixepoch() WHERE id = 'w_deleted';
+		UPDATE books SET deleted_at = unixepoch() WHERE id = 'w_deleted';
 	`); err != nil {
-		t.Fatalf("seed works: %v", err)
+		t.Fatalf("seed books: %v", err)
 	}
 
 	titleJumps, total, err := ListBookJumps(database, FullVisibilityScope(), SortTitle)
@@ -64,7 +64,7 @@ func TestListBookJumpsUsesVisibleSortBoundaries(t *testing.T) {
 
 func TestListBookJumpsRespectsVisibilityScope(t *testing.T) {
 	database := newTestDB(t)
-	seedAccessWorks(t, database)
+	seedAccessBooks(t, database)
 	user, err := database.CreateUser("jump-reader", "pw", RoleReader)
 	if err != nil {
 		t.Fatalf("create user: %v", err)
@@ -104,7 +104,7 @@ func TestListBookJumpsDropsPathologicalBucketSets(t *testing.T) {
 	for i := 0; i <= maxBookJumpBuckets; i++ {
 		initial := string(rune(0x4e00 + i))
 		if _, err := tx.Exec(
-			`INSERT INTO works (id, title, sort_title) VALUES (?, ?, ?)`,
+			`INSERT INTO books (id, title, sort_title) VALUES (?, ?, ?)`,
 			fmt.Sprintf("w_%03d", i),
 			initial+" book",
 			initial+" book",
@@ -137,11 +137,11 @@ func TestListBooksFiltersReadingStatusPerUser(t *testing.T) {
 		t.Fatalf("create bob: %v", err)
 	}
 	if _, err := database.Exec(`
-		INSERT INTO works (id, title, sort_title, added_at) VALUES
+		INSERT INTO books (id, title, sort_title, added_at) VALUES
 			('w1', 'Alpha Needle', 'Alpha Needle', 1),
 			('w2', 'Beta Needle', 'Beta Needle', 2),
 			('w3', 'Gamma', 'Gamma', 3);
-		INSERT INTO search (work_id, title, authors) VALUES
+		INSERT INTO search (book_id, title, authors) VALUES
 			('w1', 'Alpha Needle', ''), ('w2', 'Beta Needle', ''), ('w3', 'Gamma', '');
 	`); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -178,17 +178,17 @@ func TestListBooksSort(t *testing.T) {
 	database.Exec("INSERT INTO authors (id, name, sort_name) VALUES ('a1', 'Z Author', 'Z')")
 	database.Exec("INSERT INTO authors (id, name, sort_name) VALUES ('a2', 'A Author', 'A')")
 
-	// Seed works
-	database.Exec("INSERT INTO works (id, title, sort_title, added_at, published_date) VALUES ('w1', 'The B Title', 'B', 1672531200, '2000-01-01')")
-	database.Exec("INSERT INTO work_authors (work_id, author_id, author_order) VALUES ('w1', 'a1', 0)")
+	// Seed books
+	database.Exec("INSERT INTO books (id, title, sort_title, added_at, published_date) VALUES ('w1', 'The B Title', 'B', 1672531200, '2000-01-01')")
+	database.Exec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES ('w1', 'a1', 0)")
 
-	database.Exec("INSERT INTO works (id, title, sort_title, added_at) VALUES ('w2', 'A Title', 'A', 1672617600)")
-	database.Exec("INSERT INTO work_authors (work_id, author_id, author_order) VALUES ('w2', 'a2', 0)")
+	database.Exec("INSERT INTO books (id, title, sort_title, added_at) VALUES ('w2', 'A Title', 'A', 1672617600)")
+	database.Exec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES ('w2', 'a2', 0)")
 
-	database.Exec("INSERT INTO works (id, title, sort_title, added_at, published_date) VALUES ('w3', 'C Title', 'C', 1672704000, '2020-01-01')")
-	database.Exec("INSERT INTO work_authors (work_id, author_id, author_order) VALUES ('w3', 'a2', 0)")
-	database.Exec("INSERT INTO works (id, title, sort_title, added_at, deleted_at) VALUES ('w_deleted', 'Deleted', 'Deleted', 1672790400, 1672790400)")
-	database.Exec("INSERT INTO work_authors (work_id, author_id, author_order) VALUES ('w_deleted', 'a2', 0)")
+	database.Exec("INSERT INTO books (id, title, sort_title, added_at, published_date) VALUES ('w3', 'C Title', 'C', 1672704000, '2020-01-01')")
+	database.Exec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES ('w3', 'a2', 0)")
+	database.Exec("INSERT INTO books (id, title, sort_title, added_at, deleted_at) VALUES ('w_deleted', 'Deleted', 'Deleted', 1672790400, 1672790400)")
+	database.Exec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES ('w_deleted', 'a2', 0)")
 	if err := updatePrimaryAuthorSorts(database, []string{"w1", "w2", "w3", "w_deleted"}); err != nil {
 		t.Fatalf("updatePrimaryAuthorSorts: %v", err)
 	}
@@ -230,16 +230,16 @@ func TestBookSequenceInListSorts(t *testing.T) {
 			t.Fatalf("exec %q: %v", query, err)
 		}
 	}
-	must("INSERT INTO works (id, title, sort_title, primary_author_sort, added_at, published_date) VALUES ('w1', 'The B Title', 'B Title', 'Zed', 10, '2000-01-01')")
-	must("INSERT INTO works (id, title, sort_title, primary_author_sort, added_at) VALUES ('w2', 'A Title', 'A Title', 'Alpha', 20)")
-	must("INSERT INTO works (id, title, sort_title, primary_author_sort, added_at, published_date) VALUES ('w3', 'C Title', 'C Title', 'Alpha', 30, '2020-01-01')")
-	must("INSERT INTO works (id, title, sort_title, primary_author_sort, added_at, published_date) VALUES ('w4', 'D Title', 'D Title', 'Middle', 20, '2020-01-01')")
-	must("INSERT INTO works (id, title, sort_title, primary_author_sort, added_at, published_date, deleted_at) VALUES ('w_deleted', '0 Deleted', '0 Deleted', 'Aardvark', 40, '2030-01-01', 40)")
+	must("INSERT INTO books (id, title, sort_title, primary_author_sort, added_at, published_date) VALUES ('w1', 'The B Title', 'B Title', 'Zed', 10, '2000-01-01')")
+	must("INSERT INTO books (id, title, sort_title, primary_author_sort, added_at) VALUES ('w2', 'A Title', 'A Title', 'Alpha', 20)")
+	must("INSERT INTO books (id, title, sort_title, primary_author_sort, added_at, published_date) VALUES ('w3', 'C Title', 'C Title', 'Alpha', 30, '2020-01-01')")
+	must("INSERT INTO books (id, title, sort_title, primary_author_sort, added_at, published_date) VALUES ('w4', 'D Title', 'D Title', 'Middle', 20, '2020-01-01')")
+	must("INSERT INTO books (id, title, sort_title, primary_author_sort, added_at, published_date, deleted_at) VALUES ('w_deleted', '0 Deleted', '0 Deleted', 'Aardvark', 40, '2030-01-01', 40)")
 
 	tests := []struct {
 		name string
 		sort BookSort
-		work string
+		book string
 		prev string
 		next string
 	}{
@@ -254,11 +254,11 @@ func TestBookSequenceInListSorts(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := BookSequenceInList(database, FullVisibilityScope(), 0, tt.work, "", tt.sort, 1, 1)
+			got, err := BookSequenceInList(database, FullVisibilityScope(), 0, tt.book, "", tt.sort, 1, 1)
 			if err != nil {
 				t.Fatalf("BookSequenceInList: %v", err)
 			}
-			assertSequenceWindow(t, got, tt.prev, tt.work, tt.next)
+			assertSequenceWindow(t, got, tt.prev, tt.book, tt.next)
 		})
 	}
 
@@ -267,7 +267,7 @@ func TestBookSequenceInListSorts(t *testing.T) {
 		t.Fatalf("deleted BookSequenceInList: %v", err)
 	}
 	if len(got.Items) != 0 || got.CurrentIndex != -1 {
-		t.Fatalf("deleted work sequence = %+v; want empty", got)
+		t.Fatalf("deleted book sequence = %+v; want empty", got)
 	}
 }
 
@@ -280,12 +280,12 @@ func TestBookSequenceInSearchList(t *testing.T) {
 			t.Fatalf("exec %q: %v", query, err)
 		}
 	}
-	must("INSERT INTO works (id, title, sort_title, added_at) VALUES ('w1', 'Alpha', 'Alpha', 1)")
-	must("INSERT INTO works (id, title, sort_title, added_at) VALUES ('w2', 'Beta', 'Beta', 2)")
-	must("INSERT INTO works (id, title, sort_title, added_at) VALUES ('w3', 'Gamma', 'Gamma', 3)")
-	must("INSERT INTO search (rowid, work_id, title, authors) VALUES (1, 'w1', 'needle Alpha', '')")
-	must("INSERT INTO search (rowid, work_id, title, authors) VALUES (2, 'w2', 'needle Beta', '')")
-	must("INSERT INTO search (rowid, work_id, title, authors) VALUES (3, 'w3', 'needle Gamma', '')")
+	must("INSERT INTO books (id, title, sort_title, added_at) VALUES ('w1', 'Alpha', 'Alpha', 1)")
+	must("INSERT INTO books (id, title, sort_title, added_at) VALUES ('w2', 'Beta', 'Beta', 2)")
+	must("INSERT INTO books (id, title, sort_title, added_at) VALUES ('w3', 'Gamma', 'Gamma', 3)")
+	must("INSERT INTO search (rowid, book_id, title, authors) VALUES (1, 'w1', 'needle Alpha', '')")
+	must("INSERT INTO search (rowid, book_id, title, authors) VALUES (2, 'w2', 'needle Beta', '')")
+	must("INSERT INTO search (rowid, book_id, title, authors) VALUES (3, 'w3', 'needle Gamma', '')")
 
 	got, err := BookSequenceInList(database, FullVisibilityScope(), 0, "w2", "needle", SortTitle, 1, 1)
 	if err != nil {

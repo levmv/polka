@@ -404,25 +404,25 @@ func (s *Server) handleOPDSOpenSearch(w http.ResponseWriter, r *http.Request) {
 
 // writeOPDSAcquisition resolves assets/authors/covers for the given publication
 // rows and writes an acquisition feed. Shared by the all-books and search feeds;
-// works without a downloadable asset are skipped (an acquisition entry without an
+// books without a downloadable asset are skipped (an acquisition entry without an
 // acquisition link is useless to a reader).
 func (s *Server) writeOPDSAcquisition(w http.ResponseWriter, r *http.Request, meta opds.AcquisitionMeta, rows []db.OPDSPublicationRow) {
-	workIDs := make([]string, 0, len(rows))
+	bookIDs := make([]string, 0, len(rows))
 	for _, row := range rows {
-		workIDs = append(workIDs, row.ID)
+		bookIDs = append(bookIDs, row.ID)
 	}
 
-	assetRows, err := db.AssetsByWorkIDs(s.db, workIDs)
+	assetRows, err := db.AssetsByBookIDs(s.db, bookIDs)
 	if err != nil {
 		serverError(w, err)
 		return
 	}
-	assetsByWork := make(map[string][]db.AssetRow)
+	assetsByBook := make(map[string][]db.AssetRow)
 	for _, a := range assetRows {
-		assetsByWork[a.WorkID] = append(assetsByWork[a.WorkID], a)
+		assetsByBook[a.BookID] = append(assetsByBook[a.BookID], a)
 	}
 
-	authorsByWork, err := db.AuthorsByWorkIDs(s.db, workIDs)
+	authorsByBook, err := db.AuthorsByBookIDs(s.db, bookIDs)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -430,17 +430,17 @@ func (s *Server) writeOPDSAcquisition(w http.ResponseWriter, r *http.Request, me
 
 	pubs := make([]opds.Publication, 0, len(rows))
 	for _, row := range rows {
-		links := opdsAssetLinks(r, assetsByWork[row.ID])
+		links := opdsAssetLinks(r, assetsByBook[row.ID])
 		if len(links) == 0 {
 			continue
 		}
 		links = append(links, opdsCoverLinks(r, row.ID, row.CoverVersion)...)
 
 		pub := opds.Publication{
-			ID:            "urn:polka:work:" + row.ID,
+			ID:            "urn:polka:book:" + row.ID,
 			Title:         row.Title,
 			Updated:       time.Unix(row.UpdatedAt, 0),
-			Authors:       opdsAuthorNames(authorsByWork[row.ID]),
+			Authors:       opdsAuthorNames(authorsByBook[row.ID]),
 			Categories:    opdsCategories(row.Tags.String),
 			Publisher:     row.Publisher.String,
 			PublishedDate: row.PublishedDate.String,
@@ -517,7 +517,7 @@ func opdsAssetLinks(r *http.Request, assets []db.AssetRow) []opds.Link {
 	return links
 }
 
-func opdsCoverLinks(r *http.Request, workID string, coverVersion int) []opds.Link {
+func opdsCoverLinks(r *http.Request, bookID string, coverVersion int) []opds.Link {
 	q := url.Values{}
 	if coverVersion > 0 {
 		q.Set("v", strconv.Itoa(coverVersion))
@@ -525,7 +525,7 @@ func opdsCoverLinks(r *http.Request, workID string, coverVersion int) []opds.Lin
 	thumbQ := cloneValues(q)
 	thumbQ.Set("variant", "thumb")
 
-	escapedID := url.PathEscape(workID)
+	escapedID := url.PathEscape(bookID)
 	return []opds.Link{
 		{Rel: opds.ImageRel, Href: absoluteURL(r, "/covers/"+escapedID, q), Type: "image/jpeg"},
 		{Rel: opds.ThumbnailRel, Href: absoluteURL(r, "/covers/"+escapedID, thumbQ), Type: "image/jpeg"},

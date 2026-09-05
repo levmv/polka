@@ -29,17 +29,17 @@ func TestTransactCommitsAndRollsBack(t *testing.T) {
 	database := newTestDB(t)
 
 	err := database.Transact(context.Background(), func(tx *sql.Tx) error {
-		_, err := tx.Exec("INSERT INTO works (id, title, sort_title) VALUES ('w_commit', 'Committed', 'Committed')")
+		_, err := tx.Exec("INSERT INTO books (id, title, sort_title) VALUES ('w_commit', 'Committed', 'Committed')")
 		return err
 	})
 	if err != nil {
 		t.Fatalf("commit transaction: %v", err)
 	}
-	assertWorkCount(t, database, "w_commit", 1)
+	assertBookCount(t, database, "w_commit", 1)
 
 	sentinel := errors.New("stop")
 	err = database.Transact(context.Background(), func(tx *sql.Tx) error {
-		if _, err := tx.Exec("INSERT INTO works (id, title, sort_title) VALUES ('w_rollback', 'Rollback', 'Rollback')"); err != nil {
+		if _, err := tx.Exec("INSERT INTO books (id, title, sort_title) VALUES ('w_rollback', 'Rollback', 'Rollback')"); err != nil {
 			return err
 		}
 		return sentinel
@@ -47,16 +47,16 @@ func TestTransactCommitsAndRollsBack(t *testing.T) {
 	if !errors.Is(err, sentinel) {
 		t.Fatalf("rollback transaction err = %v, want sentinel", err)
 	}
-	assertWorkCount(t, database, "w_rollback", 0)
+	assertBookCount(t, database, "w_rollback", 0)
 }
 
-func assertWorkCount(t *testing.T, database *DB, workID string, want int) {
+func assertBookCount(t *testing.T, database *DB, bookID string, want int) {
 	t.Helper()
 	var got int
-	if err := database.QueryRow("SELECT count(*) FROM works WHERE id = ?", workID).Scan(&got); err != nil {
-		t.Fatalf("count work %s: %v", workID, err)
+	if err := database.QueryRow("SELECT count(*) FROM books WHERE id = ?", bookID).Scan(&got); err != nil {
+		t.Fatalf("count book %s: %v", bookID, err)
 	}
 	if got != want {
-		t.Fatalf("count work %s = %d, want %d", workID, got, want)
+		t.Fatalf("count book %s = %d, want %d", bookID, got, want)
 	}
 }

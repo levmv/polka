@@ -2,17 +2,17 @@ import { Buffer } from 'node:buffer';
 import { epub } from '../book-fixtures';
 import { expect, type Locator, type Page, test } from '../fixtures';
 
-let disposableWorkIDs: string[] = [];
+let disposableBookIDs: string[] = [];
 
 test.beforeEach(() => {
-  disposableWorkIDs = [];
+  disposableBookIDs = [];
 });
 
 test.afterEach(async ({ page }) => {
-  for (const workID of disposableWorkIDs) {
-    const trash = await page.request.post('/api/books/bulk/trash', { data: { ids: [workID] } });
+  for (const bookID of disposableBookIDs) {
+    const trash = await page.request.post('/api/books/bulk/trash', { data: { ids: [bookID] } });
     expect(trash.ok()).toBeTruthy();
-    const purge = await page.request.delete(`/api/books/${encodeURIComponent(workID)}/purge`);
+    const purge = await page.request.delete(`/api/books/${encodeURIComponent(bookID)}/purge`);
     expect(purge.status()).toBe(204);
   }
 });
@@ -28,9 +28,9 @@ async function uploadDisposableBook(page: Page, prefix: string): Promise<string>
   const card = page.locator('.book-card', { hasText: title });
   await expect(card).toBeVisible();
   const href = await card.locator('.book-title-link').getAttribute('href');
-  const workID = href ? new URL(href, page.url()).pathname.split('/').pop() : '';
-  if (!workID) throw new Error('missing disposable editor work id');
-  disposableWorkIDs.push(workID);
+  const bookID = href ? new URL(href, page.url()).pathname.split('/').pop() : '';
+  if (!bookID) throw new Error('missing disposable editor book id');
+  disposableBookIDs.push(bookID);
   return title;
 }
 
@@ -861,7 +861,7 @@ test.describe('Book editor', () => {
     await expect(page.locator('.detail-title')).toBeVisible();
   });
 
-  test('Edit view rich editor works correctly', async ({ page }) => {
+  test('Edit view rich editor books correctly', async ({ page }) => {
     const disposableTitle = await uploadDisposableBook(page, 'Rich Editor Draft');
 
     const card = page.locator('.book-card', { hasText: disposableTitle });

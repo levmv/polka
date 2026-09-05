@@ -29,8 +29,8 @@ export function libraryBookListContext(
     return context;
 }
 
-export function bookURL(workId: string, context?: BookListContext | null): string {
-    const url = new URL(`/book/${encodeURIComponent(workId)}`, window.location.origin);
+export function bookURL(bookId: string, context?: BookListContext | null): string {
+    const url = new URL(`/book/${encodeURIComponent(bookId)}`, window.location.origin);
     if (context) writeContextParams(url.searchParams, context);
     return `${url.pathname}${url.search}`;
 }

@@ -53,7 +53,7 @@ func TestAPIAuthorListPagination(t *testing.T) {
 }
 
 // TestAPIAuthorInfo covers the lookup that powers the book-edit convergence
-// prompt: an exact-name hit returns the work count, an unknown name 404s, and a
+// prompt: an exact-name hit returns the book count, an unknown name 404s, and a
 // missing name parameter is a 400.
 func TestAPIAuthorInfo(t *testing.T) {
 	database, dir := setupTestDB(t)
@@ -71,7 +71,7 @@ func TestAPIAuthorInfo(t *testing.T) {
 		return w
 	}
 
-	// Known author (seeded on one work).
+	// Known author (seeded on one book).
 	w := get("?name=J.R.R.+Tolkien")
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())

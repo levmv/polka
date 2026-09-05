@@ -19,8 +19,8 @@ func readingActivityFixture(t *testing.T, zone string) (*DB, int64) {
 		t.Fatal(err)
 	}
 	for _, statement := range []string{
-		`INSERT INTO works (id, title, sort_title) VALUES ('w1', 'Book', 'Book')`,
-		`INSERT INTO assets (id, work_id, storage_path, filename, extension) VALUES ('a1', 'w1', 'one.epub', 'one.epub', '.epub'), ('a2', 'w1', 'two.pdf', 'two.pdf', '.pdf')`,
+		`INSERT INTO books (id, title, sort_title) VALUES ('w1', 'Book', 'Book')`,
+		`INSERT INTO assets (id, book_id, storage_path, filename, extension) VALUES ('a1', 'w1', 'one.epub', 'one.epub', '.epub'), ('a2', 'w1', 'two.pdf', 'two.pdf', '.pdf')`,
 	} {
 		if _, err := database.Exec(statement); err != nil {
 			t.Fatal(err)
@@ -100,7 +100,7 @@ func TestReadingActivityRetriesAndTakeover(t *testing.T) {
 		t.Fatalf("overlapping readers = %v", days)
 	}
 	var positions, statuses int
-	if err := database.QueryRow(`SELECT (SELECT COUNT(*) FROM user_asset_state), (SELECT COUNT(*) FROM user_work_reading_events)`).Scan(&positions, &statuses); err != nil {
+	if err := database.QueryRow(`SELECT (SELECT COUNT(*) FROM user_asset_state), (SELECT COUNT(*) FROM user_book_reading_events)`).Scan(&positions, &statuses); err != nil {
 		t.Fatal(err)
 	}
 	if positions != 0 || statuses != 0 {

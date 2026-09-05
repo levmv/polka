@@ -19,7 +19,7 @@ import (
 
 type readerPageData struct {
 	layoutPageData
-	WorkID          string
+	BookID          string
 	AssetID         string
 	Title           string
 	Extension       string
@@ -36,7 +36,7 @@ type readerPageData struct {
 }
 
 type readerPageAsset struct {
-	WorkID        string
+	BookID        string
 	AssetID       string
 	Title         string
 	Extension     string
@@ -45,14 +45,14 @@ type readerPageAsset struct {
 }
 
 func (s *Server) handleRead(w http.ResponseWriter, r *http.Request) {
-	workID := r.PathValue("id")
+	bookID := r.PathValue("id")
 
 	scope, err := s.visibilityScope(r)
 	if err != nil {
 		serverError(w, err)
 		return
 	}
-	asset, err := db.PrimaryAssetForWork(s.db, scope, workID)
+	asset, err := db.PrimaryAssetForBook(s.db, scope, bookID)
 	if errors.Is(err, sql.ErrNoRows) {
 		http.Error(w, "Book or primary asset not found", http.StatusNotFound)
 		return
@@ -67,7 +67,7 @@ func (s *Server) handleRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	renderReaderPage(w, readerPageAsset{
-		WorkID:        asset.WorkID,
+		BookID:        asset.BookID,
 		AssetID:       asset.ID,
 		Title:         asset.Title,
 		Extension:     asset.Extension,
@@ -94,7 +94,7 @@ func (s *Server) handleReadAssetPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	renderReaderPage(w, readerPageAsset{
-		WorkID:        asset.WorkID,
+		BookID:        asset.BookID,
 		AssetID:       assetID,
 		Title:         asset.Title,
 		Extension:     asset.Extension,
@@ -108,7 +108,7 @@ func renderReaderPage(w http.ResponseWriter, asset readerPageAsset) {
 	ext := strings.ToLower(asset.Extension)
 	data := readerPageData{
 		layoutPageData:  newLayoutPageData(),
-		WorkID:          asset.WorkID,
+		BookID:          asset.BookID,
 		AssetID:         asset.AssetID,
 		Title:           asset.Title,
 		Extension:       strings.TrimPrefix(strings.ToUpper(ext), "."),

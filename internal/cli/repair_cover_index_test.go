@@ -20,11 +20,11 @@ func TestRecoverableCoverIndex(t *testing.T) {
 		t.Fatalf("mkdir covers: %v", err)
 	}
 
-	staged := filepath.Join(staging, ".tmp-1111-w_staged-cover")
-	placed := filepath.Join(covers, ".tmp-2222-w_placed")
-	adjacent := filepath.Join(covers, ".writeback-w_adjacent-cover-3333.tmp")
-	shadowed := filepath.Join(covers, ".tmp-4444-w_staged")
-	unrelated := filepath.Join(covers, "notes-w_placed")
+	staged := filepath.Join(staging, ".tmp-1111-b_staged-cover")
+	placed := filepath.Join(covers, ".tmp-2222-b_placed")
+	adjacent := filepath.Join(covers, ".writeback-b_adjacent-cover-3333.tmp")
+	shadowed := filepath.Join(covers, ".tmp-4444-b_staged")
+	unrelated := filepath.Join(covers, "notes-b_placed")
 	for _, path := range []string{staged, placed, adjacent, shadowed, unrelated} {
 		if err := os.WriteFile(path, []byte(filepath.Base(path)), 0o644); err != nil {
 			t.Fatalf("write %s: %v", filepath.Base(path), err)
@@ -33,16 +33,16 @@ func TestRecoverableCoverIndex(t *testing.T) {
 
 	idx := newRecoverableCoverIndex(context.Background(), root)
 	for _, tc := range []struct {
-		workID string
+		bookID string
 		want   string
 	}{
-		{workID: "w_staged", want: staged},
-		{workID: "w_placed", want: placed},
-		{workID: "w_adjacent", want: adjacent},
-		{workID: "w_missing", want: ""},
+		{bookID: "b_staged", want: staged},
+		{bookID: "b_placed", want: placed},
+		{bookID: "b_adjacent", want: adjacent},
+		{bookID: "b_missing", want: ""},
 	} {
-		if got := idx.find(tc.workID); got != tc.want {
-			t.Errorf("find(%q) = %q; want %q", tc.workID, got, tc.want)
+		if got := idx.find(tc.bookID); got != tc.want {
+			t.Errorf("find(%q) = %q; want %q", tc.bookID, got, tc.want)
 		}
 	}
 }

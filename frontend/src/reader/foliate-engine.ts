@@ -450,11 +450,11 @@ export function applyFoliateDisplay(view: FoliateViewElement, prefs: ReaderPrefe
     const renderer = view.renderer;
     if (!renderer) return;
 
-    const style = normalizeReaderDisplayStyle(prefs.display_style);
+    const style = normalizeReaderDisplayStyle(prefs.reader_style);
     const palette = readerDisplayPalette(style);
     const columnWidth =
         style === 'custom'
-            ? clampNumber(prefs.custom_column_width, 560, 920, DEFAULT_READER_COLUMN_WIDTH)
+            ? clampNumber(prefs.reader_column_width, 560, 920, DEFAULT_READER_COLUMN_WIDTH)
             : style === 'original'
               ? 820
               : DEFAULT_READER_COLUMN_WIDTH;
@@ -581,7 +581,7 @@ function readerContentCSS(
     prefs: ReaderPreferences,
     palette: ReaderDisplayPalette,
 ): string {
-    const rootFontSize = (1.15 + clampNumber(prefs.font_scale, -4, 6, 0) * 0.06).toFixed(2);
+    const rootFontSize = (1.15 + clampNumber(prefs.reader_font_size, -4, 6, 0) * 0.06).toFixed(2);
     if (style === 'original') {
         return `
 html,
@@ -605,7 +605,7 @@ body {
     }
 
     const lineHeight =
-        style === 'custom' ? clampNumber(prefs.custom_line_height, 1.2, 2.2, 1.72) : 1.72;
+        style === 'custom' ? clampNumber(prefs.reader_line_height, 1.2, 2.2, 1.72) : 1.72;
 
     return `
 html,

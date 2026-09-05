@@ -155,7 +155,7 @@ func TestAPISendOptionsPlansKindleEPUB(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, admin.ID, http.MethodGet, "/api/send/options?work=w_1", nil))
+	handler.ServeHTTP(w, jsonRequest(t, s, admin.ID, http.MethodGet, "/api/send/options?book=w_1", nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("send options status = %d; body: %s", w.Code, w.Body.String())
 	}
@@ -180,8 +180,8 @@ func TestAPISendOptionsChoicesUsePersistedFormat(t *testing.T) {
 
 	admin := mustUser(t, database, "admin", db.RoleAdmin)
 	if _, err := database.Exec(`
-		INSERT INTO works (id, title, sort_title) VALUES ('w_fb2_zip', 'FB2 Zip', 'FB2 Zip');
-		INSERT INTO assets (id, work_id, storage_path, filename, extension, format, current_size, is_primary)
+		INSERT INTO books (id, title, sort_title) VALUES ('w_fb2_zip', 'FB2 Zip', 'FB2 Zip');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, current_size, is_primary)
 			VALUES ('asset_fb2_zip', 'w_fb2_zip', 'Books/fb2.zip', 'fb2.zip', '.fb2.zip', 'fb2', 1024, 1);
 	`); err != nil {
 		t.Fatalf("seed fb2.zip asset: %v", err)
@@ -213,7 +213,7 @@ func TestAPISendOptionsChoicesUsePersistedFormat(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, admin.ID, http.MethodGet, "/api/send/options?work=w_fb2_zip", nil))
+	handler.ServeHTTP(w, jsonRequest(t, s, admin.ID, http.MethodGet, "/api/send/options?book=w_fb2_zip", nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("send options status = %d; body: %s", w.Code, w.Body.String())
 	}
@@ -574,7 +574,7 @@ func TestSendingSwitchGatesDeliveryAPI(t *testing.T) {
 	sendOptions := func() SendOptionsDTO {
 		t.Helper()
 		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, jsonRequest(t, s, admin.ID, http.MethodGet, "/api/send/options?work=w_1", nil))
+		handler.ServeHTTP(rec, jsonRequest(t, s, admin.ID, http.MethodGet, "/api/send/options?book=w_1", nil))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("send options status = %d; body: %s", rec.Code, rec.Body.String())
 		}
@@ -591,7 +591,7 @@ func TestSendingSwitchGatesDeliveryAPI(t *testing.T) {
 
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, jsonRequest(t, s, admin.ID, http.MethodPost, "/api/deliveries", map[string]any{
-		"work_id": "w_1",
+		"book_id": "w_1",
 	}))
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("create delivery while off = %d, want %d; body: %s", w.Code, http.StatusForbidden, w.Body.String())
@@ -678,7 +678,7 @@ func createQueuedDeliveryJob(t *testing.T, database *db.DB, userID int64, target
 		DeviceName:  "Kindle",
 		DeviceEmail: "reader@kindle.com",
 		Preset:      db.DeliveryPresetKindle,
-		WorkID:      "w_1",
+		BookID:      "w_1",
 		AssetID:     sql.NullString{String: "asset_1", Valid: true},
 		Title:       "The Hobbit",
 		Target:      target,

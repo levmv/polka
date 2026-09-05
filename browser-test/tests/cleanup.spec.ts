@@ -31,7 +31,7 @@ async function cleanupGroupForTitle(
   return group!;
 }
 
-async function purgeWorks(page: Page, ids: string[]): Promise<void> {
+async function purgeBooks(page: Page, ids: string[]): Promise<void> {
   const trash = await page.request.post('/api/books/bulk/trash', { data: { ids } });
   expect(trash.ok()).toBeTruthy();
   for (const id of ids) {
@@ -121,7 +121,7 @@ test.describe('Cleanup page', () => {
     await group.getByRole('button', { name: 'Dismiss' }).click();
     await expect(page.locator('.toast', { hasText: 'Dismissed duplicate group' })).toBeVisible();
     await expect(page.locator('.duplicate-group', { hasText: title })).toHaveCount(0);
-    await purgeWorks(page, ids);
+    await purgeBooks(page, ids);
 
   });
 
@@ -163,7 +163,7 @@ test.describe('Cleanup page', () => {
     const survivorBook = await bookRes.json();
     const extensions = survivorBook.assets.map((asset: { extension: string }) => asset.extension).sort();
     expect(extensions).toEqual(['.epub', '.fb2']);
-    await purgeWorks(
+    await purgeBooks(
       page,
       apiGroup.books.map((book) => book.id),
     );

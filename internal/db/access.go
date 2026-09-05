@@ -8,18 +8,18 @@ import (
 
 // VisibilityScope narrows content queries to what one account may see.
 // Authorization is two separate primitives composed with AND — deliberately
-// no single authorize(user, action, work) entry point:
+// no single authorize(user, action, book) entry point:
 //
 //   - capability ("may this user perform action X?") — a minimum-role check,
 //     declared per route in web/server.go's route table;
-//   - visibility ("may this user see work W?") — this scope, ANDed into every
+//   - visibility ("may this user see book B?") — this scope, ANDed into every
 //     content query unconditionally: lists, search, authors, series, tags,
 //     OPDS, covers, downloads, reader entry points, sequence navigation.
 //
 // Contract: a scoped account sees the scoped catalog as its whole library —
-// direct access to an out-of-scope work or asset is a 404, exactly like
-// content that doesn't exist. Access is work-centric (asset resolves to its
-// work). Enforcement covers every authenticated entry point: browser
+// direct access to an out-of-scope book or asset is a 404, exactly like
+// content that doesn't exist. Access is book-centric (asset resolves to its
+// book). Enforcement covers every authenticated entry point: browser
 // sessions, basic auth, app tokens, kosync tokens. An empty scope is valid
 // and fail-closed: the account sees an empty library, not an error.
 type VisibilityScope struct {
@@ -56,22 +56,22 @@ func (s VisibilityScope) IsFull() bool {
 	return s.ContentScope == "" || s.ContentScope == ContentScopeAll
 }
 
-// WorkWhere returns a predicate restricting workIDExpr to the scope. A shelf
+// BookWhere returns a predicate restricting bookIDExpr to the scope. A shelf
 // counts as a scope source when it is shared, or personal but owned by
 // someone *else* (a curator's hidden allowlist) — the owner_id <> user_id
 // half excludes the scoped reader's own personal shelves, which is what
 // keeps "nothing a reader does can widen their scope" true: readers organize
 // already-visible books, only curators grant access.
 //
-// Eligible query shelves are access boundaries, so "list all matching works"
-// and "does work W match" must stay one predicate (the same MATCH against the
-// same non-empty query_match here and in visibleWorksCTE). New books matching
+// Eligible query shelves are access boundaries, so "list all matching books"
+// and "does book B match" must stay one predicate (the same MATCH against the
+// same non-empty query_match here and in visibleBooksCTE). New books matching
 // one become visible with no review: dynamic by design, accepted for the
 // household trust model. Relational no: filters and per-user status: filters
 // are never eligible because query_match cannot represent their full meaning.
 // If the grammar ever grows OR/NOT/grouping, re-audit scope eligibility before
 // allowing those expressions at an authorization boundary.
-func (s VisibilityScope) WorkWhere(workIDExpr string) (string, []any) {
+func (s VisibilityScope) BookWhere(bookIDExpr string) (string, []any) {
 	if s.IsFull() {
 		return "1 = 1", nil
 	}
@@ -86,7 +86,7 @@ func (s VisibilityScope) WorkWhere(workIDExpr string) (string, []any) {
 				SELECT 1
 				FROM shelf_books scope_books
 				WHERE scope_books.shelf_id = scope_shelf.id
-				  AND scope_books.work_id = ` + workIDExpr + `
+				  AND scope_books.book_id = ` + bookIDExpr + `
 			))
 			OR
 			(scope_shelf.kind = 'query'
@@ -95,33 +95,33 @@ func (s VisibilityScope) WorkWhere(workIDExpr string) (string, []any) {
 			 AND EXISTS (
 				SELECT 1
 				FROM search
-				WHERE search.work_id = ` + workIDExpr + `
+				WHERE search.book_id = ` + bookIDExpr + `
 				  AND search MATCH scope_shelf.query_match
 			))
 		  )
 	)`, []any{s.UserID}
 }
 
-func (s VisibilityScope) AppendWorkWhere(where, workIDExpr string, args ...any) (string, []any) {
-	scopeWhere, scopeArgs := s.WorkWhere(workIDExpr)
+func (s VisibilityScope) AppendBookWhere(where, bookIDExpr string, args ...any) (string, []any) {
+	scopeWhere, scopeArgs := s.BookWhere(bookIDExpr)
 	if scopeWhere == "1 = 1" {
 		return where, args
 	}
 	return where + " AND " + scopeWhere, append(args, scopeArgs...)
 }
 
-func (s VisibilityScope) joinVisibleWorks(fromSQL string) (string, string, []any) {
+func (s VisibilityScope) joinVisibleBooks(fromSQL string) (string, string, []any) {
 	if s.IsFull() {
 		return "", fromSQL, nil
 	}
-	return s.visibleWorksCTE(), fromSQL + `
-		JOIN visible_scope scope_visible ON scope_visible.work_id = w.id`, []any{s.UserID}
+	return s.visibleBooksCTE(), fromSQL + `
+		JOIN visible_scope scope_visible ON scope_visible.book_id = b.id`, []any{s.UserID}
 }
 
-// visibleWorksCTE builds the scoped library as a source set. List/sequence
-// queries join this instead of running WorkWhere as a per-work predicate; query
-// shelves are then evaluated FTS-first instead of once per candidate work.
-func (s VisibilityScope) visibleWorksCTE() string {
+// visibleBooksCTE builds the scoped library as a source set. List/sequence
+// queries join this instead of running BookWhere as a per-book predicate; query
+// shelves are then evaluated FTS-first instead of once per candidate book.
+func (s VisibilityScope) visibleBooksCTE() string {
 	return `
 		scope_shelves AS MATERIALIZED (
 			SELECT scope_shelf.id, scope_shelf.kind, scope_shelf.query_match
@@ -131,12 +131,12 @@ func (s VisibilityScope) visibleWorksCTE() string {
 			  AND (scope_shelf.visibility = 'shared' OR scope_shelf.owner_id <> us.user_id)
 		),
 		visible_scope AS MATERIALIZED (
-			SELECT scope_books.work_id
+			SELECT scope_books.book_id
 			FROM scope_shelves scope_shelf
 			JOIN shelf_books scope_books ON scope_books.shelf_id = scope_shelf.id
 			WHERE scope_shelf.kind = 'manual'
 			UNION
-			SELECT search.work_id
+			SELECT search.book_id
 			FROM scope_shelves scope_shelf
 			JOIN search ON search MATCH scope_shelf.query_match
 			WHERE scope_shelf.kind = 'query'
@@ -152,39 +152,39 @@ func withClause(withSQL string) string {
 	return "WITH " + withSQL
 }
 
-func CanAccessWork(queryer Queryer, scope VisibilityScope, workID string) (bool, error) {
-	where, args := scope.AppendWorkWhere("w.id = ? AND w.deleted_at IS NULL", "w.id", workID)
+func CanAccessBook(queryer Queryer, scope VisibilityScope, bookID string) (bool, error) {
+	where, args := scope.AppendBookWhere("b.id = ? AND b.deleted_at IS NULL", "b.id", bookID)
 	var exists int
-	err := queryer.QueryRow(`SELECT 1 FROM works w WHERE `+where+` LIMIT 1`, args...).Scan(&exists)
+	err := queryer.QueryRow(`SELECT 1 FROM books b WHERE `+where+` LIMIT 1`, args...).Scan(&exists)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("check work access: %w", err)
+		return false, fmt.Errorf("check book access: %w", err)
 	}
 	return true, nil
 }
 
-func CanAccessTrashedWork(queryer Queryer, scope VisibilityScope, workID string) (bool, error) {
-	where, args := scope.AppendWorkWhere("w.id = ? AND w.deleted_at IS NOT NULL", "w.id", workID)
+func CanAccessTrashedBook(queryer Queryer, scope VisibilityScope, bookID string) (bool, error) {
+	where, args := scope.AppendBookWhere("b.id = ? AND b.deleted_at IS NOT NULL", "b.id", bookID)
 	var exists int
-	err := queryer.QueryRow(`SELECT 1 FROM works w WHERE `+where+` LIMIT 1`, args...).Scan(&exists)
+	err := queryer.QueryRow(`SELECT 1 FROM books b WHERE `+where+` LIMIT 1`, args...).Scan(&exists)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("check trashed work access: %w", err)
+		return false, fmt.Errorf("check trashed book access: %w", err)
 	}
 	return true, nil
 }
 
 func CanAccessAsset(queryer Queryer, scope VisibilityScope, assetID string) (bool, error) {
-	where, args := scope.AppendWorkWhere("a.id = ? AND w.deleted_at IS NULL", "w.id", assetID)
+	where, args := scope.AppendBookWhere("a.id = ? AND b.deleted_at IS NULL", "b.id", assetID)
 	var exists int
 	err := queryer.QueryRow(`
 		SELECT 1
 		FROM assets a
-		JOIN works w ON w.id = a.work_id
+		JOIN books b ON b.id = a.book_id
 		WHERE `+where+`
 		LIMIT 1
 	`, args...).Scan(&exists)

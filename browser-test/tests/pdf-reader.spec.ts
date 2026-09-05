@@ -30,15 +30,15 @@ test('PDF reader behavior', async ({
   const card = page.locator('.book-card', { hasText: title });
   await expect(card).toBeVisible();
   const href = await card.locator('.book-title-link').getAttribute('href');
-  const workId = href?.split('/').pop()?.split('?')[0];
-  if (!workId) throw new Error('missing PDF work id');
+  const bookId = href?.split('/').pop()?.split('?')[0];
+  if (!bookId) throw new Error('missing PDF book id');
   const reader = page.locator('.reader-page');
   const stage = page.locator('.reader-pdf-stage');
   let assetId = '';
 
   try {
     await test.step('opens and saves the current page', async () => {
-      await page.goto(`/read/${workId}`);
+      await page.goto(`/read/${bookId}`);
       await expect(reader).toHaveAttribute('data-reader-format', 'pdf');
       await expect.poll(async () => stage.getAttribute('data-reader-ready')).toBe('true');
       await expect(page.locator('[data-pdf-canvas]')).toBeVisible();
@@ -181,23 +181,23 @@ test('PDF reader behavior', async ({
       await page.keyboard.press('Escape');
       await expect(searchPanel).toBeHidden();
       await expect(highlight).toHaveCount(0);
-      await expect(page).toHaveURL(new RegExp(`/read/${workId}$`));
+      await expect(page).toHaveURL(new RegExp(`/read/${bookId}$`));
     });
 
     await test.step('reveals chrome and then closes with Escape', async () => {
       await reader.evaluate((element) => element.classList.add('reader-chrome-hidden'));
       await page.keyboard.press('Escape');
       await expect(reader).not.toHaveClass(/reader-chrome-hidden/);
-      await expect(page).toHaveURL(new RegExp(`/read/${workId}$`));
+      await expect(page).toHaveURL(new RegExp(`/read/${bookId}$`));
       await page.keyboard.press('Escape');
-      await expect(page).toHaveURL(new RegExp(`/book/${workId}$`));
+      await expect(page).toHaveURL(new RegExp(`/book/${bookId}$`));
     });
   } finally {
     const trash = await page.request.post('/api/books/bulk/trash', {
-      data: { ids: [workId] },
+      data: { ids: [bookId] },
     });
     expect(trash.ok()).toBeTruthy();
-    const purge = await page.request.delete(`/api/books/${encodeURIComponent(workId)}/purge`);
+    const purge = await page.request.delete(`/api/books/${encodeURIComponent(bookId)}/purge`);
     expect(purge.status()).toBe(204);
   }
 });

@@ -28,9 +28,9 @@ func GetCleanupCounts(queryer Queryer, scope VisibilityScope) (CleanupCounts, er
 }
 
 func countBooksByCondition(queryer Queryer, scope VisibilityScope, condition string) (int, error) {
-	where, args := scope.AppendWorkWhere("w.deleted_at IS NULL AND ("+condition+")", "w.id")
+	where, args := scope.AppendBookWhere("b.deleted_at IS NULL AND ("+condition+")", "b.id")
 	var count int
-	if err := queryer.QueryRow(`SELECT COUNT(*) FROM works w WHERE `+where, args...).Scan(&count); err != nil {
+	if err := queryer.QueryRow(`SELECT COUNT(*) FROM books b WHERE `+where, args...).Scan(&count); err != nil {
 		return 0, fmt.Errorf("count cleanup books: %w", err)
 	}
 	return count, nil

@@ -10,15 +10,15 @@ func TestSeriesQueries(t *testing.T) {
 	database := newTestDB(t)
 
 	database.Exec("INSERT INTO authors (id, name, sort_name) VALUES ('a1', 'Isaac Asimov', 'Asimov, Isaac')")
-	database.Exec("INSERT INTO works (id, title, sort_title, series, series_index) VALUES ('w2', 'Second', 'Second', 'Foundation', 2)")
-	database.Exec("INSERT INTO works (id, title, sort_title, series, series_index) VALUES ('w1', 'First', 'First', 'Foundation', 1)")
-	database.Exec("INSERT INTO works (id, title, sort_title, series, series_index) VALUES ('w3', 'No Number', 'No Number', 'Foundation', NULL)")
-	database.Exec("INSERT INTO works (id, title, sort_title, series, series_index) VALUES ('w6', 'Alpha Unnumbered', 'Alpha Unnumbered', 'Foundation', 0)")
-	database.Exec("INSERT INTO works (id, title, sort_title, series, series_index) VALUES ('w7', 'Zeta Unnumbered', 'Zeta Unnumbered', 'Foundation', -1)")
-	database.Exec("INSERT INTO works (id, title, sort_title, series, series_index) VALUES ('w4', 'Other', 'Other', 'Other Series', 1)")
-	database.Exec("INSERT INTO works (id, title, sort_title, series, series_index, deleted_at) VALUES ('w5', 'Deleted', 'Deleted', 'Foundation', 3, unixepoch())")
+	database.Exec("INSERT INTO books (id, title, sort_title, series, series_index) VALUES ('w2', 'Second', 'Second', 'Foundation', 2)")
+	database.Exec("INSERT INTO books (id, title, sort_title, series, series_index) VALUES ('w1', 'First', 'First', 'Foundation', 1)")
+	database.Exec("INSERT INTO books (id, title, sort_title, series, series_index) VALUES ('w3', 'No Number', 'No Number', 'Foundation', NULL)")
+	database.Exec("INSERT INTO books (id, title, sort_title, series, series_index) VALUES ('w6', 'Alpha Unnumbered', 'Alpha Unnumbered', 'Foundation', 0)")
+	database.Exec("INSERT INTO books (id, title, sort_title, series, series_index) VALUES ('w7', 'Zeta Unnumbered', 'Zeta Unnumbered', 'Foundation', -1)")
+	database.Exec("INSERT INTO books (id, title, sort_title, series, series_index) VALUES ('w4', 'Other', 'Other', 'Other Series', 1)")
+	database.Exec("INSERT INTO books (id, title, sort_title, series, series_index, deleted_at) VALUES ('w5', 'Deleted', 'Deleted', 'Foundation', 3, unixepoch())")
 	for _, id := range []string{"w1", "w2", "w3", "w4", "w5", "w6", "w7"} {
-		database.Exec("INSERT INTO work_authors (work_id, author_id, author_order) VALUES (?, 'a1', 0)", id)
+		database.Exec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES (?, 'a1', 0)", id)
 	}
 
 	series, err := ListSeriesCountsPage(database, FullVisibilityScope(), "", "", 10)
@@ -49,7 +49,7 @@ func TestSeriesQueries(t *testing.T) {
 
 	// Series order groups by series name, then numbered volumes by index, then
 	// the unnumbered ones by title; series-less books come last.
-	database.Exec("INSERT INTO works (id, title, sort_title) VALUES ('w8', 'Standalone', 'Standalone')")
+	database.Exec("INSERT INTO books (id, title, sort_title) VALUES ('w8', 'Standalone', 'Standalone')")
 	ordered, err := ListBooks(database, FullVisibilityScope(), 0, "", SortSeries, 10, 0)
 	if err != nil {
 		t.Fatalf("list books by series order: %v", err)
@@ -81,15 +81,15 @@ func TestSeriesCardsPage(t *testing.T) {
 
 	database.Exec("INSERT INTO authors (id, name, sort_name) VALUES ('a1', 'Isaac Asimov', 'Asimov, Isaac')")
 	// Volume 1 has no cover, so volume 2 represents the series.
-	database.Exec("INSERT INTO works (id, title, sort_title, series, series_index, cover_version) VALUES ('w1', 'First', 'First', 'Foundation', 1, 0)")
-	database.Exec("INSERT INTO works (id, title, sort_title, series, series_index, cover_version) VALUES ('w2', 'Second', 'Second', 'Foundation', 2, 3)")
-	database.Exec("INSERT INTO works (id, title, sort_title, series, series_index, cover_version) VALUES ('w3', 'Third', 'Third', 'Foundation', 3, 1)")
-	database.Exec("INSERT INTO works (id, title, sort_title, series, series_index, cover_version, deleted_at) VALUES ('w4', 'Trashed', 'Trashed', 'Foundation', 4, 1, unixepoch())")
+	database.Exec("INSERT INTO books (id, title, sort_title, series, series_index, cover_version) VALUES ('w1', 'First', 'First', 'Foundation', 1, 0)")
+	database.Exec("INSERT INTO books (id, title, sort_title, series, series_index, cover_version) VALUES ('w2', 'Second', 'Second', 'Foundation', 2, 3)")
+	database.Exec("INSERT INTO books (id, title, sort_title, series, series_index, cover_version) VALUES ('w3', 'Third', 'Third', 'Foundation', 3, 1)")
+	database.Exec("INSERT INTO books (id, title, sort_title, series, series_index, cover_version, deleted_at) VALUES ('w4', 'Trashed', 'Trashed', 'Foundation', 4, 1, unixepoch())")
 	// No volume of this series has a cover: the first one still represents it.
-	database.Exec("INSERT INTO works (id, title, sort_title, series, series_index, cover_version) VALUES ('w5', 'Only', 'Only', 'Other Series', 1, 0)")
+	database.Exec("INSERT INTO books (id, title, sort_title, series, series_index, cover_version) VALUES ('w5', 'Only', 'Only', 'Other Series', 1, 0)")
 
 	for _, id := range []string{"w1", "w2", "w3", "w4"} {
-		database.Exec("INSERT INTO work_authors (work_id, author_id, author_order) VALUES (?, 'a1', 0)", id)
+		database.Exec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES (?, 'a1', 0)", id)
 	}
 
 	ctx := context.Background()
@@ -108,9 +108,9 @@ func TestSeriesCardsPage(t *testing.T) {
 		t.Fatalf("ListSeriesCardsPage: %v", err)
 	}
 	want := []SeriesCard{
-		{Name: "Foundation", Author: "Isaac Asimov", BookCount: 3, FinishedCount: 1, CoverWorkID: "w2", CoverVersion: 3},
+		{Name: "Foundation", Author: "Isaac Asimov", BookCount: 3, FinishedCount: 1, CoverBookID: "w2", CoverVersion: 3},
 		// "Other Series" has no author linked, so the tile carries none.
-		{Name: "Other Series", Author: "", BookCount: 1, FinishedCount: 0, CoverWorkID: "w5", CoverVersion: 0},
+		{Name: "Other Series", Author: "", BookCount: 1, FinishedCount: 0, CoverBookID: "w5", CoverVersion: 0},
 	}
 	if !slices.Equal(cards, want) {
 		t.Fatalf("series cards = %+v, want %+v", cards, want)
@@ -126,9 +126,9 @@ func TestSeriesCardsPage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create shelf: %v", err)
 	}
-	for _, workID := range []string{"w1", "w3"} {
-		if err := database.AddBookToShelf(shelf.ID, 0, workID); err != nil {
-			t.Fatalf("add %s to shelf: %v", workID, err)
+	for _, bookID := range []string{"w1", "w3"} {
+		if err := database.AddBookToShelf(shelf.ID, 0, bookID); err != nil {
+			t.Fatalf("add %s to shelf: %v", bookID, err)
 		}
 	}
 	if _, err := database.UpdateUserAccess(scoped.ID, UserAccess{Role: RoleReader, ContentScope: ContentScopeShelves, ShelfIDs: []string{shelf.ID}}); err != nil {
@@ -148,7 +148,7 @@ func TestSeriesCardsPage(t *testing.T) {
 	}
 	// w2 carries the cover but is out of scope, so w3 represents the series.
 	wantScoped := []SeriesCard{
-		{Name: "Foundation", Author: "Isaac Asimov", BookCount: 2, FinishedCount: 1, CoverWorkID: "w3", CoverVersion: 1},
+		{Name: "Foundation", Author: "Isaac Asimov", BookCount: 2, FinishedCount: 1, CoverBookID: "w3", CoverVersion: 1},
 	}
 	if !slices.Equal(scopedCards, wantScoped) {
 		t.Fatalf("scoped series cards = %+v, want %+v", scopedCards, wantScoped)

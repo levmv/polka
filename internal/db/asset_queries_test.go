@@ -8,16 +8,16 @@ import (
 	"github.com/levmv/polka/internal/format"
 )
 
-func TestAssetsByWorkIDsOrdersPrimaryFirst(t *testing.T) {
+func TestAssetsByBookIDsOrdersPrimaryFirst(t *testing.T) {
 	database := newTestDB(t)
 
-	database.Exec("INSERT INTO works (id, title, sort_title) VALUES ('w1', 'T1', 'T1')")
-	database.Exec("INSERT INTO assets (id, work_id, storage_path, filename, extension, format, is_primary, can_read) VALUES ('a_pdf', 'w1', 'books/a_pdf.pdf', 'a_pdf.pdf', '.pdf', 'pdf', 0, 1)")
-	database.Exec("INSERT INTO assets (id, work_id, storage_path, filename, extension, format, is_primary, can_read) VALUES ('a_epub', 'w1', 'books/a_epub.epub', 'a_epub.epub', '.epub', 'epub', 1, 1)")
+	database.Exec("INSERT INTO books (id, title, sort_title) VALUES ('w1', 'T1', 'T1')")
+	database.Exec("INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read) VALUES ('a_pdf', 'w1', 'books/a_pdf.pdf', 'a_pdf.pdf', '.pdf', 'pdf', 0, 1)")
+	database.Exec("INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read) VALUES ('a_epub', 'w1', 'books/a_epub.epub', 'a_epub.epub', '.epub', 'epub', 1, 1)")
 
-	assets, err := AssetsByWorkIDs(database, []string{"w1"})
+	assets, err := AssetsByBookIDs(database, []string{"w1"})
 	if err != nil {
-		t.Fatalf("AssetsByWorkIDs: %v", err)
+		t.Fatalf("AssetsByBookIDs: %v", err)
 	}
 	if len(assets) != 2 {
 		t.Fatalf("assets len = %d; want 2", len(assets))
@@ -30,26 +30,26 @@ func TestAssetsByWorkIDsOrdersPrimaryFirst(t *testing.T) {
 	}
 }
 
-func TestPrimaryAssetForWork(t *testing.T) {
+func TestPrimaryAssetForBook(t *testing.T) {
 	database := newTestDB(t)
 
-	database.Exec("INSERT INTO works (id, title, sort_title) VALUES ('w1', 'T1', 'T1')")
-	database.Exec("INSERT INTO works (id, title, sort_title) VALUES ('w2', 'T2', 'T2')")
-	database.Exec("INSERT INTO assets (id, work_id, storage_path, filename, extension, format, is_primary, can_read) VALUES ('a_pdf', 'w1', 'books/a_pdf.pdf', 'a_pdf.pdf', '.pdf', 'pdf', 0, 1)")
-	database.Exec("INSERT INTO assets (id, work_id, storage_path, filename, extension, format, is_primary, can_read, current_sha256) VALUES ('a_epub', 'w1', 'books/a_epub.epub', 'a_epub.epub', '.epub', 'epub', 1, 1, '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef')")
+	database.Exec("INSERT INTO books (id, title, sort_title) VALUES ('w1', 'T1', 'T1')")
+	database.Exec("INSERT INTO books (id, title, sort_title) VALUES ('w2', 'T2', 'T2')")
+	database.Exec("INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read) VALUES ('a_pdf', 'w1', 'books/a_pdf.pdf', 'a_pdf.pdf', '.pdf', 'pdf', 0, 1)")
+	database.Exec("INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, current_sha256) VALUES ('a_epub', 'w1', 'books/a_epub.epub', 'a_epub.epub', '.epub', 'epub', 1, 1, '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef')")
 
-	asset, err := PrimaryAssetForWork(database, FullVisibilityScope(), "w1")
+	asset, err := PrimaryAssetForBook(database, FullVisibilityScope(), "w1")
 	if err != nil {
-		t.Fatalf("PrimaryAssetForWork: %v", err)
+		t.Fatalf("PrimaryAssetForBook: %v", err)
 	}
-	if asset.ID != "a_epub" || asset.WorkID != "w1" || asset.Title != "T1" || asset.Format != format.FormatEPUB || !asset.IsPrimary || !asset.CanRead {
+	if asset.ID != "a_epub" || asset.BookID != "w1" || asset.Title != "T1" || asset.Format != format.FormatEPUB || !asset.IsPrimary || !asset.CanRead {
 		t.Fatalf("primary asset = %+v; want a_epub for w1", asset)
 	}
 	if asset.CurrentSHA256 != "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" {
 		t.Fatalf("primary asset current SHA-256 = %q", asset.CurrentSHA256)
 	}
 
-	if _, err := PrimaryAssetForWork(database, FullVisibilityScope(), "w2"); !errors.Is(err, sql.ErrNoRows) {
+	if _, err := PrimaryAssetForBook(database, FullVisibilityScope(), "w2"); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("missing primary err = %v, want sql.ErrNoRows", err)
 	}
 }

@@ -48,36 +48,36 @@ func validateCoverBytes(coverBytes []byte) (validatedCoverBytes, error) {
 // promotion, and derived-cache invalidation this method holds the same storage
 // slot as write-back/import/relayout. A write-back therefore cannot observe a
 // new cover revision while the old original is still on disk.
-func (s *Server) storeCoverBytes(ctx context.Context, workID string, coverBytes validatedCoverBytes) error {
+func (s *Server) storeCoverBytes(ctx context.Context, bookID string, coverBytes validatedCoverBytes) error {
 	releaseStorageSlot, err := s.acquireStorageWorkSlot(ctx)
 	if err != nil {
 		return err
 	}
 	defer releaseStorageSlot()
 
-	coverPath := covers.OriginalPath(workID)
+	coverPath := covers.OriginalPath(bookID)
 	root := s.dataRoot()
 	err = storage.Place(root, coverPath, bytes.NewReader([]byte(coverBytes)), func() error {
 		return s.db.Transact(ctx, func(tx *sql.Tx) error {
 			var overrides sql.NullString
 			if err := tx.QueryRow(`
 				SELECT manual_overrides
-				FROM works
+				FROM books
 				WHERE id = ? AND deleted_at IS NULL
-			`, workID).Scan(&overrides); err != nil {
+			`, bookID).Scan(&overrides); err != nil {
 				return err
 			}
 
 			overrideMap := bookmeta.ParseOverrides(overrides.String)
 			overrideMap["cover"] = true
 			_, err := tx.Exec(`
-				UPDATE works
+				UPDATE books
 				SET cover_version = cover_version + 1,
 				    metadata_rev = metadata_rev + 1,
 				    manual_overrides = ?,
 				    updated_at = unixepoch()
 				WHERE id = ?
-			`, bookmeta.MarshalOverrides(overrideMap), workID)
+			`, bookmeta.MarshalOverrides(overrideMap), bookID)
 			return err
 		})
 	})
@@ -85,12 +85,12 @@ func (s *Server) storeCoverBytes(ctx context.Context, workID string, coverBytes 
 		return err
 	}
 
-	covers.RemoveDerived(root, workID)
+	covers.RemoveDerived(root, bookID)
 	return nil
 }
 
-func (s *Server) storeCoverAndReturnBook(w http.ResponseWriter, r *http.Request, workID string, coverBytes validatedCoverBytes) {
-	if err := s.storeCoverBytes(r.Context(), workID, coverBytes); err != nil {
+func (s *Server) storeCoverAndReturnBook(w http.ResponseWriter, r *http.Request, bookID string, coverBytes validatedCoverBytes) {
+	if err := s.storeCoverBytes(r.Context(), bookID, coverBytes); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			http.NotFound(w, r)
 		} else {
@@ -99,12 +99,12 @@ func (s *Server) storeCoverAndReturnBook(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	s.handleAPIBookDetailReturn(w, r, workID)
+	s.handleAPIBookDetailReturn(w, r, bookID)
 }
 
 func (s *Server) handleAPICoverUpload(w http.ResponseWriter, r *http.Request) {
-	workID := r.PathValue("id")
-	if _, ok := s.requireWorkAccess(w, r, workID); !ok {
+	bookID := r.PathValue("id")
+	if _, ok := s.requireBookAccess(w, r, bookID); !ok {
 		return
 	}
 
@@ -130,12 +130,12 @@ func (s *Server) handleAPICoverUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.storeCoverAndReturnBook(w, r, workID, validCover)
+	s.storeCoverAndReturnBook(w, r, bookID, validCover)
 }
 
 func (s *Server) handleAPIGeneratedCoverPreview(w http.ResponseWriter, r *http.Request) {
-	workID := r.PathValue("id")
-	if _, ok := s.requireWorkAccess(w, r, workID); !ok {
+	bookID := r.PathValue("id")
+	if _, ok := s.requireBookAccess(w, r, bookID); !ok {
 		return
 	}
 
@@ -163,8 +163,8 @@ func (s *Server) handleAPIGeneratedCoverPreview(w http.ResponseWriter, r *http.R
 }
 
 func (s *Server) handleAPICoverURL(w http.ResponseWriter, r *http.Request) {
-	workID := r.PathValue("id")
-	if _, ok := s.requireWorkAccess(w, r, workID); !ok {
+	bookID := r.PathValue("id")
+	if _, ok := s.requireBookAccess(w, r, bookID); !ok {
 		return
 	}
 
@@ -179,7 +179,7 @@ func (s *Server) handleAPICoverURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.storeCoverAndReturnBook(w, r, workID, coverBytes)
+	s.storeCoverAndReturnBook(w, r, bookID, coverBytes)
 }
 
 func (s *Server) fetchRemoteCover(r *http.Request, rawURL string) (validatedCoverBytes, error) {

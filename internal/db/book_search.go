@@ -46,36 +46,36 @@ func QueryTerm(field, value string) string {
 	return field + `:"` + strings.ReplaceAll(value, `"`, `""`) + `"`
 }
 
-// UpdateSearchIndex rebuilds the search table row for a work from the
+// UpdateSearchIndex rebuilds the search table row for a book from the
 // relational catalog.
-func UpdateSearchIndex(tx *sql.Tx, workID string) error {
-	if _, err := tx.Exec("DELETE FROM search WHERE work_id = ?", workID); err != nil {
+func UpdateSearchIndex(tx *sql.Tx, bookID string) error {
+	if _, err := tx.Exec("DELETE FROM search WHERE book_id = ?", bookID); err != nil {
 		return fmt.Errorf("delete search: %w", err)
 	}
 
-	// Gather every indexed field in one pass: the direct works columns plus the
+	// Gather every indexed field in one pass: the direct books columns plus the
 	// authors (reusing colAuthors) and filenames as correlated subqueries.
 	var title, series, tags, description, identifiers, authors, filenames string
 	err := tx.QueryRow(fmt.Sprintf(`
 		SELECT
-			w.title,
-			COALESCE(w.series, ''),
-			COALESCE(w.tags, ''),
-			COALESCE(w.description, ''),
-			COALESCE(w.identifiers, ''),
+			b.title,
+			COALESCE(b.series, ''),
+			COALESCE(b.tags, ''),
+			COALESCE(b.description, ''),
+			COALESCE(b.identifiers, ''),
 			%s,
-			COALESCE((SELECT group_concat(filename, ' ') FROM assets WHERE work_id = w.id), '')
-		FROM works w
-		WHERE w.id = ?
-	`, colAuthors), workID).Scan(&title, &series, &tags, &description, &identifiers, &authors, &filenames)
+			COALESCE((SELECT group_concat(filename, ' ') FROM assets WHERE book_id = b.id), '')
+		FROM books b
+		WHERE b.id = ?
+	`, colAuthors), bookID).Scan(&title, &series, &tags, &description, &identifiers, &authors, &filenames)
 	if err != nil {
-		return fmt.Errorf("query work fields: %w", err)
+		return fmt.Errorf("query book fields: %w", err)
 	}
 
 	if _, err := tx.Exec(`
-		INSERT INTO search (rowid, work_id, title, authors, series, tags, description, identifiers, filename, tag_keys)
+		INSERT INTO search (rowid, book_id, title, authors, series, tags, description, identifiers, filename, tag_keys)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, nil, workID, title, authors, series, tags, description, identifiers, filenames, TagSearchKeys(tags)); err != nil {
+	`, nil, bookID, title, authors, series, tags, description, identifiers, filenames, TagSearchKeys(tags)); err != nil {
 		return fmt.Errorf("insert search: %w", err)
 	}
 	return nil
@@ -398,8 +398,8 @@ func searchFilterCondition(kind searchFilterKind) string {
 		return noSeriesCondition
 	case searchReadingStatus:
 		return `COALESCE((
-			SELECT rs.status FROM user_work_reading_state rs
-			WHERE rs.user_id = ? AND rs.work_id = w.id
+			SELECT rs.status FROM user_book_reading_state rs
+			WHERE rs.user_id = ? AND rs.book_id = b.id
 		), 'unread') = ?`
 	default:
 		panic("unknown search filter")
@@ -421,14 +421,14 @@ type bookSearchPlan struct {
 func newBookSearchPlan(scope VisibilityScope, userID int64, rawQuery string) bookSearchPlan {
 	parsed, _ := parseSearchQuery(rawQuery, true)
 	match := parsed.ftsMatch()
-	joined := "works w"
-	where := "w.deleted_at IS NULL"
+	joined := "books b"
+	where := "b.deleted_at IS NULL"
 	if match != "" {
-		joined = "search s JOIN works w ON s.work_id = w.id"
+		joined = "search s JOIN books b ON s.book_id = b.id"
 		where = "search MATCH ? AND " + where
 	}
 
-	withSQL, fromSQL, args := scope.joinVisibleWorks(joined)
+	withSQL, fromSQL, args := scope.joinVisibleBooks(joined)
 	if match != "" {
 		args = append(args, match)
 	}

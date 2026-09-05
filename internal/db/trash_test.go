@@ -11,14 +11,14 @@ func seedTrashFixture(t *testing.T, d *DB) {
 	stmts := []string{
 		`INSERT INTO users (id, username, password_hash, role) VALUES (1,'alice','x','admin')`,
 		`INSERT INTO authors (id, name, sort_name) VALUES ('a1','Frank Herbert','Herbert, Frank')`,
-		`INSERT INTO works (id, title, sort_title) VALUES ('w1','Dune','Dune')`,
-		`INSERT INTO works (id, title, sort_title) VALUES ('w2','Hyperion','Hyperion')`,
-		`INSERT INTO work_authors (work_id, author_id, author_order) VALUES ('w1','a1',0)`,
-		`INSERT INTO search (rowid, work_id, title, authors) VALUES (1,'w1','Dune','Frank Herbert')`,
-		`INSERT INTO search (rowid, work_id, title, authors) VALUES (2,'w2','Hyperion','')`,
-		`INSERT INTO assets (id, work_id, storage_path, filename, extension) VALUES ('as1','w1','H/Dune/as1.epub','as1.epub','.epub')`,
+		`INSERT INTO books (id, title, sort_title) VALUES ('w1','Dune','Dune')`,
+		`INSERT INTO books (id, title, sort_title) VALUES ('w2','Hyperion','Hyperion')`,
+		`INSERT INTO book_authors (book_id, author_id, author_order) VALUES ('w1','a1',0)`,
+		`INSERT INTO search (rowid, book_id, title, authors) VALUES (1,'w1','Dune','Frank Herbert')`,
+		`INSERT INTO search (rowid, book_id, title, authors) VALUES (2,'w2','Hyperion','')`,
+		`INSERT INTO assets (id, book_id, storage_path, filename, extension) VALUES ('as1','w1','H/Dune/as1.epub','as1.epub','.epub')`,
 		`INSERT INTO shelves (id, name, kind, owner_id, visibility) VALUES ('s1','Faves','manual',1,'shared')`,
-		`INSERT INTO shelf_books (shelf_id, work_id) VALUES ('s1','w1')`,
+		`INSERT INTO shelf_books (shelf_id, book_id) VALUES ('s1','w1')`,
 	}
 	for _, q := range stmts {
 		if _, err := d.Exec(q); err != nil {
@@ -34,14 +34,14 @@ func newTrashTestDB(t *testing.T) *DB {
 	return d
 }
 
-func TestSoftDeleteHidesWorkEverywhere(t *testing.T) {
+func TestSoftDeleteHidesBookEverywhere(t *testing.T) {
 	d := newTrashTestDB(t)
 
 	if got := len(mustListBooks(t, d, "")); got != 2 {
-		t.Fatalf("baseline list = %d works, want 2", got)
+		t.Fatalf("baseline list = %d books, want 2", got)
 	}
 
-	if err := SoftDeleteWork(d, "w1", 1); err != nil {
+	if err := SoftDeleteBook(d, "w1", 1); err != nil {
 		t.Fatalf("soft delete: %v", err)
 	}
 
@@ -66,7 +66,7 @@ func TestSoftDeleteHidesWorkEverywhere(t *testing.T) {
 	}
 
 	// Trash listing surfaces it with the deleter's display name.
-	trashed, err := ListTrashedWorks(d, FullVisibilityScope())
+	trashed, err := ListTrashedBooks(d, FullVisibilityScope())
 	if err != nil {
 		t.Fatalf("list trashed: %v", err)
 	}
@@ -77,19 +77,19 @@ func TestSoftDeleteHidesWorkEverywhere(t *testing.T) {
 		t.Fatalf("trashed[0] = %+v, want deleted_by alice and a timestamp", trashed[0])
 	}
 
-	// Re-deleting a trashed work is a no-op miss, not a double-delete.
-	if err := SoftDeleteWork(d, "w1", 1); !errors.Is(err, sql.ErrNoRows) {
+	// Re-deleting a trashed book is a no-op miss, not a double-delete.
+	if err := SoftDeleteBook(d, "w1", 1); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("re-delete err = %v, want ErrNoRows", err)
 	}
 }
 
-func TestRestoreBringsWorkBack(t *testing.T) {
+func TestRestoreBringsBookBack(t *testing.T) {
 	d := newTrashTestDB(t)
-	if err := SoftDeleteWork(d, "w1", 1); err != nil {
+	if err := SoftDeleteBook(d, "w1", 1); err != nil {
 		t.Fatalf("soft delete: %v", err)
 	}
 
-	if err := RestoreWork(d, "w1"); err != nil {
+	if err := RestoreBook(d, "w1"); err != nil {
 		t.Fatalf("restore: %v", err)
 	}
 	if got := len(mustListBooks(t, d, "")); got != 2 {
@@ -99,54 +99,54 @@ func TestRestoreBringsWorkBack(t *testing.T) {
 		t.Fatalf("GetBook(restored) err = %v, want nil", err)
 	}
 
-	// Restoring a live work is a no-op miss.
-	if err := RestoreWork(d, "w1"); !errors.Is(err, sql.ErrNoRows) {
+	// Restoring a live book is a no-op miss.
+	if err := RestoreBook(d, "w1"); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("re-restore err = %v, want ErrNoRows", err)
 	}
 }
 
-func TestPurgeRemovesRowsAndRefusesLiveWork(t *testing.T) {
+func TestPurgeRemovesRowsAndRefusesLiveBook(t *testing.T) {
 	d := newTrashTestDB(t)
 
-	// A live work cannot be purged — purge is the trash-only, irreversible half.
+	// A live book cannot be purged — purge is the trash-only, irreversible half.
 	tx, _ := d.Begin()
-	if err := PurgeWork(tx, "w1"); !errors.Is(err, sql.ErrNoRows) {
-		t.Fatalf("purge live work err = %v, want ErrNoRows", err)
+	if err := PurgeBook(tx, "w1"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("purge live book err = %v, want ErrNoRows", err)
 	}
 	tx.Rollback()
 
-	if err := SoftDeleteWork(d, "w1", 1); err != nil {
+	if err := SoftDeleteBook(d, "w1", 1); err != nil {
 		t.Fatalf("soft delete: %v", err)
 	}
 
 	tx, _ = d.Begin()
-	if err := PurgeWork(tx, "w1"); err != nil {
+	if err := PurgeBook(tx, "w1"); err != nil {
 		t.Fatalf("purge: %v", err)
 	}
 	if err := tx.Commit(); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
 
-	// Work row, its assets (FK cascade), its FTS row, its shelf membership, and
+	// Book row, its assets (FK cascade), its FTS row, its shelf membership, and
 	// the now-orphaned author are all gone.
-	assertCount(t, d, 0, "SELECT count(*) FROM works WHERE id='w1'")
-	assertCount(t, d, 0, "SELECT count(*) FROM assets WHERE work_id='w1'")
-	assertCount(t, d, 0, "SELECT count(*) FROM search WHERE work_id='w1'")
-	assertCount(t, d, 0, "SELECT count(*) FROM shelf_books WHERE work_id='w1'")
+	assertCount(t, d, 0, "SELECT count(*) FROM books WHERE id='w1'")
+	assertCount(t, d, 0, "SELECT count(*) FROM assets WHERE book_id='w1'")
+	assertCount(t, d, 0, "SELECT count(*) FROM search WHERE book_id='w1'")
+	assertCount(t, d, 0, "SELECT count(*) FROM shelf_books WHERE book_id='w1'")
 	assertCount(t, d, 0, "SELECT count(*) FROM authors WHERE id='a1'")
 
-	if trashed, _ := ListTrashedWorks(d, FullVisibilityScope()); len(trashed) != 0 {
+	if trashed, _ := ListTrashedBooks(d, FullVisibilityScope()); len(trashed) != 0 {
 		t.Fatalf("after purge, trashed = %d, want 0", len(trashed))
 	}
-	// The untouched work survives.
-	assertCount(t, d, 1, "SELECT count(*) FROM works WHERE id='w2'")
+	// The untouched book survives.
+	assertCount(t, d, 1, "SELECT count(*) FROM books WHERE id='w2'")
 }
 
-func TestPurgeAllTrashedWorksExceedsSQLiteParameterLimit(t *testing.T) {
+func TestPurgeAllTrashedBooksExceedsSQLiteParameterLimit(t *testing.T) {
 	d := newTestDB(t)
 	const trashedCount = 32767
-	if _, err := d.Exec(`INSERT INTO works (id, title, sort_title) VALUES ('w-live', 'Live', 'Live')`); err != nil {
-		t.Fatalf("seed live work: %v", err)
+	if _, err := d.Exec(`INSERT INTO books (id, title, sort_title) VALUES ('w-live', 'Live', 'Live')`); err != nil {
+		t.Fatalf("seed live book: %v", err)
 	}
 	if _, err := d.Exec(`
 		WITH RECURSIVE seq(n) AS (
@@ -154,15 +154,15 @@ func TestPurgeAllTrashedWorksExceedsSQLiteParameterLimit(t *testing.T) {
 			UNION ALL
 			SELECT n + 1 FROM seq WHERE n < 32767
 		)
-		INSERT INTO works (id, title, sort_title, deleted_at)
+		INSERT INTO books (id, title, sort_title, deleted_at)
 		SELECT printf('w-large-%05d', n), printf('Large %d', n), printf('Large %d', n), unixepoch()
 		FROM seq
 	`); err != nil {
 		t.Fatalf("seed large trash: %v", err)
 	}
 	if _, err := d.Exec(`
-		INSERT INTO search (work_id, title, authors)
-		SELECT id, title, '' FROM works WHERE id LIKE 'w-large-%'
+		INSERT INTO search (book_id, title, authors)
+		SELECT id, title, '' FROM books WHERE id LIKE 'w-large-%'
 	`); err != nil {
 		t.Fatalf("seed large trash search rows: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestPurgeAllTrashedWorksExceedsSQLiteParameterLimit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("begin purge: %v", err)
 	}
-	purged, err := PurgeAllTrashedWorks(tx)
+	purged, err := PurgeAllTrashedBooks(tx)
 	if err != nil {
 		tx.Rollback()
 		t.Fatalf("purge all: %v", err)
@@ -184,10 +184,10 @@ func TestPurgeAllTrashedWorksExceedsSQLiteParameterLimit(t *testing.T) {
 		t.Fatalf("commit purge: %v", err)
 	}
 
-	assertCount(t, d, 0, "SELECT count(*) FROM works WHERE id LIKE 'w-large-%'")
-	assertCount(t, d, 0, "SELECT count(*) FROM search WHERE work_id LIKE 'w-large-%'")
-	assertCount(t, d, 1, "SELECT count(*) FROM works")
-	assertCount(t, d, 1, "SELECT count(*) FROM works WHERE id='w-live'")
+	assertCount(t, d, 0, "SELECT count(*) FROM books WHERE id LIKE 'w-large-%'")
+	assertCount(t, d, 0, "SELECT count(*) FROM search WHERE book_id LIKE 'w-large-%'")
+	assertCount(t, d, 1, "SELECT count(*) FROM books")
+	assertCount(t, d, 1, "SELECT count(*) FROM books WHERE id='w-live'")
 }
 
 func mustListBooks(t *testing.T, d *DB, q string) []BookSummaryRow {

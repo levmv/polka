@@ -29,12 +29,12 @@ type MetadataCandidateDTO struct {
 }
 
 func (s *Server) handleAPIMetadataCandidates(w http.ResponseWriter, r *http.Request) {
-	workID := r.PathValue("id")
-	if _, ok := s.requireWorkAccess(w, r, workID); !ok {
+	bookID := r.PathValue("id")
+	if _, ok := s.requireBookAccess(w, r, bookID); !ok {
 		return
 	}
 
-	query, err := s.metadataQueryForWork(workID)
+	query, err := s.metadataQueryForBook(bookID)
 	if errors.Is(err, sql.ErrNoRows) {
 		http.Error(w, "Book not found", http.StatusNotFound)
 		return
@@ -100,8 +100,8 @@ func (s *Server) metadataRegistry() metalookup.Registry {
 	return metalookup.NewRegistry(nil)
 }
 
-func (s *Server) metadataQueryForWork(workID string) (metalookup.Query, error) {
-	b, err := db.GetBook(s.db, db.FullVisibilityScope(), workID)
+func (s *Server) metadataQueryForBook(bookID string) (metalookup.Query, error) {
+	b, err := db.GetBook(s.db, db.FullVisibilityScope(), bookID)
 	if err != nil {
 		return metalookup.Query{}, err
 	}
@@ -111,11 +111,11 @@ func (s *Server) metadataQueryForWork(workID string) (metalookup.Query, error) {
 		Title: b.Title,
 	}
 
-	authorsByWork, err := db.AuthorsByWorkIDs(s.db, []string{workID})
+	authorsByBook, err := db.AuthorsByBookIDs(s.db, []string{bookID})
 	if err != nil {
 		return metalookup.Query{}, err
 	}
-	if authors := authorsByWork[workID]; len(authors) > 0 {
+	if authors := authorsByBook[bookID]; len(authors) > 0 {
 		query.Author = authors[0].Name
 	}
 	return query, nil

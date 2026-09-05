@@ -61,7 +61,7 @@ export type CoverDraftController = {
     renderPending: () => void;
     resetToStored: () => void;
     syncControls: (disabled: boolean) => void;
-    savePending: (workID: string) => Promise<Book>;
+    savePending: (bookID: string) => Promise<Book>;
     destroy: () => void;
 };
 
@@ -545,16 +545,16 @@ export function createCoverDraftController(opts: {
             if (coverSearchBtn) coverSearchBtn.disabled = coverBusy;
             syncCoverDraftControls(opts.uiID, pendingCover, revertCoverBtn);
         },
-        savePending: async (workID) => {
+        savePending: async (bookID) => {
             const cover = pendingCover;
             if (!cover) throw new Error('no pending cover');
             try {
                 const updated =
                     cover.kind === 'url'
-                        ? await apiApplyCoverURL(workID, cover.url)
+                        ? await apiApplyCoverURL(bookID, cover.url)
                         : cover.kind === 'search'
-                          ? await apiApplyCoverSearchResult(workID, cover.token)
-                          : await apiUploadCover(workID, cover.file);
+                          ? await apiApplyCoverSearchResult(bookID, cover.token)
+                          : await apiUploadCover(bookID, cover.file);
                 releasePendingCoverDraft(cover);
                 pendingCover = null;
                 showSavedReference = generatedVariants.length > 0;

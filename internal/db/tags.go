@@ -11,26 +11,26 @@ import (
 // optionally filtered by a substring. A nonpositive limit returns all matches.
 func ListTags(queryer Queryer, scope VisibilityScope, q string, limit int) ([]string, error) {
 	filter := strings.ToLower(strings.TrimSpace(q))
-	where := `w.deleted_at IS NULL
-		  AND w.tags IS NOT NULL
-		  AND trim(w.tags) <> ''`
+	where := `b.deleted_at IS NULL
+		  AND b.tags IS NOT NULL
+		  AND trim(b.tags) <> ''`
 	var withSQL string
 	var args []any
 	if !scope.IsFull() {
-		withSQL = scope.visibleWorksCTE()
-		// IN drives primary-key lookups of visible works; a join may scan the catalog.
-		where += ` AND w.id IN (SELECT work_id FROM visible_scope)`
+		withSQL = scope.visibleBooksCTE()
+		// IN drives primary-key lookups of visible books; a join may scan the catalog.
+		where += ` AND b.id IN (SELECT book_id FROM visible_scope)`
 		args = append(args, scope.UserID)
 	}
 	if filter != "" && isASCII(filter) {
 		// LIKE folds only ASCII. Different byte/character lengths let non-ASCII
 		// tags reach Go's Unicode-aware filter, including İ/i and K/k matches.
-		where += ` AND (w.tags LIKE ? ESCAPE '\'
-			OR length(CAST(w.tags AS BLOB)) <> length(w.tags))`
+		where += ` AND (b.tags LIKE ? ESCAPE '\'
+			OR length(CAST(b.tags AS BLOB)) <> length(b.tags))`
 		args = append(args, "%"+escapeLike(filter)+"%")
 	}
 	query := withClause(withSQL) + `
-		SELECT w.tags FROM works w
+		SELECT b.tags FROM books b
 		WHERE ` + where + `
 	`
 

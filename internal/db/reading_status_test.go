@@ -19,8 +19,8 @@ func TestReadingStatusLifecycleHistoryAndIsolation(t *testing.T) {
 		t.Fatalf("create bob: %v", err)
 	}
 	if _, err := database.Exec(`
-		INSERT INTO works (id, title, sort_title) VALUES ('w1', 'Book', 'Book');
-		INSERT INTO assets (id, work_id, storage_path, filename, extension, koreader_hash)
+		INSERT INTO books (id, title, sort_title) VALUES ('w1', 'Book', 'Book');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, koreader_hash)
 		VALUES ('a1', 'w1', 'book.epub', 'book.epub', '.epub', 'hash1');
 	`); err != nil {
 		t.Fatalf("seed book: %v", err)
@@ -69,8 +69,8 @@ func TestReadingStatusLifecycleHistoryAndIsolation(t *testing.T) {
 
 	rows, err := database.Query(`
 		SELECT to_status, reverted_at
-		FROM user_work_reading_events
-		WHERE user_id = ? AND work_id = ?
+		FROM user_book_reading_events
+		WHERE user_id = ? AND book_id = ?
 		ORDER BY seq ASC
 	`, alice.ID, "w1")
 	if err != nil {
@@ -117,8 +117,8 @@ func TestAutomaticReadingStatusKeepsExplicitTerminalStates(t *testing.T) {
 		t.Fatalf("create user: %v", err)
 	}
 	if _, err := database.Exec(`
-		INSERT INTO works (id, title, sort_title) VALUES ('w1', 'Book', 'Book');
-		INSERT INTO assets (id, work_id, storage_path, filename, extension, koreader_hash)
+		INSERT INTO books (id, title, sort_title) VALUES ('w1', 'Book', 'Book');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, koreader_hash)
 		VALUES ('a1', 'w1', 'book.epub', 'book.epub', '.epub', 'known');
 	`); err != nil {
 		t.Fatalf("seed: %v", err)

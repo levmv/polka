@@ -1,6 +1,6 @@
 package covers
 
-// Generated fallback covers. A work with no stored cover image gets a
+// Generated fallback covers. A book with no stored cover image gets a
 // deterministic placeholder rendered from its title and author instead of an
 // empty "No Cover" block. The render is a pure function of (title, author):
 // the background colour is hashed from the text and the title/author are laid
@@ -39,7 +39,7 @@ func mustParseFont(ttf []byte) *opentype.Font {
 	return f
 }
 
-// Placeholder renders a deterministic fallback cover for a work with no stored
+// Placeholder renders a deterministic fallback cover for a book with no stored
 // cover. The output is always exactly the variant's 2:3 bounds, JPEG-encoded.
 func Placeholder(title, author string, variant Variant, opts Options) (Encoded, error) {
 	opts = normalizeOptions(opts)

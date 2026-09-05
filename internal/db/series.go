@@ -12,27 +12,27 @@ type SeriesCount struct {
 // Series page passes it empty. afterName is the opaque cursor's decoded key.
 // limit is the positive page size.
 func ListSeriesCountsPage(queryer Queryer, scope VisibilityScope, q, afterName string, limit int) ([]SeriesCount, error) {
-	where := "w.deleted_at IS NULL AND w.series IS NOT NULL AND TRIM(w.series) <> ''"
+	where := "b.deleted_at IS NULL AND b.series IS NOT NULL AND TRIM(b.series) <> ''"
 	var args []any
 	if q != "" {
-		where += ` AND w.series LIKE ? ESCAPE '\'`
+		where += ` AND b.series LIKE ? ESCAPE '\'`
 		args = append(args, "%"+escapeLike(q)+"%")
 	}
 	if afterName != "" {
 		where += ` AND (
-			w.series COLLATE NOCASE > ? COLLATE NOCASE OR
-			(w.series COLLATE NOCASE = ? COLLATE NOCASE AND w.series COLLATE BINARY > ? COLLATE BINARY)
+			b.series COLLATE NOCASE > ? COLLATE NOCASE OR
+			(b.series COLLATE NOCASE = ? COLLATE NOCASE AND b.series COLLATE BINARY > ? COLLATE BINARY)
 		)`
 		args = append(args, afterName, afterName, afterName)
 	}
-	where, args = scope.AppendWorkWhere(where, "w.id", args...)
+	where, args = scope.AppendBookWhere(where, "b.id", args...)
 	args = append(args, limit)
 	rows, err := queryer.Query(`
-		SELECT w.series, COUNT(*) AS book_count
-		FROM works w
+		SELECT b.series, COUNT(*) AS book_count
+		FROM books b
 		WHERE `+where+`
-		GROUP BY w.series
-		ORDER BY w.series COLLATE NOCASE ASC, w.series COLLATE BINARY ASC
+		GROUP BY b.series
+		ORDER BY b.series COLLATE NOCASE ASC, b.series COLLATE BINARY ASC
 		LIMIT ?
 	`, args...)
 	if err != nil {
@@ -58,20 +58,20 @@ func ListSeriesCountsPage(queryer Queryer, scope VisibilityScope, q, afterName s
 }
 
 // SeriesCard is one tile on the Series page: the series, how many books it
-// holds, how many of them the viewer finished, and the work that stands for the
+// holds, how many of them the viewer finished, and the book that stands for the
 // whole series with its cover and author.
 type SeriesCard struct {
 	Name          string
 	Author        string
 	BookCount     int
 	FinishedCount int
-	CoverWorkID   string
+	CoverBookID   string
 	CoverVersion  int
 }
 
 // ListSeriesCardsPage returns one keyset page of Series-page tiles. Names and
 // counts come from the same keyset walk as ListSeriesCountsPage; a second
-// query then enriches only that page with its cover work and finished count, so
+// query then enriches only that page with its cover book and finished count, so
 // the per-request work stays proportional to the page instead of the library.
 // limit is the positive page size.
 func ListSeriesCardsPage(queryer Queryer, scope VisibilityScope, userID int64, q, afterName string, limit int) ([]SeriesCard, error) {
@@ -106,7 +106,7 @@ func ListSeriesCardsPage(queryer Queryer, scope VisibilityScope, userID int64, q
 // in series order that actually has a cover, so a missing cover on book one does
 // not leave the whole series blank; its primary author names the series.
 func seriesCardDetails(queryer Queryer, scope VisibilityScope, userID int64, names []string) (map[string]SeriesCard, error) {
-	withSQL, fromSQL, args := scope.joinVisibleWorks("works w")
+	withSQL, fromSQL, args := scope.joinVisibleBooks("books b")
 	args = append(args, userID)
 	placeholders, nameArgs := idPlaceholders(names)
 	args = append(args, nameArgs...)
@@ -117,26 +117,26 @@ func seriesCardDetails(queryer Queryer, scope VisibilityScope, userID int64, nam
 	withSQL += `
 		series_ranked AS (
 			SELECT
-				w.series AS name,
-				w.id AS work_id,
-				w.cover_version AS cover_version,
+				b.series AS name,
+				b.id AS book_id,
+				b.cover_version AS cover_version,
 				COALESCE(` + subPrimaryAuthorName + `, '') AS author,
 				ROW_NUMBER() OVER (
-					PARTITION BY w.series
-					ORDER BY CASE WHEN w.cover_version > 0 THEN 0 ELSE 1 END ASC, ` + seriesOrderBy + `
+					PARTITION BY b.series
+					ORDER BY CASE WHEN b.cover_version > 0 THEN 0 ELSE 1 END ASC, ` + seriesOrderBy + `
 				) AS rank_in_series,
 				SUM(CASE WHEN reading.status = 'finished' THEN 1 ELSE 0 END) OVER (
-					PARTITION BY w.series
+					PARTITION BY b.series
 				) AS finished_count
 			FROM ` + fromSQL + `
-			LEFT JOIN user_work_reading_state reading
-				ON reading.work_id = w.id AND reading.user_id = ?
-			WHERE w.deleted_at IS NULL AND w.series IN (` + placeholders + `)
+			LEFT JOIN user_book_reading_state reading
+				ON reading.book_id = b.id AND reading.user_id = ?
+			WHERE b.deleted_at IS NULL AND b.series IN (` + placeholders + `)
 		)`
 
 	rows, err := queryer.Query(`
 		WITH `+withSQL+`
-		SELECT name, work_id, cover_version, author, finished_count
+		SELECT name, book_id, cover_version, author, finished_count
 		FROM series_ranked
 		WHERE rank_in_series = 1
 	`, args...)
@@ -148,7 +148,7 @@ func seriesCardDetails(queryer Queryer, scope VisibilityScope, userID int64, nam
 	details := make(map[string]SeriesCard, len(names))
 	for rows.Next() {
 		var card SeriesCard
-		if err := rows.Scan(&card.Name, &card.CoverWorkID, &card.CoverVersion, &card.Author, &card.FinishedCount); err != nil {
+		if err := rows.Scan(&card.Name, &card.CoverBookID, &card.CoverVersion, &card.Author, &card.FinishedCount); err != nil {
 			return nil, fmt.Errorf("series card details scan: %w", err)
 		}
 		details[card.Name] = card

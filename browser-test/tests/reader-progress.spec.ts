@@ -26,10 +26,10 @@ test.describe('Reader progress lifecycle', () => {
     const card = page.locator('.book-card', { hasText: 'CBZ Reader Book' });
     await expect(card).toBeVisible();
     const href = await card.locator('.book-title-link').getAttribute('href');
-    const workId = href ? new URL(href, page.url()).pathname.split('/').pop() : '';
-    if (!workId) throw new Error('missing CBZ work id');
+    const bookId = href ? new URL(href, page.url()).pathname.split('/').pop() : '';
+    if (!bookId) throw new Error('missing CBZ book id');
 
-    await page.goto(href || `/book/${encodeURIComponent(workId)}`);
+    await page.goto(href || `/book/${encodeURIComponent(bookId)}`);
     await expect(page.locator('.detail-title')).toHaveText('CBZ Reader Book');
     const assetId = await page
       .locator('[data-reader-progress-asset]')
@@ -51,7 +51,7 @@ test.describe('Reader progress lifecycle', () => {
     );
     expect(saveRes.ok()).toBe(true);
 
-    await page.goto(`/read/${encodeURIComponent(workId)}`);
+    await page.goto(`/read/${encodeURIComponent(bookId)}`);
     const stage = page.locator('.reader-epub-stage');
     await expect(stage).toBeVisible();
     await expect.poll(async () => stage.getAttribute('data-reader-ready')).toBe('true');
@@ -74,7 +74,7 @@ test.describe('Reader progress lifecycle', () => {
     await expect.poll(() => currentReaderFraction(page)).toBeGreaterThan(savedProgress);
     expect((await fetchReaderState(page, assetId)).progress).toBe(savedProgress);
     await page.locator('.reader-close').click();
-    await expect(page).toHaveURL(new RegExp(`/book/${workId}$`));
+    await expect(page).toHaveURL(new RegExp(`/book/${bookId}$`));
     await expect
       .poll(async () => (await fetchReaderState(page, assetId)).progress)
       .toBeGreaterThan(savedProgress);
@@ -119,10 +119,10 @@ test.describe('Reader progress lifecycle', () => {
     await page.goto('/?q=CBZ%20Reader%20Book');
     const card = page.locator('.book-card', { hasText: 'CBZ Reader Book' });
     const href = await card.locator('.book-title-link').getAttribute('href');
-    if (!href) throw new Error('missing CBZ work link');
-    const workId = new URL(href, page.url()).pathname.split('/').pop();
-    if (!workId) throw new Error('missing CBZ work id');
-    await page.goto(`/read/${encodeURIComponent(workId)}`);
+    if (!href) throw new Error('missing CBZ book link');
+    const bookId = new URL(href, page.url()).pathname.split('/').pop();
+    if (!bookId) throw new Error('missing CBZ book id');
+    await page.goto(`/read/${encodeURIComponent(bookId)}`);
     await expect
       .poll(async () => page.locator('.reader-epub-stage').getAttribute('data-reader-ready'))
       .toBe('true');
@@ -155,10 +155,10 @@ test.describe('Reader progress lifecycle', () => {
     const card = page.locator('.book-card', { hasText: 'CBZ Reader Book' });
     await expect(card).toBeVisible();
     const href = await card.locator('.book-title-link').getAttribute('href');
-    const workId = href ? new URL(href, page.url()).pathname.split('/').pop() : '';
-    if (!workId) throw new Error('missing CBZ work id');
+    const bookId = href ? new URL(href, page.url()).pathname.split('/').pop() : '';
+    if (!bookId) throw new Error('missing CBZ book id');
 
-    await page.goto(href || `/book/${encodeURIComponent(workId)}`);
+    await page.goto(href || `/book/${encodeURIComponent(bookId)}`);
     const assetId = await page
       .locator('[data-reader-progress-asset]')
       .getAttribute('data-reader-progress-asset');
@@ -169,7 +169,7 @@ test.describe('Reader progress lifecycle', () => {
         message.includes(`/api/reader/assets/${assetId}/state`),
     );
 
-    await page.goto(`/read/${encodeURIComponent(workId)}`);
+    await page.goto(`/read/${encodeURIComponent(bookId)}`);
     const stage = page.locator('.reader-epub-stage');
     await expect.poll(async () => stage.getAttribute('data-reader-ready')).toBe('true');
 
@@ -213,7 +213,7 @@ test.describe('Reader progress lifecycle', () => {
     await page.goto('/?q=CBZ%20Reader%20Book');
     const card = page.locator('.book-card', { hasText: 'CBZ Reader Book' });
     const href = await card.locator('.book-title-link').getAttribute('href');
-    if (!href) throw new Error('missing CBZ work link');
+    if (!href) throw new Error('missing CBZ book link');
     await page.goto(href);
 
     const status = page.locator('#btn-reading-status');

@@ -29,7 +29,7 @@ func TestAPIReaderStateLifecycle(t *testing.T) {
 	if err := json.UnmarshalRead(w.Body, &state); err != nil {
 		t.Fatalf("decode default state: %v", err)
 	}
-	if state.AssetID != "asset_1" || state.WorkID != "w_1" || state.Progress != 0 || state.Locator.String() != "{}" || state.LastReadAt != 0 {
+	if state.AssetID != "asset_1" || state.BookID != "w_1" || state.Progress != 0 || state.Locator.String() != "{}" || state.LastReadAt != 0 {
 		t.Fatalf("default state = %+v", state)
 	}
 	if state.ReadingStatus.Status != db.ReadingStatusUnread {
@@ -308,7 +308,7 @@ func TestAPIContinueReading(t *testing.T) {
 	if _, err := database.Exec(`
 			INSERT INTO user_asset_state (user_id, asset_id, progress, locator, last_read_at, updated_at)
 			VALUES (?, 'asset_1', 0.42, '{"engine":"foliate","cfi":"epubcfi(/6/2)","fraction":0.42}', 100, 100);
-			INSERT INTO user_work_reading_state (user_id, work_id, status, updated_at)
+			INSERT INTO user_book_reading_state (user_id, book_id, status, updated_at)
 			VALUES (?, 'w_1', 'reading', 100)
 		`, user.ID, user.ID); err != nil {
 		t.Fatalf("insert reader state: %v", err)
@@ -334,7 +334,7 @@ func TestAPIContinueReading(t *testing.T) {
 	}
 
 	if _, err := database.SaveUserSettings(user.ID, db.UserSettingsPatch{
-		HideContinueReading: new(true),
+		ShowContinueReading: new(false),
 	}); err != nil {
 		t.Fatalf("hide continue reading: %v", err)
 	}
@@ -349,138 +349,5 @@ func TestAPIContinueReading(t *testing.T) {
 	}
 	if len(items) != 0 {
 		t.Fatalf("got %d hidden continue items, want 0", len(items))
-	}
-}
-
-func TestAPIReaderPreferencesLifecycle(t *testing.T) {
-	database, dir := setupTestDB(t)
-	defer database.Close()
-
-	alice := mustUser(t, database, "alice", db.RoleMember)
-	bob := mustUser(t, database, "bob", db.RoleMember)
-
-	s := newTestServer(database, dir)
-	handler := testRoutes(t, s)
-
-	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodGet, "/api/reader/preferences", nil))
-	if w.Code != http.StatusOK {
-		t.Fatalf("default prefs status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
-	}
-	var prefs ReaderPreferencesDTO
-	if err := json.UnmarshalRead(w.Body, &prefs); err != nil {
-		t.Fatalf("decode default prefs: %v", err)
-	}
-	if prefs.EPUBFlow != db.ReaderFlowPaginated ||
-		prefs.DisplayStyle != db.ReaderStylePaper ||
-		prefs.FontScale != db.DefaultReaderFontScale ||
-		prefs.CustomColumnWidth != db.DefaultReaderCustomColumnWidth ||
-		prefs.CustomLineHeight != db.DefaultReaderCustomLineHeight ||
-		prefs.UpdatedAt != 0 {
-		t.Fatalf("default prefs = %+v", prefs)
-	}
-
-	flow := db.ReaderFlowScrolled
-	style := db.ReaderStyleCustom
-	fontScale := 2
-	customWidth := 820
-	customLine := 1.9
-	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodPut, "/api/reader/preferences", readerPreferencesRequest{
-		EPUBFlow:          &flow,
-		DisplayStyle:      &style,
-		FontScale:         &fontScale,
-		CustomColumnWidth: &customWidth,
-		CustomLineHeight:  &customLine,
-	}))
-	if w.Code != http.StatusOK {
-		t.Fatalf("save prefs status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
-	}
-	prefs = ReaderPreferencesDTO{}
-	if err := json.UnmarshalRead(w.Body, &prefs); err != nil {
-		t.Fatalf("decode saved prefs: %v", err)
-	}
-	if prefs.EPUBFlow != db.ReaderFlowScrolled ||
-		prefs.DisplayStyle != db.ReaderStyleCustom ||
-		prefs.FontScale != fontScale ||
-		prefs.CustomColumnWidth != customWidth ||
-		prefs.CustomLineHeight != customLine ||
-		prefs.UpdatedAt == 0 {
-		t.Fatalf("saved prefs = %+v", prefs)
-	}
-
-	fontScale = -1
-	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodPut, "/api/reader/preferences", readerPreferencesRequest{
-		FontScale: &fontScale,
-	}))
-	if w.Code != http.StatusOK {
-		t.Fatalf("partial prefs status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
-	}
-	prefs = ReaderPreferencesDTO{}
-	if err := json.UnmarshalRead(w.Body, &prefs); err != nil {
-		t.Fatalf("decode partial prefs: %v", err)
-	}
-	if prefs.EPUBFlow != db.ReaderFlowScrolled ||
-		prefs.DisplayStyle != db.ReaderStyleCustom ||
-		prefs.FontScale != fontScale ||
-		prefs.CustomColumnWidth != customWidth ||
-		prefs.CustomLineHeight != customLine {
-		t.Fatalf("partial prefs did not preserve existing values: %+v", prefs)
-	}
-
-	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, bob.ID, http.MethodGet, "/api/reader/preferences", nil))
-	if w.Code != http.StatusOK {
-		t.Fatalf("bob prefs status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
-	}
-	prefs = ReaderPreferencesDTO{}
-	if err := json.UnmarshalRead(w.Body, &prefs); err != nil {
-		t.Fatalf("decode bob prefs: %v", err)
-	}
-	if prefs.EPUBFlow != db.ReaderFlowPaginated || prefs.DisplayStyle != db.ReaderStylePaper {
-		t.Fatalf("reader prefs leaked across users: %+v", prefs)
-	}
-}
-
-func TestAPIReaderPreferencesErrors(t *testing.T) {
-	database, dir := setupTestDB(t)
-	defer database.Close()
-
-	user := mustUser(t, database, "reader", db.RoleMember)
-	s := newTestServer(database, dir)
-	handler := testRoutes(t, s)
-
-	flow := "sideways"
-	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, user.ID, http.MethodPut, "/api/reader/preferences", readerPreferencesRequest{
-		EPUBFlow: &flow,
-	}))
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("invalid prefs status = %d, want %d", w.Code, http.StatusBadRequest)
-	}
-
-	style := "neon"
-	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, user.ID, http.MethodPut, "/api/reader/preferences", readerPreferencesRequest{
-		DisplayStyle: &style,
-	}))
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("invalid style status = %d, want %d", w.Code, http.StatusBadRequest)
-	}
-
-	fontScale := 12
-	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, user.ID, http.MethodPut, "/api/reader/preferences", readerPreferencesRequest{
-		FontScale: &fontScale,
-	}))
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("invalid font scale status = %d, want %d", w.Code, http.StatusBadRequest)
-	}
-
-	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/reader/preferences", nil))
-	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("unauth prefs status = %d, want %d", w.Code, http.StatusUnauthorized)
 	}
 }

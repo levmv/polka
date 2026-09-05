@@ -28,21 +28,21 @@ func idPlaceholders(ids []string) (string, []any) {
 	return placeholders, args
 }
 
-// BooksForBulkEdit loads the current bulk-editable state for the given live works
-// that are visible in scope. Works that are missing, trashed, or out of scope are
+// BooksForBulkEdit loads the current bulk-editable state for the given live books
+// that are visible in scope. Books that are missing, trashed, or out of scope are
 // simply omitted, so the caller can treat the returned set as the authoritative
-// list of works it may mutate.
+// list of books it may mutate.
 func BooksForBulkEdit(queryer Queryer, scope VisibilityScope, ids []string) ([]BulkEditRow, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
 	placeholders, args := idPlaceholders(ids)
-	where := "w.deleted_at IS NULL AND w.id IN (" + placeholders + ")"
-	where, args = scope.AppendWorkWhere(where, "w.id", args...)
+	where := "b.deleted_at IS NULL AND b.id IN (" + placeholders + ")"
+	where, args = scope.AppendBookWhere(where, "b.id", args...)
 
 	rows, err := queryer.Query(`
-		SELECT w.id, w.tags, w.series, w.series_index, w.manual_overrides
-		FROM works w
+		SELECT b.id, b.tags, b.series, b.series_index, b.manual_overrides
+		FROM books b
 		WHERE `+where, args...)
 	if err != nil {
 		return nil, fmt.Errorf("books for bulk edit query: %w", err)
@@ -63,19 +63,19 @@ func BooksForBulkEdit(queryer Queryer, scope VisibilityScope, ids []string) ([]B
 	return out, nil
 }
 
-// BookSummaryRowsByIDs returns list-projection rows for the given works visible in
+// BookSummaryRowsByIDs returns list-projection rows for the given books visible in
 // scope, so a mutation handler can hand updated summaries back to the client.
 func BookSummaryRowsByIDs(queryer Queryer, scope VisibilityScope, ids []string) ([]BookSummaryRow, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
 	placeholders, args := idPlaceholders(ids)
-	where := "w.deleted_at IS NULL AND w.id IN (" + placeholders + ")"
-	where, args = scope.AppendWorkWhere(where, "w.id", args...)
+	where := "b.deleted_at IS NULL AND b.id IN (" + placeholders + ")"
+	where, args = scope.AppendBookWhere(where, "b.id", args...)
 
 	rows, err := queryer.Query(`
 		SELECT `+bookSummaryColumns+`
-		FROM works w
+		FROM books b
 		WHERE `+where, args...)
 	if err != nil {
 		return nil, fmt.Errorf("book summaries by ids query: %w", err)

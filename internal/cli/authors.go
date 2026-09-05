@@ -56,7 +56,7 @@ func printLibraryAuthorSubcommandUsage(sub string) {
 
 // renameAuthor renames an author in place, or merges into an existing author of
 // that name, then rebuilds the search index and relayouts the files of every
-// affected work. The primary author is part of the canonical path, so this moves
+// affected book. The primary author is part of the canonical path, so this moves
 // files in bulk.
 func renameAuthor(parent context.Context, dataDir string, args []string, name, usage string) (retErr error) {
 	fs := commandFlagSet(name, usage)
@@ -99,7 +99,7 @@ func renameAuthor(parent context.Context, dataDir string, args []string, name, u
 
 	fmt.Printf("Renamed %q → %q: %s affected, %s relocated\n",
 		oldName, newName,
-		formatCount(res.Affected, "work", "works"),
+		formatCount(res.Affected, "book", "books"),
 		formatCount(res.Moved, "file", "files"),
 	)
 	return nil

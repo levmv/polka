@@ -12,26 +12,26 @@ import (
 	"github.com/levmv/polka/internal/storage"
 )
 
-func TestWorkRequiresLayoutBeforeMove(t *testing.T) {
+func TestBookRequiresLayoutBeforeMove(t *testing.T) {
 	database, root := setupRelayoutTest(t)
-	seedRelayoutWork(t, database, "w_1", "a_1", "New Title", "Jane Doe", bookmeta.AuthorSort("Jane Doe"), ".epub",
+	seedRelayoutBook(t, database, "w_1", "a_1", "New Title", "Jane Doe", bookmeta.AuthorSort("Jane Doe"), ".epub",
 		"books/old/place/a_1.epub")
 
-	if _, err := Work(database, root, "w_1"); !errors.Is(err, storage.ErrLayoutMissing) {
-		t.Fatalf("Work error = %v; want ErrLayoutMissing", err)
+	if _, err := Book(database, root, "w_1"); !errors.Is(err, storage.ErrLayoutMissing) {
+		t.Fatalf("Book error = %v; want ErrLayoutMissing", err)
 	}
 	if _, err := os.Stat(root.Abs("books")); !os.IsNotExist(err) {
-		t.Fatalf("Work recreated books dir despite missing layout; stat err=%v", err)
+		t.Fatalf("Book recreated books dir despite missing layout; stat err=%v", err)
 	}
 }
 
-func TestWorkUsesDurableOriginalFilenameInTemplate(t *testing.T) {
+func TestBookUsesDurableOriginalFilenameInTemplate(t *testing.T) {
 	database, root := setupRelayoutTest(t)
 	if err := storage.EnsureLayout(root); err != nil {
 		t.Fatalf("EnsureLayout: %v", err)
 	}
 	oldPath := "legacy/current-location.epub"
-	seedRelayoutWork(t, database, "w_1", "a_1", "Old Title", "Jane Doe", bookmeta.AuthorSort("Jane Doe"), ".epub", oldPath)
+	seedRelayoutBook(t, database, "w_1", "a_1", "Old Title", "Jane Doe", bookmeta.AuthorSort("Jane Doe"), ".epub", oldPath)
 	if _, err := database.Exec("UPDATE assets SET original_filename = 'Source Name.epub' WHERE id = 'a_1'"); err != nil {
 		t.Fatalf("set original filename: %v", err)
 	}
@@ -44,13 +44,13 @@ func TestWorkUsesDurableOriginalFilenameInTemplate(t *testing.T) {
 	if err := os.WriteFile(root.Abs(oldPath), []byte("book bytes"), 0o644); err != nil {
 		t.Fatalf("write old file: %v", err)
 	}
-	if _, err := database.Exec("UPDATE works SET title = 'New Title', sort_title = 'New Title' WHERE id = 'w_1'"); err != nil {
+	if _, err := database.Exec("UPDATE books SET title = 'New Title', sort_title = 'New Title' WHERE id = 'w_1'"); err != nil {
 		t.Fatalf("update title: %v", err)
 	}
 
-	moved, err := Work(database, root, "w_1")
+	moved, err := Book(database, root, "w_1")
 	if err != nil {
-		t.Fatalf("Work: %v", err)
+		t.Fatalf("Book: %v", err)
 	}
 	if moved != 1 {
 		t.Fatalf("moved = %d; want 1", moved)
@@ -73,27 +73,27 @@ func TestWorkUsesDurableOriginalFilenameInTemplate(t *testing.T) {
 		t.Fatalf("old file still exists or stat failed: %v", err)
 	}
 
-	moved, err = Work(database, root, "w_1")
+	moved, err = Book(database, root, "w_1")
 	if err != nil {
-		t.Fatalf("second Work: %v", err)
+		t.Fatalf("second Book: %v", err)
 	}
 	if moved != 0 {
 		t.Fatalf("second moved = %d; want 0", moved)
 	}
 	var secondStoragePath, secondFilename, secondOriginalFilename string
 	if err := database.QueryRow("SELECT storage_path, filename, original_filename FROM assets WHERE id = 'a_1'").Scan(&secondStoragePath, &secondFilename, &secondOriginalFilename); err != nil {
-		t.Fatalf("query asset path after second Work: %v", err)
+		t.Fatalf("query asset path after second Book: %v", err)
 	}
 	if secondStoragePath != storagePath || secondFilename != filename || secondOriginalFilename != originalFilename {
-		t.Fatalf("second Work changed asset path fields: before=%q/%q/%q after=%q/%q/%q", storagePath, filename, originalFilename, secondStoragePath, secondFilename, secondOriginalFilename)
+		t.Fatalf("second Book changed asset path fields: before=%q/%q/%q after=%q/%q/%q", storagePath, filename, originalFilename, secondStoragePath, secondFilename, secondOriginalFilename)
 	}
 	if got, err := os.ReadFile(root.Abs(wantPath)); err != nil {
-		t.Fatalf("read new file after second Work: %v", err)
+		t.Fatalf("read new file after second Book: %v", err)
 	} else if string(got) != "book bytes" {
-		t.Fatalf("new file after second Work = %q; want original bytes", got)
+		t.Fatalf("new file after second Book = %q; want original bytes", got)
 	}
 	if _, err := os.Stat(root.Abs(oldPath)); !os.IsNotExist(err) {
-		t.Fatalf("old file exists after second Work or stat failed: %v", err)
+		t.Fatalf("old file exists after second Book or stat failed: %v", err)
 	}
 }
 
@@ -104,7 +104,7 @@ func TestRenameAuthorWarnsWhenRelayoutStorageUnavailable(t *testing.T) {
 	}
 	authorSort := bookmeta.AuthorSort("Jane Doe")
 	oldPath := relayoutTestPath(t, "Moved Title", "Jane Doe", authorSort, "a_1", ".epub")
-	seedRelayoutWork(t, database, "w_1", "a_1", "Moved Title", "Jane Doe", authorSort, ".epub", oldPath)
+	seedRelayoutBook(t, database, "w_1", "a_1", "Moved Title", "Jane Doe", authorSort, ".epub", oldPath)
 	if err := os.MkdirAll(filepath.Dir(root.Abs(oldPath)), 0o755); err != nil {
 		t.Fatalf("mkdir old path: %v", err)
 	}
@@ -171,19 +171,19 @@ func setupRelayoutTest(t *testing.T) (*db.DB, storage.Root) {
 	return database, storage.NewRoot(filepath.Join(dataDir, "storage"))
 }
 
-func seedRelayoutWork(t *testing.T, database *db.DB, workID, assetID, title, authorName, authorSort, ext, storagePath string) {
+func seedRelayoutBook(t *testing.T, database *db.DB, bookID, assetID, title, authorName, authorSort, ext, storagePath string) {
 	t.Helper()
-	if _, err := database.Exec("INSERT INTO works (id, title, sort_title) VALUES (?, ?, ?)", workID, title, title); err != nil {
-		t.Fatalf("insert work: %v", err)
+	if _, err := database.Exec("INSERT INTO books (id, title, sort_title) VALUES (?, ?, ?)", bookID, title, title); err != nil {
+		t.Fatalf("insert book: %v", err)
 	}
 	if _, err := database.Exec("INSERT INTO authors (id, name, sort_name) VALUES ('author_1', ?, ?)", authorName, authorSort); err != nil {
 		t.Fatalf("insert author: %v", err)
 	}
-	if _, err := database.Exec("INSERT INTO work_authors (work_id, author_id, author_order) VALUES (?, 'author_1', 0)", workID); err != nil {
-		t.Fatalf("insert work_author: %v", err)
+	if _, err := database.Exec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES (?, 'author_1', 0)", bookID); err != nil {
+		t.Fatalf("insert book_author: %v", err)
 	}
-	if _, err := database.Exec("INSERT INTO assets (id, work_id, storage_path, filename, extension) VALUES (?, ?, ?, ?, ?)",
-		assetID, workID, storagePath, filepath.Base(storagePath), ext); err != nil {
+	if _, err := database.Exec("INSERT INTO assets (id, book_id, storage_path, filename, extension) VALUES (?, ?, ?, ?, ?)",
+		assetID, bookID, storagePath, filepath.Base(storagePath), ext); err != nil {
 		t.Fatalf("insert asset: %v", err)
 	}
 }

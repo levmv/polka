@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	booksRootKey     = "books_root"
+	booksRootKey     = "storage.books_root"
 	defaultBooksRoot = "books"
 )
 

@@ -227,12 +227,12 @@ func (s *Server) handleAPIAnnotationExport(w http.ResponseWriter, r *http.Reques
 	if writeReaderStateError(w, err) {
 		return
 	}
-	authorsByWork, err := db.AuthorsByWorkIDs(s.db, []string{asset.WorkID})
+	authorsByBook, err := db.AuthorsByBookIDs(s.db, []string{asset.BookID})
 	if err != nil {
 		serverError(w, err)
 		return
 	}
-	_, authors := authorsToDTO(authorsByWork[asset.WorkID])
+	_, authors := authorsToDTO(authorsByBook[asset.BookID])
 
 	document := buildAnnotationExportDocument(asset, authors, rows)
 	w.Header().Set("Cache-Control", "private, no-store")
