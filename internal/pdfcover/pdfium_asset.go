@@ -8,3 +8,6 @@ import _ "embed"
 //
 //go:embed generated/pdfium-cover.wasm
 var pdfiumCoverWASM []byte
+
+// PDFium version pinned by pdfium-wasm.json.
+const pdfiumVersion = "7961"

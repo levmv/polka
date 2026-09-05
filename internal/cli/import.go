@@ -26,11 +26,12 @@ type importCommandOptions struct {
 }
 
 type importReport struct {
-	Source        string          `json:"source"`
-	DryRun        bool            `json:"dry_run"`
-	DeleteSources bool            `json:"delete_sources,omitzero"`
-	Summary       importSummary   `json:"summary"`
-	Items         []importOutcome `json:"items"`
+	PDFCoverRenderer pdfcover.BackendInfo `json:"pdf_cover_renderer,omitzero"`
+	Source           string               `json:"source"`
+	DryRun           bool                 `json:"dry_run"`
+	DeleteSources    bool                 `json:"delete_sources,omitzero"`
+	Summary          importSummary        `json:"summary"`
+	Items            []importOutcome      `json:"items"`
 }
 
 type importSummary struct {
@@ -172,6 +173,7 @@ func importSinglePath(ctx context.Context, database *db.DB, dataDir, srcPath str
 	}
 	renderer := pdfcover.NewRenderer()
 	defer renderer.Close()
+	report.PDFCoverRenderer = renderer.BackendInfo()
 
 	res, err := importer.ImportFile(ctx, database, root, srcPath, renderer, importer.Options{PathTemplate: template, CoverRoot: coverRoot})
 	item := importOutcome{Source: srcPath}
@@ -206,6 +208,7 @@ func importFolderPath(ctx context.Context, database *db.DB, dataDir, rootPath st
 		}
 		renderer = pdfcover.NewRenderer()
 		defer renderer.Close()
+		report.PDFCoverRenderer = renderer.BackendInfo()
 	}
 
 	err := filepath.WalkDir(rootPath, func(path string, d os.DirEntry, walkErr error) error {

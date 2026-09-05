@@ -251,6 +251,7 @@ func markdownDocument(text string) epubTextDocument {
 	var nav []epubNavItem
 	usedIDs := map[string]bool{}
 	metadataPrefix := true
+	fence := ""
 
 	flushParagraph := func() {
 		if len(paragraph) == 0 {
@@ -294,6 +295,23 @@ func markdownDocument(text string) epubTextDocument {
 
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
+		if fence != "" {
+			if strings.HasPrefix(trimmed, fence) && strings.Trim(trimmed, fence[:1]+" \t") == "" {
+				out.WriteString("</code></pre>\n")
+				fence = ""
+			} else {
+				out.WriteString(html.EscapeString(line))
+				out.WriteByte('\n')
+			}
+			continue
+		}
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			flushBlocks()
+			metadataPrefix = false
+			fence = trimmed[:len(trimmed)-len(strings.TrimLeft(trimmed, trimmed[:1]))]
+			out.WriteString("<pre><code>")
+			continue
+		}
 		if trimmed == "" {
 			flushBlocks()
 			continue
@@ -347,6 +365,9 @@ func markdownDocument(text string) epubTextDocument {
 		paragraph = append(paragraph, trimmed)
 	}
 	flushBlocks()
+	if fence != "" {
+		out.WriteString("</code></pre>\n")
+	}
 	if out.Len() == 0 {
 		return epubTextDocument{Body: "<p></p>\n"}
 	}

@@ -139,30 +139,99 @@ func insertKindleFileposAnchors(raw []byte, refs []int) []byte {
 	}
 	var out bytes.Buffer
 	last := 0
-	for _, pos := range refs {
+	offsets := kindleAnchorOffsets(raw, refs)
+	for i := 0; i < len(refs); {
+		pos := offsets[i]
+		end := i + 1
+		for end < len(refs) && offsets[end] == pos {
+			end++
+		}
+		group := refs[i:end]
+		i = end
 		if pos < last || pos > len(raw) {
 			continue
 		}
 		out.Write(raw[last:pos])
 		if tag, tagNameEnd, ok := kindleStartTagNameEnd(raw, pos); ok {
-			if kindleCanCarryRenderedID(tag) {
-				out.Write(raw[pos:tagNameEnd])
-				fmt.Fprintf(&out, ` id="filepos%d"`, pos)
-				last = tagNameEnd
-				continue
-			}
 			if tagEnd, ok := kindleStartTagEnd(raw, pos); ok {
-				out.Write(raw[pos:tagEnd])
-				fmt.Fprintf(&out, `<a id="filepos%d"></a>`, pos)
+				if kindleCanCarryRenderedID(tag) {
+					out.Write(raw[pos:tagNameEnd])
+					fmt.Fprintf(&out, ` id="filepos%d"`, group[0])
+					out.Write(raw[tagNameEnd:tagEnd])
+					group = group[1:]
+				} else {
+					out.Write(raw[pos:tagEnd])
+				}
+				for _, ref := range group {
+					fmt.Fprintf(&out, `<a id="filepos%d"></a>`, ref)
+				}
 				last = tagEnd
 				continue
 			}
 		}
-		fmt.Fprintf(&out, `<a id="filepos%d"></a>`, pos)
+		for _, ref := range group {
+			fmt.Fprintf(&out, `<a id="filepos%d"></a>`, ref)
+		}
 		last = pos
 	}
 	out.Write(raw[last:])
 	return out.Bytes()
+}
+
+func kindleAnchorOffsets(raw []byte, refs []int) []int {
+	offsets := append([]int(nil), refs...)
+	z := html.NewTokenizer(bytes.NewReader(raw))
+	start, index := 0, 0
+	for {
+		kind := z.Next()
+		if kind == html.ErrorToken {
+			break
+		}
+		end := start + len(z.Raw())
+		for index < len(refs) && refs[index] < end {
+			ref := refs[index]
+			if ref >= start {
+				if kind == html.TextToken {
+					offsets[index] = kindleAnchorTextOffset(raw, ref)
+				} else if ref > start {
+					offsets[index] = end
+				}
+			}
+			index++
+		}
+		start = end
+	}
+	return offsets
+}
+
+// PalmDOC offsets address bytes, including the middle of a character reference
+// or UTF-8 rune. An anchor belongs immediately after that character, while its
+// id retains the original filepos used by links and navigation.
+func kindleAnchorTextOffset(raw []byte, pos int) int {
+	if pos < 0 || pos >= len(raw) {
+		return pos
+	}
+	for pos < len(raw) && raw[pos]&0xc0 == 0x80 {
+		pos++
+	}
+	start := bytes.LastIndexByte(raw[max(0, pos-64):pos], '&')
+	if start < 0 {
+		return pos
+	}
+	start += max(0, pos-64)
+	if bytes.ContainsAny(raw[start+1:pos], "; &<>\\\"'\t\r\n") {
+		return pos
+	}
+	end := bytes.IndexByte(raw[pos:min(len(raw), pos+64)], ';')
+	if end < 0 {
+		return pos
+	}
+	end += pos + 1
+	entity := string(raw[start:end])
+	if html.UnescapeString(entity) != entity {
+		return end
+	}
+	return pos
 }
 
 func kindleCanCarryRenderedID(tag string) bool {

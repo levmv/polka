@@ -10,6 +10,7 @@ package pdfcover
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -58,9 +59,10 @@ const (
 )
 
 type BackendInfo struct {
-	Backend    Backend
-	Version    string
-	Executable string
+	Backend    Backend `json:"backend"`
+	Version    string  `json:"version"`
+	Executable string  `json:"executable,omitempty"`
+	WASMSHA256 string  `json:"wasm_sha256,omitempty"`
 }
 
 type rendererConfig struct {
@@ -102,7 +104,10 @@ func NewRenderer() *Renderer {
 func detectBackend(command externalCommand, lookPath func(string) (string, error)) BackendInfo {
 	info, err := detectPoppler(command, lookPath)
 	if err != nil {
-		return BackendInfo{Backend: BackendPDFiumWASM}
+		return BackendInfo{
+			Backend: BackendPDFiumWASM, Version: pdfiumVersion,
+			WASMSHA256: fmt.Sprintf("%x", sha256.Sum256(pdfiumCoverWASM)),
+		}
 	}
 	return info
 }

@@ -416,11 +416,15 @@ func (r *fb2EPUBRenderer) markContent() {
 }
 
 func (r *fb2EPUBRenderer) inlineTextHasContent() bool {
-	if len(r.fb2Stack) == 0 || len(r.contentStack) == 0 {
-		return false
+	// A newly opened inline wrapper can start with whitespace after content in
+	// its parent. Stop at a block boundary so indentation between paragraphs is
+	// still ignored.
+	for i := len(r.fb2Stack) - 1; i >= 0 && isFB2InlineText(r.fb2Stack[i]); i-- {
+		if r.contentStack[i] {
+			return true
+		}
 	}
-	top := len(r.fb2Stack) - 1
-	return isFB2InlineText(r.fb2Stack[top]) && r.contentStack[top]
+	return false
 }
 
 func (r *fb2EPUBRenderer) renderedElement(el xml.StartElement) (string, string) {

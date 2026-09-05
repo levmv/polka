@@ -121,6 +121,9 @@ func TestImportJSONSingleFile(t *testing.T) {
 	if report.Source != src || report.DryRun {
 		t.Fatalf("report source/dry_run = %q/%v", report.Source, report.DryRun)
 	}
+	if report.PDFCoverRenderer.Backend == "" || report.PDFCoverRenderer.Version == "" {
+		t.Fatalf("report omits PDF cover renderer identity: %+v", report.PDFCoverRenderer)
+	}
 	if report.Summary.Imported != 1 || report.Summary.Errors != 0 {
 		t.Fatalf("summary = %+v; want one imported and no errors", report.Summary)
 	}
