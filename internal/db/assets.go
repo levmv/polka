@@ -50,6 +50,19 @@ type AssetWithAuthorRow struct {
 	AuthorSortName   string
 }
 
+// RecordAssetRestore keeps write-back acknowledgement only when restoring the
+// exact bytes it described. Original import identity is never changed.
+func RecordAssetRestore(database Execer, assetID, sha256 string, size int64) error {
+	_, err := database.Exec(`
+		UPDATE assets
+		SET writeback_rev = CASE WHEN current_sha256 = ? THEN writeback_rev ELSE 0 END,
+		    writeback_error = NULL,
+		    current_sha256 = ?, current_size = ?, koreader_hash = NULL, updated_at = unixepoch()
+		WHERE id = ?
+	`, sha256, sha256, size, assetID)
+	return err
+}
+
 // EnsureReadablePrimaryAsset keeps one primary asset for a work while
 // preferring something the browser can actually open. An existing readable
 // primary is stable; an unreadable primary is replaced only when a readable

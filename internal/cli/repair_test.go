@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -12,11 +13,15 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/levmv/polka/internal/bookmeta"
 	"github.com/levmv/polka/internal/covers"
 	"github.com/levmv/polka/internal/db"
+	"github.com/levmv/polka/internal/format"
+	"github.com/levmv/polka/internal/importer"
 	"github.com/levmv/polka/internal/storage"
+	"github.com/levmv/polka/internal/writeback"
 )
 
 func TestRepairReconciliation(t *testing.T) {
@@ -221,6 +226,93 @@ func TestRepairAppliesPendingWritebackTemp(t *testing.T) {
 	}
 	assertWritebackAttemptCleared(t, database, assetID)
 	assertAssetWritebackState(t, database, assetID, newHash, newSize, "ko-temp", 2)
+}
+
+func TestRepairMergedWritebackAttemptLeavesSurvivorMetadataPending(t *testing.T) {
+	for _, replaced := range []bool{false, true} {
+		t.Run(fmt.Sprintf("already_replaced_%t", replaced), func(t *testing.T) {
+			dataDir, database, root, assetID, storagePath := setupImportedRepairEPUB(t, "Story", "Writer One")
+			defer database.Close()
+			user, err := database.CreateUser("curator", "pw", db.RoleMember)
+			if err != nil {
+				t.Fatal(err)
+			}
+			row, err := db.GetMetadataWritebackAsset(database, assetID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// The former revision must reach the survivor's revision after merge:
+			// otherwise repair would leave the file dirty even without invalidation.
+			if _, err := database.Exec(`UPDATE works SET publisher = ?, metadata_rev = metadata_rev + 1 WHERE id = ?`, "Former publisher", row.WorkID); err != nil {
+				t.Fatal(err)
+			}
+			snapshot, err := db.LoadMetadataWritebackSnapshot(database, row.WorkID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			original, err := os.ReadFile(root.Abs(storagePath))
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Model interruption on either side of replacement. The pending hash
+			// is still needed for recovery even after this asset changes work.
+			tempRel, err := storage.WriteAdjacentTempWith(root, storagePath, assetID, func(w io.Writer) error {
+				return format.RewriteEPUBMetadataTo(w, bytes.NewReader(original), int64(len(original)), snapshot.Metadata, time.Unix(snapshot.UpdatedAt, 0))
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			hash, size, err := fileSHA256AndSize(root.Abs(tempRel))
+			if err != nil {
+				t.Fatal(err)
+			}
+			insertWritebackAttempt(t, database, assetID, storagePath, tempRel, hash, size, "ko-pending", snapshot.MetadataRev)
+			if replaced {
+				if err := storage.ReplaceWithStaged(root, tempRel, storagePath); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			otherPath := filepath.Join(dataDir, "survivor.epub")
+			writeEPUB(t, otherPath, "Story", "Writer One", "One, Writer")
+			survivor, err := importer.ImportFile(context.Background(), database, root, otherPath, nil, importer.Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := database.Transact(context.Background(), func(tx *sql.Tx) error {
+				_, err := db.MergeDuplicateWorks(tx, db.FullVisibilityScope(), db.DuplicateMergeRequest{
+					SurvivorID: survivor.WorkID, WorkIDs: []string{survivor.WorkID, row.WorkID},
+					DeletedBy: user.ID,
+				})
+				if err != nil {
+					return err
+				}
+				return db.BumpMetadataRev(tx, []string{survivor.WorkID})
+			}); err != nil {
+				t.Fatal(err)
+			}
+			repaired, err := repairMetadataWritebackAttempts(context.Background(), database, root)
+			if err != nil || repaired.Finalized+repaired.Replaced != 1 || repaired.Errors != 0 {
+				t.Fatalf("repair = %+v, %v; want one recovered write-back", repaired, err)
+			}
+			state, err := db.GetWorkWritebackState(database, survivor.WorkID)
+			if err != nil || state.Dirty != 2 {
+				t.Fatalf("writeback state after merge/repair = %+v, %v; want both assets dirty", state, err)
+			}
+			summary, err := writeback.Run(context.Background(), database, root, writeback.Options{})
+			if err != nil || summary.Planned != 2 || summary.Failed != 0 {
+				t.Fatalf("dirty-only write-back = %+v, %v; want both assets updated", summary, err)
+			}
+			data, err := os.ReadFile(root.Abs(storagePath))
+			if err != nil {
+				t.Fatal(err)
+			}
+			meta, err := format.ExtractEPUBMetadata(bytes.NewReader(data), int64(len(data)))
+			if err != nil || meta.Publisher != "" {
+				t.Fatalf("recovered metadata = %+v, %v; want survivor's empty publisher", meta, err)
+			}
+		})
+	}
 }
 
 func TestRepairRemovesOrphanWritebackTemp(t *testing.T) {

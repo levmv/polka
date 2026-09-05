@@ -289,10 +289,22 @@ func MergeDuplicateWorks(tx *sql.Tx, scope VisibilityScope, req DuplicateMergeRe
 		return DuplicateMergeResult{}, fmt.Errorf("demote duplicate loser assets: %w", err)
 	}
 
+	// Revisions belong to one work; acknowledgement from the former work says
+	// nothing about whether these files contain the survivor's metadata.
+	// Pending writes must retain their hashes for byte recovery, but repair must
+	// not restore acknowledgement of the former work's revision either.
+	if _, err := tx.Exec(`
+		UPDATE metadata_writeback_attempts
+		SET metadata_rev = 0
+		WHERE asset_id IN (SELECT id FROM assets WHERE work_id IN (`+loserPlaceholders+`))
+	`, loserArgs...); err != nil {
+		return DuplicateMergeResult{}, fmt.Errorf("invalidate duplicate writeback attempts: %w", err)
+	}
+
 	args := append([]any{req.SurvivorID}, loserArgs...)
 	if _, err := tx.Exec(`
 		UPDATE assets
-		SET work_id = ?, updated_at = unixepoch()
+		SET work_id = ?, writeback_rev = 0, writeback_error = NULL, updated_at = unixepoch()
 		WHERE work_id IN (`+loserPlaceholders+`)
 	`, args...); err != nil {
 		return DuplicateMergeResult{}, fmt.Errorf("move duplicate assets: %w", err)

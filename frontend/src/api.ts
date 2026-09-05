@@ -634,8 +634,9 @@ export async function fetchSeriesPage(
     if (cursor) params.set('cursor', cursor);
     if (query) params.set('q', query);
     if (limit) params.set('limit', String(limit));
+    const qs = params.toString();
     return await fetchJSON<CursorPage<SeriesSummary>>(
-        `/api/series${params.size ? `?${params.toString()}` : ''}`,
+        `/api/series${qs ? `?${qs}` : ''}`,
         'Failed to fetch series',
         signal ? { signal } : undefined,
     );
@@ -1109,8 +1110,9 @@ export async function fetchAuthorPage(
 ): Promise<CursorPage<AuthorAdmin>> {
     const params = new URLSearchParams();
     if (cursor) params.set('cursor', cursor);
+    const qs = params.toString();
     return await fetchJSON<CursorPage<AuthorAdmin>>(
-        `/api/authors/list${params.size ? `?${params.toString()}` : ''}`,
+        `/api/authors/list${qs ? `?${qs}` : ''}`,
         'Failed to fetch authors',
         signal ? { signal } : undefined,
     );
