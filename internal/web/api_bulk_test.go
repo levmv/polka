@@ -285,7 +285,7 @@ func TestBulkTrashMovesSelectedToTrash(t *testing.T) {
 	s := newTestServer(database, dir)
 	handler := testRoutes(t, s)
 
-	trash := func(userID string, ids ...string) *httptest.ResponseRecorder {
+	trash := func(userID int64, ids ...string) *httptest.ResponseRecorder {
 		req := jsonRequest(t, s, userID, http.MethodPost, "/api/books/bulk/trash", map[string]any{"ids": ids})
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, req)
@@ -361,7 +361,7 @@ func TestBulkShelfAddAndRemove(t *testing.T) {
 	s := newTestServer(database, dir)
 	handler := testRoutes(t, s)
 
-	call := func(userID, op string, ids ...string) *httptest.ResponseRecorder {
+	call := func(userID int64, op string, ids ...string) *httptest.ResponseRecorder {
 		req := jsonRequest(t, s, userID, http.MethodPost,
 			"/api/shelves/"+shelf.ID+"/books/bulk", map[string]any{"ids": ids, "op": op})
 		w := httptest.NewRecorder()

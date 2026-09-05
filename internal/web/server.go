@@ -71,7 +71,7 @@ const (
 
 // withUserID carries the identity shared by every authentication path, including
 // token/basic-auth protocols that do not pass through the normal route gate.
-func withUserID(ctx context.Context, userID string) context.Context {
+func withUserID(ctx context.Context, userID int64) context.Context {
 	return context.WithValue(ctx, userIDKey, userID)
 }
 
@@ -85,10 +85,10 @@ func withUser(ctx context.Context, user *db.User) context.Context {
 	return context.WithValue(ctx, userKey, user)
 }
 
-// UserID returns the authenticated user's id for a request, or "" before the
+// UserID returns the authenticated user's id for a request, or 0 before the
 // auth middleware has accepted a session.
-func UserID(ctx context.Context) string {
-	uid, _ := ctx.Value(userIDKey).(string)
+func UserID(ctx context.Context) int64 {
+	uid, _ := ctx.Value(userIDKey).(int64)
 	return uid
 }
 
@@ -511,6 +511,8 @@ func (s *Server) routes() (*http.ServeMux, error) {
 	s.route(mux, "PUT /api/reader/assets/{id}/state", db.RoleReader, s.handleAPIReaderStateSave)
 	s.route(mux, "DELETE /api/reader/assets/{id}/state", db.RoleReader, s.handleAPIReaderStateReset)
 	s.route(mux, "POST /api/reader/assets/{id}/touch", db.RoleReader, s.handleAPIReaderStateTouch)
+	s.route(mux, "POST /api/reader/assets/{id}/activity", db.RoleReader, s.handleAPIReadingActivity)
+	s.route(mux, "PUT /api/reader/assets/{id}/activity", db.RoleReader, s.handleAPIReadingActivity)
 	s.route(mux, "GET /api/reader/assets/{id}/annotations", db.RoleReader, s.handleAPIAnnotations)
 	s.route(mux, "GET /api/reader/assets/{id}/annotations/export", db.RoleReader, s.handleAPIAnnotationExport)
 	s.route(mux, "POST /api/reader/assets/{id}/annotations", db.RoleReader, s.handleAPIAnnotationCreate)
@@ -663,10 +665,10 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func (s *Server) basicAuthUserID(r *http.Request) (string, bool, error) {
+func (s *Server) basicAuthUserID(r *http.Request) (int64, bool, error) {
 	username, password, ok := r.BasicAuth()
 	if !ok {
-		return "", false, nil
+		return 0, false, nil
 	}
 	// App tokens are self-identifying app passwords. Try the cheap token hash
 	// lookup before bcrypt so OPDS/download/cover clients do not pay password
@@ -677,12 +679,12 @@ func (s *Server) basicAuthUserID(r *http.Request) (string, bool, error) {
 
 	user, err := s.authenticatePassword(r.Context(), username, password)
 	if err != nil {
-		return "", false, err
+		return 0, false, err
 	}
 	if user != nil {
 		return user.ID, true, nil
 	}
-	return "", false, nil
+	return 0, false, nil
 }
 
 const (
@@ -719,7 +721,7 @@ func writePasswordAuthBusy(w http.ResponseWriter) {
 	http.Error(w, "Too many authentication attempts", http.StatusTooManyRequests)
 }
 
-func (s *Server) kosyncTokenUserID(r *http.Request) (string, bool, error) {
+func (s *Server) kosyncTokenUserID(r *http.Request) (int64, bool, error) {
 	return s.db.AppTokenUserID(kosyncTokenFromPath(r.URL.Path))
 }
 

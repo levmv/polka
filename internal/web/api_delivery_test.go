@@ -671,7 +671,7 @@ func seedDeliveryEmailSettings(t *testing.T, database *db.DB, attachmentLimitMB 
 	}
 }
 
-func createQueuedDeliveryJob(t *testing.T, database *db.DB, userID string, target sql.NullString) *db.DeliveryJob {
+func createQueuedDeliveryJob(t *testing.T, database *db.DB, userID int64, target sql.NullString) *db.DeliveryJob {
 	t.Helper()
 	job, err := database.CreateDeliveryJob(db.DeliveryJob{
 		UserID:      userID,

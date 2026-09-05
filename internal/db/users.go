@@ -8,15 +8,13 @@ import (
 	"strings"
 
 	"golang.org/x/crypto/bcrypt"
-
-	"github.com/levmv/polka/internal/id"
 )
 
 // User is an authentication identity. Library content is shared across all
 // users; only per-user state references the user id. password_hash is a bcrypt
 // hash and is never exposed in any DTO or API response.
 type User struct {
-	ID           string
+	ID           int64
 	Username     string
 	PasswordHash string
 	Role         string
@@ -32,7 +30,7 @@ type UserAccess struct {
 	Role          string
 	ContentScope  string
 	ShelfIDs      []string
-	ShelfViewerID string
+	ShelfViewerID int64
 }
 
 const userColumns = `id, username, password_hash, role, content_scope, created_at, updated_at`
@@ -192,12 +190,12 @@ func (db *DB) CreateUserWithAccess(username, password string, access UserAccess)
 		return nil, err
 	}
 
-	u := &User{ID: id.New(id.User), Username: uname, PasswordHash: hash, Role: access.Role, ContentScope: contentScope}
+	u := &User{Username: uname, PasswordHash: hash, Role: access.Role, ContentScope: contentScope}
 	err = db.Transact(context.Background(), func(tx *sql.Tx) error {
-		if _, err := tx.Exec(
-			"INSERT INTO users (id, username, password_hash, role, content_scope) VALUES (?, ?, ?, ?, ?)",
-			u.ID, u.Username, u.PasswordHash, u.Role, u.ContentScope,
-		); err != nil {
+		if err := tx.QueryRow(
+			"INSERT INTO users (username, password_hash, role, content_scope) VALUES (?, ?, ?, ?) RETURNING id",
+			u.Username, u.PasswordHash, u.Role, u.ContentScope,
+		).Scan(&u.ID); err != nil {
 			return fmt.Errorf("insert user: %w", err)
 		}
 		return replaceUserScopeShelves(tx, u.ID, access.ShelfViewerID, contentScope, shelfIDs)
@@ -221,7 +219,7 @@ func (db *DB) GetUserByUsername(username string) (*User, error) {
 }
 
 // GetUserByID looks an account up by id. A missing user returns (nil, nil).
-func (db *DB) GetUserByID(userID string) (*User, error) {
+func (db *DB) GetUserByID(userID int64) (*User, error) {
 	return scanOptionalUser(db.QueryRow(
 		"SELECT "+userColumns+" FROM users WHERE id = ?",
 		userID,
@@ -268,7 +266,7 @@ func (db *DB) ListUsers() ([]User, error) {
 	return users, rows.Err()
 }
 
-func (db *DB) UpdateUserAccess(userID string, access UserAccess) (*User, error) {
+func (db *DB) UpdateUserAccess(userID int64, access UserAccess) (*User, error) {
 	if !ValidRole(access.Role) {
 		return nil, errorWithDetail(ErrInvalidUserInput, fmt.Sprintf("invalid role %q", access.Role))
 	}
@@ -300,7 +298,7 @@ func (db *DB) UpdateUserAccess(userID string, access UserAccess) (*User, error) 
 	return db.GetUserByID(userID)
 }
 
-func replaceUserScopeShelves(tx *sql.Tx, userID, shelfViewerID, contentScope string, scopeShelfIDs []string) error {
+func replaceUserScopeShelves(tx *sql.Tx, userID, shelfViewerID int64, contentScope string, scopeShelfIDs []string) error {
 	if contentScope != ContentScopeShelves {
 		if _, err := tx.Exec(`DELETE FROM user_scope_shelves WHERE user_id = ?`, userID); err != nil {
 			return fmt.Errorf("clear user scope shelves: %w", err)
@@ -340,7 +338,8 @@ func replaceUserScopeShelves(tx *sql.Tx, userID, shelfViewerID, contentScope str
 			continue
 		}
 		seenShelves[shelfID] = struct{}{}
-		var ownerID, visibility, kind string
+		var ownerID int64
+		var visibility, kind string
 		var query, queryMatch sql.NullString
 		if err := tx.QueryRow(`
 			SELECT owner_id, visibility, kind, query, query_match
@@ -375,7 +374,7 @@ func replaceUserScopeShelves(tx *sql.Tx, userID, shelfViewerID, contentScope str
 }
 
 // SetUserPassword replaces the stored password hash for an account.
-func (db *DB) SetUserPassword(userID, password string) error {
+func (db *DB) SetUserPassword(userID int64, password string) error {
 	hash, err := hashPassword(password)
 	if err != nil {
 		return err
@@ -394,7 +393,7 @@ func (db *DB) SetUserPassword(userID, password string) error {
 }
 
 // DeleteUser removes an account by id.
-func (db *DB) DeleteUser(userID string) error {
+func (db *DB) DeleteUser(userID int64) error {
 	return db.Transact(context.Background(), func(tx *sql.Tx) error {
 		if err := guardAdminRemoval(tx, userID); err != nil {
 			return err
@@ -412,7 +411,7 @@ func (db *DB) DeleteUser(userID string) error {
 
 // guardAdminRemoval must run in the same immediate transaction as the role
 // change or deletion. Non-admin accounts need no special handling.
-func guardAdminRemoval(tx *sql.Tx, userID string) error {
+func guardAdminRemoval(tx *sql.Tx, userID int64) error {
 	var role string
 	var hasOtherAdmin int
 	err := tx.QueryRow(`

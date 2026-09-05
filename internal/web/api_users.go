@@ -4,12 +4,13 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/levmv/polka/internal/db"
 )
 
 type UserDTO struct {
-	ID            string   `json:"id"`
+	ID            int64    `json:"id"`
 	Username      string   `json:"username"`
 	Role          string   `json:"role"`
 	ContentScope  string   `json:"content_scope"`
@@ -22,7 +23,7 @@ type UserDTO struct {
 }
 
 type MeDTO struct {
-	ID           string `json:"id"`
+	ID           int64  `json:"id"`
 	Username     string `json:"username"`
 	Role         string `json:"role"`
 	ContentScope string `json:"content_scope"`
@@ -87,7 +88,7 @@ func (s *Server) requireRole(w http.ResponseWriter, r *http.Request, minRole str
 	u := contextUser(r.Context())
 	if u == nil {
 		userID := UserID(r.Context())
-		if userID == "" {
+		if userID <= 0 {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return nil, false
 		}
@@ -111,7 +112,7 @@ func (s *Server) requireRole(w http.ResponseWriter, r *http.Request, minRole str
 
 func (s *Server) handleAPIMe(w http.ResponseWriter, r *http.Request) {
 	userID := UserID(r.Context())
-	if userID == "" {
+	if userID <= 0 {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -190,7 +191,10 @@ func (s *Server) handleAPIUserCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAPIUserUpdate(w http.ResponseWriter, r *http.Request) {
-	userID := r.PathValue("id")
+	userID, ok := userIDFromPath(w, r)
+	if !ok {
+		return
+	}
 	target, err := s.db.GetUserByID(userID)
 	if err != nil {
 		serverError(w, err)
@@ -246,7 +250,10 @@ func (s *Server) handleAPIUserUpdate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAPIUserDelete(w http.ResponseWriter, r *http.Request) {
-	userID := r.PathValue("id")
+	userID, ok := userIDFromPath(w, r)
+	if !ok {
+		return
+	}
 	if err := s.db.DeleteUser(userID); err != nil {
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
@@ -264,7 +271,10 @@ func (s *Server) handleAPIUserDelete(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAPIUserPassword(w http.ResponseWriter, r *http.Request) {
 	current := contextUser(r.Context())
 
-	userID := r.PathValue("id")
+	userID, ok := userIDFromPath(w, r)
+	if !ok {
+		return
+	}
 	if current.Role != db.RoleAdmin && current.ID != userID {
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
@@ -306,4 +316,13 @@ func (s *Server) handleAPIUserPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func userIDFromPath(w http.ResponseWriter, r *http.Request) (int64, bool) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		http.Error(w, "Invalid user id", http.StatusBadRequest)
+		return 0, false
+	}
+	return id, true
 }

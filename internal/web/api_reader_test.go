@@ -333,9 +333,8 @@ func TestAPIContinueReading(t *testing.T) {
 		t.Fatalf("continue item = %+v", items[0])
 	}
 
-	if _, err := database.SaveUserSettings(user.ID, db.UserSettings{
-		Theme:               db.ThemeSystem,
-		HideContinueReading: true,
+	if _, err := database.SaveUserSettings(user.ID, db.UserSettingsPatch{
+		HideContinueReading: new(true),
 	}); err != nil {
 		t.Fatalf("hide continue reading: %v", err)
 	}

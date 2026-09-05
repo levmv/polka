@@ -25,6 +25,32 @@ async function openSettings(page: Page, tab: string): Promise<Locator> {
 }
 
 test.describe('Account settings', () => {
+  test('loading library settings preserves a personal setting being edited', async ({ page }) => {
+    let release!: () => void;
+    const storageReady = new Promise<void>((resolve) => { release = resolve; });
+    await page.route('**/api/admin/storage', async (route) => {
+      await storageReady;
+      await route.continue();
+    });
+    try {
+      const modal = await openSettings(page, 'General');
+      const input = modal.getByRole('combobox', { name: 'Time zone', exact: true });
+      await expect(input).toBeVisible();
+      // Returning while the request is pending also replaces its original host.
+      await modal.getByRole('tab', { name: 'Users', exact: true }).click();
+      await modal.getByRole('tab', { name: 'General', exact: true }).click();
+      const previous = await input.inputValue();
+      await input.fill('Europe/');
+      release();
+      await expect(modal.getByLabel('Metadata write-back mode')).toBeVisible();
+      await expect(input).toHaveValue('Europe/');
+      await expect(input).toBeFocused();
+      await input.fill(previous);
+    } finally {
+      release();
+    }
+  });
+
   test('shows reading app setup and manages credentials', async ({ page }) => {
     const stamp = Date.now().toString(36);
     const shelfName = `Kobo Query ${stamp}`;

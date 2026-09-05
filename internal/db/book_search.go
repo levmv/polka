@@ -418,7 +418,7 @@ type bookSearchPlan struct {
 	hasRank    bool
 }
 
-func newBookSearchPlan(scope VisibilityScope, userID, rawQuery string) bookSearchPlan {
+func newBookSearchPlan(scope VisibilityScope, userID int64, rawQuery string) bookSearchPlan {
 	parsed, _ := parseSearchQuery(rawQuery, true)
 	match := parsed.ftsMatch()
 	joined := "works w"

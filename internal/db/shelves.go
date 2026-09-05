@@ -41,7 +41,7 @@ type Shelf struct {
 	Kind       ShelfKind
 	Query      string
 	QueryMatch string
-	OwnerID    string
+	OwnerID    int64
 	Visibility ShelfVisibility
 	Position   int
 	CreatedAt  int64
@@ -117,7 +117,7 @@ func normalizeShelfVisibility(visibility ShelfVisibility) (ShelfVisibility, erro
 	}
 }
 
-func nextShelfPosition(database *DB, ownerID string, visibility ShelfVisibility) (int, error) {
+func nextShelfPosition(database *DB, ownerID int64, visibility ShelfVisibility) (int, error) {
 	var pos int
 	var err error
 	if visibility == ShelfShared {
@@ -133,9 +133,8 @@ func nextShelfPosition(database *DB, ownerID string, visibility ShelfVisibility)
 
 // CreateShelf inserts either a manual shelf or a query-backed shelf. ownerID is
 // always the shelf owner; visibility controls whether other users can see it.
-func (db *DB) CreateShelf(ownerID string, visibility ShelfVisibility, name string, kind ShelfKind, query string) (*Shelf, error) {
-	ownerID = strings.TrimSpace(ownerID)
-	if ownerID == "" {
+func (db *DB) CreateShelf(ownerID int64, visibility ShelfVisibility, name string, kind ShelfKind, query string) (*Shelf, error) {
+	if ownerID <= 0 {
 		return nil, ErrShelfOwnerRequired
 	}
 	visibility, err := normalizeShelfVisibility(visibility)
@@ -181,15 +180,15 @@ func (db *DB) CreateShelf(ownerID string, visibility ShelfVisibility, name strin
 	return db.GetShelf(shelf.ID, ownerID)
 }
 
-// ListShelves returns shared shelves plus the viewer's personal shelves. With an
-// empty viewerID it returns only shared shelves.
-func (db *DB) ListShelves(viewerID string) ([]Shelf, error) {
+// ListShelves returns shared shelves plus the viewer's personal shelves. With a
+// zero viewerID it returns only shared shelves.
+func (db *DB) ListShelves(viewerID int64) ([]Shelf, error) {
 	query := `
 			SELECT id, name, kind, query, query_match, owner_id, visibility, position, created_at, updated_at
 			FROM shelves
 			WHERE visibility = ?`
 	args := []any{string(ShelfShared)}
-	if viewerID != "" {
+	if viewerID > 0 {
 		query += ` OR owner_id = ?`
 		args = append(args, viewerID)
 	}
@@ -216,7 +215,7 @@ func (db *DB) ListShelves(viewerID string) ([]Shelf, error) {
 // ordered by name. Deleting the user cascades these away for the whole
 // household (shelves.owner_id ON DELETE CASCADE), so the user-delete UI warns
 // with this list before confirming.
-func SharedShelfNamesOwnedBy(queryer Queryer, ownerID string) ([]string, error) {
+func SharedShelfNamesOwnedBy(queryer Queryer, ownerID int64) ([]string, error) {
 	rows, err := queryer.Query(`
 		SELECT name FROM shelves
 		WHERE owner_id = ? AND visibility = ?
@@ -243,9 +242,9 @@ func SharedShelfNamesOwnedBy(queryer Queryer, ownerID string) ([]string, error) 
 // Shelf-scoped accounts see assigned shared scope shelves plus their personal
 // shelves, so scope-defining shelves are navigable without exposing unrelated
 // shared shelf names.
-func (db *DB) ListShelvesForUser(userID string) ([]Shelf, error) {
-	if userID == "" {
-		return db.ListShelves("")
+func (db *DB) ListShelvesForUser(userID int64) ([]Shelf, error) {
+	if userID <= 0 {
+		return db.ListShelves(0)
 	}
 	u, err := db.GetUserByID(userID)
 	if err != nil {
@@ -285,15 +284,15 @@ func (db *DB) ListShelvesForUser(userID string) ([]Shelf, error) {
 	return shelves, rows.Err()
 }
 
-// GetShelf returns a shelf visible to viewerID. Empty viewerID can only see
+// GetShelf returns a shelf visible to viewerID. Zero viewerID can only see
 // shared shelves.
-func (db *DB) GetShelf(shelfID, viewerID string) (*Shelf, error) {
+func (db *DB) GetShelf(shelfID string, viewerID int64) (*Shelf, error) {
 	query := `
 			SELECT id, name, kind, query, query_match, owner_id, visibility, position, created_at, updated_at
 			FROM shelves
 			WHERE id = ? AND (visibility = ?`
 	args := []any{shelfID, string(ShelfShared)}
-	if viewerID != "" {
+	if viewerID > 0 {
 		query += ` OR owner_id = ?`
 		args = append(args, viewerID)
 	}
@@ -312,9 +311,9 @@ func (db *DB) GetShelf(shelfID, viewerID string) (*Shelf, error) {
 // GetShelfForUser returns a shelf only if it is visible in the user's current
 // library scope. Use GetShelf for low-level owner/shared checks that should not
 // apply content-scope narrowing.
-func (db *DB) GetShelfForUser(shelfID, userID string) (*Shelf, error) {
-	if userID == "" {
-		return db.GetShelf(shelfID, "")
+func (db *DB) GetShelfForUser(shelfID string, userID int64) (*Shelf, error) {
+	if userID <= 0 {
+		return db.GetShelf(shelfID, 0)
 	}
 	u, err := db.GetUserByID(userID)
 	if err != nil {
@@ -368,7 +367,7 @@ func scanShelf(row rowScanner) (Shelf, error) {
 // new search string; manual shelves ignore query and keep explicit membership.
 // visibility changes whether the shelf is personal or shared without changing
 // ownership.
-func (db *DB) UpdateShelf(shelfID, viewerID, name, query string, visibility ShelfVisibility) (*Shelf, error) {
+func (db *DB) UpdateShelf(shelfID string, viewerID int64, name, query string, visibility ShelfVisibility) (*Shelf, error) {
 	shelf, err := db.GetShelf(shelfID, viewerID)
 	if err != nil {
 		return nil, err
@@ -413,7 +412,7 @@ func (db *DB) UpdateShelf(shelfID, viewerID, name, query string, visibility Shel
 	return db.GetShelf(shelfID, viewerID)
 }
 
-func (db *DB) DeleteShelf(shelfID, viewerID string) error {
+func (db *DB) DeleteShelf(shelfID string, viewerID int64) error {
 	if _, err := db.GetShelf(shelfID, viewerID); err != nil {
 		return err
 	}
@@ -427,7 +426,7 @@ func (db *DB) DeleteShelf(shelfID, viewerID string) error {
 	return nil
 }
 
-func (db *DB) AddBookToShelf(shelfID, viewerID, workID string) error {
+func (db *DB) AddBookToShelf(shelfID string, viewerID int64, workID string) error {
 	shelf, err := db.GetShelf(shelfID, viewerID)
 	if err != nil {
 		return err
@@ -450,7 +449,7 @@ func (db *DB) AddBookToShelf(shelfID, viewerID, workID string) error {
 // skipping any already present, and returns how many rows were newly inserted.
 // Each insert recomputes the next position, so the selection is appended in the
 // given order after whatever the shelf already held.
-func (db *DB) AddBooksToShelf(ctx context.Context, shelfID, viewerID string, workIDs []string) (int, error) {
+func (db *DB) AddBooksToShelf(ctx context.Context, shelfID string, viewerID int64, workIDs []string) (int, error) {
 	shelf, err := db.GetShelf(shelfID, viewerID)
 	if err != nil {
 		return 0, err
@@ -491,7 +490,7 @@ func (db *DB) AddBooksToShelf(ctx context.Context, shelfID, viewerID string, wor
 
 // RemoveBooksFromShelf drops every workID from the manual shelf in one statement
 // and returns how many rows were actually removed.
-func (db *DB) RemoveBooksFromShelf(shelfID, viewerID string, workIDs []string) (int, error) {
+func (db *DB) RemoveBooksFromShelf(shelfID string, viewerID int64, workIDs []string) (int, error) {
 	shelf, err := db.GetShelf(shelfID, viewerID)
 	if err != nil {
 		return 0, err
@@ -514,7 +513,7 @@ func (db *DB) RemoveBooksFromShelf(shelfID, viewerID string, workIDs []string) (
 	return int(n), nil
 }
 
-func (db *DB) RemoveBookFromShelf(shelfID, viewerID, workID string) error {
+func (db *DB) RemoveBookFromShelf(shelfID string, viewerID int64, workID string) error {
 	shelf, err := db.GetShelf(shelfID, viewerID)
 	if err != nil {
 		return err
@@ -531,7 +530,7 @@ func (db *DB) RemoveBookFromShelf(shelfID, viewerID, workID string) error {
 // ListBookShelfMemberships returns visible manual shelves and whether the work
 // is currently assigned to each. Query shelves are omitted because they cannot
 // be hand-edited.
-func (db *DB) ListBookShelfMemberships(viewerID, workID string) ([]ShelfMembership, error) {
+func (db *DB) ListBookShelfMemberships(viewerID int64, workID string) ([]ShelfMembership, error) {
 	query := `
 			SELECT s.id, s.name, s.kind, s.query, s.query_match, s.owner_id, s.visibility, s.position, s.created_at, s.updated_at,
 			       CASE WHEN sb.work_id IS NULL THEN 0 ELSE 1 END AS in_shelf
@@ -539,7 +538,7 @@ func (db *DB) ListBookShelfMemberships(viewerID, workID string) ([]ShelfMembersh
 			LEFT JOIN shelf_books sb ON sb.shelf_id = s.id AND sb.work_id = ?
 			WHERE s.kind = 'manual' AND (s.visibility = ?`
 	args := []any{workID, string(ShelfShared)}
-	if viewerID != "" {
+	if viewerID > 0 {
 		query += ` OR s.owner_id = ?`
 		args = append(args, viewerID)
 	}

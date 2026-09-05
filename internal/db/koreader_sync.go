@@ -14,7 +14,7 @@ var (
 )
 
 type KOReaderProgress struct {
-	UserID       string
+	UserID       int64
 	DocumentHash string
 	Progress     string
 	Percentage   float64
@@ -94,7 +94,7 @@ func ResolveKOReaderHash(queryer Queryer, documentHash string) (KOReaderHashTarg
 
 func (db *DB) SaveKOReaderProgressAndAdvanceStatus(
 	ctx context.Context,
-	userID string,
+	userID int64,
 	progress KOReaderProgress,
 ) (*KOReaderProgress, ReadingStatusChange, error) {
 	progress, err := normalizeKOReaderProgress(userID, progress)
@@ -119,8 +119,8 @@ func (db *DB) SaveKOReaderProgressAndAdvanceStatus(
 	return saved, change, nil
 }
 
-func normalizeKOReaderProgress(userID string, progress KOReaderProgress) (KOReaderProgress, error) {
-	progress.UserID = strings.TrimSpace(userID)
+func normalizeKOReaderProgress(userID int64, progress KOReaderProgress) (KOReaderProgress, error) {
+	progress.UserID = userID
 	progress.DocumentHash = strings.TrimSpace(progress.DocumentHash)
 	progress.Progress = strings.TrimSpace(progress.Progress)
 	progress.Device = strings.TrimSpace(progress.Device)
@@ -148,14 +148,13 @@ func saveKOReaderProgress(tx *sql.Tx, progress KOReaderProgress) (*KOReaderProgr
 	return getKOReaderProgress(tx, progress.UserID, progress.DocumentHash)
 }
 
-func (db *DB) GetKOReaderProgress(userID, documentHash string) (*KOReaderProgress, error) {
+func (db *DB) GetKOReaderProgress(userID int64, documentHash string) (*KOReaderProgress, error) {
 	return getKOReaderProgress(db, userID, documentHash)
 }
 
-func getKOReaderProgress(queryer Queryer, userID, documentHash string) (*KOReaderProgress, error) {
-	userID = strings.TrimSpace(userID)
+func getKOReaderProgress(queryer Queryer, userID int64, documentHash string) (*KOReaderProgress, error) {
 	documentHash = strings.TrimSpace(documentHash)
-	if userID == "" {
+	if userID <= 0 {
 		return nil, errorWithDetail(ErrKOReaderInvalidInput, "user id required")
 	}
 	if documentHash == "" {
@@ -178,7 +177,7 @@ func getKOReaderProgress(queryer Queryer, userID, documentHash string) (*KOReade
 }
 
 func validateKOReaderProgress(p KOReaderProgress) error {
-	if p.UserID == "" {
+	if p.UserID <= 0 {
 		return errorWithDetail(ErrKOReaderInvalidInput, "user id required")
 	}
 	if p.DocumentHash == "" {

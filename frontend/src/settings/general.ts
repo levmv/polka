@@ -11,6 +11,7 @@ import { createToggle } from '../components/toggle';
 import { textEl } from '../dom';
 import { errorMessage } from '../errors';
 import { applyTheme } from '../theme';
+import { suggestedTimeZones } from '../time-zone';
 import { showToast } from '../toast';
 import type { AdminStorageStatus, CurrentUser, ThemePreference, UserSettings } from '../types';
 import {
@@ -27,6 +28,7 @@ type GeneralState = AsyncLoadState & {
     status: AdminStorageStatus | null;
     storageLoading: boolean;
     storageError: string;
+    writebackHost: HTMLElement | null;
 };
 
 export function createGeneralPanel(currentUser: CurrentUser): (root: HTMLElement) => void {
@@ -37,6 +39,7 @@ export function createGeneralPanel(currentUser: CurrentUser): (root: HTMLElement
         status: null,
         storageLoading: false,
         storageError: '',
+        writebackHost: null,
         loadError: '',
     };
     return (root) => renderGeneralPanel(root, currentUser, state);
@@ -118,8 +121,41 @@ function renderGeneralPanel(
 
     const rows = document.createElement('div');
     rows.className = 'settings-rows';
+    const timeZoneField = document.createElement('div');
+    const timeZoneInput = document.createElement('input');
+    timeZoneInput.type = 'text';
+    timeZoneInput.className = 'settings-input';
+    timeZoneInput.setAttribute('aria-label', 'Time zone');
+    timeZoneInput.setAttribute('list', 'settings-time-zones');
+    timeZoneInput.autocomplete = 'off';
+    timeZoneInput.spellcheck = false;
+    timeZoneInput.value = settings.time_zone;
+    timeZoneInput.placeholder = 'Europe/Berlin';
+    const timeZones = document.createElement('datalist');
+    timeZones.id = 'settings-time-zones';
+    for (const zone of suggestedTimeZones(settings.time_zone)) {
+        const option = document.createElement('option');
+        option.value = zone;
+        timeZones.append(option);
+    }
+    timeZoneInput.addEventListener('change', () => {
+        const previous = state.settings?.time_zone ?? settings.time_zone;
+        const next = timeZoneInput.value.trim();
+        timeZoneInput.value = next;
+        if (next !== previous) {
+            void persist({ time_zone: next }, () => {
+                timeZoneInput.value = previous;
+            });
+        }
+    });
+    timeZoneField.append(timeZoneInput, timeZones);
     rows.append(
         settingsRow('Theme', 'How polka looks. System follows your device.', themeSelect.el),
+        settingsRow(
+            'Time zone',
+            'New reading sessions use this time zone. Past reading days stay unchanged.',
+            timeZoneField,
+        ),
         settingsRow(
             'Continue reading',
             'Show the Continue reading rail at the top of the library.',
@@ -128,7 +164,7 @@ function renderGeneralPanel(
     );
 
     if (currentUser.role === 'admin') {
-        appendGeneralLibraryRows(rows, state, () => renderGeneralPanel(root, currentUser, state));
+        appendWritebackRow(rows, state);
     }
     root.append(rows);
     const currentVersion = appVersion();
@@ -145,11 +181,20 @@ function renderGeneralPanel(
     }
 }
 
-function appendGeneralLibraryRows(
-    rows: HTMLElement,
-    state: GeneralState,
-    rerender: () => void,
-): void {
+function appendWritebackRow(rows: HTMLElement, state: GeneralState): void {
+    const control = document.createElement('div');
+    state.writebackHost = control;
+    const rerender = () => {
+        // Tab changes can replace the host during a request. Update the latest
+        // host without rebuilding the personal controls and losing their edits.
+        state.writebackHost?.replaceChildren(
+            state.status
+                ? writebackControl(state, rerender)
+                : state.storageError
+                  ? errorNote(state.storageError)
+                  : loadingNote(),
+        );
+    };
     if (!state.status && !state.storageLoading && !state.storageError) {
         state.storageLoading = true;
         fetchAdminStorageStatus()
@@ -165,11 +210,7 @@ function appendGeneralLibraryRows(
             });
     }
 
-    const control = state.status
-        ? writebackControl(state, rerender)
-        : state.storageError
-          ? errorNote(state.storageError)
-          : loadingNote();
+    rerender();
 
     rows.append(
         settingsRow(
@@ -180,8 +221,7 @@ function appendGeneralLibraryRows(
     );
 }
 
-// how many book files are behind the catalog, and how many previously failed.
-export function writebackControl(state: GeneralState, rerender: () => void): HTMLElement {
+function writebackControl(state: GeneralState, rerender: () => void): HTMLElement {
     const wrap = document.createElement('div');
     wrap.className = 'settings-writeback-control';
     const wb = state.status?.writeback;

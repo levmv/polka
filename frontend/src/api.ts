@@ -1,5 +1,6 @@
 import { type BookListContext, bookListContextParams } from './book-list-context';
 import { takeBootstrapCurrentUser, takeBootstrapUserSettings } from './bootstrap';
+import { browserTimeZone } from './time-zone';
 import type {
     AdminStorageStatus,
     Annotation,
@@ -279,19 +280,40 @@ export async function fetchUserSettings(): Promise<UserSettings> {
         const promise = bootstrapped?.theme
             ? Promise.resolve(bootstrapped)
             : fetchJSON<UserSettings>('/api/settings', 'Failed to fetch settings');
-        userSettingsPromise = promise.finally(() => {
-            userSettingsPromise = null;
-        });
+        userSettingsPromise = promise
+            .then(async (settings) => {
+                if (settings.time_zone) return settings;
+                try {
+                    return await fetchJSON<UserSettings>(
+                        '/api/settings',
+                        'Failed to initialize time zone',
+                        jsonBody('PUT', {
+                            time_zone: browserTimeZone(),
+                            initialize_time_zone: true,
+                        }),
+                    );
+                } catch {
+                    // Do not block browsing on a failed automatic preference save.
+                    // A later fetch can retry the same conditional initialization.
+                    return settings;
+                }
+            })
+            .finally(() => {
+                userSettingsPromise = null;
+            });
     }
     return await userSettingsPromise;
 }
 
-export type UserSettingsUpdate = Partial<Pick<UserSettings, 'theme' | 'hide_continue_reading'>>;
+export type UserSettingsUpdate = Partial<
+    Pick<UserSettings, 'theme' | 'hide_continue_reading' | 'time_zone'>
+>;
 
 export async function saveUserSettings(payload: UserSettingsUpdate): Promise<UserSettings> {
     const request: UserSettingsUpdate = {
         theme: payload.theme,
         hide_continue_reading: payload.hide_continue_reading,
+        time_zone: payload.time_zone,
     };
     const saved = await fetchJSON<UserSettings>(
         '/api/settings',
@@ -329,7 +351,7 @@ export async function createUser(payload: {
 }
 
 export async function updateUserAccess(
-    userId: string,
+    userId: number,
     payload: {
         role: UserAccount['role'];
         content_scope: UserAccount['content_scope'];
@@ -343,7 +365,7 @@ export async function updateUserAccess(
     );
 }
 
-export async function updateUserPassword(userId: string, password: string): Promise<void> {
+export async function updateUserPassword(userId: number, password: string): Promise<void> {
     await apiFetch(
         `/api/users/${encodeURIComponent(userId)}/password`,
         'Failed to update password',
@@ -351,7 +373,7 @@ export async function updateUserPassword(userId: string, password: string): Prom
     );
 }
 
-export async function deleteUser(userId: string): Promise<void> {
+export async function deleteUser(userId: number): Promise<void> {
     await apiFetch(`/api/users/${encodeURIComponent(userId)}`, 'Failed to remove user', {
         method: 'DELETE',
     });
@@ -780,6 +802,32 @@ export async function fetchReaderState(assetId: string): Promise<ReaderState> {
     return await fetchJSON<ReaderState>(
         `/api/reader/assets/${encodeURIComponent(assetId)}/state`,
         'Failed to fetch reader state',
+    );
+}
+
+export async function sendReadingActivity(
+    assetId: string,
+    sessionId: string,
+    segment: number,
+    checkpoint?: { elapsed_ms: number; last_activity_ms: number; finished: boolean },
+    keepalive = false,
+): Promise<{ active: boolean; counted_ms: number }> {
+    return await requestAttempt(
+        `/api/reader/assets/${encodeURIComponent(assetId)}/activity`,
+        {
+            ...jsonBody(checkpoint ? 'PUT' : 'POST', {
+                session_id: sessionId,
+                segment,
+                ...checkpoint,
+            }),
+            keepalive,
+        },
+        async (response) => {
+            if (!response.ok)
+                throw await responseError(response, 'Failed to save reading activity');
+            return await response.json();
+        },
+        true,
     );
 }
 

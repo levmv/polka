@@ -90,7 +90,7 @@ func TestRestoreWritebackAcknowledgementMatchesRestoredBytes(t *testing.T) {
 	}
 }
 
-func writebackIdentityServer(t *testing.T) (*Server, http.Handler, string) {
+func writebackIdentityServer(t *testing.T) (*Server, http.Handler, int64) {
 	t.Helper()
 	dir := t.TempDir()
 	database, err := bootstrap.EnsureLibrary(dir)
@@ -117,7 +117,7 @@ func addWritebackIdentityBook(t *testing.T, s *Server, name string) (importer.Re
 	return result, data
 }
 
-func writebackIdentityJSON(t *testing.T, s *Server, handler http.Handler, userID, method, path string, body any) {
+func writebackIdentityJSON(t *testing.T, s *Server, handler http.Handler, userID int64, method, path string, body any) {
 	t.Helper()
 	resp := httptest.NewRecorder()
 	handler.ServeHTTP(resp, jsonRequest(t, s, userID, method, path, body))

@@ -28,7 +28,7 @@ func TestShelvesVisibilityAndMembership(t *testing.T) {
 		t.Fatalf("CreateShelf query: %v", err)
 	}
 
-	visibleSharedOnly, err := database.ListShelves("")
+	visibleSharedOnly, err := database.ListShelves(0)
 	if err != nil {
 		t.Fatalf("ListShelves shared: %v", err)
 	}

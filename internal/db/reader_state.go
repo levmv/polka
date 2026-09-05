@@ -26,7 +26,7 @@ const (
 )
 
 type ReaderState struct {
-	UserID     string
+	UserID     int64
 	AssetID    string
 	WorkID     string
 	Progress   float64
@@ -36,7 +36,7 @@ type ReaderState struct {
 }
 
 type ReaderPreferences struct {
-	UserID            string
+	UserID            int64
 	EPUBFlow          string
 	DisplayStyle      string
 	FontScale         int
@@ -52,12 +52,12 @@ type ContinueReadingRow struct {
 	LastReadAt int64
 }
 
-func (db *DB) GetReaderState(userID, assetID string) (*ReaderState, error) {
+func (db *DB) GetReaderState(userID int64, assetID string) (*ReaderState, error) {
 	return getReaderState(db, userID, assetID)
 }
 
-func getReaderState(queryer Queryer, userID, assetID string) (*ReaderState, error) {
-	if userID == "" {
+func getReaderState(queryer Queryer, userID int64, assetID string) (*ReaderState, error) {
+	if userID <= 0 {
 		return nil, ErrUserIDRequired
 	}
 	state := &ReaderState{UserID: userID, AssetID: assetID, Locator: EmptyReaderLocator()}
@@ -88,7 +88,7 @@ func getReaderState(queryer Queryer, userID, assetID string) (*ReaderState, erro
 
 func (db *DB) TouchReaderStateAndAdvanceStatus(
 	ctx context.Context,
-	userID, assetID string,
+	userID int64, assetID string,
 	source ReadingStatusSource,
 ) (*ReaderState, ReadingStatusChange, error) {
 	var state *ReaderState
@@ -111,7 +111,7 @@ func (db *DB) TouchReaderStateAndAdvanceStatus(
 	return state, change, nil
 }
 
-func touchReaderState(tx *sql.Tx, userID, assetID string) (*ReaderState, error) {
+func touchReaderState(tx *sql.Tx, userID int64, assetID string) (*ReaderState, error) {
 	if _, err := getReaderState(tx, userID, assetID); err != nil {
 		return nil, err
 	}
@@ -129,7 +129,7 @@ func touchReaderState(tx *sql.Tx, userID, assetID string) (*ReaderState, error) 
 
 func (db *DB) SaveReaderStateAndAdvanceStatus(
 	ctx context.Context,
-	userID, assetID string,
+	userID int64, assetID string,
 	progress float64,
 	locator ReaderLocator,
 	source ReadingStatusSource,
@@ -166,7 +166,7 @@ func validateReaderPosition(progress float64, locator ReaderLocator) (ReaderLoca
 	return normalized, nil
 }
 
-func saveReaderState(tx *sql.Tx, userID, assetID string, progress float64, locator ReaderLocator) (*ReaderState, error) {
+func saveReaderState(tx *sql.Tx, userID int64, assetID string, progress float64, locator ReaderLocator) (*ReaderState, error) {
 	if _, err := getReaderState(tx, userID, assetID); err != nil {
 		return nil, err
 	}
@@ -184,7 +184,7 @@ func saveReaderState(tx *sql.Tx, userID, assetID string, progress float64, locat
 	return getReaderState(tx, userID, assetID)
 }
 
-func (db *DB) ResetReaderState(userID, assetID string) error {
+func (db *DB) ResetReaderState(userID int64, assetID string) error {
 	if _, err := db.GetReaderState(userID, assetID); err != nil {
 		return err
 	}
@@ -197,8 +197,8 @@ func (db *DB) ResetReaderState(userID, assetID string) error {
 	return nil
 }
 
-func (db *DB) GetReaderPreferences(userID string) (*ReaderPreferences, error) {
-	if userID == "" {
+func (db *DB) GetReaderPreferences(userID int64) (*ReaderPreferences, error) {
+	if userID <= 0 {
 		return nil, ErrUserIDRequired
 	}
 	prefs := defaultReaderPreferences(userID)
@@ -216,8 +216,8 @@ func (db *DB) GetReaderPreferences(userID string) (*ReaderPreferences, error) {
 	return prefs, nil
 }
 
-func (db *DB) SaveReaderPreferences(userID string, prefs ReaderPreferences) (*ReaderPreferences, error) {
-	if userID == "" {
+func (db *DB) SaveReaderPreferences(userID int64, prefs ReaderPreferences) (*ReaderPreferences, error) {
+	if userID <= 0 {
 		return nil, ErrUserIDRequired
 	}
 	prefs = normalizeReaderPreferences(userID, prefs)
@@ -253,8 +253,8 @@ func (db *DB) SaveReaderPreferences(userID string, prefs ReaderPreferences) (*Re
 	return db.GetReaderPreferences(userID)
 }
 
-func ListContinueReading(queryer Queryer, scope VisibilityScope, userID string, limit int) ([]ContinueReadingRow, error) {
-	if userID == "" {
+func ListContinueReading(queryer Queryer, scope VisibilityScope, userID int64, limit int) ([]ContinueReadingRow, error) {
+	if userID <= 0 {
 		return nil, ErrUserIDRequired
 	}
 	if limit <= 0 {
@@ -336,7 +336,7 @@ func validReaderStyle(style string) bool {
 	return style == ReaderStyleOriginal || style == ReaderStylePaper || style == ReaderStyleCustom
 }
 
-func defaultReaderPreferences(userID string) *ReaderPreferences {
+func defaultReaderPreferences(userID int64) *ReaderPreferences {
 	return &ReaderPreferences{
 		UserID:            userID,
 		EPUBFlow:          ReaderFlowPaginated,
@@ -347,7 +347,7 @@ func defaultReaderPreferences(userID string) *ReaderPreferences {
 	}
 }
 
-func normalizeReaderPreferences(userID string, prefs ReaderPreferences) ReaderPreferences {
+func normalizeReaderPreferences(userID int64, prefs ReaderPreferences) ReaderPreferences {
 	defaults := defaultReaderPreferences(userID)
 	defaults.EPUBFlow = prefs.EPUBFlow
 	defaults.DisplayStyle = prefs.DisplayStyle

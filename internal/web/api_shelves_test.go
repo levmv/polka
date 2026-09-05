@@ -194,7 +194,7 @@ func TestReaderCannotMutateSharedShelfOrAddOutOfScopeBook(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create scope shelf: %v", err)
 	}
-	if err := database.AddBookToShelf(scopeShelf.ID, "", "w_1"); err != nil {
+	if err := database.AddBookToShelf(scopeShelf.ID, 0, "w_1"); err != nil {
 		t.Fatalf("seed scope shelf: %v", err)
 	}
 	if _, err := database.UpdateUserAccess(reader.ID, db.UserAccess{
@@ -272,9 +272,9 @@ func TestAPIShelvesSharedCreationAndScopedVisibility(t *testing.T) {
 		t.Fatalf("decode kids shelf: %v", err)
 	}
 	if kids.OwnerID != admin.ID || kids.Visibility != string(db.ShelfShared) {
-		t.Fatalf("shared shelf = %+v, want owner %q and shared visibility", kids, admin.ID)
+		t.Fatalf("shared shelf = %+v, want owner %d and shared visibility", kids, admin.ID)
 	}
-	if err := database.AddBookToShelf(kids.ID, "", "w_1"); err != nil {
+	if err := database.AddBookToShelf(kids.ID, 0, "w_1"); err != nil {
 		t.Fatalf("seed kids shelf: %v", err)
 	}
 

@@ -1,3 +1,4 @@
+import { fetchUserSettings } from '../api';
 import { listURLForContext, readBookListContextFromLocation } from '../book-list-context';
 
 export function bootReader(init: () => void): void {
@@ -5,6 +6,7 @@ export function bootReader(init: () => void): void {
         document.body.classList.add('reader-shell');
         document.querySelector<HTMLElement>('.app-main')?.classList.add('app-main--reader');
         applyCloseTarget();
+        void fetchUserSettings().catch(() => undefined);
         init();
     });
 }

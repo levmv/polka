@@ -73,7 +73,7 @@ func TestListBookJumpsRespectsVisibilityScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create shelf: %v", err)
 	}
-	if err := database.AddBookToShelf(shelf.ID, "", "w_kid"); err != nil {
+	if err := database.AddBookToShelf(shelf.ID, 0, "w_kid"); err != nil {
 		t.Fatalf("add book: %v", err)
 	}
 	if _, err := database.UpdateUserAccess(user.ID, UserAccess{Role: RoleReader, ContentScope: ContentScopeShelves, ShelfIDs: []string{shelf.ID}}); err != nil {
@@ -205,7 +205,7 @@ func TestListBooksSort(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(string(tt.sort), func(t *testing.T) {
-			books, err := ListBooks(database, FullVisibilityScope(), "", "", tt.sort, 10, 0)
+			books, err := ListBooks(database, FullVisibilityScope(), 0, "", tt.sort, 10, 0)
 			if err != nil {
 				t.Fatalf("ListBooks failed: %v", err)
 			}
@@ -254,7 +254,7 @@ func TestBookSequenceInListSorts(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := BookSequenceInList(database, FullVisibilityScope(), "", tt.work, "", tt.sort, 1, 1)
+			got, err := BookSequenceInList(database, FullVisibilityScope(), 0, tt.work, "", tt.sort, 1, 1)
 			if err != nil {
 				t.Fatalf("BookSequenceInList: %v", err)
 			}
@@ -262,7 +262,7 @@ func TestBookSequenceInListSorts(t *testing.T) {
 		})
 	}
 
-	got, err := BookSequenceInList(database, FullVisibilityScope(), "", "w_deleted", "", SortAdded, 1, 1)
+	got, err := BookSequenceInList(database, FullVisibilityScope(), 0, "w_deleted", "", SortAdded, 1, 1)
 	if err != nil {
 		t.Fatalf("deleted BookSequenceInList: %v", err)
 	}
@@ -287,13 +287,13 @@ func TestBookSequenceInSearchList(t *testing.T) {
 	must("INSERT INTO search (rowid, work_id, title, authors) VALUES (2, 'w2', 'needle Beta', '')")
 	must("INSERT INTO search (rowid, work_id, title, authors) VALUES (3, 'w3', 'needle Gamma', '')")
 
-	got, err := BookSequenceInList(database, FullVisibilityScope(), "", "w2", "needle", SortTitle, 1, 1)
+	got, err := BookSequenceInList(database, FullVisibilityScope(), 0, "w2", "needle", SortTitle, 1, 1)
 	if err != nil {
 		t.Fatalf("BookSequenceInList search: %v", err)
 	}
 	assertSequenceWindow(t, got, "w1", "w2", "w3")
 
-	relevance, err := BookSequenceInList(database, FullVisibilityScope(), "", "w2", "needle", SortRelevance, 1, 1)
+	relevance, err := BookSequenceInList(database, FullVisibilityScope(), 0, "w2", "needle", SortRelevance, 1, 1)
 	if err != nil {
 		t.Fatalf("BookSequenceInList relevance search: %v", err)
 	}

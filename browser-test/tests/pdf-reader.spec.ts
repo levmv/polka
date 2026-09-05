@@ -14,6 +14,12 @@ test('PDF reader behavior', async ({
       message.includes('/state due to access control checks'),
   );
   const stamp = `${browserName}-${Date.now().toString(36)}`;
+  let activityCheckpoints = 0;
+  page.on('request', (request) => {
+    if (request.method() === 'PUT' && /\/api\/reader\/assets\/[^/]+\/activity$/.test(request.url())) {
+      activityCheckpoints += 1;
+    }
+  });
   const title = `PDF Reader ${stamp}`;
   await page.goto('/');
   await page.locator('#book-upload-input').setInputFiles(
@@ -43,6 +49,7 @@ test('PDF reader behavior', async ({
       await page.getByRole('button', { name: 'Next page' }).click();
       await expect(page.locator('[data-pdf-page-input]')).toHaveValue('2');
       await expect(page.locator('[data-pdf-text-layer]')).toContainText('Second PDF page');
+      await expect.poll(() => activityCheckpoints).toBeGreaterThan(0);
 
       assetId = (await reader.getAttribute('data-reader-asset-id')) || '';
       if (!assetId) throw new Error('missing PDF asset id');

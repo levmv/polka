@@ -23,7 +23,7 @@ import (
 // sessions, basic auth, app tokens, kosync tokens. An empty scope is valid
 // and fail-closed: the account sees an empty library, not an error.
 type VisibilityScope struct {
-	UserID       string
+	UserID       int64
 	ContentScope string
 }
 
@@ -31,8 +31,8 @@ func FullVisibilityScope() VisibilityScope {
 	return VisibilityScope{ContentScope: ContentScopeAll}
 }
 
-func (db *DB) VisibilityScopeForUser(userID string) (VisibilityScope, error) {
-	if userID == "" {
+func (db *DB) VisibilityScopeForUser(userID int64) (VisibilityScope, error) {
+	if userID <= 0 {
 		return FullVisibilityScope(), nil
 	}
 	u, err := db.GetUserByID(userID)
@@ -197,7 +197,7 @@ func CanAccessAsset(queryer Queryer, scope VisibilityScope, assetID string) (boo
 	return true, nil
 }
 
-func UserScopeShelfIDs(queryer Queryer, userID string) ([]string, error) {
+func UserScopeShelfIDs(queryer Queryer, userID int64) ([]string, error) {
 	rows, err := queryer.Query(`
 		SELECT shelf_id
 		FROM user_scope_shelves

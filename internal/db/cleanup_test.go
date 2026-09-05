@@ -55,7 +55,7 @@ func TestCleanupCategories(t *testing.T) {
 	}
 	for _, tt := range filterTests {
 		t.Run("search "+tt.query, func(t *testing.T) {
-			books, err := ListBooks(database, FullVisibilityScope(), "", tt.query, SortRelevance, 10, 0)
+			books, err := ListBooks(database, FullVisibilityScope(), 0, tt.query, SortRelevance, 10, 0)
 			if err != nil {
 				t.Fatalf("ListBooks(%q) failed: %v", tt.query, err)
 			}

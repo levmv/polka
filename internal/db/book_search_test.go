@@ -134,7 +134,7 @@ func TestSearchRelevancePrefersIdentityFields(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 
-	books, err := ListBooks(database, FullVisibilityScope(), "", "needle", SortRelevance, 10, 0)
+	books, err := ListBooks(database, FullVisibilityScope(), 0, "needle", SortRelevance, 10, 0)
 	if err != nil {
 		t.Fatalf("search books: %v", err)
 	}
@@ -173,7 +173,7 @@ func TestSearchPrefixMatching(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			books, err := ListBooks(database, FullVisibilityScope(), "", tt.query, SortTitle, 10, 0)
+			books, err := ListBooks(database, FullVisibilityScope(), 0, tt.query, SortTitle, 10, 0)
 			if err != nil {
 				t.Fatalf("search books: %v", err)
 			}

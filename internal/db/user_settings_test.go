@@ -25,9 +25,9 @@ func TestUserSettingsLifecycle(t *testing.T) {
 		t.Fatalf("default user settings = %+v", settings)
 	}
 
-	settings, err = database.SaveUserSettings(alice.ID, UserSettings{
-		Theme:               ThemeSepia,
-		HideContinueReading: true,
+	settings, err = database.SaveUserSettings(alice.ID, UserSettingsPatch{
+		Theme:               new(ThemeSepia),
+		HideContinueReading: new(true),
 	})
 	if err != nil {
 		t.Fatalf("SaveUserSettings: %v", err)
@@ -44,10 +44,42 @@ func TestUserSettingsLifecycle(t *testing.T) {
 		t.Fatalf("user settings leaked across users: %+v", bobSettings)
 	}
 
-	if _, err := database.SaveUserSettings(alice.ID, UserSettings{Theme: "solarized"}); !errors.Is(err, ErrInvalidTheme) {
+	if _, err := database.SaveUserSettings(alice.ID, UserSettingsPatch{Theme: new("solarized")}); !errors.Is(err, ErrInvalidTheme) {
 		t.Fatalf("invalid theme err = %v, want ErrInvalidTheme", err)
 	}
-	if _, err := database.GetUserSettings(""); !errors.Is(err, ErrUserIDRequired) {
+	if _, err := database.GetUserSettings(0); !errors.Is(err, ErrUserIDRequired) {
 		t.Fatalf("missing user err = %v, want ErrUserIDRequired", err)
+	}
+}
+
+func TestUserTimeZoneInitialization(t *testing.T) {
+	database := newTestDB(t)
+	user, err := database.CreateUser("reader", "pw", RoleMember)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings, err := database.GetUserSettings(user.ID)
+	if err != nil || settings.TimeZone != "" {
+		t.Fatalf("unset time zone: %+v, %v", settings, err)
+	}
+	for _, tc := range []struct {
+		patch UserSettingsPatch
+		want  string
+	}{
+		{UserSettingsPatch{TimeZone: new("Europe/Berlin"), InitializeTimeZone: true}, "Europe/Berlin"},
+		{UserSettingsPatch{TimeZone: new("Asia/Tokyo"), InitializeTimeZone: true}, "Europe/Berlin"},
+		{UserSettingsPatch{TimeZone: new("UTC")}, "UTC"},
+		{UserSettingsPatch{TimeZone: new("Asia/Tokyo"), InitializeTimeZone: true}, "UTC"},
+		{UserSettingsPatch{Theme: new(ThemeDark)}, "UTC"},
+	} {
+		settings, err = database.SaveUserSettings(user.ID, tc.patch)
+		if err != nil || settings.TimeZone != tc.want {
+			t.Fatalf("time zone = %+v, %v; want %s", settings, err, tc.want)
+		}
+	}
+	for _, zone := range []string{"", "Local", "Mars/Olympus", "../UTC", "/etc/localtime"} {
+		if _, err := database.SaveUserSettings(user.ID, UserSettingsPatch{TimeZone: &zone}); !errors.Is(err, ErrInvalidTimeZone) {
+			t.Fatalf("time zone %q error = %v", zone, err)
+		}
 	}
 }

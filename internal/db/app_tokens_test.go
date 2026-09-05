@@ -23,11 +23,11 @@ func TestAppTokenLifecycle(t *testing.T) {
 
 	uid, ok, err := database.AppTokenUserID(token)
 	if err != nil || !ok || uid != u.ID {
-		t.Fatalf("lookup token: uid=%q ok=%v err=%v, want %q/true", uid, ok, err, u.ID)
+		t.Fatalf("lookup token: uid=%d ok=%v err=%v, want %d/true", uid, ok, err, u.ID)
 	}
 
-	if uid, ok, err := database.AppTokenUserID("deadbeef"); ok || uid != "" || err != nil {
-		t.Fatalf("unknown token: uid=%q ok=%v err=%v, want empty/false/nil", uid, ok, err)
+	if uid, ok, err := database.AppTokenUserID("deadbeef"); ok || uid != 0 || err != nil {
+		t.Fatalf("unknown token: uid=%d ok=%v err=%v, want zero/false/nil", uid, ok, err)
 	}
 
 	tokens, err := database.ListAppTokens(u.ID)

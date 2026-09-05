@@ -30,7 +30,7 @@ const annotationColumns = `id, user_id, asset_id, kind, cfi, quote,
 
 type Annotation struct {
 	ID            string
-	UserID        string
+	UserID        int64
 	AssetID       string
 	Kind          string
 	CFI           string
@@ -57,8 +57,8 @@ type AnnotationNoteUpdate struct {
 	Note string
 }
 
-func (db *DB) ListAnnotations(userID, assetID string) ([]Annotation, error) {
-	if userID == "" {
+func (db *DB) ListAnnotations(userID int64, assetID string) ([]Annotation, error) {
+	if userID <= 0 {
 		return nil, ErrUserIDRequired
 	}
 	if _, err := db.GetReaderState(userID, assetID); err != nil {
@@ -89,8 +89,8 @@ func (db *DB) ListAnnotations(userID, assetID string) ([]Annotation, error) {
 	return out, nil
 }
 
-func (db *DB) CreateAnnotation(userID, assetID string, input AnnotationCreate) (Annotation, error) {
-	if userID == "" {
+func (db *DB) CreateAnnotation(userID int64, assetID string, input AnnotationCreate) (Annotation, error) {
+	if userID <= 0 {
 		return Annotation{}, ErrUserIDRequired
 	}
 	if _, err := db.GetReaderState(userID, assetID); err != nil {
@@ -122,7 +122,7 @@ func (db *DB) CreateAnnotation(userID, assetID string, input AnnotationCreate) (
 	return db.GetAnnotationByAnchor(userID, assetID, ann.Kind, ann.CFI)
 }
 
-func (db *DB) GetAnnotationByAnchor(userID, assetID, kind, cfi string) (Annotation, error) {
+func (db *DB) GetAnnotationByAnchor(userID int64, assetID, kind, cfi string) (Annotation, error) {
 	var ann Annotation
 	err := scanAnnotation(db.QueryRow(`
 		SELECT `+annotationColumns+`
@@ -138,8 +138,8 @@ func (db *DB) GetAnnotationByAnchor(userID, assetID, kind, cfi string) (Annotati
 	return ann, nil
 }
 
-func (db *DB) UpdateAnnotationNote(userID, assetID, annotationID string, input AnnotationNoteUpdate) (Annotation, error) {
-	if userID == "" {
+func (db *DB) UpdateAnnotationNote(userID int64, assetID, annotationID string, input AnnotationNoteUpdate) (Annotation, error) {
+	if userID <= 0 {
 		return Annotation{}, ErrUserIDRequired
 	}
 	note, err := normalizeAnnotationNote(input.Note)
@@ -156,7 +156,7 @@ func (db *DB) UpdateAnnotationNote(userID, assetID, annotationID string, input A
 	return db.GetAnnotationByID(userID, assetID, annotationID)
 }
 
-func (db *DB) GetAnnotationByID(userID, assetID, annotationID string) (Annotation, error) {
+func (db *DB) GetAnnotationByID(userID int64, assetID, annotationID string) (Annotation, error) {
 	var ann Annotation
 	err := scanAnnotation(db.QueryRow(`
 		SELECT `+annotationColumns+`
@@ -172,8 +172,8 @@ func (db *DB) GetAnnotationByID(userID, assetID, annotationID string) (Annotatio
 	return ann, nil
 }
 
-func (db *DB) DeleteAnnotation(userID, assetID, annotationID string) error {
-	if userID == "" {
+func (db *DB) DeleteAnnotation(userID int64, assetID, annotationID string) error {
+	if userID <= 0 {
 		return ErrUserIDRequired
 	}
 	res, err := db.Exec(`
@@ -213,7 +213,7 @@ func scanAnnotation(scanner rowScanner, ann *Annotation) error {
 	return nil
 }
 
-func normalizeAnnotation(userID, assetID string, input AnnotationCreate) (Annotation, error) {
+func normalizeAnnotation(userID int64, assetID string, input AnnotationCreate) (Annotation, error) {
 	kind := strings.TrimSpace(input.Kind)
 	if kind == "" {
 		kind = AnnotationKindHighlight

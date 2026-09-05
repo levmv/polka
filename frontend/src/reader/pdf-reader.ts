@@ -12,6 +12,7 @@ import {
 import { fetchReaderState, touchReaderState } from '../api';
 import { clamp } from '../dom';
 import type { ReaderLocator, ReaderState } from '../types';
+import { createReadingActivity, type ReadingActivity } from './activity';
 import { closeReader, focusReaderSurface, revealChrome, toggleReaderChrome } from './controls';
 import { wirePDFOutline } from './pdf-outline';
 import { type PDFSearchController, wirePDFSearch } from './pdf-search';
@@ -68,6 +69,7 @@ export async function initPDFReader(
 }
 
 class PDFReader {
+    private readonly activity: ReadingActivity;
     private document: PDFDocumentProxy | null = null;
     private loadingTask: PDFDocumentLoadingTask | null = null;
     private pageProxy: PDFPageProxy | null = null;
@@ -91,6 +93,7 @@ class PDFReader {
         private readonly options: PDFReaderOptions,
     ) {
         this.stateSaver = createReaderStateSaver(root, assetId, options);
+        this.activity = createReadingActivity(assetId);
     }
 
     async open(): Promise<void> {
@@ -144,6 +147,7 @@ class PDFReader {
         this.root.classList.add('reader-ready');
         this.elements.stage.focus({ preventScroll: true });
         revealChrome(this.root);
+        this.activity.start();
         void this.stateSaver.flush();
 
         touchReaderState(this.assetId)
@@ -154,6 +158,7 @@ class PDFReader {
     }
 
     private wireControls(): void {
+        this.activity.observeScrolling(this.elements.stage);
         this.elements.previous.addEventListener('click', () => {
             void this.navigateTo(this.pageNumber - 1);
         });
@@ -305,6 +310,7 @@ class PDFReader {
         }
 
         this.pageNumber = nextPage;
+        this.activity.recordAction();
         this.updateControls();
         await this.renderCurrentPage();
         this.scheduleSave();

@@ -232,7 +232,7 @@ type BookSequenceWindow struct {
 	Total        int
 }
 
-func BookSequenceInList(queryer Queryer, scope VisibilityScope, userID, workID, q string, sort BookSort, before, after int) (BookSequenceWindow, error) {
+func BookSequenceInList(queryer Queryer, scope VisibilityScope, userID int64, workID, q string, sort BookSort, before, after int) (BookSequenceWindow, error) {
 	plan := newBookSearchPlan(scope, userID, q)
 	return queryBookSequenceWindow(
 		queryer,
@@ -315,7 +315,7 @@ func queryBookSequenceWindow(queryer Queryer, workID, withSQL, fromSQL, whereSQL
 	return window, nil
 }
 
-func ListBooks(queryer Queryer, scope VisibilityScope, userID, q string, sort BookSort, limit, offset int) ([]BookSummaryRow, error) {
+func ListBooks(queryer Queryer, scope VisibilityScope, userID int64, q string, sort BookSort, limit, offset int) ([]BookSummaryRow, error) {
 	plan := newBookSearchPlan(scope, userID, q)
 	rows, err := queryer.Query(fmt.Sprintf(`
 		%s

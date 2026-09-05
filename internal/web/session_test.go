@@ -30,7 +30,7 @@ func TestSessionStorePersistsAcrossDBReopen(t *testing.T) {
 		t.Fatalf("lookup session: %v", err)
 	}
 	if !ok || uid != u.ID {
-		t.Fatalf("lookup = (%q, %v), want (%q, true)", uid, ok, u.ID)
+		t.Fatalf("lookup = (%d, %v), want (%d, true)", uid, ok, u.ID)
 	}
 
 	var storedHash string
@@ -62,7 +62,7 @@ func TestSessionStoreIdleExpiryAndLastSeenBump(t *testing.T) {
 
 	now = now.Add(2 * time.Hour)
 	if uid, ok, err := store.lookup(sid); err != nil || !ok || uid != u.ID {
-		t.Fatalf("lookup after activity = (%q, %v, %v), want (%q, true, nil)", uid, ok, err, u.ID)
+		t.Fatalf("lookup after activity = (%d, %v, %v), want (%d, true, nil)", uid, ok, err, u.ID)
 	}
 
 	var lastSeen int64
@@ -75,7 +75,7 @@ func TestSessionStoreIdleExpiryAndLastSeenBump(t *testing.T) {
 
 	now = now.Add(sessionIdleTTL + time.Second)
 	if uid, ok, err := store.lookup(sid); err != nil || ok {
-		t.Fatalf("expired lookup = (%q, %v, %v), want not live", uid, ok, err)
+		t.Fatalf("expired lookup = (%d, %v, %v), want not live", uid, ok, err)
 	}
 	assertSessionRows(t, database, sid, 0)
 }
@@ -103,7 +103,7 @@ func TestSessionStoreAbsoluteExpiry(t *testing.T) {
 
 	now = start.Add(sessionAbsoluteTTL + time.Second)
 	if uid, ok, err := store.lookup(sid); err != nil || ok {
-		t.Fatalf("absolute expired lookup = (%q, %v, %v), want not live", uid, ok, err)
+		t.Fatalf("absolute expired lookup = (%d, %v, %v), want not live", uid, ok, err)
 	}
 	assertSessionRows(t, database, sid, 0)
 }
