@@ -468,11 +468,12 @@ CREATE VIRTUAL TABLE search USING fts5(
     description,
     identifiers,
     filename,
+    tag_keys,
     content='',
     contentless_delete=1,
     contentless_unindexed=1
 );
 
--- Ignore work_id and prefer title, authors, then series. Remaining columns use
--- the default weight of 1.
-INSERT INTO search(search, rank) VALUES ('rank', 'bm25(0.0, 10.0, 8.0, 4.0)');
+-- Prefer title, authors, then series. Exact tag keys filter membership without
+-- contributing relevance; ordinary word searches exclude that internal column.
+INSERT INTO search(search, rank) VALUES ('rank', 'bm25(0.0, 10.0, 8.0, 4.0, 1.0, 1.0, 1.0, 1.0, 0.0)');

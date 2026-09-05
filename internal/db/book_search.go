@@ -1,11 +1,14 @@
 package db
 
 import (
+	"crypto/sha256"
 	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
 	"unicode"
+
+	"github.com/levmv/polka/internal/bookmeta"
 )
 
 type SearchQueryValidation struct {
@@ -70,12 +73,30 @@ func UpdateSearchIndex(tx *sql.Tx, workID string) error {
 	}
 
 	if _, err := tx.Exec(`
-		INSERT INTO search (rowid, work_id, title, authors, series, tags, description, identifiers, filename)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, nil, workID, title, authors, series, tags, description, identifiers, filenames); err != nil {
+		INSERT INTO search (rowid, work_id, title, authors, series, tags, description, identifiers, filename, tag_keys)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, nil, workID, title, authors, series, tags, description, identifiers, filenames, TagSearchKeys(tags)); err != nil {
 		return fmt.Errorf("insert search: %w", err)
 	}
 	return nil
+}
+
+// tagSearchKey keeps a whole tag in one bounded FTS token, including punctuation
+// and non-Latin text. Case/whitespace equivalence matches bookmeta.ParseTagList;
+// word tokenization must not turn "History" into "Art History" or "C++" into "C".
+// These keys are a disposable index projection, never catalog identifiers.
+func tagSearchKey(tag string) string {
+	return fmt.Sprintf("t%x", sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(tag)))))
+}
+
+// TagSearchKeys prepares whole tags for the internal FTS column. Index fixtures
+// use this same projection as UpdateSearchIndex.
+func TagSearchKeys(raw string) string {
+	tags := bookmeta.ParseTagList(raw)
+	for i, tag := range tags {
+		tags[i] = tagSearchKey(tag)
+	}
+	return strings.Join(tags, " ")
 }
 
 type searchField uint8
@@ -85,6 +106,7 @@ const (
 	searchAuthors
 	searchSeries
 	searchTags
+	searchExactTags
 	searchTitle
 )
 
@@ -132,12 +154,17 @@ func (q parsedSearchQuery) ftsMatch() string {
 			value += "*"
 		}
 		switch term.field {
+		case searchEverywhere:
+			// Internal tag keys must never participate in ordinary word search.
+			value = "-tag_keys:" + value
 		case searchAuthors:
 			value = "authors:" + value
 		case searchSeries:
 			value = "series:" + value
 		case searchTags:
 			value = "tags:" + value
+		case searchExactTags:
+			value = `tag_keys:"` + tagSearchKey(term.value) + `"`
 		case searchTitle:
 			value = "title:" + value
 		}
@@ -203,7 +230,8 @@ func parseSearchQuery(q string, lenient bool) (parsedSearchQuery, error) {
 	flushToken := func(prefix bool) error {
 		value := currentToken.String()
 		currentToken.Reset()
-		prefix = prefix && (!tokenQuoted || inQuote) && searchPrefixEligible(value)
+		quoted := tokenQuoted && !inQuote
+		prefix = prefix && !quoted && searchPrefixEligible(value)
 		tokenQuoted = false
 		if value == "" {
 			if key == "" {
@@ -223,7 +251,11 @@ func parseSearchQuery(q string, lenient bool) (parsedSearchQuery, error) {
 		case "series":
 			parsed.terms = append(parsed.terms, searchTerm{field: searchSeries, value: value, prefix: prefix})
 		case "tag":
-			parsed.terms = append(parsed.terms, searchTerm{field: searchTags, value: value, prefix: prefix})
+			field := searchTags
+			if quoted {
+				field = searchExactTags
+			}
+			parsed.terms = append(parsed.terms, searchTerm{field: field, value: value, prefix: prefix})
 		case "title":
 			parsed.terms = append(parsed.terms, searchTerm{field: searchTitle, value: value, prefix: prefix})
 		case "no":

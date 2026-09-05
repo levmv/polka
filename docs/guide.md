@@ -97,6 +97,7 @@ dune                      words in titles, authors, series, or tags
 author:herbert            author names only
 series:"Foundation"       quotes keep a phrase together
 tag:sci-fi title:dune     qualifiers can be combined
+tag:"history"             one whole tag, not "art history"
 status:unread             your unread books
 status:dropped dune       status and text can be combined
 no:cover                  books without a selected cover
@@ -104,6 +105,8 @@ no:cover                  books without a selected cover
 
 Search completes the final unquoted word as you type, so `author:herb` finds
 Herbert. Quote a complete term or phrase to keep it exact.
+For tags, quotes select the whole tag, ignoring letter case; clicking a tag uses
+this exact match. Leave a tag query unquoted to search its words as you type.
 
 Reading status is personal, so `status:` can produce different results for
 different accounts even when the rest of the query is shared. `/` focuses the
