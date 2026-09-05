@@ -10,9 +10,9 @@ import (
 )
 
 const (
-	pathSettingKey          = "ingest_path"
-	enabledSettingKey       = "ingest_enabled"
-	deleteSourcesSettingKey = "ingest_delete_sources"
+	pathSettingKey          = "ingest.path"
+	enabledSettingKey       = "ingest.enabled"
+	deleteSourcesSettingKey = "ingest.delete_sources"
 	defaultPath             = "ingest"
 )
 

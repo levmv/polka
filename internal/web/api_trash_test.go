@@ -56,10 +56,10 @@ func TestTrashLifecycleHTTP(t *testing.T) {
 		t.Fatalf("restore = %d, want 204", w.Code)
 	}
 	if got := listBookIDs(t, do(member.ID, http.MethodGet, "/api/books")); len(got) != 2 {
-		t.Fatalf("browse after restore = %v, want 2 works", got)
+		t.Fatalf("browse after restore = %v, want 2 books", got)
 	}
 
-	if err := db.SoftDeleteWork(database, "w_1", member.ID); err != nil {
+	if err := db.SoftDeleteBook(database, "w_1", member.ID); err != nil {
 		t.Fatalf("soft delete w_1: %v", err)
 	}
 	if w := do(member.ID, http.MethodDelete, "/api/books/w_1/purge"); w.Code != http.StatusForbidden {
@@ -103,7 +103,7 @@ func TestEmptyTrashHTTP(t *testing.T) {
 	}
 
 	for _, id := range []string{"w_1", "w_2"} {
-		if err := db.SoftDeleteWork(database, id, member.ID); err != nil {
+		if err := db.SoftDeleteBook(database, id, member.ID); err != nil {
 			t.Fatalf("soft delete %s: %v", id, err)
 		}
 	}
@@ -161,7 +161,7 @@ func TestPurgeUnavailableRootPreservesCatalog(t *testing.T) {
 			defer database.Close()
 			admin := mustUser(t, database, "admin", db.RoleAdmin)
 			for _, id := range tt.ids {
-				if err := db.SoftDeleteWork(database, id, admin.ID); err != nil {
+				if err := db.SoftDeleteBook(database, id, admin.ID); err != nil {
 					t.Fatalf("soft delete %s: %v", id, err)
 				}
 			}
@@ -182,11 +182,11 @@ func TestPurgeUnavailableRootPreservesCatalog(t *testing.T) {
 
 			for _, id := range tt.ids {
 				var deleted bool
-				if err := database.QueryRow("SELECT deleted_at IS NOT NULL FROM works WHERE id = ?", id).Scan(&deleted); err != nil {
-					t.Fatalf("work %s disappeared after rejected purge: %v", id, err)
+				if err := database.QueryRow("SELECT deleted_at IS NOT NULL FROM books WHERE id = ?", id).Scan(&deleted); err != nil {
+					t.Fatalf("book %s disappeared after rejected purge: %v", id, err)
 				}
 				if !deleted {
-					t.Fatalf("work %s was restored during rejected purge", id)
+					t.Fatalf("book %s was restored during rejected purge", id)
 				}
 			}
 			assetPath := filepath.Join(dir, "Tolkien", "The_Hobbit", "a_1.epub")
@@ -201,7 +201,7 @@ func TestPurgeWaitsForStorageSlot(t *testing.T) {
 	database, dir := setupTestDB(t)
 	defer database.Close()
 	admin := mustUser(t, database, "purge-slot-admin", db.RoleAdmin)
-	if err := db.SoftDeleteWork(database, "w_1", admin.ID); err != nil {
+	if err := db.SoftDeleteBook(database, "w_1", admin.ID); err != nil {
 		t.Fatalf("soft delete: %v", err)
 	}
 
@@ -213,7 +213,7 @@ func TestPurgeWaitsForStorageSlot(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() {
-		_, err := s.purgeTrashedWorks(context.Background(), []string{"w_1"})
+		_, err := s.purgeTrashedBooks(context.Background(), []string{"w_1"})
 		done <- err
 	}()
 
@@ -224,9 +224,9 @@ func TestPurgeWaitsForStorageSlot(t *testing.T) {
 	case <-time.After(50 * time.Millisecond):
 	}
 	var exists bool
-	if err := database.QueryRow("SELECT EXISTS(SELECT 1 FROM works WHERE id = 'w_1')").Scan(&exists); err != nil {
+	if err := database.QueryRow("SELECT EXISTS(SELECT 1 FROM books WHERE id = 'w_1')").Scan(&exists); err != nil {
 		releaseOtherMutation()
-		t.Fatalf("query work: %v", err)
+		t.Fatalf("query book: %v", err)
 	}
 	if !exists {
 		releaseOtherMutation()
@@ -242,11 +242,11 @@ func TestPurgeWaitsForStorageSlot(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("purge did not resume after storage slot release")
 	}
-	if err := database.QueryRow("SELECT EXISTS(SELECT 1 FROM works WHERE id = 'w_1')").Scan(&exists); err != nil {
-		t.Fatalf("query purged work: %v", err)
+	if err := database.QueryRow("SELECT EXISTS(SELECT 1 FROM books WHERE id = 'w_1')").Scan(&exists); err != nil {
+		t.Fatalf("query purged book: %v", err)
 	}
 	if exists {
-		t.Fatal("work still exists after purge")
+		t.Fatal("book still exists after purge")
 	}
 }
 
@@ -254,7 +254,7 @@ func TestPurgeTreatsMissingAssetAsOrdinaryDrift(t *testing.T) {
 	database, dir := setupTestDB(t)
 	defer database.Close()
 	admin := mustUser(t, database, "missing-asset-admin", db.RoleAdmin)
-	if err := db.SoftDeleteWork(database, "w_1", admin.ID); err != nil {
+	if err := db.SoftDeleteBook(database, "w_1", admin.ID); err != nil {
 		t.Fatalf("soft delete: %v", err)
 	}
 	assetPath := filepath.Join(dir, "Tolkien", "The_Hobbit", "a_1.epub")
@@ -271,11 +271,11 @@ func TestPurgeTreatsMissingAssetAsOrdinaryDrift(t *testing.T) {
 		t.Fatalf("status = %d, want 204; body: %s", w.Code, w.Body.String())
 	}
 	var exists bool
-	if err := database.QueryRow("SELECT EXISTS(SELECT 1 FROM works WHERE id = 'w_1')").Scan(&exists); err != nil {
-		t.Fatalf("query work: %v", err)
+	if err := database.QueryRow("SELECT EXISTS(SELECT 1 FROM books WHERE id = 'w_1')").Scan(&exists); err != nil {
+		t.Fatalf("query book: %v", err)
 	}
 	if exists {
-		t.Fatal("work survived purge because its individual asset was missing")
+		t.Fatal("book survived purge because its individual asset was missing")
 	}
 }
 

@@ -14,23 +14,23 @@ func TestGetPossibleDuplicates(t *testing.T) {
 	database.Exec("INSERT INTO authors (id, name, sort_name) VALUES ('a2', 'Other Author', 'Other Author')")
 
 	// w1 and w2 are duplicates (different case, punctuation)
-	database.Exec("INSERT INTO works (id, title, sort_title, added_at) VALUES ('w1', 'Foundation', 'Foundation', 30)")
-	database.Exec("INSERT INTO work_authors (work_id, author_id, author_order) VALUES ('w1', 'a1', 0)")
+	database.Exec("INSERT INTO books (id, title, sort_title, added_at) VALUES ('w1', 'Foundation', 'Foundation', 30)")
+	database.Exec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES ('w1', 'a1', 0)")
 
-	database.Exec("INSERT INTO works (id, title, sort_title, added_at) VALUES ('w2', 'foundation!', 'Foundation', 20)")
-	database.Exec("INSERT INTO work_authors (work_id, author_id, author_order) VALUES ('w2', 'a1', 0)")
+	database.Exec("INSERT INTO books (id, title, sort_title, added_at) VALUES ('w2', 'foundation!', 'Foundation', 20)")
+	database.Exec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES ('w2', 'a1', 0)")
 
 	// w3 is unrelated
-	database.Exec("INSERT INTO works (id, title, sort_title, added_at) VALUES ('w3', 'Other Book', 'Other Book', 10)")
-	database.Exec("INSERT INTO work_authors (work_id, author_id, author_order) VALUES ('w3', 'a1', 0)")
+	database.Exec("INSERT INTO books (id, title, sort_title, added_at) VALUES ('w3', 'Other Book', 'Other Book', 10)")
+	database.Exec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES ('w3', 'a1', 0)")
 
 	// Same normalized title, different primary author: not a duplicate.
-	database.Exec("INSERT INTO works (id, title, sort_title, added_at) VALUES ('w4', 'Foundation', 'Foundation', 25)")
-	database.Exec("INSERT INTO work_authors (work_id, author_id, author_order) VALUES ('w4', 'a2', 0)")
+	database.Exec("INSERT INTO books (id, title, sort_title, added_at) VALUES ('w4', 'Foundation', 'Foundation', 25)")
+	database.Exec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES ('w4', 'a2', 0)")
 
 	// Deleted rows do not create duplicate cleanup items.
-	database.Exec("INSERT INTO works (id, title, sort_title, added_at, deleted_at) VALUES ('w_deleted', 'foundation?', 'Foundation', 40, 40)")
-	database.Exec("INSERT INTO work_authors (work_id, author_id, author_order) VALUES ('w_deleted', 'a1', 0)")
+	database.Exec("INSERT INTO books (id, title, sort_title, added_at, deleted_at) VALUES ('w_deleted', 'foundation?', 'Foundation', 40, 40)")
+	database.Exec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES ('w_deleted', 'a1', 0)")
 
 	count, groups, err := GetPossibleDuplicates(database, FullVisibilityScope(), 10)
 	if err != nil {
@@ -63,9 +63,9 @@ func TestGetPossibleDuplicatesCountsBeyondLimit(t *testing.T) {
 	database.Exec("INSERT INTO authors (id, name, sort_name) VALUES ('a1', 'Author', 'Author')")
 	for i, title := range []string{"Alpha", "Beta", "Gamma"} {
 		for j := range 2 {
-			workID := fmt.Sprintf("w_%d_%d", i, j)
-			database.Exec("INSERT INTO works (id, title, sort_title, added_at) VALUES (?, ?, ?, ?)", workID, title, title, 100-i*10-j)
-			database.Exec("INSERT INTO work_authors (work_id, author_id, author_order) VALUES (?, 'a1', 0)", workID)
+			bookID := fmt.Sprintf("w_%d_%d", i, j)
+			database.Exec("INSERT INTO books (id, title, sort_title, added_at) VALUES (?, ?, ?, ?)", bookID, title, title, 100-i*10-j)
+			database.Exec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES (?, 'a1', 0)", bookID)
 		}
 	}
 
@@ -86,7 +86,7 @@ func TestGetPossibleDuplicatesCountsBeyondLimit(t *testing.T) {
 
 func TestDismissDuplicateGroupHidesOnlyCoveredCurrentSet(t *testing.T) {
 	database := newTestDB(t)
-	insertDuplicateWorks(t, database, "w1", "w2")
+	insertDuplicateBooks(t, database, "w1", "w2")
 
 	user, err := database.CreateUser("curator", "pw", RoleMember)
 	if err != nil {
@@ -106,7 +106,7 @@ func TestDismissDuplicateGroupHidesOnlyCoveredCurrentSet(t *testing.T) {
 		t.Fatalf("dismissed duplicates count=%d groups=%d, want none", count, len(groups))
 	}
 
-	insertDuplicateWork(t, database, "w3", "Foundation?", 10)
+	insertDuplicateBook(t, database, "w3", "Foundation?", 10)
 	count, groups, err = GetPossibleDuplicates(database, FullVisibilityScope(), 10)
 	if err != nil {
 		t.Fatalf("GetPossibleDuplicates after third copy: %v", err)
@@ -116,26 +116,26 @@ func TestDismissDuplicateGroupHidesOnlyCoveredCurrentSet(t *testing.T) {
 	}
 }
 
-func TestMergeDuplicateWorksMovesAssetsShelvesAndSafeFillIns(t *testing.T) {
+func TestMergeDuplicateBooksMovesAssetsShelvesAndSafeFillIns(t *testing.T) {
 	database := newTestDB(t)
-	insertDuplicateWorks(t, database, "w1", "w2")
+	insertDuplicateBooks(t, database, "w1", "w2")
 
 	user, err := database.CreateUser("curator", "pw", RoleMember)
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
-	database.Exec("UPDATE works SET description = NULL, cover_version = 0 WHERE id = 'w1'")
-	database.Exec("UPDATE works SET description = 'Loser description', cover_version = 2 WHERE id = 'w2'")
+	database.Exec("UPDATE books SET description = NULL, cover_version = 0 WHERE id = 'w1'")
+	database.Exec("UPDATE books SET description = 'Loser description', cover_version = 2 WHERE id = 'w2'")
 	database.Exec(`
-		INSERT INTO assets (id, work_id, storage_path, filename, extension, format, is_primary, can_read, created_at)
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, created_at)
 		VALUES
 			('asset_epub', 'w1', 'A/Foundation/asset_epub.epub', 'asset_epub.epub', '.epub', 'epub', 1, 0, 10),
 			('asset_pdf', 'w2', 'A/Foundation/asset_pdf.pdf', 'asset_pdf.pdf', '.pdf', 'pdf', 1, 1, 20)
 	`)
 	database.Exec("INSERT INTO shelves (id, name, kind, owner_id, position) VALUES ('s1', 'Shelf', 'manual', ?, 1)", user.ID)
-	database.Exec("INSERT INTO shelf_books (shelf_id, work_id, position) VALUES ('s1', 'w2', 5)")
+	database.Exec("INSERT INTO shelf_books (shelf_id, book_id, position) VALUES ('s1', 'w2', 5)")
 	database.Exec(`
-		INSERT INTO delivery_jobs (id, user_id, device_name, device_email, preset, work_id, asset_id, title, filename)
+		INSERT INTO delivery_jobs (id, user_id, device_name, device_email, preset, book_id, asset_id, title, filename)
 		VALUES ('dj1', ?, 'Device', 'reader@example.test', 'generic', 'w2', 'asset_pdf', 'Foundation', 'asset_pdf.pdf')
 	`, user.ID)
 	if _, err := database.Exec(`
@@ -154,22 +154,22 @@ func TestMergeDuplicateWorksMovesAssetsShelvesAndSafeFillIns(t *testing.T) {
 	var result DuplicateMergeResult
 	if err := database.Transact(context.Background(), func(tx *sql.Tx) error {
 		var err error
-		result, err = MergeDuplicateWorks(tx, FullVisibilityScope(), DuplicateMergeRequest{
+		result, err = MergeDuplicateBooks(tx, FullVisibilityScope(), DuplicateMergeRequest{
 			SurvivorID:  "w1",
-			WorkIDs:     []string{"w1", "w2"},
+			BookIDs:     []string{"w1", "w2"},
 			DeletedBy:   user.ID,
 			CoverFromID: "w2",
 		})
 		return err
 	}); err != nil {
-		t.Fatalf("MergeDuplicateWorks: %v", err)
+		t.Fatalf("MergeDuplicateBooks: %v", err)
 	}
 	if !result.FilledDescription || !result.FilledCover {
 		t.Fatalf("merge fill-ins = desc:%v cover:%v, want both", result.FilledDescription, result.FilledCover)
 	}
 
 	var deletedAt sql.NullInt64
-	if err := database.QueryRow("SELECT deleted_at FROM works WHERE id = 'w2'").Scan(&deletedAt); err != nil {
+	if err := database.QueryRow("SELECT deleted_at FROM books WHERE id = 'w2'").Scan(&deletedAt); err != nil {
 		t.Fatalf("query loser deleted_at: %v", err)
 	}
 	if !deletedAt.Valid {
@@ -178,14 +178,14 @@ func TestMergeDuplicateWorksMovesAssetsShelvesAndSafeFillIns(t *testing.T) {
 
 	var description string
 	var coverVersion int
-	if err := database.QueryRow("SELECT description, cover_version FROM works WHERE id = 'w1'").Scan(&description, &coverVersion); err != nil {
+	if err := database.QueryRow("SELECT description, cover_version FROM books WHERE id = 'w1'").Scan(&description, &coverVersion); err != nil {
 		t.Fatalf("query survivor fill-ins: %v", err)
 	}
 	if description != "Loser description" || coverVersion != 1 {
 		t.Fatalf("survivor desc=%q cover_version=%d, want loser description and version 1", description, coverVersion)
 	}
 	var metadataRev int
-	if err := database.QueryRow("SELECT metadata_rev FROM works WHERE id = 'w1'").Scan(&metadataRev); err != nil {
+	if err := database.QueryRow("SELECT metadata_rev FROM books WHERE id = 'w1'").Scan(&metadataRev); err != nil {
 		t.Fatalf("query survivor metadata_rev: %v", err)
 	}
 	if metadataRev != 0 {
@@ -193,14 +193,14 @@ func TestMergeDuplicateWorksMovesAssetsShelvesAndSafeFillIns(t *testing.T) {
 	}
 
 	var assetCount, primaryCount int
-	if err := database.QueryRow("SELECT COUNT(*), SUM(is_primary) FROM assets WHERE work_id = 'w1'").Scan(&assetCount, &primaryCount); err != nil {
+	if err := database.QueryRow("SELECT COUNT(*), SUM(is_primary) FROM assets WHERE book_id = 'w1'").Scan(&assetCount, &primaryCount); err != nil {
 		t.Fatalf("query survivor assets: %v", err)
 	}
 	if assetCount != 2 || primaryCount != 1 {
 		t.Fatalf("survivor assets=%d primaries=%d, want 2 assets and 1 primary", assetCount, primaryCount)
 	}
 	var primaryAssetID string
-	if err := database.QueryRow("SELECT id FROM assets WHERE work_id = 'w1' AND is_primary = 1").Scan(&primaryAssetID); err != nil {
+	if err := database.QueryRow("SELECT id FROM assets WHERE book_id = 'w1' AND is_primary = 1").Scan(&primaryAssetID); err != nil {
 		t.Fatalf("query survivor primary asset: %v", err)
 	}
 	if primaryAssetID != "asset_pdf" {
@@ -208,29 +208,29 @@ func TestMergeDuplicateWorksMovesAssetsShelvesAndSafeFillIns(t *testing.T) {
 	}
 
 	var shelfRows int
-	if err := database.QueryRow("SELECT COUNT(*) FROM shelf_books WHERE shelf_id = 's1' AND work_id = 'w1'").Scan(&shelfRows); err != nil {
+	if err := database.QueryRow("SELECT COUNT(*) FROM shelf_books WHERE shelf_id = 's1' AND book_id = 'w1'").Scan(&shelfRows); err != nil {
 		t.Fatalf("query shelf membership: %v", err)
 	}
 	if shelfRows != 1 {
 		t.Fatalf("survivor shelf rows = %d, want 1", shelfRows)
 	}
-	if err := database.QueryRow("SELECT COUNT(*) FROM shelf_books WHERE work_id = 'w2'").Scan(&shelfRows); err != nil {
+	if err := database.QueryRow("SELECT COUNT(*) FROM shelf_books WHERE book_id = 'w2'").Scan(&shelfRows); err != nil {
 		t.Fatalf("query loser shelf membership: %v", err)
 	}
 	if shelfRows != 0 {
 		t.Fatalf("loser shelf rows = %d, want 0", shelfRows)
 	}
 
-	var deliveryWorkID string
-	if err := database.QueryRow("SELECT work_id FROM delivery_jobs WHERE id = 'dj1'").Scan(&deliveryWorkID); err != nil {
+	var deliveryBookID string
+	if err := database.QueryRow("SELECT book_id FROM delivery_jobs WHERE id = 'dj1'").Scan(&deliveryBookID); err != nil {
 		t.Fatalf("query delivery job: %v", err)
 	}
-	if deliveryWorkID != "w1" {
-		t.Fatalf("delivery job work_id = %s, want w1", deliveryWorkID)
+	if deliveryBookID != "w1" {
+		t.Fatalf("delivery job book_id = %s, want w1", deliveryBookID)
 	}
 
 	readerState, err := database.GetReaderState(user.ID, "asset_pdf")
-	if err != nil || readerState.WorkID != "w1" || readerState.Progress != 0.4 {
+	if err != nil || readerState.BookID != "w1" || readerState.Progress != 0.4 {
 		t.Fatalf("moved asset reader state = %+v, err %v; want stable asset state on survivor", readerState, err)
 	}
 	annotations, err := database.ListAnnotations(user.ID, "asset_pdf")
@@ -239,38 +239,38 @@ func TestMergeDuplicateWorksMovesAssetsShelvesAndSafeFillIns(t *testing.T) {
 	}
 }
 
-func TestMergeDuplicateWorksLeavesMetadataRevToCaller(t *testing.T) {
+func TestMergeDuplicateBooksLeavesMetadataRevToCaller(t *testing.T) {
 	database := newTestDB(t)
-	insertDuplicateWorks(t, database, "w1", "w2")
+	insertDuplicateBooks(t, database, "w1", "w2")
 	user, err := database.CreateUser("curator", "pw", RoleMember)
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
-	database.Exec("UPDATE works SET description = 'Survivor description', cover_version = 1 WHERE id = 'w1'")
-	database.Exec("UPDATE works SET description = 'Loser description', cover_version = 0 WHERE id = 'w2'")
+	database.Exec("UPDATE books SET description = 'Survivor description', cover_version = 1 WHERE id = 'w1'")
+	database.Exec("UPDATE books SET description = 'Loser description', cover_version = 0 WHERE id = 'w2'")
 	database.Exec(`
-		INSERT INTO assets (id, work_id, storage_path, filename, extension, format, is_primary, writeback_rev, created_at)
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, writeback_rev, created_at)
 		VALUES ('asset_loser_epub', 'w2', 'A/Foundation/asset_loser_epub.epub', 'asset_loser_epub.epub', '.epub', 'epub', 1, 0, 20)
 	`)
 
 	var result DuplicateMergeResult
 	if err := database.Transact(context.Background(), func(tx *sql.Tx) error {
 		var err error
-		result, err = MergeDuplicateWorks(tx, FullVisibilityScope(), DuplicateMergeRequest{
+		result, err = MergeDuplicateBooks(tx, FullVisibilityScope(), DuplicateMergeRequest{
 			SurvivorID: "w1",
-			WorkIDs:    []string{"w1", "w2"},
+			BookIDs:    []string{"w1", "w2"},
 			DeletedBy:  user.ID,
 		})
 		return err
 	}); err != nil {
-		t.Fatalf("MergeDuplicateWorks: %v", err)
+		t.Fatalf("MergeDuplicateBooks: %v", err)
 	}
 	if result.FilledDescription || result.FilledCover {
 		t.Fatalf("merge fill-ins = desc:%v cover:%v, want none", result.FilledDescription, result.FilledCover)
 	}
 
 	var metadataRev int
-	if err := database.QueryRow("SELECT metadata_rev FROM works WHERE id = 'w1'").Scan(&metadataRev); err != nil {
+	if err := database.QueryRow("SELECT metadata_rev FROM books WHERE id = 'w1'").Scan(&metadataRev); err != nil {
 		t.Fatalf("query survivor metadata_rev: %v", err)
 	}
 	if metadataRev != 0 {
@@ -285,9 +285,9 @@ func TestMergeDuplicateWorksLeavesMetadataRevToCaller(t *testing.T) {
 	}
 }
 
-func TestMergeDuplicateWorksMergesPerUserReadingStateAndHistories(t *testing.T) {
+func TestMergeDuplicateBooksMergesPerUserReadingStateAndHistories(t *testing.T) {
 	database := newTestDB(t)
-	insertDuplicateWorks(t, database, "w1", "w2", "w3")
+	insertDuplicateBooks(t, database, "w1", "w2", "w3")
 
 	alice, err := database.CreateUser("alice", "pw", RoleMember)
 	if err != nil {
@@ -298,8 +298,8 @@ func TestMergeDuplicateWorksMergesPerUserReadingStateAndHistories(t *testing.T) 
 		t.Fatalf("create bob: %v", err)
 	}
 	if _, err := database.Exec(`
-		INSERT INTO user_work_reading_events
-			(id, user_id, work_id, previous_event_id, from_status, to_status, source, occurred_at)
+		INSERT INTO user_book_reading_events
+			(id, user_id, book_id, previous_event_id, from_status, to_status, source, occurred_at)
 		VALUES
 			('alice-survivor-reading', ?, 'w1', NULL, 'unread', 'reading', 'manual', 10),
 			('alice-loser-reading', ?, 'w2', NULL, 'unread', 'reading', 'web_reader', 20),
@@ -310,8 +310,8 @@ func TestMergeDuplicateWorksMergesPerUserReadingStateAndHistories(t *testing.T) 
 		t.Fatalf("seed reading events: %v", err)
 	}
 	if _, err := database.Exec(`
-		INSERT INTO user_work_reading_state
-			(user_id, work_id, status, last_event_id, updated_at)
+		INSERT INTO user_book_reading_state
+			(user_id, book_id, status, last_event_id, updated_at)
 		VALUES
 			(?, 'w1', 'reading', 'alice-survivor-reading', 10),
 			(?, 'w2', 'finished', 'alice-loser-finished', 21),
@@ -322,14 +322,14 @@ func TestMergeDuplicateWorksMergesPerUserReadingStateAndHistories(t *testing.T) 
 	}
 
 	if err := database.Transact(context.Background(), func(tx *sql.Tx) error {
-		_, err := MergeDuplicateWorks(tx, FullVisibilityScope(), DuplicateMergeRequest{
+		_, err := MergeDuplicateBooks(tx, FullVisibilityScope(), DuplicateMergeRequest{
 			SurvivorID: "w1",
-			WorkIDs:    []string{"w1", "w2", "w3"},
+			BookIDs:    []string{"w1", "w2", "w3"},
 			DeletedBy:  alice.ID,
 		})
 		return err
 	}); err != nil {
-		t.Fatalf("MergeDuplicateWorks: %v", err)
+		t.Fatalf("MergeDuplicateBooks: %v", err)
 	}
 
 	aliceState, err := GetReadingStatus(database, alice.ID, "w1")
@@ -342,13 +342,13 @@ func TestMergeDuplicateWorksMergesPerUserReadingStateAndHistories(t *testing.T) 
 	}
 
 	var loserStates, survivorEvents int
-	if err := database.QueryRow("SELECT COUNT(*) FROM user_work_reading_state WHERE work_id IN ('w2', 'w3')").Scan(&loserStates); err != nil {
+	if err := database.QueryRow("SELECT COUNT(*) FROM user_book_reading_state WHERE book_id IN ('w2', 'w3')").Scan(&loserStates); err != nil {
 		t.Fatalf("count loser reading states: %v", err)
 	}
 	if loserStates != 0 {
 		t.Fatalf("loser reading states = %d, want 0", loserStates)
 	}
-	if err := database.QueryRow("SELECT COUNT(*) FROM user_work_reading_events WHERE work_id = 'w1'").Scan(&survivorEvents); err != nil {
+	if err := database.QueryRow("SELECT COUNT(*) FROM user_book_reading_events WHERE book_id = 'w1'").Scan(&survivorEvents); err != nil {
 		t.Fatalf("count survivor reading events: %v", err)
 	}
 	if survivorEvents != 5 {
@@ -360,14 +360,14 @@ func TestMergeDuplicateWorksMergesPerUserReadingStateAndHistories(t *testing.T) 
 		t.Fatalf("undo selected merged history = %+v, err %v", undone, err)
 	}
 	if err := database.Transact(context.Background(), func(tx *sql.Tx) error {
-		if err := PurgeWork(tx, "w2"); err != nil {
+		if err := PurgeBook(tx, "w2"); err != nil {
 			return err
 		}
-		return PurgeWork(tx, "w3")
+		return PurgeBook(tx, "w3")
 	}); err != nil {
 		t.Fatalf("purge merged losers: %v", err)
 	}
-	if err := database.QueryRow("SELECT COUNT(*) FROM user_work_reading_events WHERE work_id = 'w1'").Scan(&survivorEvents); err != nil {
+	if err := database.QueryRow("SELECT COUNT(*) FROM user_book_reading_events WHERE book_id = 'w1'").Scan(&survivorEvents); err != nil {
 		t.Fatalf("count reading events after purge: %v", err)
 	}
 	if survivorEvents != 5 {
@@ -399,16 +399,16 @@ func TestDuplicateMatchKey(t *testing.T) {
 	}
 }
 
-func insertDuplicateWorks(t *testing.T, database *DB, ids ...string) {
+func insertDuplicateBooks(t *testing.T, database *DB, ids ...string) {
 	t.Helper()
 	database.Exec("INSERT INTO authors (id, name, sort_name) VALUES ('a_dup', 'Isaac Asimov', 'Asimov, Isaac')")
 	for i, id := range ids {
-		insertDuplicateWork(t, database, id, "Foundation", 100-i)
+		insertDuplicateBook(t, database, id, "Foundation", 100-i)
 	}
 }
 
-func insertDuplicateWork(t *testing.T, database *DB, workID, title string, addedAt int) {
+func insertDuplicateBook(t *testing.T, database *DB, bookID, title string, addedAt int) {
 	t.Helper()
-	database.Exec("INSERT INTO works (id, title, sort_title, added_at) VALUES (?, ?, ?, ?)", workID, title, title, addedAt)
-	database.Exec("INSERT INTO work_authors (work_id, author_id, author_order) VALUES (?, 'a_dup', 0)", workID)
+	database.Exec("INSERT INTO books (id, title, sort_title, added_at) VALUES (?, ?, ?, ?)", bookID, title, title, addedAt)
+	database.Exec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES (?, 'a_dup', 0)", bookID)
 }

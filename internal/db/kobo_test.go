@@ -6,22 +6,22 @@ import (
 	"testing"
 )
 
-func seedKoboWork(t *testing.T, database *DB, workID, assetID, title, formatKey, tags string) {
+func seedKoboBook(t *testing.T, database *DB, bookID, assetID, title, formatKey, tags string) {
 	t.Helper()
 	if _, err := database.Exec(`
-		INSERT INTO works (id, title, sort_title, tags, language, publisher)
+		INSERT INTO books (id, title, sort_title, tags, language, publisher)
 		VALUES (?, ?, ?, ?, 'en', 'Polka Press')
-	`, workID, title, title, tags); err != nil {
-		t.Fatalf("seed Kobo work: %v", err)
+	`, bookID, title, title, tags); err != nil {
+		t.Fatalf("seed Kobo book: %v", err)
 	}
 	if _, err := database.Exec(`
 		INSERT INTO assets
-		    (id, work_id, storage_path, filename, extension, format, is_primary, current_size)
+		    (id, book_id, storage_path, filename, extension, format, is_primary, current_size)
 		VALUES (?, ?, ?, ?, ?, ?, 1, 1234)
-	`, assetID, workID, workID+"/"+assetID+"."+formatKey, assetID+"."+formatKey, formatKey, formatKey); err != nil {
-		t.Fatalf("seed Kobo work: %v", err)
+	`, assetID, bookID, bookID+"/"+assetID+"."+formatKey, assetID+"."+formatKey, formatKey, formatKey); err != nil {
+		t.Fatalf("seed Kobo book: %v", err)
 	}
-	if _, err := database.Exec(`INSERT INTO search (work_id, title, tags) VALUES (?, ?, ?)`, workID, title, tags); err != nil {
+	if _, err := database.Exec(`INSERT INTO search (book_id, title, tags) VALUES (?, ?, ?)`, bookID, title, tags); err != nil {
 		t.Fatalf("seed Kobo search row: %v", err)
 	}
 }
@@ -36,12 +36,12 @@ func TestKoboConnectionIncrementalLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	seedKoboWork(t, database, "w_one", "a_epub", "One", "epub", "chosen")
-	seedKoboWork(t, database, "w_two", "a_two", "Two", "epub", "outside")
+	seedKoboBook(t, database, "w_one", "a_epub", "One", "epub", "chosen")
+	seedKoboBook(t, database, "w_two", "a_two", "Two", "epub", "outside")
 	if _, err := database.Exec(`
 		UPDATE assets SET is_primary = 0 WHERE id = 'a_epub';
 		INSERT INTO assets
-		    (id, work_id, storage_path, filename, extension, format, is_primary, current_size)
+		    (id, book_id, storage_path, filename, extension, format, is_primary, current_size)
 		VALUES ('a_kepub', 'w_one', 'w_one/a_kepub.kepub', 'a_kepub.kepub', 'kepub', 'kepub', 0, 1400);
 	`); err != nil {
 		t.Fatal(err)
@@ -86,7 +86,7 @@ func TestKoboConnectionIncrementalLifecycle(t *testing.T) {
 		t.Fatalf("acknowledged sync = %+v, %v", acknowledged, err)
 	}
 
-	if _, err := database.Exec(`UPDATE works SET title = 'One revised', updated_at = updated_at + 1 WHERE id = 'w_one'`); err != nil {
+	if _, err := database.Exec(`UPDATE books SET title = 'One revised', updated_at = updated_at + 1 WHERE id = 'w_one'`); err != nil {
 		t.Fatal(err)
 	}
 	changed, current, _, err := database.SyncKoboConnection(context.Background(), connection.ID, current, KoboSyncPageLimit)
@@ -97,7 +97,7 @@ func TestKoboConnectionIncrementalLifecycle(t *testing.T) {
 		t.Fatalf("metadata change = %+v", changed)
 	}
 
-	if _, err := database.Exec(`DELETE FROM shelf_books WHERE shelf_id = ? AND work_id = 'w_one'`, shelf.ID); err != nil {
+	if _, err := database.Exec(`DELETE FROM shelf_books WHERE shelf_id = ? AND book_id = 'w_one'`, shelf.ID); err != nil {
 		t.Fatal(err)
 	}
 	removed, current, _, err := database.SyncKoboConnection(context.Background(), connection.ID, current, KoboSyncPageLimit)
@@ -146,9 +146,9 @@ func TestKoboSyncPaginationQueryShelfAndCursorValidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	seedKoboWork(t, database, "w_a", "a_a", "A", "epub", "send")
-	seedKoboWork(t, database, "w_b", "a_b", "B", "epub", "send")
-	seedKoboWork(t, database, "w_c", "a_c", "C", "epub", "skip")
+	seedKoboBook(t, database, "w_a", "a_a", "A", "epub", "send")
+	seedKoboBook(t, database, "w_b", "a_b", "B", "epub", "send")
+	seedKoboBook(t, database, "w_c", "a_c", "C", "epub", "skip")
 	shelf, err := database.CreateShelf(user.ID, ShelfShared, "Send", ShelfQuery, "tag:send")
 	if err != nil {
 		t.Fatal(err)

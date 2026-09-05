@@ -75,14 +75,14 @@ type candidate struct {
 
 type importOutcome struct {
 	status      importer.Status
-	workTrashed bool
+	bookTrashed bool
 	restored    bool
 }
 
 type Summary struct {
 	Imported   int
 	Duplicates int
-	// Trashed is the subset of duplicate candidates whose work remains in Trash.
+	// Trashed is the subset of duplicate candidates whose book remains in Trash.
 	Trashed int
 	// Restored counts imported groups returned to the live catalog.
 	Restored int
@@ -247,7 +247,7 @@ func (s *Service) ScanOnce(ctx context.Context, force bool) (Summary, error) {
 			}
 		case importer.StatusDuplicate:
 			summary.Duplicates++
-			if outcome.workTrashed {
+			if outcome.bookTrashed {
 				summary.Trashed++
 			}
 			s.noteImport()
@@ -356,14 +356,14 @@ func (s *Service) importCandidate(ctx context.Context, root storage.Root, c cand
 		} else {
 			outcome = importOutcome{
 				status:      groupStatus(group),
-				workTrashed: groupWorkTrashed(group),
+				bookTrashed: groupBookTrashed(group),
 				restored:    group.Restored,
 			}
 		}
 	} else {
 		var res importer.Result
 		res, err = s.importFile(ctx, s.db, root, c.Path, renderer, opts)
-		outcome = importOutcome{status: res.Status, workTrashed: res.WorkTrashed}
+		outcome = importOutcome{status: res.Status, bookTrashed: res.BookTrashed}
 	}
 	if err != nil {
 		return importOutcome{status: s.failCandidate(c, err.Error())}, nil
@@ -508,9 +508,9 @@ func groupStatus(group importer.GroupResult) importer.Status {
 	return importer.StatusDuplicate
 }
 
-func groupWorkTrashed(group importer.GroupResult) bool {
+func groupBookTrashed(group importer.GroupResult) bool {
 	for _, result := range group.Results {
-		if result.WorkTrashed {
+		if result.BookTrashed {
 			return true
 		}
 	}

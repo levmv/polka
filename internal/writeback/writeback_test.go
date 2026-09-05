@@ -28,11 +28,11 @@ func TestRunWritesDirtyEPUBAndUpdatesAssetIdentity(t *testing.T) {
 	defer database.Close()
 
 	if _, err := database.Exec(`
-		UPDATE works
+		UPDATE books
 		SET title = 'New Title', sort_title = 'Title, New', metadata_rev = 1, updated_at = 1800000000
 		WHERE id = 'w1'
 	`); err != nil {
-		t.Fatalf("update work metadata: %v", err)
+		t.Fatalf("update book metadata: %v", err)
 	}
 	if _, err := database.Exec(`
 		UPDATE authors SET name = 'Jane Writer', sort_name = 'Writer, Jane' WHERE id = 'au1'
@@ -108,7 +108,7 @@ func TestRunWritesDirtyEPUBCover(t *testing.T) {
 		t.Fatalf("write stored cover: %v", err)
 	}
 	if _, err := database.Exec(`
-		UPDATE works
+		UPDATE books
 		SET cover_version = 1, metadata_rev = 1, updated_at = 1800000000
 		WHERE id = 'w1'
 	`); err != nil {
@@ -153,11 +153,11 @@ func TestRunWritesDirtyKEPUBContainer(t *testing.T) {
 		t.Fatalf("mark asset as kepub: %v", err)
 	}
 	if _, err := database.Exec(`
-		UPDATE works
+		UPDATE books
 		SET title = 'New KEPUB Title', metadata_rev = 1
 		WHERE id = 'w1'
 	`); err != nil {
-		t.Fatalf("update work metadata: %v", err)
+		t.Fatalf("update book metadata: %v", err)
 	}
 
 	summary, err := Run(context.Background(), database, root, Options{})
@@ -187,11 +187,11 @@ func TestRunWritesDirtyFB2(t *testing.T) {
 	defer database.Close()
 
 	if _, err := database.Exec(`
-		UPDATE works
+		UPDATE books
 		SET title = 'New FB2 Title', cover_version = 1, metadata_rev = 1, updated_at = 1800000000
 		WHERE id = 'w1'
 	`); err != nil {
-		t.Fatalf("update work metadata: %v", err)
+		t.Fatalf("update book metadata: %v", err)
 	}
 	if _, err := database.Exec(`
 		UPDATE authors SET name = 'Jane FB2 Writer', sort_name = 'Writer, Jane FB2' WHERE id = 'au1'
@@ -236,8 +236,8 @@ func TestRunFailedOnlyPlansFailedDirtyAssets(t *testing.T) {
 	}
 	defer database.Close()
 	if _, err := database.Exec(`
-		INSERT INTO works (id, title, sort_title, metadata_rev) VALUES ('w1', 'Book', 'Book', 2);
-		INSERT INTO assets (id, work_id, storage_path, filename, extension, format, writeback_rev, writeback_error)
+		INSERT INTO books (id, title, sort_title, metadata_rev) VALUES ('w1', 'Book', 'Book', 2);
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, writeback_rev, writeback_error)
 		VALUES
 			('clean_dirty', 'w1', 'Book/clean.epub', 'clean.epub', '.epub', 'epub', 1, NULL),
 			('failed_dirty', 'w1', 'Book/failed.epub', 'failed.epub', '.epub', 'epub', 1, 'bad opf');
@@ -258,8 +258,8 @@ func TestServiceRunOnceWritesOnlyInAutoMode(t *testing.T) {
 	database, root, assetID, relPath := setupWritebackEPUB(t, "Old Title", "Old Author")
 	defer database.Close()
 
-	if _, err := database.Exec("UPDATE works SET title = 'Auto Title', metadata_rev = 1 WHERE id = 'w1'"); err != nil {
-		t.Fatalf("mark work dirty: %v", err)
+	if _, err := database.Exec("UPDATE books SET title = 'Auto Title', metadata_rev = 1 WHERE id = 'w1'"); err != nil {
+		t.Fatalf("mark book dirty: %v", err)
 	}
 	svc := NewService(database, root, ServiceOptions{BatchLimit: 1})
 	svc.now = func() time.Time { return time.Unix(200, 0) }
@@ -305,8 +305,8 @@ func TestServiceRunOnceWritesOnlyInAutoMode(t *testing.T) {
 func TestServiceFailureRetryUsesDurableTimestamp(t *testing.T) {
 	database, root, _, relPath := setupWritebackEPUB(t, "Old Title", "Old Author")
 	defer database.Close()
-	if _, err := database.Exec("UPDATE works SET title = 'New Title', metadata_rev = 1 WHERE id = 'w1'"); err != nil {
-		t.Fatalf("mark work dirty: %v", err)
+	if _, err := database.Exec("UPDATE books SET title = 'New Title', metadata_rev = 1 WHERE id = 'w1'"); err != nil {
+		t.Fatalf("mark book dirty: %v", err)
 	}
 	driftBytes := testWritebackEPUBBytes(t, "Drift Title", "Drift Author")
 	if err := os.WriteFile(root.Abs(relPath), driftBytes, 0o644); err != nil {
@@ -349,8 +349,8 @@ func TestRunRefusesCurrentFileDrift(t *testing.T) {
 	database, root, assetID, relPath := setupWritebackEPUB(t, "Old Title", "Old Author")
 	defer database.Close()
 
-	if _, err := database.Exec("UPDATE works SET title = 'New Title', metadata_rev = 1 WHERE id = 'w1'"); err != nil {
-		t.Fatalf("update work metadata: %v", err)
+	if _, err := database.Exec("UPDATE books SET title = 'New Title', metadata_rev = 1 WHERE id = 'w1'"); err != nil {
+		t.Fatalf("update book metadata: %v", err)
 	}
 	driftBytes := testWritebackEPUBBytes(t, "Drift Title", "Drift Author")
 	if err := os.WriteFile(root.Abs(relPath), driftBytes, 0o644); err != nil {
@@ -387,8 +387,8 @@ func TestRunReturnsSecondaryWritebackStateFailure(t *testing.T) {
 	database, root, assetID, relPath := setupWritebackEPUB(t, "Old Title", "Old Author")
 	defer database.Close()
 
-	if _, err := database.Exec("UPDATE works SET title = 'New Title', metadata_rev = 1 WHERE id = 'w1'"); err != nil {
-		t.Fatalf("update work metadata: %v", err)
+	if _, err := database.Exec("UPDATE books SET title = 'New Title', metadata_rev = 1 WHERE id = 'w1'"); err != nil {
+		t.Fatalf("update book metadata: %v", err)
 	}
 	driftBytes := testWritebackEPUBBytes(t, "Drift Title", "Drift Author")
 	if err := os.WriteFile(root.Abs(relPath), driftBytes, 0o644); err != nil {
@@ -455,8 +455,8 @@ func TestRunRefusesOversizedInputBeforeRendering(t *testing.T) {
 	`, oversized, assetID); err != nil {
 		t.Fatalf("update asset identity: %v", err)
 	}
-	if _, err := database.Exec("UPDATE works SET title = 'New Title', metadata_rev = 1 WHERE id = 'w1'"); err != nil {
-		t.Fatalf("update work metadata: %v", err)
+	if _, err := database.Exec("UPDATE books SET title = 'New Title', metadata_rev = 1 WHERE id = 'w1'"); err != nil {
+		t.Fatalf("update book metadata: %v", err)
 	}
 
 	summary, err := Run(context.Background(), database, root, Options{})
@@ -485,8 +485,8 @@ func TestRunDryRunDoesNotTouchFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read before: %v", err)
 	}
-	if _, err := database.Exec("UPDATE works SET title = 'New Title', metadata_rev = 1 WHERE id = 'w1'"); err != nil {
-		t.Fatalf("update work metadata: %v", err)
+	if _, err := database.Exec("UPDATE books SET title = 'New Title', metadata_rev = 1 WHERE id = 'w1'"); err != nil {
+		t.Fatalf("update book metadata: %v", err)
 	}
 
 	summary, err := Run(context.Background(), database, root, Options{DryRun: true})
@@ -534,18 +534,18 @@ func setupWritebackEPUB(t *testing.T, title, author string) (*db.DB, storage.Roo
 		t.Fatalf("write source epub: %v", err)
 	}
 
-	if _, err := database.Exec("INSERT INTO works (id, title, sort_title) VALUES ('w1', ?, ?)", title, title); err != nil {
-		t.Fatalf("insert work: %v", err)
+	if _, err := database.Exec("INSERT INTO books (id, title, sort_title) VALUES ('w1', ?, ?)", title, title); err != nil {
+		t.Fatalf("insert book: %v", err)
 	}
 	if _, err := database.Exec("INSERT INTO authors (id, name, sort_name) VALUES ('au1', ?, ?)", author, author); err != nil {
 		t.Fatalf("insert author: %v", err)
 	}
-	if _, err := database.Exec("INSERT INTO work_authors (work_id, author_id, role, author_order) VALUES ('w1', 'au1', 'aut', 0)"); err != nil {
-		t.Fatalf("insert work author: %v", err)
+	if _, err := database.Exec("INSERT INTO book_authors (book_id, author_id, role, author_order) VALUES ('w1', 'au1', 'aut', 0)"); err != nil {
+		t.Fatalf("insert book author: %v", err)
 	}
 	if _, err := database.Exec(`
 		INSERT INTO assets
-			(id, work_id, storage_path, filename, extension, format, is_primary, can_read, original_sha256, current_sha256, original_size, current_size)
+			(id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_sha256, current_sha256, original_size, current_size)
 		VALUES
 			(?, 'w1', ?, 'Book.epub', '.epub', 'epub', 1, 1, ?, ?, ?, ?)
 	`, assetID, relPath, sha256HexForTest(src), sha256HexForTest(src), len(src), len(src)); err != nil {
@@ -576,18 +576,18 @@ func setupWritebackFB2(t *testing.T, title, author string) (*db.DB, storage.Root
 		t.Fatalf("write source fb2: %v", err)
 	}
 
-	if _, err := database.Exec("INSERT INTO works (id, title, sort_title) VALUES ('w1', ?, ?)", title, title); err != nil {
-		t.Fatalf("insert work: %v", err)
+	if _, err := database.Exec("INSERT INTO books (id, title, sort_title) VALUES ('w1', ?, ?)", title, title); err != nil {
+		t.Fatalf("insert book: %v", err)
 	}
 	if _, err := database.Exec("INSERT INTO authors (id, name, sort_name) VALUES ('au1', ?, ?)", author, author); err != nil {
 		t.Fatalf("insert author: %v", err)
 	}
-	if _, err := database.Exec("INSERT INTO work_authors (work_id, author_id, role, author_order) VALUES ('w1', 'au1', 'aut', 0)"); err != nil {
-		t.Fatalf("insert work author: %v", err)
+	if _, err := database.Exec("INSERT INTO book_authors (book_id, author_id, role, author_order) VALUES ('w1', 'au1', 'aut', 0)"); err != nil {
+		t.Fatalf("insert book author: %v", err)
 	}
 	if _, err := database.Exec(`
 		INSERT INTO assets
-			(id, work_id, storage_path, filename, extension, format, is_primary, can_read, original_sha256, current_sha256, original_size, current_size)
+			(id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_sha256, current_sha256, original_size, current_size)
 		VALUES
 			(?, 'w1', ?, 'Book.fb2', '.fb2', 'fb2', 1, 1, ?, ?, ?, ?)
 	`, assetID, relPath, sha256HexForTest(src), sha256HexForTest(src), len(src), len(src)); err != nil {

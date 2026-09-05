@@ -13,9 +13,9 @@ type SeriesDTO struct {
 	Author        string `json:"author"`
 	BookCount     int    `json:"book_count"`
 	FinishedCount int    `json:"finished_count"`
-	// The work whose cover stands for the series on the Series page; the cover
-	// route generates a placeholder when that work has no stored cover.
-	CoverWorkID  string `json:"cover_work_id"`
+	// The book whose cover stands for the series on the Series page; the cover
+	// route generates a placeholder when that book has no stored cover.
+	CoverBookID  string `json:"cover_book_id"`
 	CoverVersion int    `json:"cover_version"`
 }
 
@@ -58,7 +58,7 @@ func (s *Server) handleAPISeries(w http.ResponseWriter, r *http.Request) {
 			Author:        row.Author,
 			BookCount:     row.BookCount,
 			FinishedCount: row.FinishedCount,
-			CoverWorkID:   row.CoverWorkID,
+			CoverBookID:   row.CoverBookID,
 			CoverVersion:  row.CoverVersion,
 		})
 	}

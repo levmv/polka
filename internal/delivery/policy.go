@@ -25,7 +25,7 @@ const (
 	EmailMessageOverhead     = 4096
 )
 
-type Work struct {
+type Book struct {
 	ID      string
 	Title   string
 	Authors string
@@ -104,20 +104,20 @@ func PresetFromEmail(email string) Preset {
 	}
 }
 
-func PlanDelivery(work Work, opts PlanOptions) Plan {
+func PlanDelivery(book Book, opts PlanOptions) Plan {
 	opts = normalizePlanOptions(opts)
-	if len(work.Assets) == 0 {
+	if len(book.Assets) == 0 {
 		return noPlan(ReasonNoCompatibleFormat, "This book has no file to send.")
 	}
 	if opts.RequestedAssetID != "" {
-		return planRequested(work, opts)
+		return planRequested(book, opts)
 	}
-	return planBest(work, opts)
+	return planBest(book, opts)
 }
 
-func PlanChoices(work Work, opts PlanOptions) []PlanChoice {
+func PlanChoices(book Book, opts PlanOptions) []PlanChoice {
 	opts = normalizePlanOptions(opts)
-	if len(work.Assets) == 0 {
+	if len(book.Assets) == 0 {
 		return nil
 	}
 
@@ -139,10 +139,10 @@ func PlanChoices(work Work, opts PlanOptions) []PlanChoice {
 		choices = append(choices, PlanChoice{Plan: plan, Default: isDefault})
 	}
 
-	add(planBest(work, opts), true)
+	add(planBest(book, opts), true)
 	if opts.Preset == PresetGeneric {
-		for _, asset := range sortedAssets(work.Assets) {
-			add(planRequested(work, PlanOptions{
+		for _, asset := range sortedAssets(book.Assets) {
+			add(planRequested(book, PlanOptions{
 				Preset:            opts.Preset,
 				AttachmentLimitMB: opts.AttachmentLimitMB,
 				RequestedAssetID:  asset.ID,
@@ -150,8 +150,8 @@ func PlanChoices(work Work, opts PlanOptions) []PlanChoice {
 		}
 	} else {
 		for _, f := range directPreference(opts.Preset) {
-			for _, asset := range assetsByFormat(work.Assets, f) {
-				add(planRequested(work, PlanOptions{
+			for _, asset := range assetsByFormat(book.Assets, f) {
+				add(planRequested(book, PlanOptions{
 					Preset:            opts.Preset,
 					AttachmentLimitMB: opts.AttachmentLimitMB,
 					RequestedAssetID:  asset.ID,
@@ -160,11 +160,11 @@ func PlanChoices(work Work, opts PlanOptions) []PlanChoice {
 		}
 	}
 	for _, target := range conversionPreference(opts.Preset) {
-		for _, asset := range sortedAssets(work.Assets) {
+		for _, asset := range sortedAssets(book.Assets) {
 			if !conversionAllowed(opts.Preset, asset.Format, target) {
 				continue
 			}
-			add(planRequested(work, PlanOptions{
+			add(planRequested(book, PlanOptions{
 				Preset:            opts.Preset,
 				AttachmentLimitMB: opts.AttachmentLimitMB,
 				RequestedAssetID:  asset.ID,
@@ -175,9 +175,9 @@ func PlanChoices(work Work, opts PlanOptions) []PlanChoice {
 	return choices
 }
 
-func planRequested(work Work, opts PlanOptions) Plan {
+func planRequested(book Book, opts PlanOptions) Plan {
 	var selected Asset
-	for _, asset := range work.Assets {
+	for _, asset := range book.Assets {
 		if asset.ID == opts.RequestedAssetID {
 			selected = asset
 			break
@@ -191,25 +191,25 @@ func planRequested(work Work, opts PlanOptions) Plan {
 		if !conversionAllowed(opts.Preset, selected.Format, target) {
 			return noPlan(ReasonConversionMissing, fmt.Sprintf("Cannot convert %s for this device.", format.FormatLabel(selected.Format)))
 		}
-		return conversionPlan(work, selected, target)
+		return conversionPlan(book, selected, target)
 	}
 	if !directAllowed(opts.Preset, selected.Format) {
-		return incompatibleReason(work, opts.Preset)
+		return incompatibleReason(book, opts.Preset)
 	}
 	if tooLarge(selected.Size, opts) {
 		return tooLargeReason(selected.Size, opts)
 	}
-	return nativePlan(work, selected)
+	return nativePlan(book, selected)
 }
 
-func planBest(work Work, opts PlanOptions) Plan {
+func planBest(book Book, opts PlanOptions) Plan {
 	if opts.Preset == PresetGeneric {
 		return noPlan(ReasonNoCompatibleFormat, "Choose a file to email for this generic device.")
 	}
 
 	var tooLargeCandidate *Asset
 	for _, f := range directPreference(opts.Preset) {
-		candidates := assetsByFormat(work.Assets, f)
+		candidates := assetsByFormat(book.Assets, f)
 		for i := range candidates {
 			candidate := candidates[i]
 			if tooLarge(candidate.Size, opts) {
@@ -218,14 +218,14 @@ func planBest(work Work, opts PlanOptions) Plan {
 				}
 				continue
 			}
-			return nativePlan(work, candidate)
+			return nativePlan(book, candidate)
 		}
 	}
 
 	for _, target := range conversionPreference(opts.Preset) {
-		for _, asset := range sortedAssets(work.Assets) {
+		for _, asset := range sortedAssets(book.Assets) {
 			if conversionAllowed(opts.Preset, asset.Format, target) {
-				return conversionPlan(work, asset, target)
+				return conversionPlan(book, asset, target)
 			}
 		}
 	}
@@ -233,26 +233,26 @@ func planBest(work Work, opts PlanOptions) Plan {
 	if tooLargeCandidate != nil {
 		return tooLargeReason(tooLargeCandidate.Size, opts)
 	}
-	return incompatibleReason(work, opts.Preset)
+	return incompatibleReason(book, opts.Preset)
 }
 
-func nativePlan(work Work, asset Asset) Plan {
+func nativePlan(book Book, asset Asset) Plan {
 	mediaType := format.MediaTypeForExtension(asset.Extension)
 	return Plan{
 		AssetID:      asset.ID,
 		SourceFormat: asset.Format,
-		Filename:     deliveryFilename(work, asset, ""),
+		Filename:     deliveryFilename(book, asset, ""),
 		MediaType:    mediaType,
 		SizeBytes:    asset.Size,
 	}
 }
 
-func conversionPlan(work Work, asset Asset, target converter.Target) Plan {
+func conversionPlan(book Book, asset Asset, target converter.Target) Plan {
 	return Plan{
 		AssetID:      asset.ID,
 		SourceFormat: asset.Format,
 		Target:       target,
-		Filename:     deliveryFilename(work, asset, converter.TargetExtension(target)),
+		Filename:     deliveryFilename(book, asset, converter.TargetExtension(target)),
 		MediaType:    converter.TargetMediaType(target),
 		Converted:    true,
 	}
@@ -262,7 +262,7 @@ func noPlan(code, message string) Plan {
 	return Plan{Reason: Reason{Code: code, Message: message}}
 }
 
-func incompatibleReason(_ Work, _ Preset) Plan {
+func incompatibleReason(_ Book, _ Preset) Plan {
 	return noPlan(ReasonNoCompatibleFormat, "No format this device accepts by email.")
 }
 
@@ -427,10 +427,10 @@ func EncodedSize(raw int64) int64 {
 	return encoded + lines*2 + EmailMessageOverhead
 }
 
-func deliveryFilename(work Work, asset Asset, forcedExt string) string {
-	base := strings.TrimSpace(work.Title)
-	if strings.TrimSpace(work.Authors) != "" {
-		base += " - " + strings.TrimSpace(work.Authors)
+func deliveryFilename(book Book, asset Asset, forcedExt string) string {
+	base := strings.TrimSpace(book.Title)
+	if strings.TrimSpace(book.Authors) != "" {
+		base += " - " + strings.TrimSpace(book.Authors)
 	}
 	if strings.TrimSpace(base) == "" {
 		base = strings.TrimSuffix(asset.Filename, filepath.Ext(asset.Filename))

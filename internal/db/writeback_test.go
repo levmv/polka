@@ -12,11 +12,11 @@ import (
 func TestMetadataWritebackDirtyQuery(t *testing.T) {
 	database := newTestDB(t)
 
-	database.Exec("INSERT INTO works (id, title, sort_title, metadata_rev) VALUES ('w_epub', 'EPUB', 'EPUB', 2)")
-	database.Exec("INSERT INTO works (id, title, sort_title, metadata_rev) VALUES ('w_pdf', 'PDF', 'PDF', 2)")
-	database.Exec("INSERT INTO works (id, title, sort_title, metadata_rev, deleted_at) VALUES ('w_deleted', 'Deleted', 'Deleted', 2, 10)")
+	database.Exec("INSERT INTO books (id, title, sort_title, metadata_rev) VALUES ('w_epub', 'EPUB', 'EPUB', 2)")
+	database.Exec("INSERT INTO books (id, title, sort_title, metadata_rev) VALUES ('w_pdf', 'PDF', 'PDF', 2)")
+	database.Exec("INSERT INTO books (id, title, sort_title, metadata_rev, deleted_at) VALUES ('w_deleted', 'Deleted', 'Deleted', 2, 10)")
 	database.Exec(`
-		INSERT INTO assets (id, work_id, storage_path, filename, extension, format, writeback_rev, writeback_error)
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, writeback_rev, writeback_error)
 		VALUES
 			('as_epub_dirty', 'w_epub', 'A/EPUB/as_epub_dirty.epub', 'as_epub_dirty.epub', '.epub', 'epub', 1, NULL),
 			('as_kepub_dirty', 'w_epub', 'A/EPUB/as_kepub_dirty.kepub.epub', 'as_kepub_dirty.kepub.epub', '.kepub.epub', 'kepub', 1, NULL),
@@ -108,16 +108,16 @@ func TestMetadataWritebackSnapshotAndAttempt(t *testing.T) {
 	database := newTestDB(t)
 
 	database.Exec(`
-		INSERT INTO works
+		INSERT INTO books
 			(id, title, sort_title, series, series_index, description, tags, publisher, published_date, language, identifiers, metadata_rev)
 		VALUES
 			('w1', 'Snapshot Title', 'Title, Snapshot', 'Series', 2, 'Desc', 'tag one, tag two', 'Press', '2026', 'eng', 'isbn:9780306406157', 4)
 	`)
 	database.Exec("INSERT INTO authors (id, name, sort_name) VALUES ('au1', 'Jane Writer', 'Writer, Jane')")
-	database.Exec("INSERT INTO work_authors (work_id, author_id, role, author_order) VALUES ('w1', 'au1', 'aut', 0)")
+	database.Exec("INSERT INTO book_authors (book_id, author_id, role, author_order) VALUES ('w1', 'au1', 'aut', 0)")
 	database.Exec(`
 		INSERT INTO assets
-			(id, work_id, storage_path, filename, extension, format, current_sha256, current_size, writeback_rev)
+			(id, book_id, storage_path, filename, extension, format, current_sha256, current_size, writeback_rev)
 		VALUES
 			('as1', 'w1', 'A/Book/as1.epub', 'as1.epub', '.epub', 'epub', 'oldhash', 123, 2)
 	`)
@@ -186,18 +186,18 @@ func TestMetadataWritebackSnapshotAndAttempt(t *testing.T) {
 func TestBumpMetadataRev(t *testing.T) {
 	database := newTestDB(t)
 
-	database.Exec("INSERT INTO works (id, title, sort_title, metadata_rev) VALUES ('w1', 'One', 'One', 3)")
-	database.Exec("INSERT INTO works (id, title, sort_title, metadata_rev) VALUES ('w2', 'Two', 'Two', 7)")
+	database.Exec("INSERT INTO books (id, title, sort_title, metadata_rev) VALUES ('w1', 'One', 'One', 3)")
+	database.Exec("INSERT INTO books (id, title, sort_title, metadata_rev) VALUES ('w2', 'Two', 'Two', 7)")
 
 	if err := BumpMetadataRev(database, []string{"w1", "w1", "", "w2"}); err != nil {
 		t.Fatalf("BumpMetadataRev: %v", err)
 	}
 
 	var rev1, rev2 int
-	if err := database.QueryRow("SELECT metadata_rev FROM works WHERE id = 'w1'").Scan(&rev1); err != nil {
+	if err := database.QueryRow("SELECT metadata_rev FROM books WHERE id = 'w1'").Scan(&rev1); err != nil {
 		t.Fatalf("query w1 rev: %v", err)
 	}
-	if err := database.QueryRow("SELECT metadata_rev FROM works WHERE id = 'w2'").Scan(&rev2); err != nil {
+	if err := database.QueryRow("SELECT metadata_rev FROM books WHERE id = 'w2'").Scan(&rev2); err != nil {
 		t.Fatalf("query w2 rev: %v", err)
 	}
 	if rev1 != 4 || rev2 != 8 {

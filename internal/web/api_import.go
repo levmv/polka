@@ -108,18 +108,18 @@ func (s *Server) handleAPIImport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	status := string(res.Status)
-	if res.Status == importer.StatusDuplicate && res.WorkTrashed {
+	if res.Status == importer.StatusDuplicate && res.BookTrashed {
 		// Upload is an explicit action on one book, unlike a recurring folder
 		// sweep, so accepting the bytes while leaving the book hidden would read
 		// as a failed upload.
-		if restoreErr := db.RestoreWork(s.db.DB, res.WorkID); restoreErr != nil && !errors.Is(restoreErr, sql.ErrNoRows) {
+		if restoreErr := db.RestoreBook(s.db.DB, res.BookID); restoreErr != nil && !errors.Is(restoreErr, sql.ErrNoRows) {
 			serverError(w, restoreErr)
 			return
 		}
 		status = "restored"
 	}
 	viewerIsAdmin := s.viewerIsAdmin(r)
-	book, err := s.bookDetailDTO(db.FullVisibilityScope(), UserID(r.Context()), res.WorkID, viewerIsAdmin)
+	book, err := s.bookDetailDTO(db.FullVisibilityScope(), UserID(r.Context()), res.BookID, viewerIsAdmin)
 	if errors.Is(err, sql.ErrNoRows) {
 		serverError(w, errors.New("imported book not found"))
 		return

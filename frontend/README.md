@@ -73,7 +73,7 @@ Escape external text interpolated into HTML templates with `escapeHtml()`, or as
 
 ## Settings
 
-Settings live in one tabbed modal outside the main nav; keep the number of sections small and do not pre-build empty tabs. Broad app/UI preferences belong to `user_settings`, while reader-engine display preferences belong to `user_reader_preferences`. Roles determine which tabs and controls are shown, but the server must enforce every role boundary — UI gating is never authorization.
+Settings live in one tabbed modal outside the main nav; keep the number of sections small and do not pre-build empty tabs. Account and reader display preferences share `user_settings` and `/api/settings`. Save only changed fields, so a reader or settings tab cannot overwrite unrelated choices. Roles determine which tabs and controls are shown, but the server must enforce every role boundary — UI gating is never authorization.
 
 ## Reader
 

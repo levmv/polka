@@ -34,7 +34,7 @@ func formatKeyInClause(column string, keys []string) string {
 // metadata write-back.
 type MetadataWritebackAssetRow struct {
 	AssetID       string
-	WorkID        string
+	BookID        string
 	StoragePath   string
 	Format        format.Format
 	CurrentSHA256 string
@@ -45,7 +45,7 @@ type MetadataWritebackAssetRow struct {
 }
 
 type MetadataWritebackSnapshot struct {
-	WorkID       string
+	BookID       string
 	MetadataRev  int64
 	CoverVersion int
 	UpdatedAt    int64
@@ -74,19 +74,19 @@ type MetadataWritebackCounts struct {
 	Failed int
 }
 
-// BumpMetadataRev marks works as needing their current metadata snapshot written
+// BumpMetadataRev marks books as needing their current metadata snapshot written
 // to writable assets. It also touches updated_at because the bump happens only
 // in user-visible metadata mutation paths.
 // If cover write-back uses metadata_rev instead of a separate asset marker,
 // cover mutation paths must bump this same rev.
-func BumpMetadataRev(execer Execer, workIDs []string) error {
-	ids := dedupWorkIDs(workIDs)
+func BumpMetadataRev(execer Execer, bookIDs []string) error {
+	ids := dedupBookIDs(bookIDs)
 	if len(ids) == 0 {
 		return nil
 	}
 	placeholders, args := idPlaceholders(ids)
 	if _, err := execer.Exec(`
-		UPDATE works
+		UPDATE books
 		SET metadata_rev = metadata_rev + 1,
 		    updated_at = unixepoch()
 		WHERE id IN (`+placeholders+`)
@@ -97,7 +97,7 @@ func BumpMetadataRev(execer Execer, workIDs []string) error {
 }
 
 // CountDirtyMetadataWritebackAssets counts writable live assets whose file
-// metadata is behind the current work metadata.
+// metadata is behind the current book metadata.
 func CountDirtyMetadataWritebackAssets(queryer Queryer, scope VisibilityScope) (MetadataWritebackCounts, error) {
 	where, args := metadataWritebackDirtyWhere(scope)
 	var counts MetadataWritebackCounts
@@ -105,7 +105,7 @@ func CountDirtyMetadataWritebackAssets(queryer Queryer, scope VisibilityScope) (
 		SELECT COUNT(*),
 		       COALESCE(SUM(CASE WHEN COALESCE(a.writeback_error, '') <> '' THEN 1 ELSE 0 END), 0)
 		FROM assets a
-		JOIN works w ON w.id = a.work_id
+		JOIN books b ON b.id = a.book_id
 		WHERE `+where, args...).Scan(&counts.Dirty, &counts.Failed)
 	if err != nil {
 		return MetadataWritebackCounts{}, fmt.Errorf("count dirty metadata writeback assets: %w", err)
@@ -113,27 +113,27 @@ func CountDirtyMetadataWritebackAssets(queryer Queryer, scope VisibilityScope) (
 	return counts, nil
 }
 
-// WorkWritebackState summarizes one work's writable assets for the book-page
+// BookWritebackState summarizes one book's writable assets for the book-page
 // action: how many assets can carry embedded metadata, and how many of those
-// are behind the current work metadata (the enabled/"up to date" signal).
-type WorkWritebackState struct {
+// are behind the current book metadata (the enabled/"up to date" signal).
+type BookWritebackState struct {
 	Writable int
 	Dirty    int
 }
 
-// GetWorkWritebackState reports the writable/dirty asset counts for one live
-// work. A trashed work reports zero (its detail page 404s anyway).
-func GetWorkWritebackState(queryer Queryer, workID string) (WorkWritebackState, error) {
-	var st WorkWritebackState
+// GetBookWritebackState reports the writable/dirty asset counts for one live
+// book. A trashed book reports zero (its detail page 404s anyway).
+func GetBookWritebackState(queryer Queryer, bookID string) (BookWritebackState, error) {
+	var st BookWritebackState
 	err := queryer.QueryRow(`
 		SELECT COUNT(*),
-		       COALESCE(SUM(CASE WHEN a.writeback_rev < w.metadata_rev THEN 1 ELSE 0 END), 0)
+		       COALESCE(SUM(CASE WHEN a.writeback_rev < b.metadata_rev THEN 1 ELSE 0 END), 0)
 		FROM assets a
-		JOIN works w ON w.id = a.work_id
-		WHERE a.work_id = ? AND w.deleted_at IS NULL AND `+metadataWritebackFormatSQL,
-		workID).Scan(&st.Writable, &st.Dirty)
+		JOIN books b ON b.id = a.book_id
+		WHERE a.book_id = ? AND b.deleted_at IS NULL AND `+metadataWritebackFormatSQL,
+		bookID).Scan(&st.Writable, &st.Dirty)
 	if err != nil {
-		return WorkWritebackState{}, fmt.Errorf("work writeback state: %w", err)
+		return BookWritebackState{}, fmt.Errorf("book writeback state: %w", err)
 	}
 	return st, nil
 }
@@ -142,12 +142,12 @@ func GetWorkWritebackState(queryer Queryer, workID string) (WorkWritebackState, 
 // one live asset. It is the freshness check before a physical write attempt.
 func GetMetadataWritebackAsset(queryer Queryer, assetID string) (MetadataWritebackAssetRow, error) {
 	return scanMetadataWritebackAsset(queryer.QueryRow(`
-		SELECT a.id, a.work_id, a.storage_path, a.format,
+		SELECT a.id, a.book_id, a.storage_path, a.format,
 		       COALESCE(a.current_sha256, ''), a.current_size,
-		       w.metadata_rev, a.writeback_rev, COALESCE(a.writeback_error, '')
+		       b.metadata_rev, a.writeback_rev, COALESCE(a.writeback_error, '')
 		FROM assets a
-		JOIN works w ON w.id = a.work_id
-		WHERE a.id = ? AND w.deleted_at IS NULL AND `+metadataWritebackFormatSQL+`
+		JOIN books b ON b.id = a.book_id
+		WHERE a.id = ? AND b.deleted_at IS NULL AND `+metadataWritebackFormatSQL+`
 	`, assetID))
 }
 
@@ -164,37 +164,37 @@ func ListDirtyMetadataWritebackAssets(queryer Queryer, scope VisibilityScope, li
 // state is therefore durable across process restarts without another schema
 // column or loading the whole backlog for in-memory filtering.
 func ListAutomaticMetadataWritebackAssets(queryer Queryer, scope VisibilityScope, failedBefore int64, limit int) ([]MetadataWritebackAssetRow, error) {
-	where := "w.deleted_at IS NULL AND a.writeback_rev < w.metadata_rev AND " + metadataWritebackFormatSQL +
+	where := "b.deleted_at IS NULL AND a.writeback_rev < b.metadata_rev AND " + metadataWritebackFormatSQL +
 		" AND (COALESCE(a.writeback_error, '') = '' OR a.updated_at <= ?)"
-	where, args := scope.AppendWorkWhere(where, "w.id", failedBefore)
+	where, args := scope.AppendBookWhere(where, "b.id", failedBefore)
 	return listMetadataWritebackAssets(queryer, where, args, limit)
 }
 
 // ListFailedMetadataWritebackAssets returns dirty writable live assets whose
 // last write-back attempt failed.
 func ListFailedMetadataWritebackAssets(queryer Queryer, scope VisibilityScope, limit int) ([]MetadataWritebackAssetRow, error) {
-	where := "w.deleted_at IS NULL AND a.writeback_rev < w.metadata_rev AND COALESCE(a.writeback_error, '') <> '' AND " + metadataWritebackFormatSQL
-	where, args := scope.AppendWorkWhere(where, "w.id")
+	where := "b.deleted_at IS NULL AND a.writeback_rev < b.metadata_rev AND COALESCE(a.writeback_error, '') <> '' AND " + metadataWritebackFormatSQL
+	where, args := scope.AppendBookWhere(where, "b.id")
 	return listMetadataWritebackAssets(queryer, where, args, limit)
 }
 
 // ListAllMetadataWritebackAssets returns every live writable asset, including
 // clean rows. It is for explicit maintenance runs such as --all.
 func ListAllMetadataWritebackAssets(queryer Queryer, scope VisibilityScope, limit int) ([]MetadataWritebackAssetRow, error) {
-	where, args := scope.AppendWorkWhere("w.deleted_at IS NULL AND "+metadataWritebackFormatSQL, "w.id")
+	where, args := scope.AppendBookWhere("b.deleted_at IS NULL AND "+metadataWritebackFormatSQL, "b.id")
 	return listMetadataWritebackAssets(queryer, where, args, limit)
 }
 
-// ListMetadataWritebackAssetsByWorkIDs returns writable live assets for the
-// selected works, regardless of dirty state.
-func ListMetadataWritebackAssetsByWorkIDs(queryer Queryer, scope VisibilityScope, workIDs []string, limit int) ([]MetadataWritebackAssetRow, error) {
-	ids := dedupWorkIDs(workIDs)
+// ListMetadataWritebackAssetsByBookIDs returns writable live assets for the
+// selected books, regardless of dirty state.
+func ListMetadataWritebackAssetsByBookIDs(queryer Queryer, scope VisibilityScope, bookIDs []string, limit int) ([]MetadataWritebackAssetRow, error) {
+	ids := dedupBookIDs(bookIDs)
 	if len(ids) == 0 {
 		return nil, nil
 	}
 	placeholders, args := idPlaceholders(ids)
-	where := "w.deleted_at IS NULL AND " + metadataWritebackFormatSQL + " AND w.id IN (" + placeholders + ")"
-	where, args = scope.AppendWorkWhere(where, "w.id", args...)
+	where := "b.deleted_at IS NULL AND " + metadataWritebackFormatSQL + " AND b.id IN (" + placeholders + ")"
+	where, args = scope.AppendBookWhere(where, "b.id", args...)
 	return listMetadataWritebackAssets(queryer, where, args, limit)
 }
 
@@ -206,13 +206,13 @@ func listMetadataWritebackAssets(queryer Queryer, where string, args []any, limi
 	}
 
 	rows, err := queryer.Query(`
-		SELECT a.id, a.work_id, a.storage_path, a.format,
+		SELECT a.id, a.book_id, a.storage_path, a.format,
 		       COALESCE(a.current_sha256, ''), a.current_size,
-		       w.metadata_rev, a.writeback_rev, COALESCE(a.writeback_error, '')
+		       b.metadata_rev, a.writeback_rev, COALESCE(a.writeback_error, '')
 		FROM assets a
-		JOIN works w ON w.id = a.work_id
+		JOIN books b ON b.id = a.book_id
 		WHERE `+where+`
-		ORDER BY w.updated_at ASC, a.id ASC`+limitClause, args...)
+		ORDER BY b.updated_at ASC, a.id ASC`+limitClause, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query dirty metadata writeback assets: %w", err)
 	}
@@ -236,7 +236,7 @@ func scanMetadataWritebackAsset(row rowScanner) (MetadataWritebackAssetRow, erro
 	var asset MetadataWritebackAssetRow
 	var formatKey string
 	if err := row.Scan(
-		&asset.AssetID, &asset.WorkID, &asset.StoragePath, &formatKey,
+		&asset.AssetID, &asset.BookID, &asset.StoragePath, &formatKey,
 		&asset.CurrentSHA256, &asset.CurrentSize,
 		&asset.MetadataRev, &asset.WritebackRev, &asset.Error,
 	); err != nil {
@@ -246,7 +246,7 @@ func scanMetadataWritebackAsset(row rowScanner) (MetadataWritebackAssetRow, erro
 	return asset, nil
 }
 
-func LoadMetadataWritebackSnapshot(queryer Queryer, workID string) (MetadataWritebackSnapshot, error) {
+func LoadMetadataWritebackSnapshot(queryer Queryer, bookID string) (MetadataWritebackSnapshot, error) {
 	var snap MetadataWritebackSnapshot
 	var tags string
 	err := queryer.QueryRow(`
@@ -254,10 +254,10 @@ func LoadMetadataWritebackSnapshot(queryer Queryer, workID string) (MetadataWrit
 		       COALESCE(description, ''), COALESCE(tags, ''),
 		       COALESCE(publisher, ''), COALESCE(published_date, ''),
 		       COALESCE(language, ''), COALESCE(identifiers, ''), metadata_rev, cover_version, updated_at
-		FROM works
+		FROM books
 		WHERE id = ? AND deleted_at IS NULL
-	`, workID).Scan(
-		&snap.WorkID, &snap.Metadata.Title, &snap.Metadata.SortTitle,
+	`, bookID).Scan(
+		&snap.BookID, &snap.Metadata.Title, &snap.Metadata.SortTitle,
 		&snap.Metadata.Series, &snap.Metadata.SeriesIndex,
 		&snap.Metadata.Description, &tags, &snap.Metadata.Publisher,
 		&snap.Metadata.Date, &snap.Metadata.Language, &snap.Metadata.Identifier,
@@ -269,11 +269,11 @@ func LoadMetadataWritebackSnapshot(queryer Queryer, workID string) (MetadataWrit
 	snap.Metadata.Language = bookmeta.NormalizeLanguage(snap.Metadata.Language)
 	snap.Metadata.Tags = bookmeta.ParseTagList(tags)
 
-	authors, err := AuthorsByWorkIDs(queryer, []string{snap.WorkID})
+	authors, err := AuthorsByBookIDs(queryer, []string{snap.BookID})
 	if err != nil {
 		return MetadataWritebackSnapshot{}, err
 	}
-	for _, author := range authors[snap.WorkID] {
+	for _, author := range authors[snap.BookID] {
 		name := strings.TrimSpace(author.Name)
 		if name == "" {
 			continue
@@ -404,6 +404,6 @@ func MarkMetadataWritebackError(execer Execer, assetID string, writeErr error) e
 }
 
 func metadataWritebackDirtyWhere(scope VisibilityScope) (string, []any) {
-	where := "w.deleted_at IS NULL AND a.writeback_rev < w.metadata_rev AND " + metadataWritebackFormatSQL
-	return scope.AppendWorkWhere(where, "w.id")
+	where := "b.deleted_at IS NULL AND a.writeback_rev < b.metadata_rev AND " + metadataWritebackFormatSQL
+	return scope.AppendBookWhere(where, "b.id")
 }

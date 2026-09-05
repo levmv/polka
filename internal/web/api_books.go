@@ -50,7 +50,7 @@ type BookDetailDTO struct {
 }
 
 // BookWritebackDTO drives the admin-only "Write metadata to file" action.
-// Available is true only when write-back is in manual mode and the work has at
+// Available is true only when write-back is in manual mode and the book has at
 // least one writable asset (so the action renders); Dirty is true when some
 // writable asset is behind the catalog (so it is enabled rather than "up to
 // date"). The frontend additionally gates rendering on the admin role.
@@ -325,8 +325,8 @@ func (s *Server) handleAPIBookJumps(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAPIBookSequence(w http.ResponseWriter, r *http.Request) {
-	workID := r.PathValue("id")
-	scope, ok := s.requireWorkAccess(w, r, workID)
+	bookID := r.PathValue("id")
+	scope, ok := s.requireBookAccess(w, r, bookID)
 	if !ok {
 		return
 	}
@@ -357,12 +357,12 @@ func (s *Server) handleAPIBookSequence(w http.ResponseWriter, r *http.Request) {
 				if sortParam == "" && shelf.Query != "" {
 					sort = db.SortRelevance
 				}
-				sequence, err = db.BookSequenceInList(s.db, scope, UserID(r.Context()), workID, shelf.Query, sort, before, after)
+				sequence, err = db.BookSequenceInList(s.db, scope, UserID(r.Context()), bookID, shelf.Query, sort, before, after)
 			} else {
-				sequence, err = db.BookSequenceInManualShelf(s.db, scope, workID, shelf.ID, sort, before, after)
+				sequence, err = db.BookSequenceInManualShelf(s.db, scope, bookID, shelf.ID, sort, before, after)
 			}
 		} else {
-			sequence, err = db.BookSequenceInList(s.db, scope, UserID(r.Context()), workID, q, sort, before, after)
+			sequence, err = db.BookSequenceInList(s.db, scope, UserID(r.Context()), bookID, q, sort, before, after)
 		}
 	default:
 		http.Error(w, "Missing or unsupported list context", http.StatusBadRequest)
@@ -400,34 +400,34 @@ func bookSequenceDTO(sequence db.BookSequenceWindow) BookSequenceDTO {
 
 func (s *Server) bookSummaryDTOs(bookRows []db.BookSummaryRow) ([]BookSummaryDTO, error) {
 	var books []BookSummaryDTO
-	var workIDs []string
+	var bookIDs []string
 	bookMap := make(map[string]*BookSummaryDTO)
 
 	for _, bRow := range bookRows {
 		books = append(books, summaryRowDTO(bRow))
-		workIDs = append(workIDs, bRow.ID)
+		bookIDs = append(bookIDs, bRow.ID)
 	}
 
 	for i := range books {
 		bookMap[books[i].ID] = &books[i]
 	}
 
-	assetRows, err := db.AssetsByWorkIDs(s.db, workIDs)
+	assetRows, err := db.AssetsByBookIDs(s.db, bookIDs)
 	if err != nil {
 		return nil, err
 	}
 	for _, aRow := range assetRows {
-		if b, ok := bookMap[aRow.WorkID]; ok {
+		if b, ok := bookMap[aRow.BookID]; ok {
 			b.Assets = append(b.Assets, assetDTO(aRow))
 		}
 	}
 
-	authorsByWork, err := db.AuthorsByWorkIDs(s.db, workIDs)
+	authorsByBook, err := db.AuthorsByBookIDs(s.db, bookIDs)
 	if err != nil {
 		return nil, err
 	}
 	for id, b := range bookMap {
-		b.AuthorsList, b.AuthorsDisplay = authorsToDTO(authorsByWork[id])
+		b.AuthorsList, b.AuthorsDisplay = authorsToDTO(authorsByBook[id])
 	}
 
 	if books == nil {
@@ -439,15 +439,15 @@ func (s *Server) bookSummaryDTOs(bookRows []db.BookSummaryRow) ([]BookSummaryDTO
 // handleAPIBookDetail serves GET /api/books/{id}. PATCH routes to
 // handleAPIBookEdit; the cover sub-path to handleAPICoverUpload.
 func (s *Server) handleAPIBookDetail(w http.ResponseWriter, r *http.Request) {
-	workID := r.PathValue("id")
-	s.handleAPIBookDetailReturn(w, r, workID)
+	bookID := r.PathValue("id")
+	s.handleAPIBookDetailReturn(w, r, bookID)
 }
 
 // handleAPIBookEdit serves PATCH /api/books/{id}.
 func (s *Server) handleAPIBookEdit(w http.ResponseWriter, r *http.Request) {
-	workID := r.PathValue("id")
-	if _, ok := s.requireWorkAccess(w, r, workID); !ok {
+	bookID := r.PathValue("id")
+	if _, ok := s.requireBookAccess(w, r, bookID); !ok {
 		return
 	}
-	s.handleAPIEditBook(w, r, workID)
+	s.handleAPIEditBook(w, r, bookID)
 }

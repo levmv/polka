@@ -13,14 +13,14 @@ func TestListTags(t *testing.T) {
 			t.Fatalf("exec %q: %v", query, err)
 		}
 	}
-	must("INSERT INTO works (id, title, sort_title, tags) VALUES ('w1', 'T1', 'T1', ' Fantasy, classics, Fantasy ')")
-	must("INSERT INTO works (id, title, sort_title, tags) VALUES ('w2', 'T2', 'T2', 'science fiction, CLASSICS')")
-	must("INSERT INTO works (id, title, sort_title, tags) VALUES ('w3', 'T3', 'T3', '')")
-	must(`INSERT INTO works (id, title, sort_title, tags) VALUES ('w4', 'T4', 'T4', '100% real, under_score, path\name')`)
-	must("INSERT INTO works (id, title, sort_title, tags) VALUES ('w5', 'T5', 'T5', 'Классика')")
-	must("INSERT INTO works (id, title, sort_title, tags, deleted_at) VALUES ('w_deleted', 'Deleted', 'Deleted', 'archived', 1)")
+	must("INSERT INTO books (id, title, sort_title, tags) VALUES ('w1', 'T1', 'T1', ' Fantasy, classics, Fantasy ')")
+	must("INSERT INTO books (id, title, sort_title, tags) VALUES ('w2', 'T2', 'T2', 'science fiction, CLASSICS')")
+	must("INSERT INTO books (id, title, sort_title, tags) VALUES ('w3', 'T3', 'T3', '')")
+	must(`INSERT INTO books (id, title, sort_title, tags) VALUES ('w4', 'T4', 'T4', '100% real, under_score, path\name')`)
+	must("INSERT INTO books (id, title, sort_title, tags) VALUES ('w5', 'T5', 'T5', 'Классика')")
+	must("INSERT INTO books (id, title, sort_title, tags, deleted_at) VALUES ('w_deleted', 'Deleted', 'Deleted', 'archived', 1)")
 
-	must(`INSERT INTO works (id, title, sort_title, tags) VALUES ('w6', 'T6', 'T6', 'İstanbul, Kelvin')`)
+	must(`INSERT INTO books (id, title, sort_title, tags) VALUES ('w6', 'T6', 'T6', 'İstanbul, Kelvin')`)
 
 	wantAll := []string{"100% real", "classics", "Fantasy", "İstanbul", "Kelvin", `path\name`, "science fiction", "under_score", "Классика"}
 	for _, tt := range []struct {
@@ -52,7 +52,7 @@ func TestListTags(t *testing.T) {
 		})
 	}
 
-	must("UPDATE works SET tags = 'newtag' WHERE id = 'w2'")
+	must("UPDATE books SET tags = 'newtag' WHERE id = 'w2'")
 	updated, err := ListTags(database, FullVisibilityScope(), "new", 20)
 	if err != nil {
 		t.Fatalf("ListTags updated: %v", err)
@@ -68,13 +68,13 @@ func TestListTagsVisibility(t *testing.T) {
 		INSERT INTO users (id, username, password_hash, role, content_scope) VALUES
 			(1, 'reader', 'unused', 'reader', 'shelves'),
 			(2, 'curator', 'unused', 'admin', 'all');
-		INSERT INTO works (id, title, sort_title, tags, deleted_at) VALUES
+		INSERT INTO books (id, title, sort_title, tags, deleted_at) VALUES
 			('manual', 'Manual book', 'Manual book', 'Fantasy, Shared', NULL),
 			('query', 'Query book', 'Query book', 'Science fiction, Shared, Классика, İstanbul', NULL),
 			('both', 'Query overlap', 'Query overlap', 'Adventure, Shared', NULL),
 			('hidden', 'Hidden book', 'Hidden book', 'Hİdden, Классика тайная', NULL),
 			('trashed', 'Query trashed', 'Query trashed', 'Archived', 1);
-		INSERT INTO search (work_id, title, tags) SELECT id, title, tags FROM works;
+		INSERT INTO search (book_id, title, tags) SELECT id, title, tags FROM books;
 		INSERT INTO shelves (id, name, kind, owner_id, visibility, query, query_match) VALUES
 			('manual', 'Manual', 'manual', 2, 'shared', NULL, NULL),
 			('query', 'Query', 'query', 2, 'shared', 'title:Query', ?),
@@ -82,7 +82,7 @@ func TestListTagsVisibility(t *testing.T) {
 			('own_manual', 'Own manual', 'manual', 1, 'personal', NULL, NULL),
 			('own_query', 'Own query', 'query', 1, 'personal', 'title:Hidden', ?),
 			('empty_query', 'Empty query', 'query', 2, 'shared', '', '');
-		INSERT INTO shelf_books (shelf_id, work_id) VALUES
+		INSERT INTO shelf_books (shelf_id, book_id) VALUES
 			('manual', 'manual'), ('manual', 'both'), ('manual', 'trashed'),
 			('curator_personal', 'hidden'), ('own_manual', 'hidden');
 		INSERT INTO user_scope_shelves (user_id, shelf_id) VALUES (2, 'curator_personal');

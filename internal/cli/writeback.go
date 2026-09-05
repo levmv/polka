@@ -11,7 +11,7 @@ import (
 )
 
 func runLibraryWriteback(parent context.Context, dataDir string, args []string) (retErr error) {
-	fs := commandFlagSet("library writeback", "polka library writeback [--all|<work-id>...] [--dry-run] [--limit N] [--force]")
+	fs := commandFlagSet("library writeback", "polka library writeback [--all|<book-id>...] [--dry-run] [--limit N] [--force]")
 	all := fs.Bool("all", false, "write every supported managed file, including clean files")
 	dryRun := fs.Bool("dry-run", false, "show what would be written without changing files")
 	force := fs.Bool("force", false, "override a fresh writer lease from another polka process")
@@ -19,7 +19,7 @@ func runLibraryWriteback(parent context.Context, dataDir string, args []string) 
 	if help, err := parseCommandFlags(fs, args); help || err != nil {
 		return err
 	}
-	workIDs := fs.Args()
+	bookIDs := fs.Args()
 
 	database, err := openDatabase(dataDir)
 	if err != nil {
@@ -54,7 +54,7 @@ func runLibraryWriteback(parent context.Context, dataDir string, args []string) 
 		All:       *all,
 		DryRun:    *dryRun,
 		Limit:     *limit,
-		WorkIDs:   workIDs,
+		BookIDs:   bookIDs,
 		CoverRoot: storage.NewRoot(dataDir),
 	})
 	if err != nil {

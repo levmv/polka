@@ -38,13 +38,13 @@ func TestAPIBookJumpsThresholdAndValidation(t *testing.T) {
 	for i := 2; i < minBookJumpTotal; i++ {
 		title := fmt.Sprintf("Book %03d", i)
 		if _, err := tx.Exec(
-			`INSERT INTO works (id, title, sort_title, primary_author_sort) VALUES (?, ?, ?, 'Author')`,
+			`INSERT INTO books (id, title, sort_title, primary_author_sort) VALUES (?, ?, ?, 'Author')`,
 			fmt.Sprintf("jump_%03d", i),
 			title,
 			title,
 		); err != nil {
 			tx.Rollback()
-			t.Fatalf("insert work %d: %v", i, err)
+			t.Fatalf("insert book %d: %v", i, err)
 		}
 	}
 	if err := tx.Commit(); err != nil {

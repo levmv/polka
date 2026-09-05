@@ -1,4 +1,4 @@
-import { fetchReaderPreferences, fetchReaderState, touchReaderState } from '../api';
+import { fetchReaderState, fetchUserSettings, touchReaderState } from '../api';
 import { errorMessage } from '../errors';
 import type { ReaderPreferences } from '../types';
 import { createReadingActivity } from './activity';
@@ -68,7 +68,7 @@ async function initFoliateReader(
         console.error('Failed to fetch reader state:', e);
         return null;
     });
-    const preferencesPromise = fetchReaderPreferences().catch((e) => {
+    const preferencesPromise = fetchUserSettings().catch((e) => {
         console.error('Failed to fetch reader preferences:', e);
         return DEFAULT_READER_PREFERENCES satisfies ReaderPreferences;
     });
@@ -77,11 +77,11 @@ async function initFoliateReader(
     // section change. Keep its narrow upstream-race guard for this reader page.
     suppressTransientFoliateRenderErrors();
     const preferences = normalizeReaderPreferences(await preferencesPromise);
-    page.dataset.readerFlow = preferences.epub_flow;
-    page.dataset.readerStyle = preferences.display_style;
-    page.dataset.readerFontScale = String(preferences.font_scale);
+    page.dataset.readerFlow = preferences.reader_flow;
+    page.dataset.readerStyle = preferences.reader_style;
+    page.dataset.readerFontScale = String(preferences.reader_font_size);
     // Apply before loading the book to avoid flashing the app background.
-    applyReaderCanvasColor(readerDisplayPalette(preferences.display_style).background);
+    applyReaderCanvasColor(readerDisplayPalette(preferences.reader_style).background);
     const view: FoliateViewElement = await openFoliateBookWithFallback(
         page,
         stage,

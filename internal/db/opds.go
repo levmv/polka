@@ -19,24 +19,24 @@ type OPDSPublicationRow struct {
 }
 
 const opdsPublicationColumns = `
-	w.id, w.title,
-	w.description, w.tags, w.publisher, w.published_date,
-	w.language, w.identifiers, w.cover_version, w.updated_at`
+	b.id, b.title,
+	b.description, b.tags, b.publisher, b.published_date,
+	b.language, b.identifiers, b.cover_version, b.updated_at`
 
 // ListOPDSPublications is the narrow read model for OPDS acquisition feeds. It
-// only returns live works that have at least one asset, because an OPDS
+// only returns live books that have at least one asset, because an OPDS
 // publication entry without an acquisition link is not useful to external
 // readers.
 func ListOPDSPublications(queryer Queryer, scope VisibilityScope, limit, offset int) ([]OPDSPublicationRow, error) {
-	withSQL, fromSQL, args := scope.joinVisibleWorks("works w")
+	withSQL, fromSQL, args := scope.joinVisibleBooks("books b")
 	args = append(args, limit, offset)
 	rows, err := queryer.Query(fmt.Sprintf(`
 		%s
 		SELECT %s
 		FROM %s
-		WHERE w.deleted_at IS NULL
-		  AND EXISTS (SELECT 1 FROM assets a WHERE a.work_id = w.id)
-		ORDER BY w.sort_title COLLATE NOCASE ASC, w.title COLLATE NOCASE ASC, w.id ASC
+		WHERE b.deleted_at IS NULL
+		  AND EXISTS (SELECT 1 FROM assets a WHERE a.book_id = b.id)
+		ORDER BY b.sort_title COLLATE NOCASE ASC, b.title COLLATE NOCASE ASC, b.id ASC
 		LIMIT ? OFFSET ?
 	`, withClause(withSQL), opdsPublicationColumns, fromSQL), args...)
 	if err != nil {
@@ -54,16 +54,16 @@ func SearchOPDSPublications(queryer Queryer, scope VisibilityScope, userID int64
 	if !plan.hasClauses {
 		return nil, nil
 	}
-	orderBy := "w.sort_title COLLATE NOCASE ASC, w.title COLLATE NOCASE ASC, w.id ASC"
+	orderBy := "b.sort_title COLLATE NOCASE ASC, b.title COLLATE NOCASE ASC, b.id ASC"
 	if plan.hasRank {
-		orderBy = "rank, w.id ASC"
+		orderBy = "rank, b.id ASC"
 	}
 	rows, err := queryer.Query(fmt.Sprintf(`
 		%s
 		SELECT %s
 		FROM %s
 		WHERE %s
-		  AND EXISTS (SELECT 1 FROM assets a WHERE a.work_id = w.id)
+		  AND EXISTS (SELECT 1 FROM assets a WHERE a.book_id = b.id)
 		ORDER BY %s
 		LIMIT ? OFFSET ?
 	`, withClause(plan.withSQL), opdsPublicationColumns, plan.fromSQL, plan.whereSQL,
@@ -78,18 +78,18 @@ func SearchOPDSPublications(queryer Queryer, scope VisibilityScope, userID int64
 // ListRecentOPDSPublications is ListOPDSPublications ordered newest-first, for the
 // "Recently added" navigation entry.
 func ListRecentOPDSPublications(queryer Queryer, scope VisibilityScope, limit, offset int) ([]OPDSPublicationRow, error) {
-	withSQL, fromSQL, args := scope.joinVisibleWorks("works w")
+	withSQL, fromSQL, args := scope.joinVisibleBooks("books b")
 	args = append(args, limit, offset)
 	rows, err := queryer.Query(fmt.Sprintf(`
 		%s
 		SELECT %s
 		FROM %s
-		WHERE w.deleted_at IS NULL
-		  AND EXISTS (SELECT 1 FROM assets a WHERE a.work_id = w.id)
+		WHERE b.deleted_at IS NULL
+		  AND EXISTS (SELECT 1 FROM assets a WHERE a.book_id = b.id)
 		-- IDs are time-sortable to milliseconds. Use the descending ID inside
 		-- SQLite's one-second added_at bucket so incremental OPDS consumers see
 		-- the newest acquisition first even during a fast batch import.
-		ORDER BY w.added_at DESC, w.id DESC
+		ORDER BY b.added_at DESC, b.id DESC
 		LIMIT ? OFFSET ?
 	`, withClause(withSQL), opdsPublicationColumns, fromSQL), args...)
 	if err != nil {
@@ -104,16 +104,16 @@ func ListRecentOPDSPublications(queryer Queryer, scope VisibilityScope, limit, o
 // query independently intersects the books with the user's content scope so a
 // personal shelf can never widen a shelf-scoped reader's library.
 func ListManualShelfOPDSPublications(queryer Queryer, scope VisibilityScope, shelfID string, limit, offset int) ([]OPDSPublicationRow, error) {
-	withSQL, fromSQL, args := scope.joinVisibleWorks("shelf_books sb JOIN works w ON w.id = sb.work_id")
+	withSQL, fromSQL, args := scope.joinVisibleBooks("shelf_books sb JOIN books b ON b.id = sb.book_id")
 	args = append(args, shelfID, limit, offset)
 	rows, err := queryer.Query(fmt.Sprintf(`
 		%s
 		SELECT %s
 		FROM %s
 		WHERE sb.shelf_id = ?
-		  AND w.deleted_at IS NULL
-		  AND EXISTS (SELECT 1 FROM assets a WHERE a.work_id = w.id)
-		ORDER BY sb.position ASC, sb.added_at DESC, w.added_at DESC, w.id ASC
+		  AND b.deleted_at IS NULL
+		  AND EXISTS (SELECT 1 FROM assets a WHERE a.book_id = b.id)
+		ORDER BY sb.position ASC, sb.added_at DESC, b.added_at DESC, b.id ASC
 		LIMIT ? OFFSET ?
 	`, withClause(withSQL), opdsPublicationColumns, fromSQL), args...)
 	if err != nil {
@@ -124,7 +124,7 @@ func ListManualShelfOPDSPublications(queryer Queryer, scope VisibilityScope, she
 }
 
 func CountManualShelfOPDSPublications(queryer Queryer, scope VisibilityScope, shelfID string) (int, error) {
-	withSQL, fromSQL, args := scope.joinVisibleWorks("shelf_books sb JOIN works w ON w.id = sb.work_id")
+	withSQL, fromSQL, args := scope.joinVisibleBooks("shelf_books sb JOIN books b ON b.id = sb.book_id")
 	args = append(args, shelfID)
 	var count int
 	err := queryer.QueryRow(fmt.Sprintf(`
@@ -132,8 +132,8 @@ func CountManualShelfOPDSPublications(queryer Queryer, scope VisibilityScope, sh
 		SELECT COUNT(*)
 		FROM %s
 		WHERE sb.shelf_id = ?
-		  AND w.deleted_at IS NULL
-		  AND EXISTS (SELECT 1 FROM assets a WHERE a.work_id = w.id)
+		  AND b.deleted_at IS NULL
+		  AND EXISTS (SELECT 1 FROM assets a WHERE a.book_id = b.id)
 	`, withClause(withSQL), fromSQL), args...).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("count manual shelf opds publications query: %w", err)
@@ -161,14 +161,14 @@ func scanOPDSPublications(rows *sql.Rows) ([]OPDSPublicationRow, error) {
 }
 
 func CountOPDSPublications(queryer Queryer, scope VisibilityScope) (int, error) {
-	withSQL, fromSQL, args := scope.joinVisibleWorks("works w")
+	withSQL, fromSQL, args := scope.joinVisibleBooks("books b")
 	var count int
 	err := queryer.QueryRow(fmt.Sprintf(`
 		%s
 		SELECT COUNT(*)
 		FROM %s
-		WHERE w.deleted_at IS NULL
-		  AND EXISTS (SELECT 1 FROM assets a WHERE a.work_id = w.id)
+		WHERE b.deleted_at IS NULL
+		  AND EXISTS (SELECT 1 FROM assets a WHERE a.book_id = b.id)
 	`, withClause(withSQL), fromSQL), args...).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("count opds publications query: %w", err)
@@ -187,7 +187,7 @@ func CountSearchOPDSPublications(queryer Queryer, scope VisibilityScope, userID 
 		SELECT COUNT(*)
 		FROM %s
 		WHERE %s
-		  AND EXISTS (SELECT 1 FROM assets a WHERE a.work_id = w.id)
+		  AND EXISTS (SELECT 1 FROM assets a WHERE a.book_id = b.id)
 	`, withClause(plan.withSQL), plan.fromSQL, plan.whereSQL), plan.args...).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("count search opds publications query: %w", err)

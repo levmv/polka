@@ -19,14 +19,14 @@ type AuthorMutationResult struct {
 }
 
 // RenameAuthor renames an author in place, or merges into an existing author of
-// newName, then rebuilds the search index and relayouts every affected work's
+// newName, then rebuilds the search index and relayouts every affected book's
 // files — the primary author is part of the canonical path, so a rename/merge
 // moves files in bulk. It is the single home for this orchestration, shared by
 // the CLI (`library authors rename|merge`) and the web manage-authors endpoint.
 //
-// A returned error is fatal (the rename did not happen). Per-work relayout
+// A returned error is fatal (the rename did not happen). Per-book relayout
 // failures are collected in AuthorMutationResult.Warnings instead, mirroring
-// relayout.Work's contract: the metadata change is durable and the DB matches
+// relayout.Book's contract: the metadata change is durable and the DB matches
 // disk.
 func RenameAuthor(ctx context.Context, database *db.DB, root storage.Root, oldName, newName string) (AuthorMutationResult, error) {
 	return mutateAuthor(ctx, database, root, func(tx *sql.Tx) ([]string, error) {
@@ -34,23 +34,23 @@ func RenameAuthor(ctx context.Context, database *db.DB, root storage.Root, oldNa
 	})
 }
 
-// SetAuthorSortName overrides an author's sort_name and relayouts the works it
+// SetAuthorSortName overrides an author's sort_name and relayouts the books it
 // is primary on. sort_name selects the canonical-path bucket and author folder,
 // so the override moves files just like a rename. Shares RenameAuthor's
-// contract: a returned error is fatal; per-work relayout failures are warnings.
+// contract: a returned error is fatal; per-book relayout failures are warnings.
 func SetAuthorSortName(ctx context.Context, database *db.DB, root storage.Root, name, sortName string) (AuthorMutationResult, error) {
 	return mutateAuthor(ctx, database, root, func(tx *sql.Tx) ([]string, error) {
 		return db.SetAuthorSortName(tx, name, sortName)
 	})
 }
 
-// mutateAuthor gives both author operations the same affected-work contract:
+// mutateAuthor gives both author operations the same affected-book contract:
 // bump metadata revisions and refresh search in the transaction, then relayout
 // canonical paths after commit with warning semantics.
 func mutateAuthor(ctx context.Context, database *db.DB, root storage.Root, apply func(tx *sql.Tx) ([]string, error)) (AuthorMutationResult, error) {
 	var affected []string
 
-	mutation, err := MutateWorks(ctx, database, root, func(tx *sql.Tx) (Changed, error) {
+	mutation, err := MutateBooks(ctx, database, root, func(tx *sql.Tx) (Changed, error) {
 		var err error
 		affected, err = apply(tx)
 		if err != nil {

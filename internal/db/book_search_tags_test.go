@@ -11,7 +11,7 @@ import (
 func TestQuotedTagsMatchWholeValues(t *testing.T) {
 	database := newTestDB(t)
 	longTag := strings.Repeat("x", 40000)
-	works := []struct{ id, tags string }{
+	books := []struct{ id, tags string }{
 		{"w1", " История , ИСТОРИЯ "},
 		{"w2", "История искусства"},
 		{"w3", "История, искусства"},
@@ -22,15 +22,15 @@ func TestQuotedTagsMatchWholeValues(t *testing.T) {
 		{"w8", longTag + "A"},
 		{"w9", longTag + "B"},
 	}
-	for _, work := range works {
+	for _, book := range books {
 		if err := database.Transact(context.Background(), func(tx *sql.Tx) error {
-			if _, err := tx.Exec("INSERT INTO works (id, title, sort_title, tags) VALUES (?, ?, ?, ?)", work.id, "Needle "+work.id, work.id, work.tags); err != nil {
+			if _, err := tx.Exec("INSERT INTO books (id, title, sort_title, tags) VALUES (?, ?, ?, ?)", book.id, "Needle "+book.id, book.id, book.tags); err != nil {
 				return err
 			}
-			if _, err := tx.Exec("INSERT INTO assets (id, work_id, storage_path, filename, extension) VALUES (?, ?, ?, ?, '.epub')", "a"+work.id, work.id, work.id+".epub", work.id+".epub"); err != nil {
+			if _, err := tx.Exec("INSERT INTO assets (id, book_id, storage_path, filename, extension) VALUES (?, ?, ?, ?, '.epub')", "a"+book.id, book.id, book.id+".epub", book.id+".epub"); err != nil {
 				return err
 			}
-			return UpdateSearchIndex(tx, work.id)
+			return UpdateSearchIndex(tx, book.id)
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -69,14 +69,14 @@ func TestQuotedTagsMatchWholeValues(t *testing.T) {
 
 func TestExactTagShelfTracksMetadataAndAccess(t *testing.T) {
 	database := newTestDB(t)
-	for _, work := range []struct{ id, tags string }{{"w1", "История"}, {"w2", "История искусства"}} {
-		if _, err := database.Exec("INSERT INTO works (id, title, sort_title, tags) VALUES (?, ?, ?, ?)", work.id, work.id, work.id, work.tags); err != nil {
+	for _, book := range []struct{ id, tags string }{{"w1", "История"}, {"w2", "История искусства"}} {
+		if _, err := database.Exec("INSERT INTO books (id, title, sort_title, tags) VALUES (?, ?, ?, ?)", book.id, book.id, book.id, book.tags); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := database.Exec("INSERT INTO assets (id, work_id, storage_path, filename, extension) VALUES (?, ?, ?, ?, '.epub')", "a"+work.id, work.id, work.id+".epub", work.id+".epub"); err != nil {
+		if _, err := database.Exec("INSERT INTO assets (id, book_id, storage_path, filename, extension) VALUES (?, ?, ?, ?, '.epub')", "a"+book.id, book.id, book.id+".epub", book.id+".epub"); err != nil {
 			t.Fatal(err)
 		}
-		setSearchTags(t, database, work.id, work.tags)
+		setSearchTags(t, database, book.id, book.tags)
 	}
 	user, err := database.CreateUser("reader", "pw", RoleReader)
 	if err != nil {
@@ -102,7 +102,7 @@ func TestExactTagShelfTracksMetadataAndAccess(t *testing.T) {
 		}
 		assertTagSearchResults(t, database, scope, user.ID, shelf.Query, want)
 		for _, id := range []string{"w1", "w2"} {
-			allowed, err := CanAccessWork(database, scope, id)
+			allowed, err := CanAccessBook(database, scope, id)
 			if err != nil || allowed != slices.Contains(want, id) {
 				t.Fatalf("access %s = %v, %v; want %v", id, allowed, err, slices.Contains(want, id))
 			}
@@ -117,13 +117,13 @@ func TestExactTagShelfTracksMetadataAndAccess(t *testing.T) {
 	check(nil)
 }
 
-func setSearchTags(t *testing.T, database *DB, workID, tags string) {
+func setSearchTags(t *testing.T, database *DB, bookID, tags string) {
 	t.Helper()
 	if err := database.Transact(context.Background(), func(tx *sql.Tx) error {
-		if _, err := tx.Exec("UPDATE works SET tags = ? WHERE id = ?", tags, workID); err != nil {
+		if _, err := tx.Exec("UPDATE books SET tags = ? WHERE id = ?", tags, bookID); err != nil {
 			return err
 		}
-		return UpdateSearchIndex(tx, workID)
+		return UpdateSearchIndex(tx, bookID)
 	}); err != nil {
 		t.Fatal(err)
 	}

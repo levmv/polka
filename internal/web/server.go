@@ -505,8 +505,6 @@ func (s *Server) routes() (*http.ServeMux, error) {
 	s.route(mux, "POST /api/books/{id}/cover", db.RoleMember, s.handleAPICoverUpload)
 	s.route(mux, "POST /api/books/{id}/cover-url", db.RoleMember, s.handleAPICoverURL)
 	s.route(mux, "GET /api/reader/continue", db.RoleReader, s.handleAPIContinueReading)
-	s.route(mux, "GET /api/reader/preferences", db.RoleReader, s.handleAPIReaderPreferences)
-	s.route(mux, "PUT /api/reader/preferences", db.RoleReader, s.handleAPIReaderPreferencesSave)
 	s.route(mux, "GET /api/reader/assets/{id}/state", db.RoleReader, s.handleAPIReaderState)
 	s.route(mux, "PUT /api/reader/assets/{id}/state", db.RoleReader, s.handleAPIReaderStateSave)
 	s.route(mux, "DELETE /api/reader/assets/{id}/state", db.RoleReader, s.handleAPIReaderStateReset)
@@ -523,8 +521,8 @@ func (s *Server) routes() (*http.ServeMux, error) {
 	s.route(mux, "PATCH /api/shelves/{id}", db.RoleReader, s.handleAPIShelfUpdate)
 	s.route(mux, "DELETE /api/shelves/{id}", db.RoleReader, s.handleAPIShelfDelete)
 	s.route(mux, "POST /api/shelves/{id}/books/bulk", db.RoleReader, s.handleAPIShelfBulkBooks)
-	s.route(mux, "PUT /api/shelves/{id}/books/{workID}", db.RoleReader, s.handleAPIShelfAddBook)
-	s.route(mux, "DELETE /api/shelves/{id}/books/{workID}", db.RoleReader, s.handleAPIShelfRemoveBook)
+	s.route(mux, "PUT /api/shelves/{id}/books/{bookID}", db.RoleReader, s.handleAPIShelfAddBook)
+	s.route(mux, "DELETE /api/shelves/{id}/books/{bookID}", db.RoleReader, s.handleAPIShelfRemoveBook)
 	s.route(mux, "GET /api/series", db.RoleReader, s.handleAPISeries)
 	s.route(mux, "GET /api/authors", db.RoleReader, s.handleAPIAuthors)
 	s.route(mux, "GET /api/authors/info", db.RoleMember, s.handleAPIAuthorInfo)
@@ -562,7 +560,7 @@ const rolePublic = "public"
 // the intentionally open routes (login, setup, static). Credential types and
 // unauthenticated responses are family-level rules in authMiddleware. Two kinds
 // of authorization stay in handlers, after this gate: visibility
-// (CanAccessWork/Asset needs the resolved id and answers 404), and rules that
+// (CanAccessBook/Asset needs the resolved id and answers 404), and rules that
 // are not a minimum role ("admin or self").
 func (s *Server) route(mux *http.ServeMux, pattern, minRole string, h http.HandlerFunc) {
 	mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {

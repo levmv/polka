@@ -63,16 +63,16 @@ func TestCoverHandler(t *testing.T) {
 		dataDir: dir,
 	}
 	reader := mustUser(t, database, "cover-reader", db.RoleReader)
-	coverRequest := func(target, workID string) *http.Request {
+	coverRequest := func(target, bookID string) *http.Request {
 		req := httptest.NewRequest(http.MethodGet, target, nil)
-		req.SetPathValue("id", workID)
+		req.SetPathValue("id", bookID)
 		return req.WithContext(withUser(req.Context(), reader))
 	}
 
 	coverPath := covers.OriginalPath("w_1")
 	os.MkdirAll(filepath.Join(dir, filepath.Dir(coverPath)), 0o755)
 	os.WriteFile(filepath.Join(dir, coverPath), testPNG(t), 0o644)
-	database.Exec("UPDATE works SET cover_version = 1 WHERE id = 'w_1'")
+	database.Exec("UPDATE books SET cover_version = 1 WHERE id = 'w_1'")
 
 	req := coverRequest("/covers/w_1", "w_1")
 	w := httptest.NewRecorder()
@@ -123,7 +123,7 @@ func TestCoverHandler(t *testing.T) {
 	if _, _, err := image.Decode(res.Body); err != nil {
 		t.Errorf("generated cover did not decode as an image: %v", err)
 	}
-	// A no-cover work must not leave a cache file behind; the fallback is
+	// A no-cover book must not leave a cache file behind; the fallback is
 	// regenerated on the fly, never stored.
 	if _, err := os.Stat(filepath.Join(dir, covers.CachePath("w_2", covers.VariantDisplay))); !os.IsNotExist(err) {
 		t.Errorf("generated cover should not be cached on disk")
@@ -142,12 +142,12 @@ func TestCoverHandler(t *testing.T) {
 		t.Errorf("generated conditional response body = %d bytes, err=%v", len(body), err)
 	}
 
-	// An unknown work ID still 404s — no DB row, nothing to render from.
+	// An unknown book ID still 404s — no DB row, nothing to render from.
 	req = coverRequest("/covers/w_999", "w_999")
 	w = httptest.NewRecorder()
 	s.handleCover(w, req)
 	if w.Result().StatusCode != http.StatusNotFound {
-		t.Errorf("expected 404 for unknown work, got %d", w.Result().StatusCode)
+		t.Errorf("expected 404 for unknown book, got %d", w.Result().StatusCode)
 	}
 }
 
@@ -189,10 +189,10 @@ func TestCoverHandlerAllowsMemberTrashCoversOnly(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, coverPath), testPNG(t), 0o644); err != nil {
 		t.Fatalf("write cover: %v", err)
 	}
-	if _, err := database.Exec("UPDATE works SET cover_version = 1 WHERE id = 'w_1'"); err != nil {
+	if _, err := database.Exec("UPDATE books SET cover_version = 1 WHERE id = 'w_1'"); err != nil {
 		t.Fatalf("mark cover: %v", err)
 	}
-	if err := db.SoftDeleteWork(database, "w_1", member.ID); err != nil {
+	if err := db.SoftDeleteBook(database, "w_1", member.ID); err != nil {
 		t.Fatalf("soft delete: %v", err)
 	}
 
@@ -224,16 +224,16 @@ func TestAPICoverUpload(t *testing.T) {
 	}
 	member := mustUser(t, database, "member", db.RoleMember)
 
-	uploadReq := func(workID string, filename string, contentType string, content []byte) *http.Request {
+	uploadReq := func(bookID string, filename string, contentType string, content []byte) *http.Request {
 		var b bytes.Buffer
 		mw := multipart.NewWriter(&b)
 		part, _ := mw.CreateFormFile("cover", filename)
 		part.Write(content)
 		mw.Close()
 
-		req := httptest.NewRequest("POST", "/api/books/"+workID+"/cover", &b)
+		req := httptest.NewRequest("POST", "/api/books/"+bookID+"/cover", &b)
 		req.Header.Set("Content-Type", mw.FormDataContentType())
-		req.SetPathValue("id", workID)
+		req.SetPathValue("id", bookID)
 		return req.WithContext(withUser(req.Context(), member))
 	}
 
@@ -248,7 +248,7 @@ func TestAPICoverUpload(t *testing.T) {
 	}
 
 	var coverVersion int
-	database.QueryRow("SELECT cover_version FROM works WHERE id = 'w_1'").Scan(&coverVersion)
+	database.QueryRow("SELECT cover_version FROM books WHERE id = 'w_1'").Scan(&coverVersion)
 	if coverVersion != 1 {
 		t.Errorf("expected cover_version 1, got %d", coverVersion)
 	}
@@ -299,7 +299,7 @@ func TestStoreCoverWaitsForStorageSlotAndMergesCurrentOverrides(t *testing.T) {
 	case <-time.After(50 * time.Millisecond):
 	}
 	var coverVersion int
-	if err := database.QueryRow("SELECT cover_version FROM works WHERE id = 'w_1'").Scan(&coverVersion); err != nil {
+	if err := database.QueryRow("SELECT cover_version FROM books WHERE id = 'w_1'").Scan(&coverVersion); err != nil {
 		releasePausedWriteback()
 		t.Fatalf("query cover version: %v", err)
 	}
@@ -310,7 +310,7 @@ func TestStoreCoverWaitsForStorageSlotAndMergesCurrentOverrides(t *testing.T) {
 
 	// Commit another override while the cover is queued. The cover transaction
 	// must load the then-current map, rather than replace an earlier snapshot.
-	if _, err := database.Exec(`UPDATE works SET manual_overrides = '{"title":true}' WHERE id = 'w_1'`); err != nil {
+	if _, err := database.Exec(`UPDATE books SET manual_overrides = '{"title":true}' WHERE id = 'w_1'`); err != nil {
 		releasePausedWriteback()
 		t.Fatalf("set concurrent override: %v", err)
 	}
@@ -325,7 +325,7 @@ func TestStoreCoverWaitsForStorageSlotAndMergesCurrentOverrides(t *testing.T) {
 	}
 
 	var rawOverrides string
-	if err := database.QueryRow("SELECT cover_version, manual_overrides FROM works WHERE id = 'w_1'").Scan(&coverVersion, &rawOverrides); err != nil {
+	if err := database.QueryRow("SELECT cover_version, manual_overrides FROM books WHERE id = 'w_1'").Scan(&coverVersion, &rawOverrides); err != nil {
 		t.Fatalf("query stored cover: %v", err)
 	}
 	overrides := bookmeta.ParseOverrides(rawOverrides)
@@ -416,7 +416,7 @@ func TestAPIGeneratedCoverPreviewDoesNotPersist(t *testing.T) {
 	}
 
 	var coverVersion int
-	if err := database.QueryRow("SELECT cover_version FROM works WHERE id = 'w_1'").Scan(&coverVersion); err != nil {
+	if err := database.QueryRow("SELECT cover_version FROM books WHERE id = 'w_1'").Scan(&coverVersion); err != nil {
 		t.Fatalf("query cover_version: %v", err)
 	}
 	if coverVersion != 0 {
@@ -436,7 +436,7 @@ func TestAPIGeneratedCoverPreviewDoesNotPersist(t *testing.T) {
 	w = httptest.NewRecorder()
 	s.handleAPIGeneratedCoverPreview(w, req)
 	if w.Result().StatusCode != http.StatusNotFound {
-		t.Fatalf("expected 404 for unknown work, got %d", w.Result().StatusCode)
+		t.Fatalf("expected 404 for unknown book, got %d", w.Result().StatusCode)
 	}
 }
 
@@ -482,7 +482,7 @@ func TestAPICoverURL(t *testing.T) {
 	var metadataRev int64
 	var overrides string
 	if err := database.QueryRow(
-		"SELECT cover_version, metadata_rev, manual_overrides FROM works WHERE id = 'w_1'",
+		"SELECT cover_version, metadata_rev, manual_overrides FROM books WHERE id = 'w_1'",
 	).Scan(&coverVersion, &metadataRev, &overrides); err != nil {
 		t.Fatalf("query cover fields: %v", err)
 	}
@@ -807,7 +807,7 @@ func TestAPICoverSearchApply(t *testing.T) {
 		t.Fatalf("requested URL = %q", requestedURL)
 	}
 	var coverVersion int
-	if err := database.QueryRow("SELECT cover_version FROM works WHERE id = 'w_1'").Scan(&coverVersion); err != nil {
+	if err := database.QueryRow("SELECT cover_version FROM books WHERE id = 'w_1'").Scan(&coverVersion); err != nil {
 		t.Fatalf("query cover_version: %v", err)
 	}
 	if coverVersion != 1 {

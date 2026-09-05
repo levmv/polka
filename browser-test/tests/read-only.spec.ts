@@ -7,7 +7,7 @@ function seriesItem(name: string, bookCount: number) {
     author: 'Stub Author',
     book_count: bookCount,
     finished_count: 0,
-    cover_work_id: 'w_1',
+    cover_book_id: 'w_1',
     cover_version: 0,
   };
 }
@@ -540,7 +540,7 @@ test.describe('Polka read-only browser tests', () => {
 
   test('Series page fetches the next server page on demand', async ({ page }) => {
     const requests: string[] = [];
-    // The stubbed series carry a made-up cover work, so serve a pixel for it.
+    // The stubbed series carry a made-up cover book, so serve a pixel for it.
     await page.route(/\/covers\//, async (route) => {
       await route.fulfill({
         status: 200,

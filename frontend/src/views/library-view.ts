@@ -319,7 +319,7 @@ export function initLibrary(root: HTMLElement): RouteController {
 
     const handleUserSettings = (event: Event) => {
         const settings = (event as CustomEvent<UserSettings>).detail;
-        if (!settings || typeof settings.hide_continue_reading !== 'boolean') return;
+        if (!settings || typeof settings.show_continue_reading !== 'boolean') return;
         applyUserSettings(state, settings, true);
     };
     window.addEventListener('polka:user-settings', handleUserSettings);
@@ -678,7 +678,7 @@ function cancelInFlightLoads(state: LibraryViewState): void {
 
 function syncContinueReading(state: LibraryViewState): void {
     state.rail.sync(
-        shouldShowContinueReading(state) && state.userSettings?.hide_continue_reading === false,
+        shouldShowContinueReading(state) && state.userSettings?.show_continue_reading === true,
     );
 }
 
@@ -769,13 +769,13 @@ function currentLibraryContext(state: LibraryViewState): BookListContext {
 
 function currentLibrarySequence(
     state: LibraryViewState,
-    workID: string,
+    bookID: string,
 ): BookSequenceWindow | null {
     // A jumped page does not contain the preceding slice, so let the edit
     // controller fetch its bounded server-side window instead of temporarily
     // presenting the first visible book as the first book in the library.
     if (state.pageOffset > 0) return null;
-    const currentIndex = state.books.findIndex((book) => book.id === workID);
+    const currentIndex = state.books.findIndex((book) => book.id === bookID);
     if (currentIndex < 0) return null;
     return {
         items: state.books.map((book) => ({ id: book.id, title: book.title })),
@@ -899,7 +899,7 @@ function replaceRenderedBook(state: LibraryViewState, updated: BookSummary): voi
     state.selection?.syncAfterRender();
 }
 
-// removeRenderedBooks drops the given works from view state and the DOM without
+// removeRenderedBooks drops the given books from view state and the DOM without
 // re-rendering the rest, then re-syncs selection so no trashed id lingers.
 function removeRenderedBooks(state: LibraryViewState, ids: string[]): void {
     if (ids.length === 0) return;

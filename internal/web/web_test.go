@@ -36,16 +36,16 @@ func setupTestDB(t *testing.T) (*db.DB, string) {
 	}
 
 	_, err = database.Exec(`
-		INSERT INTO works (id, title, sort_title) VALUES ('w_1', 'The Hobbit', 'Hobbit, The');
-		INSERT INTO works (id, title, sort_title) VALUES ('w_2', 'Dune', 'Dune');
+		INSERT INTO books (id, title, sort_title) VALUES ('w_1', 'The Hobbit', 'Hobbit, The');
+		INSERT INTO books (id, title, sort_title) VALUES ('w_2', 'Dune', 'Dune');
 
 		INSERT INTO authors (id, name, sort_name) VALUES ('a_1', 'J.R.R. Tolkien', 'Tolkien, J.R.R.');
 		INSERT INTO authors (id, name, sort_name) VALUES ('a_2', 'Frank Herbert', 'Herbert, Frank');
 
-		INSERT INTO work_authors (work_id, author_id) VALUES ('w_1', 'a_1');
-		INSERT INTO work_authors (work_id, author_id) VALUES ('w_2', 'a_2');
+		INSERT INTO book_authors (book_id, author_id) VALUES ('w_1', 'a_1');
+		INSERT INTO book_authors (book_id, author_id) VALUES ('w_2', 'a_2');
 
-		INSERT INTO assets (id, work_id, storage_path, filename, extension) VALUES ('asset_1', 'w_1', 'Tolkien/The_Hobbit/a_1.epub', 'a_1.epub', '.epub');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension) VALUES ('asset_1', 'w_1', 'Tolkien/The_Hobbit/a_1.epub', 'a_1.epub', '.epub');
 	`)
 	if err != nil {
 		t.Fatalf("failed to insert test data: %v", err)
@@ -60,16 +60,16 @@ func setupTestDB(t *testing.T) (*db.DB, string) {
 	return database, dir
 }
 
-func mustUpdateSearchIndex(t *testing.T, database *db.DB, workIDs ...string) {
+func mustUpdateSearchIndex(t *testing.T, database *db.DB, bookIDs ...string) {
 	t.Helper()
 	tx, err := database.Begin()
 	if err != nil {
 		t.Fatalf("begin search-index update: %v", err)
 	}
 	defer tx.Rollback()
-	for _, workID := range workIDs {
-		if err := db.UpdateSearchIndex(tx, workID); err != nil {
-			t.Fatalf("update search index for %s: %v", workID, err)
+	for _, bookID := range bookIDs {
+		if err := db.UpdateSearchIndex(tx, bookID); err != nil {
+			t.Fatalf("update search index for %s: %v", bookID, err)
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -167,7 +167,7 @@ func TestAPISearchTagAndSpecialChars(t *testing.T) {
 	database, dir := setupTestDB(t)
 	defer database.Close()
 
-	if _, err := database.Exec("UPDATE works SET tags = 'fantasy, classics' WHERE id = 'w_1'"); err != nil {
+	if _, err := database.Exec("UPDATE books SET tags = 'fantasy, classics' WHERE id = 'w_1'"); err != nil {
 		t.Fatalf("update tags: %v", err)
 	}
 	mustUpdateSearchIndex(t, database, "w_1")
@@ -232,8 +232,8 @@ func TestDownloadHandler(t *testing.T) {
 	defer database.Close()
 
 	_, err := database.Exec(`
-		INSERT INTO works (id, title, sort_title) VALUES ('w_fb2zip_download', 'Zipped FB2', 'Zipped FB2');
-		INSERT INTO assets (id, work_id, storage_path, filename, extension, format) VALUES ('asset_fb2zip_download', 'w_fb2zip_download', 'FB2/Zipped/book.fb2.zip', 'book.fb2.zip', '.fb2.zip', 'fb2');
+		INSERT INTO books (id, title, sort_title) VALUES ('w_fb2zip_download', 'Zipped FB2', 'Zipped FB2');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format) VALUES ('asset_fb2zip_download', 'w_fb2zip_download', 'FB2/Zipped/book.fb2.zip', 'book.fb2.zip', '.fb2.zip', 'fb2');
 	`)
 	if err != nil {
 		t.Fatalf("insert fb2.zip fixture: %v", err)
@@ -328,8 +328,8 @@ func TestDownloadAsAZW4PDF(t *testing.T) {
 	defer database.Close()
 
 	_, err := database.Exec(`
-		INSERT INTO works (id, title, sort_title) VALUES ('w_azw4', 'Print Replica', 'Print Replica');
-		INSERT INTO assets (id, work_id, storage_path, filename, extension, format) VALUES ('asset_azw4', 'w_azw4', 'Kindle/Print/print-replica.azw4', 'print-replica.azw4', '.azw4', 'azw4');
+		INSERT INTO books (id, title, sort_title) VALUES ('w_azw4', 'Print Replica', 'Print Replica');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format) VALUES ('asset_azw4', 'w_azw4', 'Kindle/Print/print-replica.azw4', 'print-replica.azw4', '.azw4', 'azw4');
 	`)
 	if err != nil {
 		t.Fatalf("insert azw4 fixture: %v", err)
@@ -371,8 +371,8 @@ func TestDownloadAsRejectsUnsupportedConversion(t *testing.T) {
 	defer database.Close()
 
 	_, err := database.Exec(`
-		INSERT INTO works (id, title, sort_title) VALUES ('w_mobi_download', 'Legacy MOBI', 'Legacy MOBI');
-		INSERT INTO assets (id, work_id, storage_path, filename, extension, format) VALUES ('asset_mobi_download', 'w_mobi_download', 'Kindle/Legacy/legacy.mobi', 'legacy.mobi', '.mobi', 'mobi');
+		INSERT INTO books (id, title, sort_title) VALUES ('w_mobi_download', 'Legacy MOBI', 'Legacy MOBI');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format) VALUES ('asset_mobi_download', 'w_mobi_download', 'Kindle/Legacy/legacy.mobi', 'legacy.mobi', '.mobi', 'mobi');
 	`)
 	if err != nil {
 		t.Fatalf("insert mobi fixture: %v", err)
@@ -407,8 +407,8 @@ func TestDownloadAsCBRToCBZ(t *testing.T) {
 	defer database.Close()
 
 	_, err := database.Exec(`
-		INSERT INTO works (id, title, sort_title) VALUES ('w_cbr_download', 'RAR Comic', 'RAR Comic');
-		INSERT INTO assets (id, work_id, storage_path, filename, extension, format) VALUES ('asset_cbr_download', 'w_cbr_download', 'Comics/RAR/rar-comic.cbr', 'rar-comic.cbr', '.cbr', 'cbr');
+		INSERT INTO books (id, title, sort_title) VALUES ('w_cbr_download', 'RAR Comic', 'RAR Comic');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format) VALUES ('asset_cbr_download', 'w_cbr_download', 'Comics/RAR/rar-comic.cbr', 'rar-comic.cbr', '.cbr', 'cbr');
 	`)
 	if err != nil {
 		t.Fatalf("insert CBR fixture: %v", err)
@@ -449,8 +449,8 @@ func TestDownloadAsAZW4WithoutPDFDoesNotSendAttachment(t *testing.T) {
 	defer database.Close()
 
 	_, err := database.Exec(`
-		INSERT INTO works (id, title, sort_title) VALUES ('w_empty_azw4', 'Empty Print Replica', 'Empty Print Replica');
-		INSERT INTO assets (id, work_id, storage_path, filename, extension, format) VALUES ('asset_empty_azw4', 'w_empty_azw4', 'Kindle/Empty/empty.azw4', 'empty.azw4', '.azw4', 'azw4');
+		INSERT INTO books (id, title, sort_title) VALUES ('w_empty_azw4', 'Empty Print Replica', 'Empty Print Replica');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format) VALUES ('asset_empty_azw4', 'w_empty_azw4', 'Kindle/Empty/empty.azw4', 'empty.azw4', '.azw4', 'azw4');
 	`)
 	if err != nil {
 		t.Fatalf("insert empty azw4 fixture: %v", err)
@@ -488,8 +488,8 @@ func TestDownloadAsTXTToEPUB(t *testing.T) {
 	defer database.Close()
 
 	_, err := database.Exec(`
-		INSERT INTO works (id, title, sort_title) VALUES ('w_txt', 'Plain Notes', 'Plain Notes');
-		INSERT INTO assets (id, work_id, storage_path, filename, extension, format) VALUES ('asset_txt', 'w_txt', 'Text/Plain/plain.txt', 'plain.txt', '.txt', 'txt');
+		INSERT INTO books (id, title, sort_title) VALUES ('w_txt', 'Plain Notes', 'Plain Notes');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format) VALUES ('asset_txt', 'w_txt', 'Text/Plain/plain.txt', 'plain.txt', '.txt', 'txt');
 	`)
 	if err != nil {
 		t.Fatalf("insert txt fixture: %v", err)
@@ -530,8 +530,8 @@ func TestDownloadAsOversizedTXTReturns413(t *testing.T) {
 	defer database.Close()
 
 	_, err := database.Exec(`
-		INSERT INTO works (id, title, sort_title) VALUES ('w_huge_txt', 'Huge Notes', 'Huge Notes');
-		INSERT INTO assets (id, work_id, storage_path, filename, extension, format) VALUES ('asset_huge_txt', 'w_huge_txt', 'Text/Huge/huge.txt', 'huge.txt', '.txt', 'txt');
+		INSERT INTO books (id, title, sort_title) VALUES ('w_huge_txt', 'Huge Notes', 'Huge Notes');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format) VALUES ('asset_huge_txt', 'w_huge_txt', 'Text/Huge/huge.txt', 'huge.txt', '.txt', 'txt');
 	`)
 	if err != nil {
 		t.Fatalf("insert huge txt fixture: %v", err)
@@ -573,8 +573,8 @@ func TestDownloadAsEPUBToKEPUB(t *testing.T) {
 	defer database.Close()
 
 	_, err := database.Exec(`
-		INSERT INTO works (id, title, sort_title) VALUES ('w_epub_kepub', 'Kobo Source', 'Kobo Source');
-		INSERT INTO assets (id, work_id, storage_path, filename, extension, format) VALUES ('asset_epub_kepub', 'w_epub_kepub', 'EPUB/Kobo/source.epub', 'source.epub', '.epub', 'epub');
+		INSERT INTO books (id, title, sort_title) VALUES ('w_epub_kepub', 'Kobo Source', 'Kobo Source');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format) VALUES ('asset_epub_kepub', 'w_epub_kepub', 'EPUB/Kobo/source.epub', 'source.epub', '.epub', 'epub');
 	`)
 	if err != nil {
 		t.Fatalf("insert epub fixture: %v", err)
@@ -636,8 +636,8 @@ func TestDownloadAsEPUBToRepairedEPUB(t *testing.T) {
 	defer database.Close()
 
 	_, err := database.Exec(`
-		INSERT INTO works (id, title, sort_title) VALUES ('w_epub_rebuild', 'Repair Source', 'Repair Source');
-		INSERT INTO assets (id, work_id, storage_path, filename, extension, format) VALUES ('asset_epub_rebuild', 'w_epub_rebuild', 'EPUB/Repair/source.epub', 'source.epub', '.epub', 'epub');
+		INSERT INTO books (id, title, sort_title) VALUES ('w_epub_rebuild', 'Repair Source', 'Repair Source');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format) VALUES ('asset_epub_rebuild', 'w_epub_rebuild', 'EPUB/Repair/source.epub', 'source.epub', '.epub', 'epub');
 	`)
 	if err != nil {
 		t.Fatalf("insert EPUB rebuild fixture: %v", err)
@@ -688,8 +688,8 @@ func TestDownloadAsConversionFailureDoesNotCommitAttachment(t *testing.T) {
 	defer database.Close()
 
 	_, err := database.Exec(`
-		INSERT INTO works (id, title, sort_title) VALUES ('w_broken_epub', 'Broken EPUB', 'Broken EPUB');
-		INSERT INTO assets (id, work_id, storage_path, filename, extension, format) VALUES ('asset_broken_epub', 'w_broken_epub', 'EPUB/Broken/source.epub', 'source.epub', '.epub', 'epub');
+		INSERT INTO books (id, title, sort_title) VALUES ('w_broken_epub', 'Broken EPUB', 'Broken EPUB');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format) VALUES ('asset_broken_epub', 'w_broken_epub', 'EPUB/Broken/source.epub', 'source.epub', '.epub', 'epub');
 	`)
 	if err != nil {
 		t.Fatalf("insert broken EPUB fixture: %v", err)
@@ -778,31 +778,31 @@ func TestReaderRoutesServeReadablePrimaryAssets(t *testing.T) {
 	defer database.Close()
 
 	_, err := database.Exec(`
-		INSERT INTO works (id, title, sort_title) VALUES ('w_pdf', 'PDF Book', 'PDF Book');
-		INSERT INTO assets (id, work_id, storage_path, filename, extension, format, is_primary, can_read) VALUES ('asset_pdf', 'w_pdf', 'PDF/PDF_Book/asset_pdf.pdf', 'asset_pdf.pdf', '.pdf', 'pdf', 1, 1);
-		INSERT INTO works (id, title, sort_title) VALUES ('w_epub', 'EPUB Book', 'EPUB Book');
-		INSERT INTO assets (id, work_id, storage_path, filename, extension, format, is_primary, can_read) VALUES ('asset_epub', 'w_epub', 'EPUB/EPUB_Book/asset_epub.epub', 'asset_epub.epub', '.epub', 'epub', 1, 1);
-		INSERT INTO assets (id, work_id, storage_path, filename, extension, format, is_primary, can_read) VALUES ('asset_epub_alt', 'w_epub', 'EPUB/EPUB_Book/asset_epub_alt.fb2', 'asset_epub_alt.fb2', '.fb2', 'fb2', 0, 1);
-		INSERT INTO works (id, title, sort_title) VALUES ('w_missing_epub', 'Missing EPUB', 'Missing EPUB');
-		INSERT INTO assets (id, work_id, storage_path, filename, extension, format, is_primary, can_read) VALUES ('asset_missing_epub', 'w_missing_epub', 'EPUB/Missing/asset_missing.epub', 'asset_missing.epub', '.epub', 'epub', 1, 1);
-		INSERT INTO works (id, title, sort_title) VALUES ('w_kepub', 'KEPUB Book', 'KEPUB Book');
-		INSERT INTO assets (id, work_id, storage_path, filename, extension, format, is_primary, can_read) VALUES ('asset_kepub', 'w_kepub', 'KEPUB/KEPUB_Book/asset_kepub.kepub.epub', 'asset_kepub.kepub.epub', '.kepub.epub', 'kepub', 1, 1);
-		INSERT INTO works (id, title, sort_title) VALUES ('w_mobi', 'MOBI Book', 'MOBI Book');
-		INSERT INTO assets (id, work_id, storage_path, filename, extension, format, is_primary, can_read) VALUES ('asset_mobi', 'w_mobi', 'MOBI/MOBI_Book/asset_mobi.mobi', 'asset_mobi.mobi', '.mobi', 'mobi', 1, 1);
-		INSERT INTO works (id, title, sort_title) VALUES ('w_fb2', 'FB2 Book', 'FB2 Book');
-		INSERT INTO assets (id, work_id, storage_path, filename, extension, format, is_primary, can_read) VALUES ('asset_fb2', 'w_fb2', 'FB2/FB2_Book/asset_fb2.fb2', 'asset_fb2.fb2', '.fb2', 'fb2', 1, 1);
-		INSERT INTO works (id, title, sort_title) VALUES ('w_fb2zip', 'Zipped FB2 Book', 'Zipped FB2 Book');
-		INSERT INTO assets (id, work_id, storage_path, filename, extension, format, is_primary, can_read) VALUES ('asset_fb2zip', 'w_fb2zip', 'FB2Zip/FB2Zip_Book/asset_fb2zip.fb2.zip', 'asset_fb2zip.fb2.zip', '.fb2.zip', 'fb2', 1, 1);
-		INSERT INTO works (id, title, sort_title) VALUES ('w_fb2_mislabeled', 'Mislabeled Zipped FB2 Book', 'Mislabeled Zipped FB2 Book');
-		INSERT INTO assets (id, work_id, storage_path, filename, extension, format, is_primary, can_read) VALUES ('asset_fb2_mislabeled', 'w_fb2_mislabeled', 'FB2Mislabeled/FB2Mislabeled_Book/asset_fb2_mislabeled.fb2', 'asset_fb2_mislabeled.fb2', '.fb2', 'fb2', 1, 1);
-		INSERT INTO works (id, title, sort_title) VALUES ('w_fb2gz', 'Gzipped FB2 Book', 'Gzipped FB2 Book');
-		INSERT INTO assets (id, work_id, storage_path, filename, extension, format, is_primary, can_read) VALUES ('asset_fb2gz', 'w_fb2gz', 'FB2Gzip/FB2Gzip_Book/asset_fb2gz.fb2.gz', 'asset_fb2gz.fb2.gz', '.fb2.gz', 'fb2', 1, 1);
-		INSERT INTO works (id, title, sort_title) VALUES ('w_cbz', 'CBZ Book', 'CBZ Book');
-		INSERT INTO assets (id, work_id, storage_path, filename, extension, format, is_primary, can_read) VALUES ('asset_cbz', 'w_cbz', 'CBZ/CBZ_Book/asset_cbz.cbz', 'asset_cbz.cbz', '.cbz', 'cbz', 1, 1);
-		INSERT INTO works (id, title, sort_title) VALUES ('w_cbr', 'CBR Book', 'CBR Book');
-		INSERT INTO assets (id, work_id, storage_path, filename, extension, format, is_primary, can_read) VALUES ('asset_cbr', 'w_cbr', 'CBR/CBR_Book/asset_cbr.cbr', 'asset_cbr.cbr', '.cbr', 'cbr', 1, 1);
-		INSERT INTO works (id, title, sort_title) VALUES ('w_cb7', 'CB7 Book', 'CB7 Book');
-		INSERT INTO assets (id, work_id, storage_path, filename, extension, format, is_primary, can_read) VALUES ('asset_cb7', 'w_cb7', 'CB7/CB7_Book/asset_cb7.cb7', 'asset_cb7.cb7', '.cb7', 'cb7', 1, 1);
+		INSERT INTO books (id, title, sort_title) VALUES ('w_pdf', 'PDF Book', 'PDF Book');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read) VALUES ('asset_pdf', 'w_pdf', 'PDF/PDF_Book/asset_pdf.pdf', 'asset_pdf.pdf', '.pdf', 'pdf', 1, 1);
+		INSERT INTO books (id, title, sort_title) VALUES ('w_epub', 'EPUB Book', 'EPUB Book');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read) VALUES ('asset_epub', 'w_epub', 'EPUB/EPUB_Book/asset_epub.epub', 'asset_epub.epub', '.epub', 'epub', 1, 1);
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read) VALUES ('asset_epub_alt', 'w_epub', 'EPUB/EPUB_Book/asset_epub_alt.fb2', 'asset_epub_alt.fb2', '.fb2', 'fb2', 0, 1);
+		INSERT INTO books (id, title, sort_title) VALUES ('w_missing_epub', 'Missing EPUB', 'Missing EPUB');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read) VALUES ('asset_missing_epub', 'w_missing_epub', 'EPUB/Missing/asset_missing.epub', 'asset_missing.epub', '.epub', 'epub', 1, 1);
+		INSERT INTO books (id, title, sort_title) VALUES ('w_kepub', 'KEPUB Book', 'KEPUB Book');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read) VALUES ('asset_kepub', 'w_kepub', 'KEPUB/KEPUB_Book/asset_kepub.kepub.epub', 'asset_kepub.kepub.epub', '.kepub.epub', 'kepub', 1, 1);
+		INSERT INTO books (id, title, sort_title) VALUES ('w_mobi', 'MOBI Book', 'MOBI Book');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read) VALUES ('asset_mobi', 'w_mobi', 'MOBI/MOBI_Book/asset_mobi.mobi', 'asset_mobi.mobi', '.mobi', 'mobi', 1, 1);
+		INSERT INTO books (id, title, sort_title) VALUES ('w_fb2', 'FB2 Book', 'FB2 Book');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read) VALUES ('asset_fb2', 'w_fb2', 'FB2/FB2_Book/asset_fb2.fb2', 'asset_fb2.fb2', '.fb2', 'fb2', 1, 1);
+		INSERT INTO books (id, title, sort_title) VALUES ('w_fb2zip', 'Zipped FB2 Book', 'Zipped FB2 Book');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read) VALUES ('asset_fb2zip', 'w_fb2zip', 'FB2Zip/FB2Zip_Book/asset_fb2zip.fb2.zip', 'asset_fb2zip.fb2.zip', '.fb2.zip', 'fb2', 1, 1);
+		INSERT INTO books (id, title, sort_title) VALUES ('w_fb2_mislabeled', 'Mislabeled Zipped FB2 Book', 'Mislabeled Zipped FB2 Book');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read) VALUES ('asset_fb2_mislabeled', 'w_fb2_mislabeled', 'FB2Mislabeled/FB2Mislabeled_Book/asset_fb2_mislabeled.fb2', 'asset_fb2_mislabeled.fb2', '.fb2', 'fb2', 1, 1);
+		INSERT INTO books (id, title, sort_title) VALUES ('w_fb2gz', 'Gzipped FB2 Book', 'Gzipped FB2 Book');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read) VALUES ('asset_fb2gz', 'w_fb2gz', 'FB2Gzip/FB2Gzip_Book/asset_fb2gz.fb2.gz', 'asset_fb2gz.fb2.gz', '.fb2.gz', 'fb2', 1, 1);
+		INSERT INTO books (id, title, sort_title) VALUES ('w_cbz', 'CBZ Book', 'CBZ Book');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read) VALUES ('asset_cbz', 'w_cbz', 'CBZ/CBZ_Book/asset_cbz.cbz', 'asset_cbz.cbz', '.cbz', 'cbz', 1, 1);
+		INSERT INTO books (id, title, sort_title) VALUES ('w_cbr', 'CBR Book', 'CBR Book');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read) VALUES ('asset_cbr', 'w_cbr', 'CBR/CBR_Book/asset_cbr.cbr', 'asset_cbr.cbr', '.cbr', 'cbr', 1, 1);
+		INSERT INTO books (id, title, sort_title) VALUES ('w_cb7', 'CB7 Book', 'CB7 Book');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read) VALUES ('asset_cb7', 'w_cb7', 'CB7/CB7_Book/asset_cb7.cb7', 'asset_cb7.cb7', '.cb7', 'cb7', 1, 1);
 		`)
 	if err != nil {
 		t.Fatalf("insert reader fixtures: %v", err)
@@ -1226,8 +1226,8 @@ func TestReaderRoutesRequireReadableStoredFormat(t *testing.T) {
 	defer database.Close()
 
 	_, err := database.Exec(`
-		INSERT INTO works (id, title, sort_title) VALUES ('w_stale_reader', 'Stale Reader', 'Stale Reader');
-		INSERT INTO assets (id, work_id, storage_path, filename, extension, format, is_primary, can_read)
+		INSERT INTO books (id, title, sort_title) VALUES ('w_stale_reader', 'Stale Reader', 'Stale Reader');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read)
 			VALUES ('asset_stale_reader', 'w_stale_reader', 'Stale/Stale_Reader/asset_stale_reader.chm', 'asset_stale_reader.chm', '.chm', 'chm', 1, 1);
 	`)
 	if err != nil {
@@ -1277,8 +1277,8 @@ func TestReadZippedFB2AssetRejectsAmbiguousArchive(t *testing.T) {
 	defer database.Close()
 
 	_, err := database.Exec(`
-		INSERT INTO works (id, title, sort_title) VALUES ('w_multi_fb2', 'Ambiguous FB2', 'Ambiguous FB2');
-		INSERT INTO assets (id, work_id, storage_path, filename, extension, format, is_primary) VALUES ('asset_multi_fb2', 'w_multi_fb2', 'FB2/Multi/ambiguous.fb2.zip', 'ambiguous.fb2.zip', '.fb2.zip', 'fb2', 1);
+		INSERT INTO books (id, title, sort_title) VALUES ('w_multi_fb2', 'Ambiguous FB2', 'Ambiguous FB2');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary) VALUES ('asset_multi_fb2', 'w_multi_fb2', 'FB2/Multi/ambiguous.fb2.zip', 'ambiguous.fb2.zip', '.fb2.zip', 'fb2', 1);
 	`)
 	if err != nil {
 		t.Fatalf("insert ambiguous fb2 fixture: %v", err)

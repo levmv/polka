@@ -127,9 +127,9 @@ test.describe('Catalog', () => {
     const card = page.locator('.book-card', { hasText: 'With Cover Book' });
     await expect(card).toBeVisible();
     const detailHref = await card.locator('.book-title-link').getAttribute('href');
-    const workId = detailHref ? new URL(detailHref, page.url()).pathname.split('/').pop() : '';
-    if (!workId) throw new Error('missing book id');
-    const detailRes = await page.request.get(`/api/books/${encodeURIComponent(workId)}`);
+    const bookId = detailHref ? new URL(detailHref, page.url()).pathname.split('/').pop() : '';
+    if (!bookId) throw new Error('missing book id');
+    const detailRes = await page.request.get(`/api/books/${encodeURIComponent(bookId)}`);
     expect(detailRes.ok()).toBe(true);
     const detail = (await detailRes.json()) as {
       assets: Array<{ id: string; can_read: boolean; is_primary: boolean }>;
@@ -144,7 +144,7 @@ test.describe('Catalog', () => {
     );
     expect(positionRes.ok()).toBe(true);
     const resetStatus = await page.request.put(
-      `/api/books/${encodeURIComponent(workId)}/reading-status`,
+      `/api/books/${encodeURIComponent(bookId)}/reading-status`,
       { data: { status: 'unread' } },
     );
     expect(resetStatus.ok()).toBe(true);

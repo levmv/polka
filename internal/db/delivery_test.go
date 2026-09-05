@@ -53,7 +53,7 @@ func TestDeliveryDeviceLifecycleKeepsOneDefault(t *testing.T) {
 	}
 }
 
-func TestDeliveryWorkForPlanAppliesScope(t *testing.T) {
+func TestDeliveryBookForPlanAppliesScope(t *testing.T) {
 	database := newTestDB(t)
 	user, err := database.CreateUser("reader", "pw", RoleReader)
 	if err != nil {
@@ -64,14 +64,14 @@ func TestDeliveryWorkForPlanAppliesScope(t *testing.T) {
 		t.Fatalf("create shelf: %v", err)
 	}
 	if _, err := database.Exec(`
-		INSERT INTO works (id, title, sort_title) VALUES ('allowed', 'Allowed', 'Allowed');
-		INSERT INTO works (id, title, sort_title) VALUES ('blocked', 'Blocked', 'Blocked');
-		INSERT INTO assets (id, work_id, storage_path, filename, extension, format, current_size, is_primary)
+		INSERT INTO books (id, title, sort_title) VALUES ('allowed', 'Allowed', 'Allowed');
+		INSERT INTO books (id, title, sort_title) VALUES ('blocked', 'Blocked', 'Blocked');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, current_size, is_primary)
 			VALUES ('asset_allowed', 'allowed', 'a.epub', 'a.epub', '.epub', 'epub', 100, 1);
-		INSERT INTO assets (id, work_id, storage_path, filename, extension, format, current_size, is_primary)
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, current_size, is_primary)
 			VALUES ('asset_blocked', 'blocked', 'b.epub', 'b.epub', '.epub', 'epub', 100, 1);
 	`); err != nil {
-		t.Fatalf("seed works/assets: %v", err)
+		t.Fatalf("seed books/assets: %v", err)
 	}
 	if err := database.AddBookToShelf(shelf.ID, 0, "allowed"); err != nil {
 		t.Fatalf("add allowed to shelf: %v", err)
@@ -84,14 +84,14 @@ func TestDeliveryWorkForPlanAppliesScope(t *testing.T) {
 		t.Fatalf("scope: %v", err)
 	}
 
-	work, assets, err := database.DeliveryWorkForPlan(scope, "allowed")
+	book, assets, err := database.DeliveryBookForPlan(scope, "allowed")
 	if err != nil {
-		t.Fatalf("allowed work: %v", err)
+		t.Fatalf("allowed book: %v", err)
 	}
-	if work.ID != "allowed" || len(assets) != 1 || assets[0].ID != "asset_allowed" {
-		t.Fatalf("allowed work/assets = %+v %+v", work, assets)
+	if book.ID != "allowed" || len(assets) != 1 || assets[0].ID != "asset_allowed" {
+		t.Fatalf("allowed book/assets = %+v %+v", book, assets)
 	}
-	if _, _, err := database.DeliveryWorkForPlan(scope, "blocked"); !errors.Is(err, sql.ErrNoRows) {
+	if _, _, err := database.DeliveryBookForPlan(scope, "blocked"); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("blocked err = %v, want sql.ErrNoRows", err)
 	}
 }
@@ -103,8 +103,8 @@ func TestDeliveryJobLifecycle(t *testing.T) {
 		t.Fatalf("create user: %v", err)
 	}
 	if _, err := database.Exec(`
-		INSERT INTO works (id, title, sort_title) VALUES ('w1', 'Book', 'Book');
-		INSERT INTO assets (id, work_id, storage_path, filename, extension, format)
+		INSERT INTO books (id, title, sort_title) VALUES ('w1', 'Book', 'Book');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format)
 			VALUES ('a1', 'w1', 'a.epub', 'a.epub', '.epub', 'epub');
 	`); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -120,7 +120,7 @@ func TestDeliveryJobLifecycle(t *testing.T) {
 		DeviceName:  device.Name,
 		DeviceEmail: device.Email,
 		Preset:      device.Preset,
-		WorkID:      "w1",
+		BookID:      "w1",
 		AssetID:     sql.NullString{String: "a1", Valid: true},
 		Title:       "Book",
 		Filename:    "Book.epub",
@@ -141,7 +141,7 @@ func TestDeliveryJobLifecycle(t *testing.T) {
 		DeviceName:  device.Name,
 		DeviceEmail: device.Email,
 		Preset:      device.Preset,
-		WorkID:      "w1",
+		BookID:      "w1",
 		AssetID:     sql.NullString{String: "a1", Valid: true},
 		Title:       "Book",
 		Filename:    "Book.epub",
@@ -158,7 +158,7 @@ func TestDeliveryJobLifecycle(t *testing.T) {
 		DeviceName:  device.Name,
 		DeviceEmail: device.Email,
 		Preset:      device.Preset,
-		WorkID:      "w1",
+		BookID:      "w1",
 		AssetID:     sql.NullString{String: "a1", Valid: true},
 		Title:       "Book",
 		Filename:    "Book.epub",

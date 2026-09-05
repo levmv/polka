@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestListOPDSPublicationsReturnsOnlyLiveWorksWithAssets(t *testing.T) {
+func TestListOPDSPublicationsReturnsOnlyLiveBooksWithAssets(t *testing.T) {
 	database := newTestDB(t)
 
 	mustExec := func(query string, args ...any) {
@@ -16,14 +16,14 @@ func TestListOPDSPublicationsReturnsOnlyLiveWorksWithAssets(t *testing.T) {
 	}
 
 	mustExec("INSERT INTO authors (id, name, sort_name) VALUES ('a1', 'Author One', 'Author One')")
-	mustExec("INSERT INTO works (id, title, sort_title, description, tags, publisher, published_date, language, identifiers, updated_at) VALUES ('w1', 'B Title', 'B Title', 'Desc', 'one, two', 'Press', '2024-05-01', 'en', 'isbn:978-0-306-40615-7', 10)")
-	mustExec("INSERT INTO work_authors (work_id, author_id, author_order) VALUES ('w1', 'a1', 0)")
-	mustExec("INSERT INTO assets (id, work_id, storage_path, filename, extension) VALUES ('asset1', 'w1', 'b.epub', 'b.epub', '.epub')")
-	mustExec("INSERT INTO works (id, title, sort_title, updated_at) VALUES ('w2', 'The A Book', 'A Book, The', 11)")
-	mustExec("INSERT INTO assets (id, work_id, storage_path, filename, extension) VALUES ('asset2', 'w2', 'a.epub', 'a.epub', '.epub')")
-	mustExec("INSERT INTO works (id, title, sort_title) VALUES ('w_no_asset', 'No Asset', 'No Asset')")
-	mustExec("INSERT INTO works (id, title, sort_title, deleted_at) VALUES ('w_deleted', 'Deleted', 'Deleted', 20)")
-	mustExec("INSERT INTO assets (id, work_id, storage_path, filename, extension) VALUES ('asset_deleted', 'w_deleted', 'd.epub', 'd.epub', '.epub')")
+	mustExec("INSERT INTO books (id, title, sort_title, description, tags, publisher, published_date, language, identifiers, updated_at) VALUES ('w1', 'B Title', 'B Title', 'Desc', 'one, two', 'Press', '2024-05-01', 'en', 'isbn:978-0-306-40615-7', 10)")
+	mustExec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES ('w1', 'a1', 0)")
+	mustExec("INSERT INTO assets (id, book_id, storage_path, filename, extension) VALUES ('asset1', 'w1', 'b.epub', 'b.epub', '.epub')")
+	mustExec("INSERT INTO books (id, title, sort_title, updated_at) VALUES ('w2', 'The A Book', 'A Book, The', 11)")
+	mustExec("INSERT INTO assets (id, book_id, storage_path, filename, extension) VALUES ('asset2', 'w2', 'a.epub', 'a.epub', '.epub')")
+	mustExec("INSERT INTO books (id, title, sort_title) VALUES ('w_no_asset', 'No Asset', 'No Asset')")
+	mustExec("INSERT INTO books (id, title, sort_title, deleted_at) VALUES ('w_deleted', 'Deleted', 'Deleted', 20)")
+	mustExec("INSERT INTO assets (id, book_id, storage_path, filename, extension) VALUES ('asset_deleted', 'w_deleted', 'd.epub', 'd.epub', '.epub')")
 
 	rows, err := ListOPDSPublications(database, FullVisibilityScope(), 10, 0)
 	if err != nil {
@@ -73,18 +73,18 @@ func TestListOPDSPublicationsReturnsOnlyLiveWorksWithAssets(t *testing.T) {
 func TestListRecentOPDSPublicationsIsNewestFirstWithinOneSecond(t *testing.T) {
 	database := newTestDB(t)
 
-	// Production work IDs are time-sortable. These two rows model a fast import
+	// Production book IDs are time-sortable. These two rows model a fast import
 	// where SQLite's second-resolution added_at value is identical but the later
-	// work has the lexicographically larger ID.
+	// book has the lexicographically larger ID.
 	if _, err := database.Exec(`
-		INSERT INTO works (id, title, sort_title, added_at) VALUES
+		INSERT INTO books (id, title, sort_title, added_at) VALUES
 			('w_01EARLIER', 'Earlier', 'Earlier', 100),
 			('w_01LATER', 'Later', 'Later', 100);
-		INSERT INTO assets (id, work_id, storage_path, filename, extension) VALUES
+		INSERT INTO assets (id, book_id, storage_path, filename, extension) VALUES
 			('a_earlier', 'w_01EARLIER', 'earlier.epub', 'earlier.epub', '.epub'),
 			('a_later', 'w_01LATER', 'later.epub', 'later.epub', '.epub');
 	`); err != nil {
-		t.Fatalf("seed same-second works: %v", err)
+		t.Fatalf("seed same-second books: %v", err)
 	}
 
 	first, err := ListRecentOPDSPublications(database, FullVisibilityScope(), 1, 0)
@@ -96,10 +96,10 @@ func TestListRecentOPDSPublicationsIsNewestFirstWithinOneSecond(t *testing.T) {
 		t.Fatalf("second page: %v", err)
 	}
 	if len(first) != 1 || first[0].ID != "w_01LATER" {
-		t.Fatalf("first page = %+v, want later work", first)
+		t.Fatalf("first page = %+v, want later book", first)
 	}
 	if len(second) != 1 || second[0].ID != "w_01EARLIER" {
-		t.Fatalf("second page = %+v, want earlier work", second)
+		t.Fatalf("second page = %+v, want earlier book", second)
 	}
 }
 
@@ -110,13 +110,13 @@ func TestSearchOPDSPublicationsSupportsPerUserStatusFilters(t *testing.T) {
 		t.Fatalf("create user: %v", err)
 	}
 	if _, err := database.Exec(`
-		INSERT INTO works (id, title, sort_title) VALUES
+		INSERT INTO books (id, title, sort_title) VALUES
 			('w1', 'Alpha Needle', 'Alpha Needle'),
 			('w2', 'Beta Needle', 'Beta Needle');
-		INSERT INTO assets (id, work_id, storage_path, filename, extension) VALUES
+		INSERT INTO assets (id, book_id, storage_path, filename, extension) VALUES
 			('a1', 'w1', 'a.epub', 'a.epub', '.epub'),
 			('a2', 'w2', 'b.epub', 'b.epub', '.epub');
-		INSERT INTO search (work_id, title) VALUES
+		INSERT INTO search (book_id, title) VALUES
 			('w1', 'Alpha Needle'), ('w2', 'Beta Needle');
 	`); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -143,10 +143,10 @@ func TestManualShelfOPDSPublicationsRespectContentScope(t *testing.T) {
 		t.Fatalf("create reader: %v", err)
 	}
 	for _, statement := range []string{
-		"INSERT INTO works (id, title, sort_title) VALUES ('allowed', 'Allowed', 'Allowed')",
-		"INSERT INTO works (id, title, sort_title) VALUES ('outside', 'Outside', 'Outside')",
-		"INSERT INTO assets (id, work_id, storage_path, filename, extension) VALUES ('asset_allowed', 'allowed', 'allowed.epub', 'allowed.epub', '.epub')",
-		"INSERT INTO assets (id, work_id, storage_path, filename, extension) VALUES ('asset_outside', 'outside', 'outside.epub', 'outside.epub', '.epub')",
+		"INSERT INTO books (id, title, sort_title) VALUES ('allowed', 'Allowed', 'Allowed')",
+		"INSERT INTO books (id, title, sort_title) VALUES ('outside', 'Outside', 'Outside')",
+		"INSERT INTO assets (id, book_id, storage_path, filename, extension) VALUES ('asset_allowed', 'allowed', 'allowed.epub', 'allowed.epub', '.epub')",
+		"INSERT INTO assets (id, book_id, storage_path, filename, extension) VALUES ('asset_outside', 'outside', 'outside.epub', 'outside.epub', '.epub')",
 	} {
 		if _, err := database.Exec(statement); err != nil {
 			t.Fatalf("fixture %q: %v", statement, err)
@@ -164,9 +164,9 @@ func TestManualShelfOPDSPublicationsRespectContentScope(t *testing.T) {
 	if err := database.AddBookToShelf(accessShelf.ID, reader.ID, "allowed"); err != nil {
 		t.Fatalf("add allowed book to access shelf: %v", err)
 	}
-	for _, workID := range []string{"allowed", "outside"} {
-		if err := database.AddBookToShelf(deviceShelf.ID, reader.ID, workID); err != nil {
-			t.Fatalf("add %s to device shelf: %v", workID, err)
+	for _, bookID := range []string{"allowed", "outside"} {
+		if err := database.AddBookToShelf(deviceShelf.ID, reader.ID, bookID); err != nil {
+			t.Fatalf("add %s to device shelf: %v", bookID, err)
 		}
 	}
 	if _, err := database.UpdateUserAccess(reader.ID, UserAccess{

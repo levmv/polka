@@ -13,10 +13,10 @@ func TestAuthorsWithCountsPageUsesStableTieBreaker(t *testing.T) {
 		INSERT INTO authors (id, name, sort_name) VALUES
 			('a1', 'First Name', 'Same Sort'),
 			('a2', 'Second Name', 'Same Sort');
-		INSERT INTO works (id, title, sort_title) VALUES
+		INSERT INTO books (id, title, sort_title) VALUES
 			('w1', 'First', 'First'),
 			('w2', 'Second', 'Second');
-		INSERT INTO work_authors (work_id, author_id, author_order) VALUES
+		INSERT INTO book_authors (book_id, author_id, author_order) VALUES
 			('w1', 'a1', 0),
 			('w2', 'a2', 0);
 	`); err != nil {
@@ -42,10 +42,10 @@ func TestAuthorsWithCountsPageUsesStableTieBreaker(t *testing.T) {
 func TestDeleteOrphanAuthors(t *testing.T) {
 	database := newTestDB(t)
 
-	database.Exec("INSERT INTO works (id, title, sort_title) VALUES ('w1', 'T', 'T')")
+	database.Exec("INSERT INTO books (id, title, sort_title) VALUES ('w1', 'T', 'T')")
 	database.Exec("INSERT INTO authors (id, name, sort_name) VALUES ('a_keep', 'Kept Author', 'Author, Kept')")
 	database.Exec("INSERT INTO authors (id, name, sort_name) VALUES ('a_orphan', 'Orphan Author', 'Author, Orphan')")
-	database.Exec("INSERT INTO work_authors (work_id, author_id, author_order) VALUES ('w1', 'a_keep', 0)")
+	database.Exec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES ('w1', 'a_keep', 0)")
 
 	n, err := DeleteOrphanAuthors(database)
 	if err != nil {
@@ -72,20 +72,20 @@ func TestDeleteOrphanAuthors(t *testing.T) {
 	}
 }
 
-// TestUpsertWorkAuthors locks in the shared find-or-insert/link behavior, in
+// TestUpsertBookAuthors locks in the shared find-or-insert/link behavior, in
 // particular that reusing an existing author adopts that row's persisted
 // sort_name rather than the supplied one — the agreement import and edit must
 // keep so the canonical path matches the author row (`polka check`).
-func TestUpsertWorkAuthors(t *testing.T) {
+func TestUpsertBookAuthors(t *testing.T) {
 	database := newTestDB(t)
 
-	database.Exec("INSERT INTO works (id, title, sort_title) VALUES ('w1', 'T', 'T')")
+	database.Exec("INSERT INTO books (id, title, sort_title) VALUES ('w1', 'T', 'T')")
 	// An author whose persisted sort_name was overridden away from the naive
 	// derivation (e.g. via the "Sort as" editor).
 	database.Exec("INSERT INTO authors (id, name, sort_name) VALUES ('a_lg', 'Ursula K. Le Guin', 'Le Guin, Ursula K.')")
 
 	tx, _ := database.Begin()
-	name, sort, err := UpsertWorkAuthors(tx, "w1", []bookmeta.AuthorMeta{
+	name, sort, err := UpsertBookAuthors(tx, "w1", []bookmeta.AuthorMeta{
 		{Name: "Ursula K. Le Guin", SortName: "WRONG, Sort", Role: "aut"},
 		{Name: "New Coauthor", SortName: "Coauthor, New"},
 	})
@@ -98,10 +98,10 @@ func TestUpsertWorkAuthors(t *testing.T) {
 	if name != "Ursula K. Le Guin" || sort != "Le Guin, Ursula K." {
 		t.Errorf("primary = (%q, %q), want (Ursula K. Le Guin, Le Guin, Ursula K.)", name, sort)
 	}
-	var workSort string
-	database.QueryRow("SELECT primary_author_sort FROM works WHERE id = 'w1'").Scan(&workSort)
-	if workSort != "Le Guin, Ursula K." {
-		t.Errorf("work primary_author_sort = %q, want Le Guin, Ursula K.", workSort)
+	var bookSort string
+	database.QueryRow("SELECT primary_author_sort FROM books WHERE id = 'w1'").Scan(&bookSort)
+	if bookSort != "Le Guin, Ursula K." {
+		t.Errorf("book primary_author_sort = %q, want Le Guin, Ursula K.", bookSort)
 	}
 	// The existing row's sort_name is left untouched.
 	var lgSort string
@@ -125,7 +125,7 @@ func TestUpsertWorkAuthors(t *testing.T) {
 		t.Errorf("new author id = %q, want au_ prefix", newID)
 	}
 	// Links recorded in slice order, with role carried through.
-	got, _ := AuthorsByWorkIDs(database, []string{"w1"})
+	got, _ := AuthorsByBookIDs(database, []string{"w1"})
 	if len(got["w1"]) != 2 || got["w1"][0].Name != "Ursula K. Le Guin" || got["w1"][1].Name != "New Coauthor" {
 		t.Fatalf("links = %+v, want [Ursula K. Le Guin, New Coauthor]", got["w1"])
 	}
@@ -135,31 +135,31 @@ func TestUpsertWorkAuthors(t *testing.T) {
 
 	// Calling again replaces the set (clears prior links) rather than appending.
 	tx, _ = database.Begin()
-	if _, _, err := UpsertWorkAuthors(tx, "w1", []bookmeta.AuthorMeta{{Name: "Solo Author", SortName: "Author, Solo"}}); err != nil {
+	if _, _, err := UpsertBookAuthors(tx, "w1", []bookmeta.AuthorMeta{{Name: "Solo Author", SortName: "Author, Solo"}}); err != nil {
 		t.Fatalf("re-upsert: %v", err)
 	}
 	tx.Commit()
-	got, _ = AuthorsByWorkIDs(database, []string{"w1"})
+	got, _ = AuthorsByBookIDs(database, []string{"w1"})
 	if len(got["w1"]) != 1 || got["w1"][0].Name != "Solo Author" {
 		t.Errorf("after replace, links = %+v, want [Solo Author]", got["w1"])
 	}
-	database.QueryRow("SELECT primary_author_sort FROM works WHERE id = 'w1'").Scan(&workSort)
-	if workSort != "Author, Solo" {
-		t.Errorf("after replace primary_author_sort = %q, want Author, Solo", workSort)
+	database.QueryRow("SELECT primary_author_sort FROM books WHERE id = 'w1'").Scan(&bookSort)
+	if bookSort != "Author, Solo" {
+		t.Errorf("after replace primary_author_sort = %q, want Author, Solo", bookSort)
 	}
 }
 
-// TestUpsertWorkAuthorsDeduplicates covers the case a real EPUB or an editor
+// TestUpsertBookAuthorsDeduplicates covers the case a real EPUB or an editor
 // produces: the same author name listed twice. Both would resolve to one author
-// row and collide on the work_authors PK, so the upsert must collapse them to a
+// row and collide on the book_authors PK, so the upsert must collapse them to a
 // single link rather than fail the whole edit/import.
-func TestUpsertWorkAuthorsDeduplicates(t *testing.T) {
+func TestUpsertBookAuthorsDeduplicates(t *testing.T) {
 	database := newTestDB(t)
 
-	database.Exec("INSERT INTO works (id, title, sort_title) VALUES ('w1', 'T', 'T')")
+	database.Exec("INSERT INTO books (id, title, sort_title) VALUES ('w1', 'T', 'T')")
 
 	tx, _ := database.Begin()
-	name, sort, err := UpsertWorkAuthors(tx, "w1", []bookmeta.AuthorMeta{
+	name, sort, err := UpsertBookAuthors(tx, "w1", []bookmeta.AuthorMeta{
 		{Name: "Ivan Ivanov", SortName: "Ivanov, Ivan", Role: "aut"},
 		{Name: "Ivan Ivanov", SortName: "Ivanov, Ivan"},
 		{Name: "Petr Petrov", SortName: "Petrov, Petr"},
@@ -172,27 +172,27 @@ func TestUpsertWorkAuthorsDeduplicates(t *testing.T) {
 	if name != "Ivan Ivanov" || sort != "Ivanov, Ivan" {
 		t.Errorf("primary = (%q, %q), want (Ivan Ivanov, Ivanov, Ivan)", name, sort)
 	}
-	got, _ := AuthorsByWorkIDs(database, []string{"w1"})
+	got, _ := AuthorsByBookIDs(database, []string{"w1"})
 	if len(got["w1"]) != 2 || got["w1"][0].Name != "Ivan Ivanov" || got["w1"][1].Name != "Petr Petrov" {
 		t.Fatalf("links = %+v, want [Ivan Ivanov, Petr Petrov]", got["w1"])
 	}
 }
 
-func TestAuthorsByWorkIDs(t *testing.T) {
+func TestAuthorsByBookIDs(t *testing.T) {
 	database := newTestDB(t)
 
-	database.Exec("INSERT INTO works (id, title, sort_title) VALUES ('w1', 'T1', 'T1')")
-	database.Exec("INSERT INTO works (id, title, sort_title) VALUES ('w2', 'T2', 'T2')")
+	database.Exec("INSERT INTO books (id, title, sort_title) VALUES ('w1', 'T1', 'T1')")
+	database.Exec("INSERT INTO books (id, title, sort_title) VALUES ('w2', 'T2', 'T2')")
 	database.Exec("INSERT INTO authors (id, name, sort_name) VALUES ('a1', 'Ursula K. Le Guin', 'Le Guin, Ursula K.')")
 	database.Exec("INSERT INTO authors (id, name, sort_name) VALUES ('a2', 'Cixin Liu', 'Liu, Cixin')")
 	// w1 has two authors in a deliberate order (a2 first, a1 second).
-	database.Exec("INSERT INTO work_authors (work_id, author_id, role, author_order) VALUES ('w1', 'a2', 'author', 0)")
-	database.Exec("INSERT INTO work_authors (work_id, author_id, role, author_order) VALUES ('w1', 'a1', '', 1)")
-	database.Exec("INSERT INTO work_authors (work_id, author_id, author_order) VALUES ('w2', 'a1', 0)")
+	database.Exec("INSERT INTO book_authors (book_id, author_id, role, author_order) VALUES ('w1', 'a2', 'author', 0)")
+	database.Exec("INSERT INTO book_authors (book_id, author_id, role, author_order) VALUES ('w1', 'a1', '', 1)")
+	database.Exec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES ('w2', 'a1', 0)")
 
-	got, err := AuthorsByWorkIDs(database, []string{"w1", "w2"})
+	got, err := AuthorsByBookIDs(database, []string{"w1", "w2"})
 	if err != nil {
-		t.Fatalf("AuthorsByWorkIDs: %v", err)
+		t.Fatalf("AuthorsByBookIDs: %v", err)
 	}
 
 	if len(got["w1"]) != 2 {
@@ -212,7 +212,7 @@ func TestAuthorsByWorkIDs(t *testing.T) {
 	}
 
 	// Empty input yields an empty (non-nil) map.
-	if m, err := AuthorsByWorkIDs(database, nil); err != nil || m == nil || len(m) != 0 {
+	if m, err := AuthorsByBookIDs(database, nil); err != nil || m == nil || len(m) != 0 {
 		t.Errorf("empty input: m=%v err=%v", m, err)
 	}
 }
@@ -220,15 +220,15 @@ func TestAuthorsByWorkIDs(t *testing.T) {
 func TestListAuthorNames(t *testing.T) {
 	database := newTestDB(t)
 
-	database.Exec("INSERT INTO works (id, title, sort_title) VALUES ('w1', 'T', 'T')")
-	database.Exec("INSERT INTO works (id, title, sort_title, deleted_at) VALUES ('w_deleted', 'Deleted', 'Deleted', 10)")
+	database.Exec("INSERT INTO books (id, title, sort_title) VALUES ('w1', 'T', 'T')")
+	database.Exec("INSERT INTO books (id, title, sort_title, deleted_at) VALUES ('w_deleted', 'Deleted', 'Deleted', 10)")
 	database.Exec("INSERT INTO authors (id, name, sort_name) VALUES ('a1', 'Isaac Asimov', 'Asimov, Isaac')")
 	database.Exec("INSERT INTO authors (id, name, sort_name) VALUES ('a2', 'Orphan Author', 'Author, Orphan')")
 	database.Exec("INSERT INTO authors (id, name, sort_name) VALUES ('a3', '50% Discount', 'Discount')")
 	database.Exec("INSERT INTO authors (id, name, sort_name) VALUES ('a_deleted', 'Trash Only', 'Trash Only')")
-	database.Exec("INSERT INTO work_authors (work_id, author_id, author_order) VALUES ('w1', 'a1', 0)")
-	database.Exec("INSERT INTO work_authors (work_id, author_id, author_order) VALUES ('w1', 'a3', 1)")
-	database.Exec("INSERT INTO work_authors (work_id, author_id, author_order) VALUES ('w_deleted', 'a_deleted', 0)")
+	database.Exec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES ('w1', 'a1', 0)")
+	database.Exec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES ('w1', 'a3', 1)")
+	database.Exec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES ('w_deleted', 'a_deleted', 0)")
 
 	names := func(rows []AuthorRow) []string {
 		out := make([]string, len(rows))
@@ -238,7 +238,7 @@ func TestListAuthorNames(t *testing.T) {
 		return out
 	}
 
-	// No filter: only authors referenced by live works (orphan/trash excluded),
+	// No filter: only authors referenced by live books (orphan/trash excluded),
 	// ordered by sort_name.
 	all, err := ListAuthorNames(database, FullVisibilityScope(), "", 20)
 	if err != nil {
@@ -265,14 +265,14 @@ func TestListAuthorNames(t *testing.T) {
 func TestGetAuthorInfo(t *testing.T) {
 	database := newTestDB(t)
 
-	database.Exec("INSERT INTO works (id, title, sort_title) VALUES ('w1', 'A', 'A')")
-	database.Exec("INSERT INTO works (id, title, sort_title) VALUES ('w2', 'B', 'B')")
+	database.Exec("INSERT INTO books (id, title, sort_title) VALUES ('w1', 'A', 'A')")
+	database.Exec("INSERT INTO books (id, title, sort_title) VALUES ('w2', 'B', 'B')")
 	database.Exec("INSERT INTO authors (id, name, sort_name) VALUES ('a1', 'Isaac Asimov', 'Asimov, Isaac')")
 	database.Exec("INSERT INTO authors (id, name, sort_name) VALUES ('a2', 'Orphan Author', 'Author, Orphan')")
-	database.Exec("INSERT INTO work_authors (work_id, author_id, author_order) VALUES ('w1', 'a1', 0)")
-	database.Exec("INSERT INTO work_authors (work_id, author_id, author_order) VALUES ('w2', 'a1', 0)")
+	database.Exec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES ('w1', 'a1', 0)")
+	database.Exec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES ('w2', 'a1', 0)")
 
-	// Referenced author: count reflects the linked works, sort_name is returned.
+	// Referenced author: count reflects the linked books, sort_name is returned.
 	info, ok, err := GetAuthorInfo(database, FullVisibilityScope(), "Isaac Asimov")
 	if err != nil {
 		t.Fatalf("GetAuthorInfo: %v", err)
@@ -314,9 +314,9 @@ func authorNames(t *testing.T, q Queryer) []string {
 func TestRenameAuthorInPlace(t *testing.T) {
 	database := newTestDB(t)
 
-	database.Exec("INSERT INTO works (id, title, sort_title) VALUES ('w1', 'T', 'T')")
+	database.Exec("INSERT INTO books (id, title, sort_title) VALUES ('w1', 'T', 'T')")
 	database.Exec("INSERT INTO authors (id, name, sort_name) VALUES ('a1', 'I. Asimov', 'Asimov, I.')")
-	database.Exec("INSERT INTO work_authors (work_id, author_id, author_order) VALUES ('w1', 'a1', 0)")
+	database.Exec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES ('w1', 'a1', 0)")
 
 	tx, _ := database.Begin()
 	affected, err := RenameOrMergeAuthor(tx, "I. Asimov", "Isaac Asimov", "Asimov, Isaac")
@@ -331,19 +331,19 @@ func TestRenameAuthorInPlace(t *testing.T) {
 	if names := authorNames(t, database); len(names) != 1 || names[0] != "Isaac Asimov" {
 		t.Errorf("authors = %v, want [Isaac Asimov]", names)
 	}
-	// Same row id, so the work link still resolves.
+	// Same row id, so the book link still resolves.
 	var sort string
 	database.QueryRow("SELECT sort_name FROM authors WHERE id = 'a1'").Scan(&sort)
 	if sort != "Asimov, Isaac" {
 		t.Errorf("sort_name = %q", sort)
 	}
-	var workSort string
-	database.QueryRow("SELECT primary_author_sort FROM works WHERE id = 'w1'").Scan(&workSort)
-	if workSort != "Asimov, Isaac" {
-		t.Errorf("primary_author_sort = %q, want Asimov, Isaac", workSort)
+	var bookSort string
+	database.QueryRow("SELECT primary_author_sort FROM books WHERE id = 'w1'").Scan(&bookSort)
+	if bookSort != "Asimov, Isaac" {
+		t.Errorf("primary_author_sort = %q, want Asimov, Isaac", bookSort)
 	}
 	var rev int
-	database.QueryRow("SELECT metadata_rev FROM works WHERE id = 'w1'").Scan(&rev)
+	database.QueryRow("SELECT metadata_rev FROM books WHERE id = 'w1'").Scan(&rev)
 	if rev != 0 {
 		t.Errorf("metadata_rev = %d, want DB mutation to leave bookkeeping to caller", rev)
 	}
@@ -353,15 +353,15 @@ func TestMergeAuthor(t *testing.T) {
 	database := newTestDB(t)
 
 	for _, w := range []string{"w1", "w2", "w3"} {
-		database.Exec("INSERT INTO works (id, title, sort_title) VALUES (?, 'T', 'T')", w)
+		database.Exec("INSERT INTO books (id, title, sort_title) VALUES (?, 'T', 'T')", w)
 	}
 	database.Exec("INSERT INTO authors (id, name, sort_name) VALUES ('a1', 'I. Asimov', 'Asimov, I.')")
 	database.Exec("INSERT INTO authors (id, name, sort_name) VALUES ('a2', 'Isaac Asimov', 'Asimov, Isaac')")
-	database.Exec("INSERT INTO work_authors (work_id, author_id, author_order) VALUES ('w1', 'a1', 0)")
-	database.Exec("INSERT INTO work_authors (work_id, author_id, author_order) VALUES ('w2', 'a2', 0)")
+	database.Exec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES ('w1', 'a1', 0)")
+	database.Exec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES ('w2', 'a2', 0)")
 	// w3 credits BOTH spellings (the merge must not create a duplicate link).
-	database.Exec("INSERT INTO work_authors (work_id, author_id, author_order) VALUES ('w3', 'a1', 0)")
-	database.Exec("INSERT INTO work_authors (work_id, author_id, author_order) VALUES ('w3', 'a2', 1)")
+	database.Exec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES ('w3', 'a1', 0)")
+	database.Exec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES ('w3', 'a2', 1)")
 
 	tx, _ := database.Begin()
 	affected, err := RenameOrMergeAuthor(tx, "I. Asimov", "Isaac Asimov", "Asimov, Isaac")
@@ -371,33 +371,33 @@ func TestMergeAuthor(t *testing.T) {
 	tx.Commit()
 
 	if len(affected) != 2 {
-		t.Errorf("affected = %v, want 2 works (w1, w3)", affected)
+		t.Errorf("affected = %v, want 2 books (w1, w3)", affected)
 	}
 	if names := authorNames(t, database); len(names) != 1 || names[0] != "Isaac Asimov" {
 		t.Errorf("authors = %v, want only [Isaac Asimov]", names)
 	}
-	// No work credits the deleted source author.
+	// No book credits the deleted source author.
 	var oldLinks int
-	database.QueryRow("SELECT COUNT(*) FROM work_authors WHERE author_id = 'a1'").Scan(&oldLinks)
+	database.QueryRow("SELECT COUNT(*) FROM book_authors WHERE author_id = 'a1'").Scan(&oldLinks)
 	if oldLinks != 0 {
-		t.Errorf("old author still linked to %d works", oldLinks)
+		t.Errorf("old author still linked to %d books", oldLinks)
 	}
 	// w3 ends with exactly one link to the target (no duplicate).
 	var w3Links int
-	database.QueryRow("SELECT COUNT(*) FROM work_authors WHERE work_id = 'w3' AND author_id = 'a2'").Scan(&w3Links)
+	database.QueryRow("SELECT COUNT(*) FROM book_authors WHERE book_id = 'w3' AND author_id = 'a2'").Scan(&w3Links)
 	if w3Links != 1 {
 		t.Errorf("w3 has %d links to target, want 1", w3Links)
 	}
 	var w1Sort, w3Sort string
-	database.QueryRow("SELECT primary_author_sort FROM works WHERE id = 'w1'").Scan(&w1Sort)
-	database.QueryRow("SELECT primary_author_sort FROM works WHERE id = 'w3'").Scan(&w3Sort)
+	database.QueryRow("SELECT primary_author_sort FROM books WHERE id = 'w1'").Scan(&w1Sort)
+	database.QueryRow("SELECT primary_author_sort FROM books WHERE id = 'w3'").Scan(&w3Sort)
 	if w1Sort != "Asimov, Isaac" || w3Sort != "Asimov, Isaac" {
 		t.Errorf("merged primary_author_sort = w1:%q w3:%q, want Asimov, Isaac", w1Sort, w3Sort)
 	}
 	var rev1, rev2, rev3 int
-	database.QueryRow("SELECT metadata_rev FROM works WHERE id = 'w1'").Scan(&rev1)
-	database.QueryRow("SELECT metadata_rev FROM works WHERE id = 'w2'").Scan(&rev2)
-	database.QueryRow("SELECT metadata_rev FROM works WHERE id = 'w3'").Scan(&rev3)
+	database.QueryRow("SELECT metadata_rev FROM books WHERE id = 'w1'").Scan(&rev1)
+	database.QueryRow("SELECT metadata_rev FROM books WHERE id = 'w2'").Scan(&rev2)
+	database.QueryRow("SELECT metadata_rev FROM books WHERE id = 'w3'").Scan(&rev3)
 	if rev1 != 0 || rev2 != 0 || rev3 != 0 {
 		t.Errorf("metadata_rev = w1:%d w2:%d w3:%d, want DB mutation to leave bookkeeping to caller", rev1, rev2, rev3)
 	}
@@ -406,13 +406,13 @@ func TestMergeAuthor(t *testing.T) {
 func TestSetAuthorSortNameUpdatesPrimaryAuthorSort(t *testing.T) {
 	database := newTestDB(t)
 
-	database.Exec("INSERT INTO works (id, title, sort_title) VALUES ('w1', 'Primary', 'Primary')")
-	database.Exec("INSERT INTO works (id, title, sort_title) VALUES ('w2', 'Secondary', 'Secondary')")
+	database.Exec("INSERT INTO books (id, title, sort_title) VALUES ('w1', 'Primary', 'Primary')")
+	database.Exec("INSERT INTO books (id, title, sort_title) VALUES ('w2', 'Secondary', 'Secondary')")
 	database.Exec("INSERT INTO authors (id, name, sort_name) VALUES ('a1', 'Author One', 'Author One')")
 	database.Exec("INSERT INTO authors (id, name, sort_name) VALUES ('a2', 'Other Author', 'Other Author')")
-	database.Exec("INSERT INTO work_authors (work_id, author_id, author_order) VALUES ('w1', 'a1', 0)")
-	database.Exec("INSERT INTO work_authors (work_id, author_id, author_order) VALUES ('w2', 'a2', 0)")
-	database.Exec("INSERT INTO work_authors (work_id, author_id, author_order) VALUES ('w2', 'a1', 1)")
+	database.Exec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES ('w1', 'a1', 0)")
+	database.Exec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES ('w2', 'a2', 0)")
+	database.Exec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES ('w2', 'a1', 1)")
 	if err := updatePrimaryAuthorSorts(database, []string{"w1", "w2"}); err != nil {
 		t.Fatalf("initial updatePrimaryAuthorSorts: %v", err)
 	}
@@ -425,20 +425,20 @@ func TestSetAuthorSortNameUpdatesPrimaryAuthorSort(t *testing.T) {
 	tx.Commit()
 
 	if len(affected) != 2 {
-		t.Fatalf("affected = %v, want both linked works", affected)
+		t.Fatalf("affected = %v, want both linked books", affected)
 	}
 	var primarySort, secondarySort string
-	database.QueryRow("SELECT primary_author_sort FROM works WHERE id = 'w1'").Scan(&primarySort)
-	database.QueryRow("SELECT primary_author_sort FROM works WHERE id = 'w2'").Scan(&secondarySort)
+	database.QueryRow("SELECT primary_author_sort FROM books WHERE id = 'w1'").Scan(&primarySort)
+	database.QueryRow("SELECT primary_author_sort FROM books WHERE id = 'w2'").Scan(&secondarySort)
 	if primarySort != "One, Author" {
-		t.Fatalf("primary work sort = %q; want One, Author", primarySort)
+		t.Fatalf("primary book sort = %q; want One, Author", primarySort)
 	}
 	if secondarySort != "Other Author" {
-		t.Fatalf("secondary work sort = %q; want Other Author", secondarySort)
+		t.Fatalf("secondary book sort = %q; want Other Author", secondarySort)
 	}
 	var rev1, rev2 int
-	database.QueryRow("SELECT metadata_rev FROM works WHERE id = 'w1'").Scan(&rev1)
-	database.QueryRow("SELECT metadata_rev FROM works WHERE id = 'w2'").Scan(&rev2)
+	database.QueryRow("SELECT metadata_rev FROM books WHERE id = 'w1'").Scan(&rev1)
+	database.QueryRow("SELECT metadata_rev FROM books WHERE id = 'w2'").Scan(&rev2)
 	if rev1 != 0 || rev2 != 0 {
 		t.Fatalf("metadata_rev = %d/%d; want DB mutation to leave bookkeeping to caller", rev1, rev2)
 	}
@@ -447,9 +447,9 @@ func TestSetAuthorSortNameUpdatesPrimaryAuthorSort(t *testing.T) {
 func TestSetAuthorSortNameNoOpDoesNotBumpMetadataRev(t *testing.T) {
 	database := newTestDB(t)
 
-	database.Exec("INSERT INTO works (id, title, sort_title) VALUES ('w1', 'Primary', 'Primary')")
+	database.Exec("INSERT INTO books (id, title, sort_title) VALUES ('w1', 'Primary', 'Primary')")
 	database.Exec("INSERT INTO authors (id, name, sort_name) VALUES ('a1', 'Author One', 'Author One')")
-	database.Exec("INSERT INTO work_authors (work_id, author_id, author_order) VALUES ('w1', 'a1', 0)")
+	database.Exec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES ('w1', 'a1', 0)")
 
 	tx, _ := database.Begin()
 	affected, err := SetAuthorSortName(tx, "Author One", "Author One")
@@ -462,7 +462,7 @@ func TestSetAuthorSortNameNoOpDoesNotBumpMetadataRev(t *testing.T) {
 		t.Fatalf("affected = %v, want none", affected)
 	}
 	var rev int
-	database.QueryRow("SELECT metadata_rev FROM works WHERE id = 'w1'").Scan(&rev)
+	database.QueryRow("SELECT metadata_rev FROM books WHERE id = 'w1'").Scan(&rev)
 	if rev != 0 {
 		t.Fatalf("metadata_rev = %d; want 0", rev)
 	}

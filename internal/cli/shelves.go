@@ -57,8 +57,8 @@ func printShelfUsage() {
   polka library shelves create [--query <search>] <name>
   polka library shelves remove <shelf-id>
   polka library shelves books [--limit N] <shelf-id>
-  polka library shelves add-book <shelf-id> <work-id>
-  polka library shelves remove-book <shelf-id> <work-id>
+  polka library shelves add-book <shelf-id> <book-id>
+  polka library shelves remove-book <shelf-id> <book-id>
 `)
 }
 
@@ -73,9 +73,9 @@ func printShelfSubcommandUsage(sub string) {
 	case "books":
 		fmt.Fprintln(os.Stderr, "Usage: polka library shelves books [--limit N] <shelf-id>")
 	case "add-book":
-		fmt.Fprintln(os.Stderr, "Usage: polka library shelves add-book <shelf-id> <work-id>")
+		fmt.Fprintln(os.Stderr, "Usage: polka library shelves add-book <shelf-id> <book-id>")
 	case "remove-book", "rm-book":
-		fmt.Fprintln(os.Stderr, "Usage: polka library shelves remove-book <shelf-id> <work-id>")
+		fmt.Fprintln(os.Stderr, "Usage: polka library shelves remove-book <shelf-id> <book-id>")
 	default:
 		printShelfUsage()
 	}
@@ -195,16 +195,16 @@ func shelfBooks(database *db.DB, args []string) error {
 		fmt.Println("No books on this shelf.")
 		return nil
 	}
-	workIDs := make([]string, 0, len(books))
+	bookIDs := make([]string, 0, len(books))
 	for _, b := range books {
-		workIDs = append(workIDs, b.ID)
+		bookIDs = append(bookIDs, b.ID)
 	}
-	authorsByWork, err := db.AuthorsByWorkIDs(database, workIDs)
+	authorsByBook, err := db.AuthorsByBookIDs(database, bookIDs)
 	if err != nil {
 		return err
 	}
 	for _, b := range books {
-		authors := authorsByWork[b.ID]
+		authors := authorsByBook[b.ID]
 		names := make([]string, 0, len(authors))
 		for _, author := range authors {
 			names = append(names, author.Name)
@@ -217,7 +217,7 @@ func shelfBooks(database *db.DB, args []string) error {
 func shelfAddBook(database *db.DB, args []string) error {
 	if len(args) != 2 {
 		printShelfSubcommandUsage("add-book")
-		return errors.New("usage: polka library shelves add-book <shelf-id> <work-id>")
+		return errors.New("usage: polka library shelves add-book <shelf-id> <book-id>")
 	}
 	if err := database.AddBookToShelf(args[0], 0, args[1]); err != nil {
 		return err
@@ -229,7 +229,7 @@ func shelfAddBook(database *db.DB, args []string) error {
 func shelfRemoveBook(database *db.DB, args []string) error {
 	if len(args) != 2 {
 		printShelfSubcommandUsage("remove-book")
-		return errors.New("usage: polka library shelves remove-book <shelf-id> <work-id>")
+		return errors.New("usage: polka library shelves remove-book <shelf-id> <book-id>")
 	}
 	if err := database.RemoveBookFromShelf(args[0], 0, args[1]); err != nil {
 		return err

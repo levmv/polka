@@ -151,12 +151,12 @@ func TestServiceDeletesSourceAfterImportWhenConfigured(t *testing.T) {
 	if _, err := os.Stat(src); !os.IsNotExist(err) {
 		t.Fatalf("source exists after import with delete enabled; err=%v", err)
 	}
-	var workID string
-	if err := database.QueryRow("SELECT id FROM works LIMIT 1").Scan(&workID); err != nil {
-		t.Fatalf("query imported work: %v", err)
+	var bookID string
+	if err := database.QueryRow("SELECT id FROM books LIMIT 1").Scan(&bookID); err != nil {
+		t.Fatalf("query imported book: %v", err)
 	}
-	if _, err := database.Exec("UPDATE works SET deleted_at = unixepoch() WHERE id = ?", workID); err != nil {
-		t.Fatalf("trash imported work: %v", err)
+	if _, err := database.Exec("UPDATE books SET deleted_at = unixepoch() WHERE id = ?", bookID); err != nil {
+		t.Fatalf("trash imported book: %v", err)
 	}
 
 	duplicateSrc := filepath.Join(ingestDir, "duplicate.epub")
@@ -174,8 +174,8 @@ func TestServiceDeletesSourceAfterImportWhenConfigured(t *testing.T) {
 		t.Fatalf("duplicate source exists after import with delete enabled; err=%v", err)
 	}
 	var stillTrashed bool
-	if err := database.QueryRow("SELECT deleted_at IS NOT NULL FROM works WHERE id = ?", workID).Scan(&stillTrashed); err != nil {
-		t.Fatalf("query duplicate work: %v", err)
+	if err := database.QueryRow("SELECT deleted_at IS NOT NULL FROM books WHERE id = ?", bookID).Scan(&stillTrashed); err != nil {
+		t.Fatalf("query duplicate book: %v", err)
 	}
 	if !stillTrashed {
 		t.Fatal("recurring ingest restored a plain duplicate from Trash")
@@ -440,22 +440,22 @@ func TestServiceImportsCalibreDirectoryAsGroup(t *testing.T) {
 		t.Fatalf("summary = %+v; want one imported group", summary)
 	}
 
-	var works, assets int
-	if err := database.QueryRow("SELECT COUNT(*) FROM works").Scan(&works); err != nil {
-		t.Fatalf("count works: %v", err)
+	var books, assets int
+	if err := database.QueryRow("SELECT COUNT(*) FROM books").Scan(&books); err != nil {
+		t.Fatalf("count books: %v", err)
 	}
 	if err := database.QueryRow("SELECT COUNT(*) FROM assets").Scan(&assets); err != nil {
 		t.Fatalf("count assets: %v", err)
 	}
-	if works != 1 || assets != 2 {
-		t.Fatalf("works/assets = %d/%d; want 1/2", works, assets)
+	if books != 1 || assets != 2 {
+		t.Fatalf("books/assets = %d/%d; want 1/2", books, assets)
 	}
 	var title, author string
 	if err := database.QueryRow(`
-		SELECT w.title, a.name
-		FROM works w
-		JOIN work_authors wa ON wa.work_id = w.id
-		JOIN authors a ON a.id = wa.author_id
+		SELECT b.title, a.name
+		FROM books b
+		JOIN book_authors ba ON ba.book_id = b.id
+		JOIN authors a ON a.id = ba.author_id
 		LIMIT 1
 	`).Scan(&title, &author); err != nil {
 		t.Fatalf("query metadata: %v", err)
@@ -475,12 +475,12 @@ func TestServiceImportsCalibreDirectoryAsGroup(t *testing.T) {
 		t.Fatalf("second summary = %+v; want no repeated group work", second)
 	}
 
-	var workID string
-	if err := database.QueryRow("SELECT id FROM works LIMIT 1").Scan(&workID); err != nil {
-		t.Fatalf("query work ID: %v", err)
+	var bookID string
+	if err := database.QueryRow("SELECT id FROM books LIMIT 1").Scan(&bookID); err != nil {
+		t.Fatalf("query book ID: %v", err)
 	}
-	if _, err := database.Exec("UPDATE works SET deleted_at = unixepoch() WHERE id = ?", workID); err != nil {
-		t.Fatalf("trash work: %v", err)
+	if _, err := database.Exec("UPDATE books SET deleted_at = unixepoch() WHERE id = ?", bookID); err != nil {
+		t.Fatalf("trash book: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(bookDir, "Calibre Book.fb2"), []byte("<FictionBook/>"), 0o644); err != nil {
 		t.Fatalf("write added format: %v", err)
@@ -492,14 +492,14 @@ func TestServiceImportsCalibreDirectoryAsGroup(t *testing.T) {
 	if restored.Imported != 1 || restored.Restored != 1 || restored.Trashed != 0 || restored.Failed != 0 {
 		t.Fatalf("restoring summary = %+v; want one imported and restored group", restored)
 	}
-	var workTrashed bool
-	if err := database.QueryRow("SELECT deleted_at IS NOT NULL FROM works WHERE id = ?", workID).Scan(&workTrashed); err != nil {
-		t.Fatalf("query restored work: %v", err)
+	var bookTrashed bool
+	if err := database.QueryRow("SELECT deleted_at IS NOT NULL FROM books WHERE id = ?", bookID).Scan(&bookTrashed); err != nil {
+		t.Fatalf("query restored book: %v", err)
 	}
-	if workTrashed {
-		t.Fatal("work stayed in Trash after ingest added a format")
+	if bookTrashed {
+		t.Fatal("book stayed in Trash after ingest added a format")
 	}
-	if err := database.QueryRow("SELECT COUNT(*) FROM assets WHERE work_id = ?", workID).Scan(&assets); err != nil {
+	if err := database.QueryRow("SELECT COUNT(*) FROM assets WHERE book_id = ?", bookID).Scan(&assets); err != nil {
 		t.Fatalf("count restored assets: %v", err)
 	}
 	if assets != 3 {

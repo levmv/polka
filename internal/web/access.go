@@ -55,12 +55,12 @@ func (s *Server) requireAccess(
 	return scope, true
 }
 
-func (s *Server) requireWorkAccess(w http.ResponseWriter, r *http.Request, workID string) (db.VisibilityScope, bool) {
-	return s.requireAccess(w, r, workID, db.CanAccessWork)
+func (s *Server) requireBookAccess(w http.ResponseWriter, r *http.Request, bookID string) (db.VisibilityScope, bool) {
+	return s.requireAccess(w, r, bookID, db.CanAccessBook)
 }
 
-func (s *Server) requireTrashedWorkAccess(w http.ResponseWriter, r *http.Request, workID string) (db.VisibilityScope, bool) {
-	return s.requireAccess(w, r, workID, db.CanAccessTrashedWork)
+func (s *Server) requireTrashedBookAccess(w http.ResponseWriter, r *http.Request, bookID string) (db.VisibilityScope, bool) {
+	return s.requireAccess(w, r, bookID, db.CanAccessTrashedBook)
 }
 
 func (s *Server) requireAssetAccess(w http.ResponseWriter, r *http.Request, assetID string) (db.VisibilityScope, bool) {

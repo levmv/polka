@@ -8,7 +8,7 @@ import (
 )
 
 func TestPlanDeliveryKindleDirectPreference(t *testing.T) {
-	work := Work{
+	book := Book{
 		Title:   "The Book",
 		Authors: "A. Writer",
 		Assets: []Asset{
@@ -17,7 +17,7 @@ func TestPlanDeliveryKindleDirectPreference(t *testing.T) {
 		},
 	}
 
-	plan := PlanDelivery(work, PlanOptions{Preset: PresetKindle, AttachmentLimitMB: 25})
+	plan := PlanDelivery(book, PlanOptions{Preset: PresetKindle, AttachmentLimitMB: 25})
 	if !plan.Sendable() {
 		t.Fatalf("plan not sendable: %+v", plan)
 	}
@@ -27,7 +27,7 @@ func TestPlanDeliveryKindleDirectPreference(t *testing.T) {
 }
 
 func TestPlanChoicesUsePolicyOrderAndIncludeAlternates(t *testing.T) {
-	work := Work{
+	book := Book{
 		Title: "Choices",
 		Assets: []Asset{
 			{ID: "pdf", Filename: "choices.pdf", Extension: ".pdf", Format: format.FormatPDF, Size: 1024, IsPrimary: true},
@@ -36,7 +36,7 @@ func TestPlanChoicesUsePolicyOrderAndIncludeAlternates(t *testing.T) {
 		},
 	}
 
-	choices := PlanChoices(work, PlanOptions{Preset: PresetKindle, AttachmentLimitMB: 25})
+	choices := PlanChoices(book, PlanOptions{Preset: PresetKindle, AttachmentLimitMB: 25})
 	if len(choices) != 3 {
 		t.Fatalf("choices = %+v, want EPUB, PDF, FB2->EPUB", choices)
 	}
@@ -61,11 +61,11 @@ func TestPlanDeliveryKindleConvertsLegacyKindleSourcesToEPUB(t *testing.T) {
 		{id: "pdb", ext: ".pdb", format: format.FormatPDB},
 	} {
 		t.Run(format.FormatLabel(tt.format), func(t *testing.T) {
-			work := Work{Title: "Old", Assets: []Asset{
+			book := Book{Title: "Old", Assets: []Asset{
 				{ID: tt.id, Filename: "old" + tt.ext, Extension: tt.ext, Format: tt.format, Size: 1024},
 			}}
 
-			plan := PlanDelivery(work, PlanOptions{Preset: PresetKindle})
+			plan := PlanDelivery(book, PlanOptions{Preset: PresetKindle})
 			if !plan.Sendable() {
 				t.Fatalf("plan not sendable: %+v", plan)
 			}
@@ -77,11 +77,11 @@ func TestPlanDeliveryKindleConvertsLegacyKindleSourcesToEPUB(t *testing.T) {
 }
 
 func TestPlanDeliveryKindleConvertsFB2ToEPUB(t *testing.T) {
-	work := Work{Title: "FB2", Assets: []Asset{
+	book := Book{Title: "FB2", Assets: []Asset{
 		{ID: "fb2", Filename: "fb2.fb2", Extension: ".fb2", Format: format.FormatFB2, Size: 1024, IsPrimary: true},
 	}}
 
-	plan := PlanDelivery(work, PlanOptions{Preset: PresetKindle})
+	plan := PlanDelivery(book, PlanOptions{Preset: PresetKindle})
 	if !plan.Sendable() {
 		t.Fatalf("plan not sendable: %+v", plan)
 	}
@@ -91,11 +91,11 @@ func TestPlanDeliveryKindleConvertsFB2ToEPUB(t *testing.T) {
 }
 
 func TestPlanDeliveryKindleAllowsAZW4ToPDF(t *testing.T) {
-	work := Work{Title: "Fixed", Assets: []Asset{
+	book := Book{Title: "Fixed", Assets: []Asset{
 		{ID: "azw4", Filename: "fixed.azw4", Extension: ".azw4", Format: format.FormatAZW4, Size: 1024},
 	}}
 
-	plan := PlanDelivery(work, PlanOptions{Preset: PresetKindle})
+	plan := PlanDelivery(book, PlanOptions{Preset: PresetKindle})
 	if !plan.Sendable() {
 		t.Fatalf("plan not sendable: %+v", plan)
 	}
@@ -106,11 +106,11 @@ func TestPlanDeliveryKindleAllowsAZW4ToPDF(t *testing.T) {
 
 func TestPlanDeliverySizeLimitUsesEncodedSize(t *testing.T) {
 	raw19MB := int64(19 * 1024 * 1024)
-	work := Work{Title: "Large", Assets: []Asset{
+	book := Book{Title: "Large", Assets: []Asset{
 		{ID: "epub", Filename: "large.epub", Extension: ".epub", Format: format.FormatEPUB, Size: raw19MB},
 	}}
 
-	plan := PlanDelivery(work, PlanOptions{Preset: PresetKindle, AttachmentLimitMB: 25})
+	plan := PlanDelivery(book, PlanOptions{Preset: PresetKindle, AttachmentLimitMB: 25})
 	if plan.Sendable() {
 		t.Fatalf("plan = %+v, want encoded size to exceed 25 MB limit", plan)
 	}
@@ -139,28 +139,28 @@ func TestEncodedSizeIncludesBase64LineBreaksAndOverhead(t *testing.T) {
 }
 
 func TestPlanDeliveryGenericRequiresExplicitAssetForObscureFormats(t *testing.T) {
-	work := Work{Title: "Archive", Assets: []Asset{
+	book := Book{Title: "Archive", Assets: []Asset{
 		{ID: "chm", Filename: "archive.chm", Extension: ".chm", Format: format.FormatCHM, Size: 1024},
 	}}
 
-	plan := PlanDelivery(work, PlanOptions{Preset: PresetGeneric})
+	plan := PlanDelivery(book, PlanOptions{Preset: PresetGeneric})
 	if plan.Sendable() || plan.Reason.Code != ReasonNoCompatibleFormat {
 		t.Fatalf("generic auto plan = %+v, want explicit choice required", plan)
 	}
 
-	explicit := PlanDelivery(work, PlanOptions{Preset: PresetGeneric, RequestedAssetID: "chm"})
+	explicit := PlanDelivery(book, PlanOptions{Preset: PresetGeneric, RequestedAssetID: "chm"})
 	if !explicit.Sendable() || explicit.AssetID != "chm" {
 		t.Fatalf("explicit generic plan = %+v, want CHM native", explicit)
 	}
 
-	choices := PlanChoices(work, PlanOptions{Preset: PresetGeneric})
+	choices := PlanChoices(book, PlanOptions{Preset: PresetGeneric})
 	if len(choices) != 1 || choices[0].Default || choices[0].Plan.AssetID != "chm" {
 		t.Fatalf("generic choices = %+v, want explicit CHM choice", choices)
 	}
 }
 
 func TestPlanDeliveryPocketBookDirectPreference(t *testing.T) {
-	work := Work{
+	book := Book{
 		Title: "Pocket",
 		Assets: []Asset{
 			{ID: "pdf", Filename: "pocket.pdf", Extension: ".pdf", Format: format.FormatPDF, Size: 1024, IsPrimary: true},
@@ -168,7 +168,7 @@ func TestPlanDeliveryPocketBookDirectPreference(t *testing.T) {
 		},
 	}
 
-	plan := PlanDelivery(work, PlanOptions{Preset: PresetPocketBook})
+	plan := PlanDelivery(book, PlanOptions{Preset: PresetPocketBook})
 	if !plan.Sendable() || plan.AssetID != "fb2" || plan.Target != "" {
 		t.Fatalf("PocketBook plan = %+v, want native FB2 before PDF", plan)
 	}

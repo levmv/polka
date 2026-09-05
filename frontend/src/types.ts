@@ -15,7 +15,7 @@ export interface SeriesSummary {
     author: string;
     book_count: number;
     finished_count: number;
-    cover_work_id: string;
+    cover_book_id: string;
     cover_version: number;
 }
 
@@ -160,7 +160,7 @@ export interface ReaderLocator {
 
 export interface ReaderState {
     asset_id: string;
-    work_id: string;
+    book_id: string;
     progress: number;
     locator: ReaderLocator;
     last_read_at?: number;
@@ -196,21 +196,26 @@ export interface ContinueReadingItem extends BookSummary {
 export type ReaderFlow = 'paginated' | 'scrolled';
 export type ReaderDisplayStyle = 'original' | 'paper' | 'custom';
 
-export interface ReaderPreferences {
-    epub_flow: ReaderFlow;
-    display_style: ReaderDisplayStyle;
-    font_scale: number;
-    custom_column_width: number;
-    custom_line_height: number;
-    updated_at?: number;
-}
-
 export type ThemePreference = 'system' | 'light' | 'dark' | 'sepia';
+
+export type ReaderPreferences = Pick<
+    UserSettings,
+    | 'reader_flow'
+    | 'reader_style'
+    | 'reader_font_size'
+    | 'reader_column_width'
+    | 'reader_line_height'
+>;
 
 export interface UserSettings {
     theme: ThemePreference;
-    hide_continue_reading: boolean;
+    show_continue_reading: boolean;
     time_zone: string;
+    reader_flow: ReaderFlow;
+    reader_style: ReaderDisplayStyle;
+    reader_font_size: number;
+    reader_column_width: number;
+    reader_line_height: number;
     updated_at?: number;
 }
 
@@ -397,7 +402,7 @@ export interface DeliveryJob {
     device_name: string;
     device_email: string;
     preset: DeliveryPreset;
-    work_id: string;
+    book_id: string;
     asset_id?: string;
     title: string;
     target?: string;

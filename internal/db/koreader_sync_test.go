@@ -10,14 +10,14 @@ import (
 func TestAssetKOReaderHash(t *testing.T) {
 	database := newTestDB(t)
 
-	database.Exec("INSERT INTO works (id, title, sort_title) VALUES ('w1', 'T', 'T')")
-	database.Exec("INSERT INTO assets (id, work_id, storage_path, filename, extension) VALUES ('asset1', 'w1', 'book.epub', 'book.epub', '.epub'), ('asset2', 'w1', 'book.pdf', 'book.pdf', '.pdf')")
+	database.Exec("INSERT INTO books (id, title, sort_title) VALUES ('w1', 'T', 'T')")
+	database.Exec("INSERT INTO assets (id, book_id, storage_path, filename, extension) VALUES ('asset1', 'w1', 'book.epub', 'book.epub', '.epub'), ('asset2', 'w1', 'book.pdf', 'book.pdf', '.pdf')")
 
 	if err := SetAssetKOReaderHash(database, "asset1", "abc123"); err != nil {
 		t.Fatalf("SetAssetKOReaderHash: %v", err)
 	}
 	target, err := ResolveKOReaderHash(database, "abc123")
-	if err != nil || target.Ambiguous || target.AssetID != "asset1" || target.WorkID != "w1" {
+	if err != nil || target.Ambiguous || target.AssetID != "asset1" || target.BookID != "w1" {
 		t.Fatalf("ResolveKOReaderHash = %+v err=%v; want asset1/w1", target, err)
 	}
 	if target, err := ResolveKOReaderHash(database, "missing"); err != nil || target != (KOReaderHashTarget{}) {
@@ -25,51 +25,51 @@ func TestAssetKOReaderHash(t *testing.T) {
 	}
 
 	if err := SetAssetKOReaderHash(database, "asset2", "abc123"); err != nil {
-		t.Fatalf("SetAssetKOReaderHash second same-work asset: %v", err)
+		t.Fatalf("SetAssetKOReaderHash second same-book asset: %v", err)
 	}
 	target, err = ResolveKOReaderHash(database, "abc123")
-	if err != nil || target.Ambiguous || target.AssetID != "asset1" || target.WorkID != "w1" {
-		t.Fatalf("same-work hash target = %+v err=%v; want one unambiguous work", target, err)
+	if err != nil || target.Ambiguous || target.AssetID != "asset1" || target.BookID != "w1" {
+		t.Fatalf("same-book hash target = %+v err=%v; want one unambiguous book", target, err)
 	}
 
 	if _, err := database.Exec(`
-		INSERT INTO works (id, title, sort_title) VALUES ('w2', 'Other', 'Other');
-		INSERT INTO assets (id, work_id, storage_path, filename, extension, koreader_hash)
+		INSERT INTO books (id, title, sort_title) VALUES ('w2', 'Other', 'Other');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, koreader_hash)
 		VALUES ('asset3', 'w2', 'other.epub', 'other.epub', '.epub', 'abc123')
 	`); err != nil {
-		t.Fatalf("seed cross-work hash collision: %v", err)
+		t.Fatalf("seed cross-book hash collision: %v", err)
 	}
 	target, err = ResolveKOReaderHash(database, "abc123")
-	if err != nil || !target.Ambiguous || target.AssetID != "" || target.WorkID != "" {
-		t.Fatalf("cross-work hash target = %+v err=%v; want ambiguous without arbitrary target", target, err)
+	if err != nil || !target.Ambiguous || target.AssetID != "" || target.BookID != "" {
+		t.Fatalf("cross-book hash target = %+v err=%v; want ambiguous without arbitrary target", target, err)
 	}
 
-	if _, err := database.Exec("UPDATE works SET deleted_at = unixepoch() WHERE id = 'w2'"); err != nil {
-		t.Fatalf("trash colliding work: %v", err)
+	if _, err := database.Exec("UPDATE books SET deleted_at = unixepoch() WHERE id = 'w2'"); err != nil {
+		t.Fatalf("trash colliding book: %v", err)
 	}
 	target, err = ResolveKOReaderHash(database, "abc123")
-	if err != nil || target.Ambiguous || target.AssetID != "asset1" || target.WorkID != "w1" {
+	if err != nil || target.Ambiguous || target.AssetID != "asset1" || target.BookID != "w1" {
 		t.Fatalf("live hash target with trashed collision = %+v err=%v; want asset1/w1", target, err)
 	}
-	if _, err := database.Exec("UPDATE works SET deleted_at = unixepoch() WHERE id = 'w1'"); err != nil {
-		t.Fatalf("trash last live work: %v", err)
+	if _, err := database.Exec("UPDATE books SET deleted_at = unixepoch() WHERE id = 'w1'"); err != nil {
+		t.Fatalf("trash last live book: %v", err)
 	}
 	if target, err := ResolveKOReaderHash(database, "abc123"); err != nil || target != (KOReaderHashTarget{}) {
 		t.Fatalf("trashed-only hash target = %+v err=%v; want empty", target, err)
 	}
 }
 
-func TestKOReaderAmbiguousHashSavesProviderStateWithoutAdvancingAWork(t *testing.T) {
+func TestKOReaderAmbiguousHashSavesProviderStateWithoutAdvancingABook(t *testing.T) {
 	database := newTestDB(t)
 	user, err := database.CreateUser("alice", "pw", RoleMember)
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
 	if _, err := database.Exec(`
-		INSERT INTO works (id, title, sort_title) VALUES
+		INSERT INTO books (id, title, sort_title) VALUES
 			('w1', 'First', 'First'),
 			('w2', 'Second', 'Second');
-		INSERT INTO assets (id, work_id, storage_path, filename, extension, koreader_hash) VALUES
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, koreader_hash) VALUES
 			('asset1', 'w1', 'first.epub', 'first.epub', '.epub', 'shared-hash'),
 			('asset2', 'w2', 'second.epub', 'second.epub', '.epub', 'shared-hash')
 	`); err != nil {
@@ -83,13 +83,13 @@ func TestKOReaderAmbiguousHashSavesProviderStateWithoutAdvancingAWork(t *testing
 		Device:       "KOReader",
 		DeviceID:     "device-a",
 	})
-	if err != nil || saved == nil || saved.Progress != "chapter-4" || change.Changed || change.State.WorkID != "" {
+	if err != nil || saved == nil || saved.Progress != "chapter-4" || change.Changed || change.State.BookID != "" {
 		t.Fatalf("ambiguous hash save = saved:%+v change:%+v err:%v", saved, change, err)
 	}
-	for _, workID := range []string{"w1", "w2"} {
-		state, err := GetReadingStatus(database, user.ID, workID)
+	for _, bookID := range []string{"w1", "w2"} {
+		state, err := GetReadingStatus(database, user.ID, bookID)
 		if err != nil || state.Status != ReadingStatusUnread {
-			t.Fatalf("ambiguous hash advanced %s: %+v, err %v", workID, state, err)
+			t.Fatalf("ambiguous hash advanced %s: %+v, err %v", bookID, state, err)
 		}
 	}
 }
@@ -175,11 +175,11 @@ func TestKOReaderProgressAndStatusCommitTogether(t *testing.T) {
 		t.Fatalf("create user: %v", err)
 	}
 	if _, err := database.Exec(`
-		INSERT INTO works (id, title, sort_title) VALUES ('w_kosync_atomic', 'Atomic', 'Atomic');
-		INSERT INTO assets (id, work_id, storage_path, filename, extension, koreader_hash)
+		INSERT INTO books (id, title, sort_title) VALUES ('w_kosync_atomic', 'Atomic', 'Atomic');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, koreader_hash)
 		VALUES ('a_kosync_atomic', 'w_kosync_atomic', 'atomic.epub', 'atomic.epub', '.epub', 'atomic-hash');
 		CREATE TRIGGER reject_kosync_status
-		BEFORE INSERT ON user_work_reading_events
+		BEFORE INSERT ON user_book_reading_events
 		BEGIN
 			SELECT RAISE(ABORT, 'status write rejected');
 		END;

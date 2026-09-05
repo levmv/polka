@@ -7,7 +7,7 @@ import (
 	"github.com/levmv/polka/internal/appsettings"
 )
 
-const templateSettingKey = "book_path_template"
+const templateSettingKey = "storage.book_path_template"
 
 func OpenBookPathTemplate(q appsettings.Queryer) (string, error) {
 	template, ok, err := appsettings.Get(q, templateSettingKey)
@@ -47,7 +47,7 @@ func ValidateBookPathTemplate(template string) error {
 		Series:           "Example Series",
 		SeriesIndex:      "01",
 		AssetID:          "a_example",
-		WorkID:           "w_example",
+		BookID:           "b_example",
 		Ext:              "epub",
 		OriginalFilename: "example.epub",
 	})

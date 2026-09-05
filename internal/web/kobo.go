@@ -181,7 +181,7 @@ func mapKoboPublication(publication db.KoboPublication) kobowire.Publication {
 	}
 	return kobowire.Publication{
 		AssetID:       publication.AssetID,
-		WorkID:        publication.WorkID,
+		BookID:        publication.BookID,
 		Size:          publication.Size,
 		Title:         publication.Title,
 		Description:   publication.Description,
@@ -226,7 +226,7 @@ func (s *Server) handleKoboCover(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	r.SetPathValue("id", publication.WorkID)
+	r.SetPathValue("id", publication.BookID)
 	height, _ := strconv.Atoi(r.PathValue("height"))
 	query := r.URL.Query()
 	if height > 0 && height <= 500 {

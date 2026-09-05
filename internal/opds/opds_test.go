@@ -101,7 +101,7 @@ func TestAcquisitionFeedEscapesPublicationData(t *testing.T) {
 		},
 		[]Publication{
 			{
-				ID:            "urn:polka:work:w_1",
+				ID:            "urn:polka:book:w_1",
 				Title:         "A & B",
 				Updated:       now.Add(-time.Hour),
 				Authors:       []string{"Ada <Lovelace>"},
@@ -170,7 +170,7 @@ func TestAcquisitionFeedSanitizesInvalidXMLChars(t *testing.T) {
 		},
 		[]Publication{
 			{
-				ID:            "urn:polka:work:w_dirty",
+				ID:            "urn:polka:book:w_dirty",
 				Title:         "Dirty\x00 Title",
 				Updated:       now,
 				Authors:       []string{"Ada\x01 Lovelace", string([]byte{'B', 0xff, 'a', 'd'})},

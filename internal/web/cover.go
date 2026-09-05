@@ -17,8 +17,8 @@ import (
 )
 
 func (s *Server) handleCover(w http.ResponseWriter, r *http.Request) {
-	workID := r.PathValue("id")
-	if !s.requireCoverAccess(w, r, workID) {
+	bookID := r.PathValue("id")
+	if !s.requireCoverAccess(w, r, bookID) {
 		return
 	}
 
@@ -32,7 +32,7 @@ func (s *Server) handleCover(w http.ResponseWriter, r *http.Request) {
 	}
 
 	root := s.dataRoot()
-	originalPath, err := root.Resolve(covers.OriginalPath(workID))
+	originalPath, err := root.Resolve(covers.OriginalPath(bookID))
 	if err != nil {
 		serverError(w, err)
 		return
@@ -42,14 +42,14 @@ func (s *Server) handleCover(w http.ResponseWriter, r *http.Request) {
 		if os.IsNotExist(err) {
 			// No stored cover: serve a generated fallback instead of a 404 that
 			// the frontend would have to paper over with a "No Cover" block.
-			s.serveGeneratedCover(w, r, workID, variant)
+			s.serveGeneratedCover(w, r, bookID, variant)
 		} else {
 			serverError(w, err)
 		}
 		return
 	}
 
-	cacheRel := covers.CachePath(workID, variant)
+	cacheRel := covers.CachePath(bookID, variant)
 	cachePath, err := root.Resolve(cacheRel)
 	if err != nil {
 		serverError(w, err)
@@ -78,23 +78,23 @@ func (s *Server) handleCover(w http.ResponseWriter, r *http.Request) {
 	serveCoverBytes(w, r, processed.Bytes, filepath.Base(cachePath), time.Now(), processed.ContentType)
 }
 
-func (s *Server) requireCoverAccess(w http.ResponseWriter, r *http.Request, workID string) bool {
-	_, ok := s.requireAccess(w, r, workID, func(q db.Queryer, scope db.VisibilityScope, workID string) (bool, error) {
-		allowed, err := db.CanAccessWork(q, scope, workID)
+func (s *Server) requireCoverAccess(w http.ResponseWriter, r *http.Request, bookID string) bool {
+	_, ok := s.requireAccess(w, r, bookID, func(q db.Queryer, scope db.VisibilityScope, bookID string) (bool, error) {
+		allowed, err := db.CanAccessBook(q, scope, bookID)
 		if err != nil || allowed || !db.RoleAtLeast(contextUser(r.Context()).Role, db.RoleMember) {
 			return allowed, err
 		}
-		return db.CanAccessTrashedWork(q, scope, workID)
+		return db.CanAccessTrashedBook(q, scope, bookID)
 	})
 	return ok
 }
 
-// serveGeneratedCover renders and serves a deterministic placeholder for a work
+// serveGeneratedCover renders and serves a deterministic placeholder for a book
 // with no stored cover. The image is not cached on disk: it is a pure function
 // of title+author (which a single edit can change), so we instead let the
 // browser revalidate via an ETag over those inputs.
-func (s *Server) serveGeneratedCover(w http.ResponseWriter, r *http.Request, workID string, variant covers.Variant) {
-	title, author, found, err := s.db.PlaceholderCoverText(workID)
+func (s *Server) serveGeneratedCover(w http.ResponseWriter, r *http.Request, bookID string, variant covers.Variant) {
+	title, author, found, err := s.db.PlaceholderCoverText(bookID)
 	if err != nil {
 		serverError(w, err)
 		return

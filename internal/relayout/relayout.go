@@ -1,4 +1,4 @@
-// Package relayout owns the shared sequencing for work-metadata mutations whose
+// Package relayout owns the shared sequencing for book-metadata mutations whose
 // path inputs may change: commit catalog/search bookkeeping first, then move
 // files to their canonical paths while keeping DB and disk consistent. The
 // lost-file recovery in `polka repair` is a different, search-based concern and
@@ -17,7 +17,7 @@ import (
 	"github.com/levmv/polka/internal/storage"
 )
 
-// Work moves each of a work's assets to its canonical path and then updates
+// Book moves each of a book's assets to its canonical path and then updates
 // assets.storage_path. Before and after the operation the DB and disk agree. The
 // brief interval after the move but before the update is an accepted tradeoff: a
 // concurrent read can fail transiently and succeed on retry; keeping both paths
@@ -28,14 +28,14 @@ import (
 // a returned error as a warning: the metadata change is already durable and the
 // DB stays consistent with disk; `polka repair` recovers the rare unrecoverable
 // window via the asset-id tag. Returns the number of files relocated.
-func Work(database *db.DB, root storage.Root, workID string) (int, error) {
+func Book(database *db.DB, root storage.Root, bookID string) (int, error) {
 	var title, sortTitle, series, seriesIndex string
 	if err := database.QueryRow(`
 		SELECT title, COALESCE(sort_title, ''), COALESCE(series, ''),
 		       CASE WHEN series_index IS NULL THEN '' ELSE CAST(series_index AS TEXT) END
-		FROM works
+		FROM books
 		WHERE id = ?
-	`, workID).Scan(&title, &sortTitle, &series, &seriesIndex); err != nil {
+	`, bookID).Scan(&title, &sortTitle, &series, &seriesIndex); err != nil {
 		return 0, fmt.Errorf("load title: %w", err)
 	}
 	template, err := storage.OpenBookPathTemplate(database)
@@ -43,7 +43,7 @@ func Work(database *db.DB, root storage.Root, workID string) (int, error) {
 		return 0, err
 	}
 
-	primaryAuthor, primaryAuthorSort, err := db.PrimaryAuthor(database, workID)
+	primaryAuthor, primaryAuthorSort, err := db.PrimaryAuthor(database, bookID)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return 0, fmt.Errorf("primary author: %w", err)
 	}
@@ -52,7 +52,7 @@ func Work(database *db.DB, root storage.Root, workID string) (int, error) {
 		primaryAuthorSort = bookmeta.AuthorSort("Unknown Author")
 	}
 
-	assets, err := db.AssetsByWorkIDs(database, []string{workID})
+	assets, err := db.AssetsByBookIDs(database, []string{bookID})
 	if err != nil {
 		return 0, err
 	}
@@ -79,7 +79,7 @@ func Work(database *db.DB, root storage.Root, workID string) (int, error) {
 			Series:           series,
 			SeriesIndex:      seriesIndex,
 			AssetID:          a.ID,
-			WorkID:           workID,
+			BookID:           bookID,
 			Ext:              a.Extension,
 			OriginalFilename: originalFilename,
 		})

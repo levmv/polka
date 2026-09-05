@@ -25,7 +25,7 @@ const (
 
 const (
 	deliveryDeviceColumns = `id, user_id, name, email, preset, is_default, created_at, updated_at`
-	deliveryJobColumns    = `id, user_id, device_id, device_name, device_email, preset, work_id,
+	deliveryJobColumns    = `id, user_id, device_id, device_name, device_email, preset, book_id,
 		asset_id, title, target, filename, size_bytes, status, error,
 		created_at, updated_at, sent_at`
 )
@@ -57,7 +57,7 @@ type DeliveryJob struct {
 	DeviceName  string
 	DeviceEmail string
 	Preset      string
-	WorkID      string
+	BookID      string
 	AssetID     sql.NullString
 	Title       string
 	Target      sql.NullString
@@ -70,7 +70,7 @@ type DeliveryJob struct {
 	SentAt      sql.NullInt64
 }
 
-type DeliveryWorkRow struct {
+type DeliveryBookRow struct {
 	ID      string
 	Title   string
 	Authors string
@@ -290,30 +290,30 @@ func validateDeliveryDeviceInput(userID int64, name, email, preset string) error
 	return nil
 }
 
-func (db *DB) DeliveryWorkForPlan(scope VisibilityScope, workID string) (DeliveryWorkRow, []DeliveryAssetRow, error) {
-	where, args := scope.AppendWorkWhere("w.id = ? AND w.deleted_at IS NULL", "w.id", workID)
-	var work DeliveryWorkRow
+func (db *DB) DeliveryBookForPlan(scope VisibilityScope, bookID string) (DeliveryBookRow, []DeliveryAssetRow, error) {
+	where, args := scope.AppendBookWhere("b.id = ? AND b.deleted_at IS NULL", "b.id", bookID)
+	var book DeliveryBookRow
 	err := db.QueryRow(`
-		SELECT w.id, w.title, `+colAuthors+`
-		FROM works w
+		SELECT b.id, b.title, `+colAuthors+`
+		FROM books b
 		WHERE `+where+`
 		LIMIT 1
-	`, args...).Scan(&work.ID, &work.Title, &work.Authors)
+	`, args...).Scan(&book.ID, &book.Title, &book.Authors)
 	if errors.Is(err, sql.ErrNoRows) {
-		return DeliveryWorkRow{}, nil, sql.ErrNoRows
+		return DeliveryBookRow{}, nil, sql.ErrNoRows
 	}
 	if err != nil {
-		return DeliveryWorkRow{}, nil, fmt.Errorf("get delivery work: %w", err)
+		return DeliveryBookRow{}, nil, fmt.Errorf("get delivery book: %w", err)
 	}
 
 	rows, err := db.Query(`
 		SELECT id, filename, extension, format, COALESCE(current_size, original_size, 0), is_primary
 		FROM assets
-		WHERE work_id = ?
+		WHERE book_id = ?
 		ORDER BY is_primary DESC, id ASC
-	`, work.ID)
+	`, book.ID)
 	if err != nil {
-		return DeliveryWorkRow{}, nil, fmt.Errorf("list delivery assets: %w", err)
+		return DeliveryBookRow{}, nil, fmt.Errorf("list delivery assets: %w", err)
 	}
 	defer rows.Close()
 
@@ -323,16 +323,16 @@ func (db *DB) DeliveryWorkForPlan(scope VisibilityScope, workID string) (Deliver
 		var formatKey string
 		var isPrimary int
 		if err := rows.Scan(&row.ID, &row.Filename, &row.Extension, &formatKey, &row.Size, &isPrimary); err != nil {
-			return DeliveryWorkRow{}, nil, fmt.Errorf("scan delivery asset: %w", err)
+			return DeliveryBookRow{}, nil, fmt.Errorf("scan delivery asset: %w", err)
 		}
 		row.Format = format.FormatFromKey(formatKey)
 		row.IsPrimary = isPrimary != 0
 		assets = append(assets, row)
 	}
 	if err := rows.Err(); err != nil {
-		return DeliveryWorkRow{}, nil, err
+		return DeliveryBookRow{}, nil, err
 	}
-	return work, assets, nil
+	return book, assets, nil
 }
 
 func (db *DB) CreateDeliveryJob(job DeliveryJob) (*DeliveryJob, error) {
@@ -344,12 +344,12 @@ func (db *DB) CreateDeliveryJob(job DeliveryJob) (*DeliveryJob, error) {
 	}
 	_, err := db.Exec(`
 		INSERT INTO delivery_jobs (
-			id, user_id, device_id, device_name, device_email, preset, work_id,
+			id, user_id, device_id, device_name, device_email, preset, book_id,
 			asset_id, title, target, filename, size_bytes, status, error
 		)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, job.ID, job.UserID, job.DeviceID, job.DeviceName, job.DeviceEmail, job.Preset,
-		job.WorkID, job.AssetID, job.Title, job.Target, job.Filename, job.SizeBytes,
+		job.BookID, job.AssetID, job.Title, job.Target, job.Filename, job.SizeBytes,
 		job.Status, job.Error)
 	if err != nil {
 		return nil, fmt.Errorf("create delivery job: %w", err)
@@ -517,7 +517,7 @@ func scanDeliveryJobRow(row rowScanner) (*DeliveryJob, error) {
 	var job DeliveryJob
 	if err := row.Scan(
 		&job.ID, &job.UserID, &job.DeviceID, &job.DeviceName, &job.DeviceEmail,
-		&job.Preset, &job.WorkID, &job.AssetID, &job.Title, &job.Target,
+		&job.Preset, &job.BookID, &job.AssetID, &job.Title, &job.Target,
 		&job.Filename, &job.SizeBytes, &job.Status, &job.Error,
 		&job.CreatedAt, &job.UpdatedAt, &job.SentAt,
 	); err != nil {

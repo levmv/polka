@@ -19,20 +19,20 @@ import (
 	"github.com/levmv/polka/internal/db"
 )
 
-func seedKoboWebBook(t *testing.T, database *db.DB, dir, workID, assetID, title string) {
+func seedKoboWebBook(t *testing.T, database *db.DB, dir, bookID, assetID, title string) {
 	t.Helper()
-	storagePath := filepath.ToSlash(filepath.Join("Kobo", workID, assetID+".epub"))
+	storagePath := filepath.ToSlash(filepath.Join("Kobo", bookID, assetID+".epub"))
 	if _, err := database.Exec(`
-		INSERT INTO works (id, title, sort_title, language, publisher)
+		INSERT INTO books (id, title, sort_title, language, publisher)
 		VALUES (?, ?, ?, 'en', 'Polka Press')
-	`, workID, title, title); err != nil {
+	`, bookID, title, title); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := database.Exec(`
 		INSERT INTO assets
-		    (id, work_id, storage_path, filename, extension, format, is_primary, current_size)
+		    (id, book_id, storage_path, filename, extension, format, is_primary, current_size)
 		VALUES (?, ?, ?, ?, '.epub', 'epub', 1, 1024)
-	`, assetID, workID, storagePath, assetID+".epub"); err != nil {
+	`, assetID, bookID, storagePath, assetID+".epub"); err != nil {
 		t.Fatal(err)
 	}
 	fullPath := filepath.Join(dir, filepath.FromSlash(storagePath))

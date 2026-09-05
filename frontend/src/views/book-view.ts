@@ -193,7 +193,7 @@ function openDownload(url: string): void {
 // is view state, not route ownership. Whoever navigates away next can therefore
 // cancel this page's request instead of racing its render.
 export function initBookDetail(
-    workId: string,
+    bookId: string,
     root: HTMLElement,
     context: RouteMountContext,
 ): RouteController {
@@ -207,7 +207,7 @@ export function initBookDetail(
         takeFocus: context.clientNavigation,
     };
     const releaseEditorHost = registerActiveBookDetailHost(hostFor(view));
-    void loadBookDetail(view, workId);
+    void loadBookDetail(view, bookId);
     return {
         destroy(): void {
             releaseEditorHost();
@@ -220,7 +220,7 @@ export function initBookDetail(
     };
 }
 
-async function loadBookDetail(view: BookDetailView, workId: string): Promise<void> {
+async function loadBookDetail(view: BookDetailView, bookId: string): Promise<void> {
     const container = view.root.querySelector<HTMLElement>('#book-detail-container');
     if (!container) return;
     // The page marks itself busy for its own data, the way the library does.
@@ -229,7 +229,7 @@ async function loadBookDetail(view: BookDetailView, workId: string): Promise<voi
     const finishGlobalLoading = beginGlobalLoading();
     try {
         const [b, me] = await Promise.all([
-            fetchBook(workId, view.abort.signal),
+            fetchBook(bookId, view.abort.signal),
             fetchCurrentUser(),
         ]);
         if (view.phase !== 'active') return;
@@ -750,7 +750,7 @@ function openSendBookModal(book: Book): void {
         send.disabled = true;
         try {
             const job = await createDelivery({
-                work_id: book.id,
+                book_id: book.id,
                 device_id: preferredDeviceID,
                 asset_id: selectedPlan.asset_id,
                 target: selectedPlan.target,

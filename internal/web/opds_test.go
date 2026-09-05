@@ -191,7 +191,7 @@ func TestOPDSSeriesNav(t *testing.T) {
 	defer database.Close()
 
 	_ = mustUser(t, database, "alice", db.RoleMember)
-	if _, err := database.Exec(`UPDATE works SET series = 'Middle-earth' WHERE id = 'w_1'`); err != nil {
+	if _, err := database.Exec(`UPDATE books SET series = 'Middle-earth' WHERE id = 'w_1'`); err != nil {
 		t.Fatalf("set series: %v", err)
 	}
 	s := newTestServer(database, dir)
@@ -230,10 +230,10 @@ func TestOPDSSeriesNavPaging(t *testing.T) {
 		id := "sw_" + strconv.Itoa(i)
 		name := "Series " + fmt.Sprintf("%03d", i)
 		if _, err := database.Exec(
-			`INSERT INTO works (id, title, sort_title, series) VALUES (?, ?, ?, ?)`,
+			`INSERT INTO books (id, title, sort_title, series) VALUES (?, ?, ?, ?)`,
 			id, name, name, name,
 		); err != nil {
-			t.Fatalf("insert work: %v", err)
+			t.Fatalf("insert book: %v", err)
 		}
 	}
 	s := newTestServer(database, dir)
@@ -275,7 +275,7 @@ func TestOPDSTagsNav(t *testing.T) {
 	defer database.Close()
 
 	_ = mustUser(t, database, "alice", db.RoleMember)
-	if _, err := database.Exec(`UPDATE works SET tags = 'fantasy, classics' WHERE id = 'w_1'`); err != nil {
+	if _, err := database.Exec(`UPDATE books SET tags = 'fantasy, classics' WHERE id = 'w_1'`); err != nil {
 		t.Fatalf("set tags: %v", err)
 	}
 	s := newTestServer(database, dir)
@@ -307,7 +307,7 @@ func TestOPDSBooksFeed(t *testing.T) {
 
 	_ = mustUser(t, database, "alice", db.RoleMember)
 	if _, err := database.Exec(`
-		UPDATE works
+		UPDATE books
 		SET description = '<p>A small <strong>adventure</strong>.</p>',
 		    tags = 'fantasy, classics',
 		    cover_version = 2,
@@ -318,7 +318,7 @@ func TestOPDSBooksFeed(t *testing.T) {
 		    updated_at = 100
 		WHERE id = 'w_1'
 	`); err != nil {
-		t.Fatalf("update work: %v", err)
+		t.Fatalf("update book: %v", err)
 	}
 	s := newTestServer(database, dir)
 
@@ -442,20 +442,20 @@ func TestOPDSPaginationBoundaries(t *testing.T) {
 
 	_ = mustUser(t, database, "alice", db.RoleMember)
 	if _, err := database.Exec(`
-		INSERT INTO works (id, title, sort_title) VALUES
+		INSERT INTO books (id, title, sort_title) VALUES
 			('w_3', 'Boundary One', 'Boundary One'),
 			('w_4', 'Boundary Two', 'Boundary Two'),
 			('w_5', 'Boundary Three', 'Boundary Three');
-		INSERT INTO assets (id, work_id, storage_path, filename, extension) VALUES
+		INSERT INTO assets (id, book_id, storage_path, filename, extension) VALUES
 			('asset_3', 'w_3', 'one.epub', 'one.epub', '.epub'),
 			('asset_4', 'w_4', 'two.epub', 'two.epub', '.epub'),
 			('asset_5', 'w_5', 'three.epub', 'three.epub', '.epub');
-		INSERT INTO search (rowid, work_id, title, authors) VALUES
+		INSERT INTO search (rowid, book_id, title, authors) VALUES
 			(3, 'w_3', 'Boundary One', ''),
 			(4, 'w_4', 'Boundary Two', ''),
 			(5, 'w_5', 'Boundary Three', '');
 	`); err != nil {
-		t.Fatalf("insert paginated works: %v", err)
+		t.Fatalf("insert paginated books: %v", err)
 	}
 	s := newTestServer(database, dir)
 

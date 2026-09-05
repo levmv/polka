@@ -19,11 +19,11 @@ test.describe('Reader', () => {
     const card = page.locator('.book-card', { hasText: title });
     await expect(card).toBeVisible();
     const href = await card.locator('.book-title-link').getAttribute('href');
-    const workId = href?.split('/').pop()?.split('?')[0];
-    if (!workId) throw new Error('missing vertical EPUB work id');
+    const bookId = href?.split('/').pop()?.split('?')[0];
+    if (!bookId) throw new Error('missing vertical EPUB book id');
 
     try {
-      await page.goto(`/read/${workId}`);
+      await page.goto(`/read/${bookId}`);
       await expect
         .poll(async () => page.locator('.reader-epub-stage').getAttribute('data-reader-ready'))
         .toBe('true');
@@ -64,10 +64,10 @@ test.describe('Reader', () => {
       await page.screenshot({ path: 'screenshots/reader-vertical.png', fullPage: true });
     } finally {
       const trash = await page.request.post('/api/books/bulk/trash', {
-        data: { ids: [workId] },
+        data: { ids: [bookId] },
       });
       expect(trash.ok()).toBeTruthy();
-      const purge = await page.request.delete(`/api/books/${encodeURIComponent(workId)}/purge`);
+      const purge = await page.request.delete(`/api/books/${encodeURIComponent(bookId)}/purge`);
       expect(purge.status()).toBe(204);
     }
   });
@@ -75,7 +75,7 @@ test.describe('Reader', () => {
   test('EPUB reader supports controls and persists reading state', async ({ page }) => {
     const reader = page.locator('.reader-page');
     const displayToggle = page.locator('[data-reader-display-toggle]');
-    let workId = '';
+    let bookId = '';
     let assetId = '';
 
     await test.step('opens with the default layout', async () => {
@@ -86,10 +86,10 @@ test.describe('Reader', () => {
       const href = await card.locator('.book-title-link').getAttribute('href');
       if (!href) throw new Error('missing book link');
       // The href carries the ?from= context; the id is the path alone.
-      workId = (href.split('/').pop() || '').split('?')[0];
-      if (!workId) throw new Error('missing work id');
+      bookId = (href.split('/').pop() || '').split('?')[0];
+      if (!bookId) throw new Error('missing book id');
 
-      await page.goto(`/read/${workId}`);
+      await page.goto(`/read/${bookId}`);
       await expect(reader).toBeVisible();
       await expect(page.locator('.reader-epub-stage')).toBeVisible();
       await expect(page.locator('foliate-view')).toBeVisible();
@@ -99,7 +99,7 @@ test.describe('Reader', () => {
       await expect(displayToggle).toBeVisible();
       const closeReader = page.getByRole('link', { name: 'Close reader' });
       await expect(closeReader).toBeVisible();
-      await expect(closeReader).toHaveAttribute('href', `/book/${workId}`);
+      await expect(closeReader).toHaveAttribute('href', `/book/${bookId}`);
       await expect
         .poll(async () => {
           return page.evaluate(() => {
@@ -338,10 +338,10 @@ test.describe('Reader', () => {
       await expect
         .poll(async () => {
           const res = await page.evaluate(async () => {
-            const response = await fetch('/api/reader/preferences');
+            const response = await fetch('/api/settings');
             if (!response.ok) return '';
             const prefs = await response.json();
-            return `${prefs.epub_flow}:${prefs.display_style}:${prefs.font_scale}`;
+            return `${prefs.reader_flow}:${prefs.reader_style}:${prefs.reader_font_size}`;
           });
           return res;
         })
@@ -399,7 +399,7 @@ test.describe('Reader', () => {
     });
 
     await test.step('projects saved progress onto book detail', async () => {
-      await page.goto(`/book/${workId}`);
+      await page.goto(`/book/${bookId}`);
       await page.evaluate(async (id) => {
         const res = await fetch(`/api/reader/assets/${encodeURIComponent(id)}/state`, {
           method: 'PUT',
@@ -438,11 +438,11 @@ test.describe('Reader', () => {
     const card = page.locator('.book-card', { hasText: title });
     await expect(card).toBeVisible();
     const href = await card.locator('.book-title-link').getAttribute('href');
-    const workId = href?.split('/').pop()?.split('?')[0];
-    if (!workId) throw new Error('missing tolerated EPUB work id');
+    const bookId = href?.split('/').pop()?.split('?')[0];
+    if (!bookId) throw new Error('missing tolerated EPUB book id');
 
     try {
-      await page.goto(`/read/${workId}`);
+      await page.goto(`/read/${bookId}`);
       const reader = page.locator('.reader-page');
       await expect(reader).toHaveAttribute('data-reader-fallback', 'epub-to-kepub');
       await expect
@@ -463,10 +463,10 @@ test.describe('Reader', () => {
         .toContain(author);
     } finally {
       const trash = await page.request.post('/api/books/bulk/trash', {
-        data: { ids: [workId] },
+        data: { ids: [bookId] },
       });
       expect(trash.ok()).toBeTruthy();
-      const purge = await page.request.delete(`/api/books/${encodeURIComponent(workId)}/purge`);
+      const purge = await page.request.delete(`/api/books/${encodeURIComponent(bookId)}/purge`);
       expect(purge.status()).toBe(204);
     }
   });
@@ -485,11 +485,11 @@ test.describe('Reader', () => {
     const card = page.locator('.book-card', { hasText: title });
     await expect(card).toBeVisible();
     const href = await card.locator('.book-title-link').getAttribute('href');
-    const workId = href?.split('/').pop()?.split('?')[0];
-    if (!workId) throw new Error('missing UTF-8 path EPUB work id');
+    const bookId = href?.split('/').pop()?.split('?')[0];
+    if (!bookId) throw new Error('missing UTF-8 path EPUB book id');
 
     try {
-      await page.goto(`/read/${workId}`);
+      await page.goto(`/read/${bookId}`);
       const reader = page.locator('.reader-page');
       await expect
         .poll(async () => page.locator('.reader-epub-stage').getAttribute('data-reader-ready'))
@@ -509,10 +509,10 @@ test.describe('Reader', () => {
         .toContain(author);
     } finally {
       const trash = await page.request.post('/api/books/bulk/trash', {
-        data: { ids: [workId] },
+        data: { ids: [bookId] },
       });
       expect(trash.ok()).toBeTruthy();
-      const purge = await page.request.delete(`/api/books/${encodeURIComponent(workId)}/purge`);
+      const purge = await page.request.delete(`/api/books/${encodeURIComponent(bookId)}/purge`);
       expect(purge.status()).toBe(204);
     }
   });
@@ -523,10 +523,10 @@ test.describe('Reader', () => {
     await expect(card).toBeVisible();
 
     const href = await card.locator('.book-title-link').getAttribute('href');
-    const workId = href?.split('/').pop();
-    if (!workId) throw new Error('missing work id');
+    const bookId = href?.split('/').pop();
+    if (!bookId) throw new Error('missing book id');
 
-    await page.goto(`/read/${workId}`);
+    await page.goto(`/read/${bookId}`);
     const reader = page.locator('.reader-page');
     await expect(reader).toHaveAttribute('data-reader-format', 'fb2');
     // FB2 shares the foliate stage with EPUB.

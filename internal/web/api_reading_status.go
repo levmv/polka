@@ -26,15 +26,15 @@ func readingStatusDTO(state db.ReadingStatusState) ReadingStatusDTO {
 }
 
 func (s *Server) handleAPIReadingStatusSave(w http.ResponseWriter, r *http.Request) {
-	workID := r.PathValue("id")
-	if _, ok := s.requireWorkAccess(w, r, workID); !ok {
+	bookID := r.PathValue("id")
+	if _, ok := s.requireBookAccess(w, r, bookID); !ok {
 		return
 	}
 	var req readingStatusRequest
 	if !readJSON(w, r, &req) {
 		return
 	}
-	change, err := s.db.SetReadingStatus(r.Context(), UserID(r.Context()), workID, req.Status, db.ReadingStatusSourceManual)
+	change, err := s.db.SetReadingStatus(r.Context(), UserID(r.Context()), bookID, req.Status, db.ReadingStatusSourceManual)
 	if writeReadingStatusError(w, err) {
 		return
 	}
@@ -42,8 +42,8 @@ func (s *Server) handleAPIReadingStatusSave(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *Server) handleAPIReadingStatusUndo(w http.ResponseWriter, r *http.Request) {
-	workID := r.PathValue("id")
-	if _, ok := s.requireWorkAccess(w, r, workID); !ok {
+	bookID := r.PathValue("id")
+	if _, ok := s.requireBookAccess(w, r, bookID); !ok {
 		return
 	}
 	var req readingStatusUndoRequest
@@ -54,7 +54,7 @@ func (s *Server) handleAPIReadingStatusUndo(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "Missing event_id", http.StatusBadRequest)
 		return
 	}
-	change, err := s.db.UndoAutomaticReadingStatus(r.Context(), UserID(r.Context()), workID, req.EventID)
+	change, err := s.db.UndoAutomaticReadingStatus(r.Context(), UserID(r.Context()), bookID, req.EventID)
 	if writeReadingStatusError(w, err) {
 		return
 	}
@@ -68,7 +68,7 @@ func writeReadingStatusError(w http.ResponseWriter, err error) bool {
 	switch {
 	case errors.Is(err, db.ErrInvalidReadingStatus):
 		http.Error(w, err.Error(), http.StatusBadRequest)
-	case errors.Is(err, db.ErrReadingStatusWorkMissing):
+	case errors.Is(err, db.ErrReadingStatusBookMissing):
 		http.Error(w, "Book not found", http.StatusNotFound)
 	case errors.Is(err, db.ErrReadingStatusUndoUnavailable):
 		http.Error(w, err.Error(), http.StatusConflict)

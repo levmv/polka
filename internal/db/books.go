@@ -48,30 +48,30 @@ const (
 const (
 	// bookSummaryColumns is the SELECT column list consumed by scanBookSummary.
 	// Authors deliberately are not flattened into this common projection:
-	// display callers batch-load the ordered work_authors rows.
-	bookSummaryColumns = `w.id, w.title, w.series, w.series_index, w.tags, w.cover_version,
-		w.published_date`
+	// display callers batch-load the ordered book_authors rows.
+	bookSummaryColumns = `b.id, b.title, b.series, b.series_index, b.tags, b.cover_version,
+		b.published_date`
 
 	// colAuthors is retained for specialized flat projections such as FTS and
-	// delivery. UI-facing book rows load ordered authors from work_authors.
+	// delivery. UI-facing book rows load ordered authors from book_authors.
 	colAuthors = `COALESCE((SELECT group_concat(name, ', ') FROM (
-		SELECT a.name FROM work_authors wa
-		JOIN authors a ON wa.author_id = a.id
-		WHERE wa.work_id = w.id
-		ORDER BY wa.author_order ASC, wa.rowid ASC)), '') AS authors`
+		SELECT a.name FROM book_authors ba
+		JOIN authors a ON ba.author_id = a.id
+		WHERE ba.book_id = b.id
+		ORDER BY ba.author_order ASC, ba.rowid ASC)), '') AS authors`
 
-	// subPrimaryAuthorName is a scalar subquery for the name of a work's primary
+	// subPrimaryAuthorName is a scalar subquery for the name of a book's primary
 	// (lowest author_order) author, for duplicate / unknown-author detection.
-	subPrimaryAuthorName = `(SELECT a.name FROM work_authors wa
-		JOIN authors a ON wa.author_id = a.id
-		WHERE wa.work_id = w.id
-		ORDER BY wa.author_order ASC, wa.rowid ASC LIMIT 1)`
+	subPrimaryAuthorName = `(SELECT a.name FROM book_authors ba
+		JOIN authors a ON ba.author_id = a.id
+		WHERE ba.book_id = b.id
+		ORDER BY ba.author_order ASC, ba.rowid ASC LIMIT 1)`
 
-	noCoverCondition       = `w.cover_version <= 0`
-	noTagsCondition        = `w.tags IS NULL OR w.tags = ''`
-	noDescriptionCondition = `w.description IS NULL OR w.description = ''`
+	noCoverCondition       = `b.cover_version <= 0`
+	noTagsCondition        = `b.tags IS NULL OR b.tags = ''`
+	noDescriptionCondition = `b.description IS NULL OR b.description = ''`
 	noAuthorCondition      = subPrimaryAuthorName + ` = 'Unknown Author'`
-	noSeriesCondition      = `w.series IS NULL OR TRIM(w.series) = ''`
+	noSeriesCondition      = `b.series IS NULL OR TRIM(b.series) = ''`
 )
 
 // scanBookSummary scans one row produced by bookSummaryColumns.
@@ -83,16 +83,16 @@ func scanBookSummary(rows *sql.Rows) (BookSummaryRow, error) {
 }
 
 func bookOrderBy(sort BookSort, hasRank bool) string {
-	orderBy := "w.added_at DESC"
+	orderBy := "b.added_at DESC"
 	switch sort {
 	case SortTitle:
-		orderBy = "w.sort_title COLLATE NOCASE ASC, w.title COLLATE NOCASE ASC"
+		orderBy = "b.sort_title COLLATE NOCASE ASC, b.title COLLATE NOCASE ASC"
 	case SortAuthor:
-		orderBy = "w.primary_author_sort ASC, w.sort_title COLLATE NOCASE ASC, w.title COLLATE NOCASE ASC"
+		orderBy = "b.primary_author_sort ASC, b.sort_title COLLATE NOCASE ASC, b.title COLLATE NOCASE ASC"
 	case SortYear:
-		orderBy = "w.published_date DESC NULLS LAST, w.added_at DESC"
+		orderBy = "b.published_date DESC NULLS LAST, b.added_at DESC"
 	case SortSeries:
-		orderBy = seriesMissingLast + ", w.series COLLATE NOCASE ASC, " + seriesVolumeOrderBy
+		orderBy = seriesMissingLast + ", b.series COLLATE NOCASE ASC, " + seriesVolumeOrderBy
 	case SortRelevance:
 		if hasRank {
 			orderBy = "rank"
@@ -102,7 +102,7 @@ func bookOrderBy(sort BookSort, hasRank bool) string {
 }
 
 func stableBookOrderBy(sort BookSort, hasRank bool) string {
-	return bookOrderBy(sort, hasRank) + ", w.id ASC"
+	return bookOrderBy(sort, hasRank) + ", b.id ASC"
 }
 
 const maxBookJumpBuckets = 128
@@ -120,19 +120,19 @@ func ListBookJumps(queryer Queryer, scope VisibilityScope, sort BookSort) ([]Boo
 	var valueExpr string
 	switch sort {
 	case SortTitle:
-		valueExpr = "w.sort_title"
+		valueExpr = "b.sort_title"
 	case SortAuthor:
-		valueExpr = "w.primary_author_sort"
+		valueExpr = "b.primary_author_sort"
 	default:
 		return nil, 0, fmt.Errorf("book jumps require title or author sort")
 	}
 
-	withSQL, fromSQL, args := scope.joinVisibleWorks("works w")
+	withSQL, fromSQL, args := scope.joinVisibleBooks("books b")
 	query := fmt.Sprintf(`
 		%s
 		SELECT %s
 		FROM %s
-		WHERE w.deleted_at IS NULL
+		WHERE b.deleted_at IS NULL
 		ORDER BY %s
 	`, withClause(withSQL), valueExpr, fromSQL, stableBookOrderBy(sort, false))
 
@@ -195,30 +195,30 @@ func bookJumpLabel(sortValue string) string {
 func manualShelfOrderBy(sort BookSort) string {
 	switch sort {
 	case SortTitle:
-		return "w.sort_title COLLATE NOCASE ASC, w.title COLLATE NOCASE ASC"
+		return "b.sort_title COLLATE NOCASE ASC, b.title COLLATE NOCASE ASC"
 	case SortAuthor:
-		return "w.primary_author_sort ASC, w.sort_title COLLATE NOCASE ASC, w.title COLLATE NOCASE ASC"
+		return "b.primary_author_sort ASC, b.sort_title COLLATE NOCASE ASC, b.title COLLATE NOCASE ASC"
 	case SortYear:
-		return "w.published_date DESC NULLS LAST, w.added_at DESC"
+		return "b.published_date DESC NULLS LAST, b.added_at DESC"
 	default:
-		return "sb.position ASC, sb.added_at DESC, w.added_at DESC"
+		return "sb.position ASC, sb.added_at DESC, b.added_at DESC"
 	}
 }
 
 func stableManualShelfOrderBy(sort BookSort) string {
-	return manualShelfOrderBy(sort) + ", w.id ASC"
+	return manualShelfOrderBy(sort) + ", b.id ASC"
 }
 
 const (
-	seriesOrderGroup = "CASE WHEN w.series_index IS NOT NULL AND w.series_index > 0 THEN 0 ELSE 1 END"
-	seriesOrderIndex = "CASE WHEN w.series_index IS NOT NULL AND w.series_index > 0 THEN w.series_index ELSE 0 END"
+	seriesOrderGroup = "CASE WHEN b.series_index IS NOT NULL AND b.series_index > 0 THEN 0 ELSE 1 END"
+	seriesOrderIndex = "CASE WHEN b.series_index IS NOT NULL AND b.series_index > 0 THEN b.series_index ELSE 0 END"
 	// Volume order inside one series: numbered volumes first in index order,
 	// then the unnumbered ones by title.
-	seriesVolumeOrderBy = seriesOrderGroup + " ASC, " + seriesOrderIndex + " ASC, w.title COLLATE NOCASE ASC"
-	seriesOrderBy       = seriesVolumeOrderBy + ", w.id ASC"
-	// Series-less works sort after every named series rather than clumping at
+	seriesVolumeOrderBy = seriesOrderGroup + " ASC, " + seriesOrderIndex + " ASC, b.title COLLATE NOCASE ASC"
+	seriesOrderBy       = seriesVolumeOrderBy + ", b.id ASC"
+	// Series-less books sort after every named series rather than clumping at
 	// the front on an empty string.
-	seriesMissingLast = "CASE WHEN w.series IS NULL OR TRIM(w.series) = '' THEN 1 ELSE 0 END ASC"
+	seriesMissingLast = "CASE WHEN b.series IS NULL OR TRIM(b.series) = '' THEN 1 ELSE 0 END ASC"
 )
 
 type BookSequenceItem struct {
@@ -232,11 +232,11 @@ type BookSequenceWindow struct {
 	Total        int
 }
 
-func BookSequenceInList(queryer Queryer, scope VisibilityScope, userID int64, workID, q string, sort BookSort, before, after int) (BookSequenceWindow, error) {
+func BookSequenceInList(queryer Queryer, scope VisibilityScope, userID int64, bookID, q string, sort BookSort, before, after int) (BookSequenceWindow, error) {
 	plan := newBookSearchPlan(scope, userID, q)
 	return queryBookSequenceWindow(
 		queryer,
-		workID,
+		bookID,
 		plan.withSQL,
 		plan.fromSQL,
 		plan.whereSQL,
@@ -247,15 +247,15 @@ func BookSequenceInList(queryer Queryer, scope VisibilityScope, userID int64, wo
 	)
 }
 
-func BookSequenceInManualShelf(queryer Queryer, scope VisibilityScope, workID, shelfID string, sort BookSort, before, after int) (BookSequenceWindow, error) {
-	withSQL, fromSQL, args := scope.joinVisibleWorks("shelf_books sb JOIN works w ON w.id = sb.work_id")
+func BookSequenceInManualShelf(queryer Queryer, scope VisibilityScope, bookID, shelfID string, sort BookSort, before, after int) (BookSequenceWindow, error) {
+	withSQL, fromSQL, args := scope.joinVisibleBooks("shelf_books sb JOIN books b ON b.id = sb.book_id")
 	args = append(args, shelfID)
 	return queryBookSequenceWindow(
 		queryer,
-		workID,
+		bookID,
 		withSQL,
 		fromSQL,
-		"sb.shelf_id = ? AND w.deleted_at IS NULL",
+		"sb.shelf_id = ? AND b.deleted_at IS NULL",
 		stableManualShelfOrderBy(sort),
 		before,
 		after,
@@ -263,7 +263,7 @@ func BookSequenceInManualShelf(queryer Queryer, scope VisibilityScope, workID, s
 	)
 }
 
-func queryBookSequenceWindow(queryer Queryer, workID, withSQL, fromSQL, whereSQL, orderBy string, before, after int, args ...any) (BookSequenceWindow, error) {
+func queryBookSequenceWindow(queryer Queryer, bookID, withSQL, fromSQL, whereSQL, orderBy string, before, after int, args ...any) (BookSequenceWindow, error) {
 	withPrefix := "WITH "
 	if strings.TrimSpace(withSQL) != "" {
 		withPrefix += withSQL + ","
@@ -272,8 +272,8 @@ func queryBookSequenceWindow(queryer Queryer, workID, withSQL, fromSQL, whereSQL
 		%s
 		ordered AS (
 			SELECT
-				w.id,
-				w.title,
+				b.id,
+				b.title,
 				ROW_NUMBER() OVER (ORDER BY %s) AS rn,
 				COUNT(*) OVER () AS total
 			FROM %s
@@ -290,7 +290,7 @@ func queryBookSequenceWindow(queryer Queryer, workID, withSQL, fromSQL, whereSQL
 		ORDER BY ordered.rn
 	`, withPrefix, orderBy, fromSQL, whereSQL)
 
-	args = append(args, workID, before, after)
+	args = append(args, bookID, before, after)
 	rows, err := queryer.Query(query, args...)
 	if err != nil {
 		return BookSequenceWindow{}, fmt.Errorf("book sequence query: %w", err)
@@ -304,7 +304,7 @@ func queryBookSequenceWindow(queryer Queryer, workID, withSQL, fromSQL, whereSQL
 		if err := rows.Scan(&item.ID, &item.Title, &rn, &window.Total); err != nil {
 			return BookSequenceWindow{}, fmt.Errorf("scan book sequence: %w", err)
 		}
-		if item.ID == workID {
+		if item.ID == bookID {
 			window.CurrentIndex = len(window.Items)
 		}
 		window.Items = append(window.Items, item)
@@ -346,13 +346,13 @@ func ListBooks(queryer Queryer, scope VisibilityScope, userID int64, q string, s
 }
 
 func ListBooksInManualShelf(queryer Queryer, scope VisibilityScope, shelfID string, sort BookSort, limit, offset int) ([]BookSummaryRow, error) {
-	withSQL, fromSQL, args := scope.joinVisibleWorks("shelf_books sb JOIN works w ON w.id = sb.work_id")
+	withSQL, fromSQL, args := scope.joinVisibleBooks("shelf_books sb JOIN books b ON b.id = sb.book_id")
 	args = append(args, shelfID, limit, offset)
 	queryStr := fmt.Sprintf(`
 		%s
 		SELECT %s
 		FROM %s
-		WHERE sb.shelf_id = ? AND w.deleted_at IS NULL
+		WHERE sb.shelf_id = ? AND b.deleted_at IS NULL
 		ORDER BY %s
 		LIMIT ? OFFSET ?
 	`, withClause(withSQL), bookSummaryColumns, fromSQL, stableManualShelfOrderBy(sort))
@@ -377,13 +377,13 @@ func ListBooksInManualShelf(queryer Queryer, scope VisibilityScope, shelfID stri
 	return books, nil
 }
 
-func GetBook(queryer Queryer, scope VisibilityScope, workID string) (BookDetailRow, error) {
-	where, args := scope.AppendWorkWhere("w.id = ? AND w.deleted_at IS NULL", "w.id", workID)
+func GetBook(queryer Queryer, scope VisibilityScope, bookID string) (BookDetailRow, error) {
+	where, args := scope.AppendBookWhere("b.id = ? AND b.deleted_at IS NULL", "b.id", bookID)
 	row := queryer.QueryRow(fmt.Sprintf(`
-		SELECT w.id, w.title, w.series, w.series_index, w.tags, w.cover_version,
-		       w.sort_title, w.description, w.language, w.publisher, w.published_date, w.identifiers,
-		       w.added_at, w.updated_at
-		FROM works w
+		SELECT b.id, b.title, b.series, b.series_index, b.tags, b.cover_version,
+		       b.sort_title, b.description, b.language, b.publisher, b.published_date, b.identifiers,
+		       b.added_at, b.updated_at
+		FROM books b
 		WHERE %s
 	`, where), args...)
 
@@ -395,13 +395,13 @@ func GetBook(queryer Queryer, scope VisibilityScope, workID string) (BookDetailR
 	return b, nil
 }
 
-// PlaceholderCoverText returns the title and primary-author name for a work,
-// the inputs for a generated fallback cover. found is false when the work does
+// PlaceholderCoverText returns the title and primary-author name for a book,
+// the inputs for a generated fallback cover. found is false when the book does
 // not exist (so the cover handler can keep returning 404 for unknown IDs).
-func (db *DB) PlaceholderCoverText(workID string) (title, author string, found bool, err error) {
+func (db *DB) PlaceholderCoverText(bookID string) (title, author string, found bool, err error) {
 	var a sql.NullString
 	err = db.QueryRow(
-		`SELECT w.title, `+subPrimaryAuthorName+` FROM works w WHERE w.id = ?`, workID,
+		`SELECT b.title, `+subPrimaryAuthorName+` FROM books b WHERE b.id = ?`, bookID,
 	).Scan(&title, &a)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", "", false, nil

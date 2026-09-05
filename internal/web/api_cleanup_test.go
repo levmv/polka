@@ -37,22 +37,22 @@ func TestCleanupDuplicateMergeUsesMutationSequencerAndStagesCover(t *testing.T) 
 	loserPath := defaultStoragePath(t, title, author, authorSort, loserA, ".epub")
 
 	if _, err := database.Exec(`
-		INSERT INTO works (id, title, sort_title, cover_version)
+		INSERT INTO books (id, title, sort_title, cover_version)
 		VALUES (?, ?, ?, 0), (?, ?, ?, 1)
 	`, survivorID, title, title, loserID, title, title); err != nil {
-		t.Fatalf("insert works: %v", err)
+		t.Fatalf("insert books: %v", err)
 	}
 	if _, err := database.Exec("INSERT INTO authors (id, name, sort_name) VALUES ('au_dup', ?, ?)", author, authorSort); err != nil {
 		t.Fatalf("insert author: %v", err)
 	}
 	if _, err := database.Exec(`
-		INSERT INTO work_authors (work_id, author_id, author_order)
+		INSERT INTO book_authors (book_id, author_id, author_order)
 		VALUES (?, 'au_dup', 0), (?, 'au_dup', 0)
 	`, survivorID, loserID); err != nil {
-		t.Fatalf("insert work authors: %v", err)
+		t.Fatalf("insert book authors: %v", err)
 	}
 	if _, err := database.Exec(`
-		INSERT INTO assets (id, work_id, storage_path, filename, extension, format, is_primary, writeback_rev)
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, writeback_rev)
 		VALUES
 			(?, ?, ?, ?, '.epub', 'epub', 1, 0),
 			(?, ?, ?, ?, '.epub', 'epub', 1, 0)
@@ -85,7 +85,7 @@ func TestCleanupDuplicateMergeUsesMutationSequencerAndStagesCover(t *testing.T) 
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, jsonRequest(t, s, member.ID, http.MethodPost, "/api/cleanup/duplicates/merge", map[string]any{
 		"survivor_id": survivorID,
-		"work_ids":    []string{survivorID, loserID},
+		"book_ids":    []string{survivorID, loserID},
 	}))
 	if w.Code != http.StatusOK {
 		t.Fatalf("merge status = %d; body: %s", w.Code, w.Body.String())
@@ -98,14 +98,14 @@ func TestCleanupDuplicateMergeUsesMutationSequencerAndStagesCover(t *testing.T) 
 	}
 
 	var coverVersion, metadataRev int
-	if err := database.QueryRow("SELECT cover_version, metadata_rev FROM works WHERE id = ?", survivorID).Scan(&coverVersion, &metadataRev); err != nil {
+	if err := database.QueryRow("SELECT cover_version, metadata_rev FROM books WHERE id = ?", survivorID).Scan(&coverVersion, &metadataRev); err != nil {
 		t.Fatalf("query survivor: %v", err)
 	}
 	if coverVersion != 1 || metadataRev != 1 {
 		t.Fatalf("survivor cover_version/metadata_rev = %d/%d; want 1/1", coverVersion, metadataRev)
 	}
 	var deletedAt sql.NullInt64
-	if err := database.QueryRow("SELECT deleted_at FROM works WHERE id = ?", loserID).Scan(&deletedAt); err != nil {
+	if err := database.QueryRow("SELECT deleted_at FROM books WHERE id = ?", loserID).Scan(&deletedAt); err != nil {
 		t.Fatalf("query loser deleted_at: %v", err)
 	}
 	if !deletedAt.Valid {
@@ -121,7 +121,7 @@ func TestCleanupDuplicateMergeUsesMutationSequencerAndStagesCover(t *testing.T) 
 	}
 
 	var assetCount, primaryCount int
-	if err := database.QueryRow("SELECT COUNT(*), SUM(is_primary) FROM assets WHERE work_id = ?", survivorID).Scan(&assetCount, &primaryCount); err != nil {
+	if err := database.QueryRow("SELECT COUNT(*), SUM(is_primary) FROM assets WHERE book_id = ?", survivorID).Scan(&assetCount, &primaryCount); err != nil {
 		t.Fatalf("query survivor assets: %v", err)
 	}
 	if assetCount != 2 || primaryCount != 1 {

@@ -22,11 +22,11 @@ func TestMixedStorageMutationBurstStaysConsistent(t *testing.T) {
 	defer database.Close()
 
 	admin := mustUser(t, database, "storage-burst-admin", db.RoleAdmin)
-	if err := db.SoftDeleteWork(database, "w_2", admin.ID); err != nil {
+	if err := db.SoftDeleteBook(database, "w_2", admin.ID); err != nil {
 		t.Fatalf("trash purge fixture: %v", err)
 	}
 
-	// Use a valid writable FB2 for the existing work so write-back can run in
+	// Use a valid writable FB2 for the existing book so write-back can run in
 	// either order relative to cover changes and repeated path-sensitive edits.
 	oldPath := filepath.Join(dataDir, "Tolkien", "The_Hobbit", "a_1.epub")
 	newPath := filepath.Join(dataDir, "Tolkien", "The_Hobbit", "a_1.fb2")
@@ -131,7 +131,7 @@ func TestMixedStorageMutationBurstStaysConsistent(t *testing.T) {
 	mutations = append(mutations,
 		func() error {
 			summary, err := writeback.Run(context.Background(), database, storage.NewRoot(dataDir), writeback.Options{
-				WorkIDs:   []string{"w_1"},
+				BookIDs:   []string{"w_1"},
 				WorkQueue: queue,
 				CoverRoot: storage.NewRoot(dataDir),
 			})
@@ -144,7 +144,7 @@ func TestMixedStorageMutationBurstStaysConsistent(t *testing.T) {
 			return nil
 		},
 		func() error {
-			n, err := s.purgeTrashedWorks(context.Background(), []string{"w_2"})
+			n, err := s.purgeTrashedBooks(context.Background(), []string{"w_2"})
 			if err != nil {
 				return fmt.Errorf("purge: %w", err)
 			}
@@ -180,7 +180,7 @@ func TestMixedStorageMutationBurstStaysConsistent(t *testing.T) {
 	// Converge a write-back that may have run before the last edit/cover, then
 	// inspect the durable DB/filesystem state left by the entire burst.
 	finalWriteback, err := writeback.Run(context.Background(), database, storage.NewRoot(dataDir), writeback.Options{
-		WorkIDs:   []string{"w_1"},
+		BookIDs:   []string{"w_1"},
 		WorkQueue: queue,
 		CoverRoot: storage.NewRoot(dataDir),
 	})
@@ -211,8 +211,8 @@ func TestMixedStorageMutationBurstStaysConsistent(t *testing.T) {
 		t.Fatalf("close foreign_key_check rows: %v", err)
 	}
 
-	var coverVersion, attempts, works, assets int
-	if err := database.QueryRow("SELECT cover_version FROM works WHERE id = 'w_1'").Scan(&coverVersion); err != nil {
+	var coverVersion, attempts, books, assets int
+	if err := database.QueryRow("SELECT cover_version FROM books WHERE id = 'w_1'").Scan(&coverVersion); err != nil {
 		t.Fatalf("query cover version: %v", err)
 	}
 	if coverVersion != burstSize {
@@ -224,14 +224,14 @@ func TestMixedStorageMutationBurstStaysConsistent(t *testing.T) {
 	if attempts != 0 {
 		t.Fatalf("unfinished write-back attempts = %d", attempts)
 	}
-	if err := database.QueryRow("SELECT COUNT(*) FROM works").Scan(&works); err != nil {
-		t.Fatalf("count works: %v", err)
+	if err := database.QueryRow("SELECT COUNT(*) FROM books").Scan(&books); err != nil {
+		t.Fatalf("count books: %v", err)
 	}
 	if err := database.QueryRow("SELECT COUNT(*) FROM assets").Scan(&assets); err != nil {
 		t.Fatalf("count assets: %v", err)
 	}
-	if works != burstSize+1 || assets != burstSize+1 {
-		t.Fatalf("catalog counts = %d works/%d assets, want %d/%d", works, assets, burstSize+1, burstSize+1)
+	if books != burstSize+1 || assets != burstSize+1 {
+		t.Fatalf("catalog counts = %d books/%d assets, want %d/%d", books, assets, burstSize+1, burstSize+1)
 	}
 
 	rows, err := database.Query("SELECT storage_path FROM assets ORDER BY id")

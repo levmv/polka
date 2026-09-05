@@ -1,7 +1,7 @@
 // Package covers owns cover image post-processing and filesystem conventions.
 //
-// SQLite stores only cover presence/version on the work. The original cover and
-// derived display/thumb images are addressed by work_id, so this package keeps
+// SQLite stores only cover presence/version on the book. The original cover and
+// derived display/thumb images are addressed by book_id, so this package keeps
 // path construction in one place and stays independent of DB/HTTP code.
 //
 // Cover processing preserves the source ratio; bad crops or invented borders
@@ -69,29 +69,29 @@ func DefaultOptions() Options {
 }
 
 // OriginalPath and CachePath are relative to the app data dir (not the books
-// root): cover originals are per-work catalog artifacts and the derived cache is
+// root): cover originals are per-book catalog artifacts and the derived cache is
 // hot and disposable, so both live next to the database rather than out on a
 // possibly-remote books disk. Durable originals sit flat under covers/; the
 // rebuildable display/thumb cache lives under a top-level cache/ that is safe to
 // delete at any time.
-func OriginalPath(workID string) string {
-	return path.Join("covers", workID)
+func OriginalPath(bookID string) string {
+	return path.Join("covers", bookID)
 }
 
 // CachePath deliberately does not include cover_version. cover_version is only
 // a browser cache-busting token in URLs; server-side derived files are replaced
 // by deleting this stable cache path when a new original cover is uploaded.
-func CachePath(workID string, variant Variant) string {
-	return path.Join("cache", "covers", CacheVersion, string(variant), workID+".jpg")
+func CachePath(bookID string, variant Variant) string {
+	return path.Join("cache", "covers", CacheVersion, string(variant), bookID+".jpg")
 }
 
-// RemoveDerived deletes the rebuildable display/thumb cache for a work, so the
+// RemoveDerived deletes the rebuildable display/thumb cache for a book, so the
 // next read regenerates them from the (newly replaced) original. Best-effort: a
 // leftover stale variant is harmless because reads regenerate any cache older
 // than the original's mtime.
-func RemoveDerived(root storage.Root, workID string) {
+func RemoveDerived(root storage.Root, bookID string) {
 	for _, variant := range []Variant{VariantDisplay, VariantThumb} {
-		cachePath, err := root.Resolve(CachePath(workID, variant))
+		cachePath, err := root.Resolve(CachePath(bookID, variant))
 		if err != nil {
 			continue
 		}

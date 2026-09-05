@@ -2,7 +2,7 @@ package bookmeta
 
 import "strings"
 
-// Tags are stored in the works.tags column as a single comma-list string (import
+// Tags are stored in the books.tags column as a single comma-list string (import
 // writes strings.Join(tags, ", ")). These helpers are the pure, tested transform
 // core shared by single-book edit and bulk edit; matching is case-insensitive and
 // the first-seen spelling wins, mirroring how db.ListTags and the table view read

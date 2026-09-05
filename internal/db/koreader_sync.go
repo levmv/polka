@@ -24,14 +24,14 @@ type KOReaderProgress struct {
 }
 
 // KOReaderHashTarget is the catalog meaning of one provider-owned document
-// hash. An empty WorkID means the hash is not known to the catalog. Ambiguous
-// means matching live assets belong to more than one work; callers may retain
+// hash. An empty BookID means the hash is not known to the catalog. Ambiguous
+// means matching live assets belong to more than one book; callers may retain
 // the hash-scoped KOSync record, but must not infer access or reading state for
-// an arbitrary work. Multiple matching assets of one live work remain
+// an arbitrary book. Multiple matching assets of one live book remain
 // unambiguous; assets in Trash do not define catalog identity.
 type KOReaderHashTarget struct {
 	AssetID   string
-	WorkID    string
+	BookID    string
 	Ambiguous bool
 }
 
@@ -57,12 +57,12 @@ func ResolveKOReaderHash(queryer Queryer, documentHash string) (KOReaderHashTarg
 		return KOReaderHashTarget{}, nil
 	}
 	rows, err := queryer.Query(`
-		SELECT MIN(a.id), a.work_id
+		SELECT MIN(a.id), a.book_id
 		FROM assets a
-		JOIN works w ON w.id = a.work_id
-		WHERE a.koreader_hash = ? AND w.deleted_at IS NULL
-		GROUP BY a.work_id
-		ORDER BY a.work_id
+		JOIN books b ON b.id = a.book_id
+		WHERE a.koreader_hash = ? AND b.deleted_at IS NULL
+		GROUP BY a.book_id
+		ORDER BY a.book_id
 		LIMIT 2
 	`, documentHash)
 	if err != nil {
@@ -72,17 +72,17 @@ func ResolveKOReaderHash(queryer Queryer, documentHash string) (KOReaderHashTarg
 
 	var target KOReaderHashTarget
 	for rows.Next() {
-		var assetID, workID string
-		if err := rows.Scan(&assetID, &workID); err != nil {
+		var assetID, bookID string
+		if err := rows.Scan(&assetID, &bookID); err != nil {
 			return KOReaderHashTarget{}, fmt.Errorf("scan asset by koreader hash: %w", err)
 		}
-		if target.WorkID == "" {
+		if target.BookID == "" {
 			target.AssetID = assetID
-			target.WorkID = workID
+			target.BookID = bookID
 			continue
 		}
 		target.AssetID = ""
-		target.WorkID = ""
+		target.BookID = ""
 		target.Ambiguous = true
 		return target, nil
 	}

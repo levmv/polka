@@ -9,31 +9,31 @@ func TestCleanupCategories(t *testing.T) {
 	database.Exec("INSERT INTO authors (id, name, sort_name) VALUES ('a1', 'Unknown Author', 'Unknown Author')")
 	database.Exec("INSERT INTO authors (id, name, sort_name) VALUES ('a2', 'Real Author', 'Real Author')")
 
-	// Seed works
+	// Seed books
 	// Book 1: Missing cover, but has tags, desc, real author
-	database.Exec("INSERT INTO works (id, title, sort_title, tags, description, cover_version) VALUES ('w1', 'B1', 'B1', 't1', 'd1', 0)")
-	database.Exec("INSERT INTO work_authors (work_id, author_id, author_order) VALUES ('w1', 'a2', 0)")
+	database.Exec("INSERT INTO books (id, title, sort_title, tags, description, cover_version) VALUES ('w1', 'B1', 'B1', 't1', 'd1', 0)")
+	database.Exec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES ('w1', 'a2', 0)")
 
 	// Book 2: Unknown author, but has cover, tags, desc
-	database.Exec("INSERT INTO works (id, title, sort_title, tags, description, cover_version) VALUES ('w2', 'B2', 'B2', 't2', 'd2', 1)")
-	database.Exec("INSERT INTO work_authors (work_id, author_id, author_order) VALUES ('w2', 'a1', 0)")
+	database.Exec("INSERT INTO books (id, title, sort_title, tags, description, cover_version) VALUES ('w2', 'B2', 'B2', 't2', 'd2', 1)")
+	database.Exec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES ('w2', 'a1', 0)")
 
 	// Book 3: No tags
-	database.Exec("INSERT INTO works (id, title, sort_title, tags, description, cover_version) VALUES ('w3', 'B3', 'B3', NULL, 'd3', 1)")
-	database.Exec("INSERT INTO work_authors (work_id, author_id, author_order) VALUES ('w3', 'a2', 0)")
+	database.Exec("INSERT INTO books (id, title, sort_title, tags, description, cover_version) VALUES ('w3', 'B3', 'B3', NULL, 'd3', 1)")
+	database.Exec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES ('w3', 'a2', 0)")
 
 	// Book 4: No description
-	database.Exec("INSERT INTO works (id, title, sort_title, tags, description, cover_version) VALUES ('w4', 'B4', 'B4', 't4', NULL, 1)")
-	database.Exec("INSERT INTO work_authors (work_id, author_id, author_order) VALUES ('w4', 'a2', 0)")
+	database.Exec("INSERT INTO books (id, title, sort_title, tags, description, cover_version) VALUES ('w4', 'B4', 'B4', 't4', NULL, 1)")
+	database.Exec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES ('w4', 'a2', 0)")
 
 	// Book 5: Perfect book (should not be in any)
-	database.Exec("INSERT INTO works (id, title, sort_title, tags, description, cover_version) VALUES ('w5', 'B5', 'B5', 't5', 'd5', 1)")
-	database.Exec("INSERT INTO work_authors (work_id, author_id, author_order) VALUES ('w5', 'a2', 0)")
-	database.Exec("INSERT INTO search (work_id, title, authors, tags, description) VALUES ('w1', 'B1', 'Real Author', 't1', 'd1')")
-	database.Exec("INSERT INTO search (work_id, title, authors, tags, description) VALUES ('w2', 'B2', 'Unknown Author', 't2', 'd2')")
-	database.Exec("INSERT INTO search (work_id, title, authors, tags, description) VALUES ('w3', 'B3', 'Real Author', '', 'd3')")
-	database.Exec("INSERT INTO search (work_id, title, authors, tags, description) VALUES ('w4', 'B4', 'Real Author', 't4', '')")
-	database.Exec("INSERT INTO search (work_id, title, authors, tags, description) VALUES ('w5', 'B5', 'Real Author', 't5', 'd5')")
+	database.Exec("INSERT INTO books (id, title, sort_title, tags, description, cover_version) VALUES ('w5', 'B5', 'B5', 't5', 'd5', 1)")
+	database.Exec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES ('w5', 'a2', 0)")
+	database.Exec("INSERT INTO search (book_id, title, authors, tags, description) VALUES ('w1', 'B1', 'Real Author', 't1', 'd1')")
+	database.Exec("INSERT INTO search (book_id, title, authors, tags, description) VALUES ('w2', 'B2', 'Unknown Author', 't2', 'd2')")
+	database.Exec("INSERT INTO search (book_id, title, authors, tags, description) VALUES ('w3', 'B3', 'Real Author', '', 'd3')")
+	database.Exec("INSERT INTO search (book_id, title, authors, tags, description) VALUES ('w4', 'B4', 'Real Author', 't4', '')")
+	database.Exec("INSERT INTO search (book_id, title, authors, tags, description) VALUES ('w5', 'B5', 'Real Author', 't5', 'd5')")
 
 	counts, err := GetCleanupCounts(database, FullVisibilityScope())
 	if err != nil {

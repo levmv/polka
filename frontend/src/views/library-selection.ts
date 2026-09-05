@@ -39,7 +39,7 @@ export interface SelectionOptions {
     canWriteback(): boolean;
     // Patch the rendered rows (and view state) for the returned summaries.
     onApplied(updated: BookSummary[]): void;
-    // Drop the given works from the rendered list and view state (bulk trash).
+    // Drop the given books from the rendered list and view state (bulk trash).
     onRemoved(ids: string[]): void;
 }
 

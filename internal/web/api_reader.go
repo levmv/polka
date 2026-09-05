@@ -11,7 +11,7 @@ import (
 
 type ReaderStateDTO struct {
 	AssetID            string           `json:"asset_id"`
-	WorkID             string           `json:"work_id"`
+	BookID             string           `json:"book_id"`
 	Progress           float64          `json:"progress"`
 	Locator            db.ReaderLocator `json:"locator"`
 	LastReadAt         int64            `json:"last_read_at,omitzero"`
@@ -19,15 +19,6 @@ type ReaderStateDTO struct {
 	ReadingStatus      ReadingStatusDTO `json:"reading_status"`
 	StatusChanged      bool             `json:"status_changed,omitzero"`
 	StatusTransitionID string           `json:"status_transition_id,omitempty"`
-}
-
-type ReaderPreferencesDTO struct {
-	EPUBFlow          string  `json:"epub_flow"`
-	DisplayStyle      string  `json:"display_style"`
-	FontScale         int     `json:"font_scale"`
-	CustomColumnWidth int     `json:"custom_column_width"`
-	CustomLineHeight  float64 `json:"custom_line_height"`
-	UpdatedAt         int64   `json:"updated_at,omitzero"`
 }
 
 type ContinueReadingDTO struct {
@@ -56,14 +47,6 @@ type readerStateRequest struct {
 	Locator  jsontext.Value `json:"locator"`
 }
 
-type readerPreferencesRequest struct {
-	EPUBFlow          *string  `json:"epub_flow"`
-	DisplayStyle      *string  `json:"display_style"`
-	FontScale         *int     `json:"font_scale"`
-	CustomColumnWidth *int     `json:"custom_column_width"`
-	CustomLineHeight  *float64 `json:"custom_line_height"`
-}
-
 type annotationRequest struct {
 	Kind          string `json:"kind"`
 	CFI           string `json:"cfi"`
@@ -81,7 +64,7 @@ type annotationNoteRequest struct {
 func readerStateDTO(state *db.ReaderState, change db.ReadingStatusChange) ReaderStateDTO {
 	return ReaderStateDTO{
 		AssetID:            state.AssetID,
-		WorkID:             state.WorkID,
+		BookID:             state.BookID,
 		Progress:           state.Progress,
 		Locator:            state.Locator,
 		LastReadAt:         state.LastReadAt,
@@ -89,17 +72,6 @@ func readerStateDTO(state *db.ReaderState, change db.ReadingStatusChange) Reader
 		ReadingStatus:      readingStatusDTO(change.State),
 		StatusChanged:      change.Changed,
 		StatusTransitionID: change.EventID,
-	}
-}
-
-func readerPreferencesDTO(prefs *db.ReaderPreferences) ReaderPreferencesDTO {
-	return ReaderPreferencesDTO{
-		EPUBFlow:          prefs.EPUBFlow,
-		DisplayStyle:      prefs.DisplayStyle,
-		FontScale:         prefs.FontScale,
-		CustomColumnWidth: prefs.CustomColumnWidth,
-		CustomLineHeight:  prefs.CustomLineHeight,
-		UpdatedAt:         prefs.UpdatedAt,
 	}
 }
 
@@ -132,7 +104,7 @@ func (s *Server) handleAPIContinueReading(w http.ResponseWriter, r *http.Request
 	if writeUserSettingsError(w, err) {
 		return
 	}
-	if settings.HideContinueReading {
+	if !settings.ShowContinueReading {
 		writeJSON(w, http.StatusOK, []ContinueReadingDTO{})
 		return
 	}
@@ -203,7 +175,7 @@ func (s *Server) handleAPIReaderState(w http.ResponseWriter, r *http.Request) {
 	if writeReaderStateError(w, err) {
 		return
 	}
-	status, err := db.GetReadingStatus(s.db, UserID(r.Context()), state.WorkID)
+	status, err := db.GetReadingStatus(s.db, UserID(r.Context()), state.BookID)
 	if writeReaderStateError(w, err) {
 		return
 	}
@@ -334,47 +306,6 @@ func (s *Server) handleAPIAnnotationDelete(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
-}
-
-func (s *Server) handleAPIReaderPreferences(w http.ResponseWriter, r *http.Request) {
-	prefs, err := s.db.GetReaderPreferences(UserID(r.Context()))
-	if writeReaderStateError(w, err) {
-		return
-	}
-	writeJSON(w, http.StatusOK, readerPreferencesDTO(prefs))
-}
-
-func (s *Server) handleAPIReaderPreferencesSave(w http.ResponseWriter, r *http.Request) {
-	var req readerPreferencesRequest
-	if !readJSON(w, r, &req) {
-		return
-	}
-	current, err := s.db.GetReaderPreferences(UserID(r.Context()))
-	if writeReaderStateError(w, err) {
-		return
-	}
-	next := *current
-	if req.EPUBFlow != nil {
-		next.EPUBFlow = *req.EPUBFlow
-	}
-	if req.DisplayStyle != nil {
-		next.DisplayStyle = *req.DisplayStyle
-	}
-	if req.FontScale != nil {
-		next.FontScale = *req.FontScale
-	}
-	if req.CustomColumnWidth != nil {
-		next.CustomColumnWidth = *req.CustomColumnWidth
-	}
-	if req.CustomLineHeight != nil {
-		next.CustomLineHeight = *req.CustomLineHeight
-	}
-
-	prefs, err := s.db.SaveReaderPreferences(UserID(r.Context()), next)
-	if writeReaderStateError(w, err) {
-		return
-	}
-	writeJSON(w, http.StatusOK, readerPreferencesDTO(prefs))
 }
 
 func writeReaderStateError(w http.ResponseWriter, err error) bool {

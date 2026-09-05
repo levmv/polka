@@ -133,9 +133,9 @@ test.describe('Library workflows', () => {
       await expect
         .poll(async () => {
           const response = await page.request.get('/api/settings');
-          return (await response.json()).hide_continue_reading;
+          return (await response.json()).show_continue_reading;
         })
-        .toBe(true);
+        .toBe(false);
 
       await expect(page).toHaveURL(
         (url) => url.pathname === '/',

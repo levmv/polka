@@ -16,7 +16,7 @@ export function handleReadingStatusChange(state: ReaderState): void {
         action: {
             label: 'Undo',
             onClick: () => {
-                void undoReadingStatus(state.work_id, eventID)
+                void undoReadingStatus(state.book_id, eventID)
                     .then((restored) => {
                         showToast(`Marked as ${restored.status}`);
                     })

@@ -1688,15 +1688,15 @@ func TestImportGroupElectsReadablePrimary(t *testing.T) {
 </package>`))
 		return docxPath, epubPath
 	}
-	assertPrimaryEPUB := func(t *testing.T, database *db.DB, workID string) {
+	assertPrimaryEPUB := func(t *testing.T, database *db.DB, bookID string) {
 		t.Helper()
 		var extension string
 		var canRead int
 		if err := database.QueryRow(`
 			SELECT extension, can_read
 			FROM assets
-			WHERE work_id = ? AND is_primary = 1
-		`, workID).Scan(&extension, &canRead); err != nil {
+			WHERE book_id = ? AND is_primary = 1
+		`, bookID).Scan(&extension, &canRead); err != nil {
 			t.Fatalf("query primary asset: %v", err)
 		}
 		if extension != ".epub" || canRead != 1 {
@@ -1704,7 +1704,7 @@ func TestImportGroupElectsReadablePrimary(t *testing.T) {
 		}
 	}
 
-	t.Run("new grouped work", func(t *testing.T) {
+	t.Run("new grouped book", func(t *testing.T) {
 		database, root := newLibrary(t)
 		docxPath, epubPath := writeSources(t)
 
@@ -1712,10 +1712,10 @@ func TestImportGroupElectsReadablePrimary(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ImportGroup: %v", err)
 		}
-		assertPrimaryEPUB(t, database, result.WorkID)
+		assertPrimaryEPUB(t, database, result.BookID)
 	})
 
-	t.Run("readable format added to existing work", func(t *testing.T) {
+	t.Run("readable format added to existing book", func(t *testing.T) {
 		database, root := newLibrary(t)
 		docxPath, epubPath := writeSources(t)
 
@@ -1727,10 +1727,10 @@ func TestImportGroupElectsReadablePrimary(t *testing.T) {
 		if err != nil {
 			t.Fatalf("add-format ImportGroup: %v", err)
 		}
-		if result.WorkID != initial.WorkID {
-			t.Fatalf("work ID = %q; want existing %q", result.WorkID, initial.WorkID)
+		if result.BookID != initial.BookID {
+			t.Fatalf("book ID = %q; want existing %q", result.BookID, initial.BookID)
 		}
-		assertPrimaryEPUB(t, database, result.WorkID)
+		assertPrimaryEPUB(t, database, result.BookID)
 	})
 }
 
@@ -1813,8 +1813,8 @@ func TestImportGroupStoresEarliestSourceModTimeAsAddedAt(t *testing.T) {
 	after := time.Now().Unix()
 
 	var createdAt, addedAt int64
-	if err := database.QueryRow("SELECT created_at, added_at FROM works WHERE id = ?", result.WorkID).Scan(&createdAt, &addedAt); err != nil {
-		t.Fatalf("query work timestamps: %v", err)
+	if err := database.QueryRow("SELECT created_at, added_at FROM books WHERE id = ?", result.BookID).Scan(&createdAt, &addedAt); err != nil {
+		t.Fatalf("query book timestamps: %v", err)
 	}
 	if addedAt != earlier.Unix() {
 		t.Fatalf("added_at = %d; want earliest source mtime %d", addedAt, earlier.Unix())
@@ -1824,7 +1824,7 @@ func TestImportGroupStoresEarliestSourceModTimeAsAddedAt(t *testing.T) {
 	}
 }
 
-func TestImportGroupRestoresTrashedWorkOnlyWhenAddingAsset(t *testing.T) {
+func TestImportGroupRestoresTrashedBookOnlyWhenAddingAsset(t *testing.T) {
 	newLibrary := func(t *testing.T) (*db.DB, storage.Root) {
 		t.Helper()
 		dataDir := t.TempDir()
@@ -1854,20 +1854,20 @@ func TestImportGroupRestoresTrashedWorkOnlyWhenAddingAsset(t *testing.T) {
 </package>`))
 		return docxPath, epubPath
 	}
-	trashWork := func(t *testing.T, database *db.DB, workID string) {
+	trashBook := func(t *testing.T, database *db.DB, bookID string) {
 		t.Helper()
-		if _, err := database.Exec("UPDATE works SET deleted_at = unixepoch() WHERE id = ?", workID); err != nil {
-			t.Fatalf("trash work: %v", err)
+		if _, err := database.Exec("UPDATE books SET deleted_at = unixepoch() WHERE id = ?", bookID); err != nil {
+			t.Fatalf("trash book: %v", err)
 		}
 	}
-	assertTrashed := func(t *testing.T, database *db.DB, workID string, want bool) {
+	assertTrashed := func(t *testing.T, database *db.DB, bookID string, want bool) {
 		t.Helper()
 		var got bool
-		if err := database.QueryRow("SELECT deleted_at IS NOT NULL FROM works WHERE id = ?", workID).Scan(&got); err != nil {
-			t.Fatalf("query work trash state: %v", err)
+		if err := database.QueryRow("SELECT deleted_at IS NOT NULL FROM books WHERE id = ?", bookID).Scan(&got); err != nil {
+			t.Fatalf("query book trash state: %v", err)
 		}
 		if got != want {
-			t.Fatalf("work trashed = %v; want %v", got, want)
+			t.Fatalf("book trashed = %v; want %v", got, want)
 		}
 	}
 
@@ -1878,47 +1878,47 @@ func TestImportGroupRestoresTrashedWorkOnlyWhenAddingAsset(t *testing.T) {
 		if err != nil {
 			t.Fatalf("initial ImportGroup: %v", err)
 		}
-		trashWork(t, database, initial.WorkID)
+		trashBook(t, database, initial.BookID)
 
 		duplicate, err := ImportGroup(context.Background(), database, root, []Source{{Path: docxPath}}, nil, Options{})
 		if err != nil {
 			t.Fatalf("duplicate ImportGroup: %v", err)
 		}
-		if len(duplicate.Results) != 1 || duplicate.Results[0].Status != StatusDuplicate || !duplicate.Results[0].WorkTrashed {
-			t.Fatalf("duplicate result = %+v; want duplicate in trashed work", duplicate.Results)
+		if len(duplicate.Results) != 1 || duplicate.Results[0].Status != StatusDuplicate || !duplicate.Results[0].BookTrashed {
+			t.Fatalf("duplicate result = %+v; want duplicate in trashed book", duplicate.Results)
 		}
 		if duplicate.Restored {
-			t.Fatal("plain duplicate reported a restored work")
+			t.Fatal("plain duplicate reported a restored book")
 		}
-		assertTrashed(t, database, initial.WorkID, true)
+		assertTrashed(t, database, initial.BookID, true)
 	})
 
-	t.Run("new asset restores work idempotently", func(t *testing.T) {
+	t.Run("new asset restores book idempotently", func(t *testing.T) {
 		database, root := newLibrary(t)
 		docxPath, epubPath := writeSources(t)
 		initial, err := ImportGroup(context.Background(), database, root, []Source{{Path: docxPath}}, nil, Options{})
 		if err != nil {
 			t.Fatalf("initial ImportGroup: %v", err)
 		}
-		trashWork(t, database, initial.WorkID)
+		trashBook(t, database, initial.BookID)
 
 		mixed, err := ImportGroup(context.Background(), database, root, []Source{{Path: docxPath}, {Path: epubPath}}, nil, Options{})
 		if err != nil {
 			t.Fatalf("mixed ImportGroup: %v", err)
 		}
-		if mixed.WorkID != initial.WorkID {
-			t.Fatalf("work ID = %q; want existing %q", mixed.WorkID, initial.WorkID)
+		if mixed.BookID != initial.BookID {
+			t.Fatalf("book ID = %q; want existing %q", mixed.BookID, initial.BookID)
 		}
 		if !mixed.Restored {
-			t.Fatal("mixed import did not report the restored work")
+			t.Fatal("mixed import did not report the restored book")
 		}
-		if len(mixed.Results) != 2 || mixed.Results[0].Status != StatusDuplicate || mixed.Results[0].WorkTrashed || mixed.Results[1].Status != StatusImported {
+		if len(mixed.Results) != 2 || mixed.Results[0].Status != StatusDuplicate || mixed.Results[0].BookTrashed || mixed.Results[1].Status != StatusImported {
 			t.Fatalf("mixed results = %+v; want live duplicate plus imported asset", mixed.Results)
 		}
-		assertTrashed(t, database, initial.WorkID, false)
+		assertTrashed(t, database, initial.BookID, false)
 
 		var assets int
-		if err := database.QueryRow("SELECT COUNT(*) FROM assets WHERE work_id = ?", initial.WorkID).Scan(&assets); err != nil {
+		if err := database.QueryRow("SELECT COUNT(*) FROM assets WHERE book_id = ?", initial.BookID).Scan(&assets); err != nil {
 			t.Fatalf("count assets: %v", err)
 		}
 		if assets != 2 {
@@ -1930,14 +1930,14 @@ func TestImportGroupRestoresTrashedWorkOnlyWhenAddingAsset(t *testing.T) {
 			t.Fatalf("repeat ImportGroup: %v", err)
 		}
 		if again.Restored {
-			t.Fatal("repeat import reported a restored work")
+			t.Fatal("repeat import reported a restored book")
 		}
 		for _, result := range again.Results {
-			if result.Status != StatusDuplicate || result.WorkTrashed {
+			if result.Status != StatusDuplicate || result.BookTrashed {
 				t.Fatalf("repeat results = %+v; want live duplicates", again.Results)
 			}
 		}
-		if err := database.QueryRow("SELECT COUNT(*) FROM assets WHERE work_id = ?", initial.WorkID).Scan(&assets); err != nil {
+		if err := database.QueryRow("SELECT COUNT(*) FROM assets WHERE book_id = ?", initial.BookID).Scan(&assets); err != nil {
 			t.Fatalf("count repeated assets: %v", err)
 		}
 		if assets != 2 {
@@ -1946,7 +1946,7 @@ func TestImportGroupRestoresTrashedWorkOnlyWhenAddingAsset(t *testing.T) {
 	})
 }
 
-func TestPersistStoresWorkMetadata(t *testing.T) {
+func TestPersistStoresBookMetadata(t *testing.T) {
 	dataDir := t.TempDir()
 	database, err := db.InitPath(filepath.Join(dataDir, "library.db"))
 	if err != nil {
@@ -2008,14 +2008,14 @@ func TestPersistStoresWorkMetadata(t *testing.T) {
 		SELECT title, sort_title, series, series_index, description, tags,
 		       cover_version, publisher, published_date,
 		       language, identifiers
-		FROM works
+		FROM books
 		WHERE id = ?
-	`, result.WorkID).Scan(
+	`, result.BookID).Scan(
 		&got.title, &got.sortTitle, &got.series, &got.seriesIndex,
 		&got.description, &got.tags, &got.coverVersion, &got.publisher,
 		&got.date, &got.language, &got.identifiers,
 	); err != nil {
-		t.Fatalf("query work metadata: %v", err)
+		t.Fatalf("query book metadata: %v", err)
 	}
 	want := storedMetadata{
 		title:        plan.Title,
@@ -2031,33 +2031,33 @@ func TestPersistStoresWorkMetadata(t *testing.T) {
 		identifiers:  plan.Metadata.Identifier,
 	}
 	if got != want {
-		t.Fatalf("stored work metadata = %+v; want %+v", got, want)
+		t.Fatalf("stored book metadata = %+v; want %+v", got, want)
 	}
 
 	rows, err := database.Query(`
-		SELECT a.name, a.sort_name, COALESCE(wa.role, '')
-		FROM work_authors wa
-		JOIN authors a ON a.id = wa.author_id
-		WHERE wa.work_id = ?
-		ORDER BY wa.author_order
-	`, result.WorkID)
+		SELECT a.name, a.sort_name, COALESCE(ba.role, '')
+		FROM book_authors ba
+		JOIN authors a ON a.id = ba.author_id
+		WHERE ba.book_id = ?
+		ORDER BY ba.author_order
+	`, result.BookID)
 	if err != nil {
-		t.Fatalf("query work authors: %v", err)
+		t.Fatalf("query book authors: %v", err)
 	}
 	defer rows.Close()
 	var authors []bookmeta.AuthorMeta
 	for rows.Next() {
 		var author bookmeta.AuthorMeta
 		if err := rows.Scan(&author.Name, &author.SortName, &author.Role); err != nil {
-			t.Fatalf("scan work author: %v", err)
+			t.Fatalf("scan book author: %v", err)
 		}
 		authors = append(authors, author)
 	}
 	if err := rows.Err(); err != nil {
-		t.Fatalf("work authors: %v", err)
+		t.Fatalf("book authors: %v", err)
 	}
 	if !slices.Equal(authors, plan.Authors) {
-		t.Fatalf("stored work authors = %+v; want %+v", authors, plan.Authors)
+		t.Fatalf("stored book authors = %+v; want %+v", authors, plan.Authors)
 	}
 }
 
@@ -2121,7 +2121,7 @@ func TestPersistStoresAssetHashesAndCover(t *testing.T) {
 		t.Fatalf("format = %q; want %q", formatKey, format.FormatKey(plan.Format))
 	}
 	var primaryAuthorSort string
-	if err := database.QueryRow("SELECT primary_author_sort FROM works WHERE id = ?", res.WorkID).Scan(&primaryAuthorSort); err != nil {
+	if err := database.QueryRow("SELECT primary_author_sort FROM books WHERE id = ?", res.BookID).Scan(&primaryAuthorSort); err != nil {
 		t.Fatalf("query primary_author_sort: %v", err)
 	}
 	if primaryAuthorSort != plan.Authors[0].SortName {
@@ -2130,7 +2130,7 @@ func TestPersistStoresAssetHashesAndCover(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dataDir, storagePath)); err != nil {
 		t.Fatalf("stored asset missing: %v", err)
 	}
-	if got, err := os.ReadFile(filepath.Join(dataDir, covers.OriginalPath(res.WorkID))); err != nil {
+	if got, err := os.ReadFile(filepath.Join(dataDir, covers.OriginalPath(res.BookID))); err != nil {
 		t.Fatalf("stored cover missing: %v", err)
 	} else if string(got) != "cover-bytes" {
 		t.Fatalf("stored cover = %q; want cover-bytes", got)
@@ -2140,8 +2140,8 @@ func TestPersistStoresAssetHashesAndCover(t *testing.T) {
 	if err != nil {
 		t.Fatalf("duplicate Import: %v", err)
 	}
-	if dup.Status != StatusDuplicate || dup.AssetID != res.AssetID || dup.WorkID != res.WorkID {
-		t.Fatalf("duplicate result = %+v; want existing asset/work", dup)
+	if dup.Status != StatusDuplicate || dup.AssetID != res.AssetID || dup.BookID != res.BookID {
+		t.Fatalf("duplicate result = %+v; want existing asset/book", dup)
 	}
 }
 
@@ -2191,12 +2191,12 @@ func TestPersistRejectsChangedSource(t *testing.T) {
 				if _, err := Persist(context.Background(), database, root, plan, Options{}); err == nil || !strings.Contains(err.Error(), "source changed during import") {
 					t.Fatalf("Persist = %v; want changed source error", err)
 				}
-				var works, assets int
-				if err := database.QueryRow("SELECT (SELECT COUNT(*) FROM works), (SELECT COUNT(*) FROM assets)").Scan(&works, &assets); err != nil {
+				var books, assets int
+				if err := database.QueryRow("SELECT (SELECT COUNT(*) FROM books), (SELECT COUNT(*) FROM assets)").Scan(&books, &assets); err != nil {
 					t.Fatal(err)
 				}
-				if works != wantCount || assets != wantCount {
-					t.Fatalf("works/assets = %d/%d; want %d/%d", works, assets, wantCount, wantCount)
+				if books != wantCount || assets != wantCount {
+					t.Fatalf("books/assets = %d/%d; want %d/%d", books, assets, wantCount, wantCount)
 				}
 				if restore {
 					if _, err := os.Stat(missingPath); !os.IsNotExist(err) {
@@ -2252,15 +2252,15 @@ func TestPersistCanceledContextRollsBackAndCleansStaging(t *testing.T) {
 		t.Fatalf("Persist error = %v; want context.Canceled", err)
 	}
 
-	var works, assets int
-	if err := database.QueryRow("SELECT COUNT(*) FROM works").Scan(&works); err != nil {
-		t.Fatalf("count works: %v", err)
+	var books, assets int
+	if err := database.QueryRow("SELECT COUNT(*) FROM books").Scan(&books); err != nil {
+		t.Fatalf("count books: %v", err)
 	}
 	if err := database.QueryRow("SELECT COUNT(*) FROM assets").Scan(&assets); err != nil {
 		t.Fatalf("count assets: %v", err)
 	}
-	if works != 0 || assets != 0 {
-		t.Fatalf("canceled persist left works/assets = %d/%d; want 0/0", works, assets)
+	if books != 0 || assets != 0 {
+		t.Fatalf("canceled persist left books/assets = %d/%d; want 0/0", books, assets)
 	}
 	entries, err := os.ReadDir(root.StagingDir())
 	if err != nil && !os.IsNotExist(err) {
@@ -2363,8 +2363,8 @@ func TestDuplicateImportRestoreUpdatesCurrentHash(t *testing.T) {
 	if err != nil {
 		t.Fatalf("duplicate Import: %v", err)
 	}
-	if dup.Status != StatusDuplicate || dup.AssetID != res.AssetID || dup.WorkID != res.WorkID {
-		t.Fatalf("duplicate result = %+v; want existing asset/work", dup)
+	if dup.Status != StatusDuplicate || dup.AssetID != res.AssetID || dup.BookID != res.BookID {
+		t.Fatalf("duplicate result = %+v; want existing asset/book", dup)
 	}
 	if got, err := os.ReadFile(managedPath); err != nil {
 		t.Fatalf("restored file missing: %v", err)

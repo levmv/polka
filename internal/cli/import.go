@@ -55,7 +55,7 @@ type importSummary struct {
 type importOutcome struct {
 	Source   string          `json:"source"`
 	Status   string          `json:"status"`
-	WorkID   string          `json:"work_id,omitempty"`
+	BookID   string          `json:"book_id,omitempty"`
 	InTrash  bool            `json:"in_trash,omitzero"`
 	Restored bool            `json:"restored,omitzero"`
 	AssetID  string          `json:"asset_id,omitempty"`
@@ -407,7 +407,7 @@ func importGroup(ctx context.Context, database *db.DB, root, coverRoot storage.R
 		return item
 	}
 
-	item.WorkID = group.WorkID
+	item.BookID = group.BookID
 	item.Title = group.Title
 	item.Authors = group.Authors
 	item.Restored = group.Restored
@@ -444,8 +444,8 @@ func importOutcomeFromResult(source string, res importer.Result) importOutcome {
 	return importOutcome{
 		Source:      source,
 		Status:      string(res.Status),
-		WorkID:      res.WorkID,
-		InTrash:     res.WorkTrashed,
+		BookID:      res.BookID,
+		InTrash:     res.BookTrashed,
 		AssetID:     res.AssetID,
 		Format:      importFormatKey(res.Format),
 		Title:       res.Title,

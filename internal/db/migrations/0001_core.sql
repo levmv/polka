@@ -1,19 +1,19 @@
--- A work is one book/publication in the shared catalog; its assets are concrete
--- files (for example EPUB and PDF). Publication metadata belongs to the work;
--- different translations or reissues are separate works.
+-- A book is a catalog entry for a publication; its assets are concrete
+-- files (for example EPUB and PDF). Publication metadata belongs to the book;
+-- different translations or reissues are separate books.
 -- SQLite is authoritative. storage_path changes only after the asset's file
 -- exists at its new location.
 --
 -- Timestamps are Unix seconds unless noted otherwise. Reading activity uses
 -- Unix milliseconds; publication dates and local calendar days are text.
 
-CREATE TABLE works (
+CREATE TABLE books (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
     sort_title TEXT NOT NULL,
     -- Denormalized primary author sort key for large-library list sorting.
     -- The author relation remains authoritative; write paths refresh this
-    -- column after changing work_authors or author sort_name.
+    -- column after changing book_authors or author sort_name.
     primary_author_sort TEXT NOT NULL DEFAULT '',
     series TEXT,
     series_index REAL,
@@ -25,7 +25,7 @@ CREATE TABLE works (
     identifiers TEXT, -- Unstructured identifier text, not JSON.
     manual_overrides TEXT, -- JSON object of manually edited field names -> true.
     -- Metadata edits advance this revision. Imported files start at revision 0
-    -- and need no write-back until the work's metadata changes.
+    -- and need no write-back until the book's metadata changes.
     metadata_rev INTEGER NOT NULL DEFAULT 0,
     -- 0 means no stored original cover; positive values are cache generations,
     -- independent of the metadata/write-back revision.
@@ -36,21 +36,21 @@ CREATE TABLE works (
     created_at INTEGER NOT NULL DEFAULT (unixepoch()),
     updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
     added_at INTEGER NOT NULL DEFAULT (unixepoch()),
-    -- NULL means live. Trashed works are excluded from normal catalog queries;
+    -- NULL means live. Trashed books are excluded from normal catalog queries;
     -- their rows and files remain until purge.
     deleted_at INTEGER,
     deleted_by INTEGER REFERENCES users(id) ON DELETE SET NULL
 );
 
--- Trash listing: only the soft-deleted works, newest-trashed first.
-CREATE INDEX idx_works_deleted_at ON works(deleted_at) WHERE deleted_at IS NOT NULL;
+-- Trash listing: only the soft-deleted books, newest-trashed first.
+CREATE INDEX idx_books_deleted_at ON books(deleted_at) WHERE deleted_at IS NOT NULL;
 
 -- Browse indexes exclude Trash and follow the list queries' ordering/tie-breaks.
-CREATE INDEX idx_works_live_author_sort ON works(primary_author_sort, sort_title COLLATE NOCASE, title COLLATE NOCASE, id) WHERE deleted_at IS NULL;
-CREATE INDEX idx_works_live_added ON works(added_at DESC, id) WHERE deleted_at IS NULL;
-CREATE INDEX idx_works_live_title ON works(sort_title COLLATE NOCASE, title COLLATE NOCASE, id) WHERE deleted_at IS NULL;
-CREATE INDEX idx_works_live_pubdate ON works(published_date DESC, added_at DESC, id) WHERE deleted_at IS NULL;
-CREATE INDEX idx_works_live_series_order ON works(
+CREATE INDEX idx_books_live_author_sort ON books(primary_author_sort, sort_title COLLATE NOCASE, title COLLATE NOCASE, id) WHERE deleted_at IS NULL;
+CREATE INDEX idx_books_live_added ON books(added_at DESC, id) WHERE deleted_at IS NULL;
+CREATE INDEX idx_books_live_title ON books(sort_title COLLATE NOCASE, title COLLATE NOCASE, id) WHERE deleted_at IS NULL;
+CREATE INDEX idx_books_live_pubdate ON books(published_date DESC, added_at DESC, id) WHERE deleted_at IS NULL;
+CREATE INDEX idx_books_live_series_order ON books(
     series,
     CASE WHEN series_index IS NOT NULL AND series_index > 0 THEN 0 ELSE 1 END,
     CASE WHEN series_index IS NOT NULL AND series_index > 0 THEN series_index ELSE 0 END,
@@ -60,10 +60,10 @@ CREATE INDEX idx_works_live_series_order ON works(
 
 -- storage_path is relative to the managed storage root. Access resolves the
 -- current path by asset ID, so relayout preserves links. is_primary selects
--- the default file for workflows that need one asset per work.
+-- the default file for workflows that need one asset per book.
 CREATE TABLE assets (
     id TEXT PRIMARY KEY,
-    work_id TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+    book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
     storage_path TEXT NOT NULL,
     filename TEXT NOT NULL, -- Basename of the current storage_path.
     original_filename TEXT NOT NULL DEFAULT '', -- Basename at import.
@@ -84,11 +84,11 @@ CREATE TABLE assets (
     original_size INTEGER,
     current_size INTEGER,
     -- Cached KOReader sampled hash of the current file bytes. It is not unique:
-    -- catalog mapping is valid only when all live matches belong to one work.
+    -- catalog mapping is valid only when all live matches belong to one book.
     koreader_hash TEXT,
-    -- Work metadata revision last embedded into this file. Non-writable formats
+    -- Book metadata revision last embedded into this file. Non-writable formats
     -- keep the default; writable assets are dirty when writeback_rev is behind
-    -- works.metadata_rev. writeback_error records the last failed attempt.
+    -- books.metadata_rev. writeback_error records the last failed attempt.
     writeback_rev INTEGER NOT NULL DEFAULT 0,
     writeback_error TEXT,
     created_at INTEGER NOT NULL DEFAULT (unixepoch()),
@@ -99,13 +99,13 @@ CREATE UNIQUE INDEX idx_assets_original_sha256 ON assets(original_sha256);
 CREATE INDEX idx_assets_current_sha256 ON assets(current_sha256);
 CREATE INDEX idx_assets_koreader_hash ON assets(koreader_hash) WHERE koreader_hash IS NOT NULL AND koreader_hash <> '';
 -- Keep this predicate in sync with format.MetadataWritebackFormatKeys().
-CREATE INDEX idx_assets_writeback_dirty ON assets(work_id, writeback_rev) WHERE format IN ('epub', 'fb2', 'kepub');
-CREATE INDEX idx_assets_work_id ON assets(work_id);
+CREATE INDEX idx_assets_writeback_dirty ON assets(book_id, writeback_rev) WHERE format IN ('epub', 'fb2', 'kepub');
+CREATE INDEX idx_assets_book_id ON assets(book_id);
 CREATE UNIQUE INDEX idx_assets_storage_path ON assets(storage_path);
-CREATE UNIQUE INDEX idx_assets_one_primary_per_work ON assets(work_id) WHERE is_primary = 1;
+CREATE UNIQUE INDEX idx_assets_one_primary_per_book ON assets(book_id) WHERE is_primary = 1;
 
 -- One row per in-flight physical metadata write-back replacement. Dirty work
--- is still derived from assets.writeback_rev < works.metadata_rev; this table
+-- is still derived from assets.writeback_rev < books.metadata_rev; this table
 -- only makes the overwrite temp/rename window inspectable and repairable.
 -- Both paths are relative to the storage root; hashes and byte size describe
 -- the staged replacement, not the previous file at storage_path.
@@ -132,15 +132,15 @@ CREATE INDEX idx_authors_name ON authors(name);
 
 -- author_order defines the display order and primary author. The first author
 -- is also the author used by canonical path construction.
-CREATE TABLE work_authors (
-    work_id TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+CREATE TABLE book_authors (
+    book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
     author_id TEXT NOT NULL REFERENCES authors(id) ON DELETE CASCADE,
     role TEXT,
     author_order INTEGER DEFAULT 0,
-    PRIMARY KEY (work_id, author_id)
+    PRIMARY KEY (book_id, author_id)
 );
 
-CREATE INDEX idx_work_authors_author_id ON work_authors(author_id);
+CREATE INDEX idx_book_authors_author_id ON book_authors(author_id);
 
 -- Cleanup duplicate dismissals are detector bookkeeping, not book metadata. A
 -- group is hidden only while its current live member set is covered by one of
@@ -150,7 +150,7 @@ CREATE TABLE duplicate_dismissals (
     id           TEXT PRIMARY KEY,
     reason       TEXT NOT NULL,
     detector_key TEXT NOT NULL,
-    work_ids     TEXT NOT NULL, -- Sorted, newline-separated IDs of dismissed works.
+    book_ids     TEXT NOT NULL, -- Sorted, newline-separated IDs of dismissed books.
     created_at   INTEGER NOT NULL DEFAULT (unixepoch()),
     created_by   INTEGER REFERENCES users(id) ON DELETE SET NULL
 );
@@ -230,13 +230,13 @@ CREATE INDEX idx_shelves_owner_visibility_position ON shelves(owner_id, visibili
 
 CREATE TABLE shelf_books (
     shelf_id TEXT NOT NULL REFERENCES shelves(id) ON DELETE CASCADE,
-    work_id  TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+    book_id  TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
     position INTEGER NOT NULL DEFAULT 0,
     added_at INTEGER NOT NULL DEFAULT (unixepoch()),
-    PRIMARY KEY (shelf_id, work_id)
+    PRIMARY KEY (shelf_id, book_id)
 );
 
-CREATE INDEX idx_shelf_books_work_id ON shelf_books(work_id);
+CREATE INDEX idx_shelf_books_book_id ON shelf_books(book_id);
 
 -- Access grants for shelf-scoped readers. Eligibility is checked at query time;
 -- a reader's own personal shelves cannot widen their access.
@@ -248,30 +248,25 @@ CREATE TABLE user_scope_shelves (
 
 CREATE INDEX idx_user_scope_shelves_shelf_id ON user_scope_shelves(shelf_id);
 
--- General account preferences; reader layout lives in user_reader_preferences.
+-- Account and reader layout preferences shared across the user's books.
 CREATE TABLE user_settings (
     user_id               INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     theme                 TEXT NOT NULL DEFAULT 'system' CHECK (theme IN ('system', 'light', 'dark', 'sepia')),
-    hide_continue_reading INTEGER NOT NULL DEFAULT 0 CHECK (hide_continue_reading IN (0, 1)),
+    show_continue_reading INTEGER NOT NULL DEFAULT 1 CHECK (show_continue_reading IN (0, 1)),
     -- IANA zone name. NULL means not yet selected/detected; 'UTC' is a choice.
     time_zone             TEXT,
+    reader_flow           TEXT NOT NULL DEFAULT 'paginated' CHECK (reader_flow IN ('paginated', 'scrolled')),
+    reader_style          TEXT NOT NULL DEFAULT 'paper' CHECK (reader_style IN ('original', 'paper', 'custom')),
+    -- Relative font-size step; 0 is the default size.
+    reader_font_size       INTEGER NOT NULL DEFAULT 0 CHECK (reader_font_size >= -4 AND reader_font_size <= 6),
+    -- Used by the custom reader style: CSS pixels and a line-height multiplier.
+    reader_column_width   INTEGER NOT NULL DEFAULT 760 CHECK (reader_column_width >= 560 AND reader_column_width <= 920),
+    reader_line_height    REAL NOT NULL DEFAULT 1.72 CHECK (reader_line_height >= 1.2 AND reader_line_height <= 2.2),
     updated_at            INTEGER NOT NULL DEFAULT (unixepoch())
 );
 
--- Reader layout preferences shared across the user's books. font_scale is a
--- discrete step; column width is in CSS pixels and line height is a multiplier.
-CREATE TABLE user_reader_preferences (
-    user_id             INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-    epub_flow           TEXT NOT NULL DEFAULT 'paginated' CHECK (epub_flow IN ('paginated', 'scrolled')),
-    display_style       TEXT NOT NULL DEFAULT 'paper' CHECK (display_style IN ('original', 'paper', 'custom')),
-    font_scale          INTEGER NOT NULL DEFAULT 0 CHECK (font_scale >= -4 AND font_scale <= 6),
-    custom_column_width INTEGER NOT NULL DEFAULT 760 CHECK (custom_column_width >= 560 AND custom_column_width <= 920),
-    custom_line_height  REAL NOT NULL DEFAULT 1.72 CHECK (custom_line_height >= 1.2 AND custom_line_height <= 2.2),
-    updated_at          INTEGER NOT NULL DEFAULT (unixepoch())
-);
-
 -- Per-user reader state. Position is stored per concrete asset because EPUB/PDF
--- variants of the same work have independent locators. `locator` is a JSON
+-- variants of the same book have independent locators. `locator` is a JSON
 -- object opaque to SQLite (CFI/page/resource position/etc. belongs to the reader
 -- engine); progress is a coarse normalized 0..1 value for browse/UI summaries.
 CREATE TABLE user_asset_state (
@@ -329,30 +324,30 @@ CREATE TABLE reading_session_days (
     CHECK (ended_at > started_at)
 ) WITHOUT ROWID;
 
--- Reading status belongs to a work; reader position belongs to an asset.
+-- Reading status belongs to a book; reader position belongs to an asset.
 -- Current state serves status: searches, while events retain completion dates
 -- and repeat reads. Undo marks events as reverted and restores the previous state.
 -- No row means unread, so importing books creates no per-user status rows.
-CREATE TABLE user_work_reading_state (
+CREATE TABLE user_book_reading_state (
     user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    work_id      TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+    book_id      TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
     status       TEXT NOT NULL CHECK (status IN ('unread', 'reading', 'finished', 'dropped')),
     last_event_id TEXT,
     updated_at   INTEGER NOT NULL DEFAULT (unixepoch()),
-    PRIMARY KEY (user_id, work_id)
+    PRIMARY KEY (user_id, book_id)
 );
 
-CREATE INDEX idx_user_work_reading_state_status ON user_work_reading_state(user_id, status, updated_at DESC);
+CREATE INDEX idx_user_book_reading_state_status ON user_book_reading_state(user_id, status, updated_at DESC);
 
-CREATE TABLE user_work_reading_events (
+CREATE TABLE user_book_reading_events (
     seq          INTEGER PRIMARY KEY AUTOINCREMENT,
     id           TEXT NOT NULL UNIQUE,
     user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    work_id      TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+    book_id      TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
     -- Explicitly link one status history rather than deriving it from global
     -- insertion order. Duplicate merge can retain independent histories for
-    -- the same resulting work without making Undo cross between them.
-    previous_event_id TEXT REFERENCES user_work_reading_events(id) ON DELETE SET NULL,
+    -- the same resulting book without making Undo cross between them.
+    previous_event_id TEXT REFERENCES user_book_reading_events(id) ON DELETE SET NULL,
     from_status  TEXT NOT NULL CHECK (from_status IN ('unread', 'reading', 'finished', 'dropped')),
     to_status    TEXT NOT NULL CHECK (to_status IN ('unread', 'reading', 'finished', 'dropped')),
     source       TEXT NOT NULL CHECK (source IN ('manual', 'web_reader', 'kosync')),
@@ -361,10 +356,10 @@ CREATE TABLE user_work_reading_events (
     CHECK (from_status <> to_status)
 );
 
-CREATE INDEX idx_user_work_reading_events_history ON user_work_reading_events(user_id, work_id, seq DESC);
-CREATE INDEX idx_user_work_reading_events_finished ON user_work_reading_events(user_id, to_status, occurred_at DESC)
+CREATE INDEX idx_user_book_reading_events_history ON user_book_reading_events(user_id, book_id, seq DESC);
+CREATE INDEX idx_user_book_reading_events_finished ON user_book_reading_events(user_id, to_status, occurred_at DESC)
     WHERE reverted_at IS NULL;
-CREATE INDEX idx_user_work_reading_events_previous ON user_work_reading_events(previous_event_id);
+CREATE INDEX idx_user_book_reading_events_previous ON user_book_reading_events(previous_event_id);
 
 -- Per-user web-reader annotations. Values are anchored to the concrete asset
 -- with Foliate CFI because alternate formats have different document locators.
@@ -402,14 +397,14 @@ CREATE TABLE kobo_connections (
 
 CREATE INDEX idx_kobo_connections_shelf_id ON kobo_connections(shelf_id);
 
--- Durable latest-value change feed for one Kobo connection. asset_id/work_id
+-- Durable latest-value change feed for one Kobo connection. asset_id/book_id
 -- intentionally are not foreign keys: a removed/purged book must leave a
 -- tombstone until an offline device asks for revisions it missed. A present row
 -- is always revalidated against live assets before metadata or bytes are served.
 CREATE TABLE kobo_items (
     connection_id TEXT NOT NULL REFERENCES kobo_connections(id) ON DELETE CASCADE,
     asset_id       TEXT NOT NULL,
-    work_id        TEXT NOT NULL,
+    book_id        TEXT NOT NULL,
     fingerprint    TEXT NOT NULL,
     present        INTEGER NOT NULL CHECK (present IN (0, 1)),
     revision       INTEGER NOT NULL CHECK (revision > 0),
@@ -420,7 +415,7 @@ CREATE TABLE kobo_items (
 );
 
 -- KOReader locators use document hashes, independently of web-reader locators.
--- An unambiguous live-catalog match may advance work-level reading status.
+-- An unambiguous live-catalog match may advance book-level reading status.
 -- Write-back updates assets.koreader_hash but leaves these records under their
 -- original hashes: devices may still hold the old file bytes.
 CREATE TABLE koreader_progress (
@@ -466,7 +461,7 @@ CREATE TABLE delivery_jobs (
     device_name  TEXT NOT NULL,
     device_email TEXT NOT NULL,
     preset       TEXT NOT NULL,
-    work_id      TEXT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+    book_id      TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
     asset_id     TEXT REFERENCES assets(id) ON DELETE SET NULL,
     title        TEXT NOT NULL,
     target       TEXT, -- Conversion target format; NULL sends the original file.
@@ -492,7 +487,7 @@ CREATE TABLE app_settings (
 );
 
 -- One cross-process writer lease for storage-mutating maintenance. It is a
--- heartbeat row rather than a filesystem lock so it still works on network
+-- heartbeat row rather than a filesystem lock so it still books on network
 -- filesystems where flock semantics are unreliable.
 -- owner identifies a process/lease instance, not a user account.
 CREATE TABLE writer_leases (
@@ -502,10 +497,10 @@ CREATE TABLE writer_leases (
 );
 
 -- Contentless FTS5 projection rebuilt when searchable metadata changes. The
--- relational tables remain authoritative; work_id is retained for joins.
+-- relational tables remain authoritative; book_id is retained for joins.
 -- tag_keys contains encoded whole-tag tokens produced by TagSearchKeys.
 CREATE VIRTUAL TABLE search USING fts5(
-    work_id UNINDEXED,
+    book_id UNINDEXED,
     title,
     authors,
     series,

@@ -97,7 +97,7 @@ directories sit directly under the folder, with no books/ prefix to name.
 
 Fields:
   title sort_title author author_sort author_bucket
-  series series_index series_bucket asset_id work_id
+  series series_index series_bucket asset_id book_id
   original_filename ext dot_ext
 
 Examples:
@@ -311,7 +311,7 @@ func assetBookPathData(a db.AssetWithAuthorRow) storage.BookPathData {
 		Series:           a.Series,
 		SeriesIndex:      a.SeriesIndex,
 		AssetID:          a.ID,
-		WorkID:           a.WorkID,
+		BookID:           a.BookID,
 		Ext:              a.Extension,
 		OriginalFilename: originalFilename,
 	}

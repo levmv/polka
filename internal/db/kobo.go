@@ -40,7 +40,7 @@ type KoboConnection struct {
 // decides when the durable projection needs a new revision.
 type KoboPublication struct {
 	AssetID       string
-	WorkID        string
+	BookID        string
 	Format        string
 	Size          int64
 	Title         string
@@ -302,18 +302,18 @@ func reconcileKoboItems(ctx context.Context, tx *sql.Tx, connection *KoboConnect
 		if !found {
 			if _, err := tx.ExecContext(ctx, `
 				INSERT INTO kobo_items
-				    (connection_id, asset_id, work_id, fingerprint, present, revision, first_revision)
+				    (connection_id, asset_id, book_id, fingerprint, present, revision, first_revision)
 				VALUES (?, ?, ?, ?, 1, ?, ?)
-			`, connection.ID, candidate.AssetID, candidate.WorkID, candidate.Fingerprint, revision, revision); err != nil {
+			`, connection.ID, candidate.AssetID, candidate.BookID, candidate.Fingerprint, revision, revision); err != nil {
 				return 0, fmt.Errorf("insert kobo item: %w", err)
 			}
 			continue
 		}
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE kobo_items
-			SET work_id = ?, fingerprint = ?, present = 1, revision = ?, updated_at = unixepoch()
+			SET book_id = ?, fingerprint = ?, present = 1, revision = ?, updated_at = unixepoch()
 			WHERE connection_id = ? AND asset_id = ?
-		`, candidate.WorkID, candidate.Fingerprint, revision, connection.ID, candidate.AssetID); err != nil {
+		`, candidate.BookID, candidate.Fingerprint, revision, connection.ID, candidate.AssetID); err != nil {
 			return 0, fmt.Errorf("update kobo item: %w", err)
 		}
 	}
@@ -351,9 +351,9 @@ func listKoboCandidates(ctx context.Context, tx *sql.Tx, userID int64, shelf *Sh
 	var args []any
 
 	if shelf.Kind == ShelfManual {
-		joined := "shelf_books sb JOIN works w ON w.id = sb.work_id JOIN assets a ON a.work_id = w.id"
-		withSQL, fromSQL, args = scope.joinVisibleWorks(joined)
-		whereSQL = "w.deleted_at IS NULL AND a.format IN ('kepub', 'epub') AND sb.shelf_id = ?"
+		joined := "shelf_books sb JOIN books b ON b.id = sb.book_id JOIN assets a ON a.book_id = b.id"
+		withSQL, fromSQL, args = scope.joinVisibleBooks(joined)
+		whereSQL = "b.deleted_at IS NULL AND a.format IN ('kepub', 'epub') AND sb.shelf_id = ?"
 		args = append(args, shelf.ID)
 	} else {
 		plan := newBookSearchPlan(scope, userID, shelf.Query)
@@ -361,33 +361,33 @@ func listKoboCandidates(ctx context.Context, tx *sql.Tx, userID int64, shelf *Sh
 			return nil, nil
 		}
 		withSQL = plan.withSQL
-		fromSQL = plan.fromSQL + " JOIN assets a ON a.work_id = w.id"
+		fromSQL = plan.fromSQL + " JOIN assets a ON a.book_id = b.id"
 		whereSQL = plan.whereSQL + " AND a.format IN ('kepub', 'epub')"
 		args = plan.argsWith()
 	}
 	ranked := fmt.Sprintf(`
 		ranked AS (
-			SELECT a.id AS id, a.work_id AS work_id, a.format AS format,
+			SELECT a.id AS id, a.book_id AS book_id, a.format AS format,
 			       COALESCE(a.current_size, a.original_size, 0) AS current_size,
-			       w.title AS title, COALESCE(w.description, '') AS description,
-			       COALESCE(w.publisher, '') AS publisher,
-			       COALESCE(w.published_date, '') AS published_date,
-			       COALESCE(w.language, '') AS language,
-			       COALESCE(w.series, '') AS series, w.series_index AS series_index,
-			       w.added_at AS added_at,
-			       MAX(w.updated_at, a.updated_at) AS modified_at,
+			       b.title AS title, COALESCE(b.description, '') AS description,
+			       COALESCE(b.publisher, '') AS publisher,
+			       COALESCE(b.published_date, '') AS published_date,
+			       COALESCE(b.language, '') AS language,
+			       COALESCE(b.series, '') AS series, b.series_index AS series_index,
+			       b.added_at AS added_at,
+			       MAX(b.updated_at, a.updated_at) AS modified_at,
 			       COALESCE((
 				   SELECT group_concat(author_name, char(31))
 				   FROM (
 				       SELECT au.name AS author_name
-				       FROM work_authors wa
-				       JOIN authors au ON au.id = wa.author_id
-				       WHERE wa.work_id = w.id
-				       ORDER BY wa.author_order, au.name COLLATE NOCASE, au.id
+				       FROM book_authors ba
+				       JOIN authors au ON au.id = ba.author_id
+				       WHERE ba.book_id = b.id
+				       ORDER BY ba.author_order, au.name COLLATE NOCASE, au.id
 				   )
 			       ), '') AS authors,
 			       ROW_NUMBER() OVER (
-				   PARTITION BY w.id
+				   PARTITION BY b.id
 				   ORDER BY (a.format = 'kepub') DESC, a.is_primary DESC, a.created_at, a.id
 			       ) AS choice
 			FROM %s
@@ -401,7 +401,7 @@ func listKoboCandidates(ctx context.Context, tx *sql.Tx, userID int64, shelf *Sh
 
 	rows, err := tx.QueryContext(ctx, fmt.Sprintf(`
 		%s
-		SELECT id, work_id, format, current_size, title, description,
+		SELECT id, book_id, format, current_size, title, description,
 		       publisher, published_date, language, series, series_index,
 		       added_at, modified_at, authors
 		FROM ranked
@@ -431,7 +431,7 @@ func scanKoboCandidate(row rowScanner) (koboCandidate, error) {
 	var candidate koboCandidate
 	var authors string
 	err := row.Scan(
-		&candidate.AssetID, &candidate.WorkID, &candidate.Format, &candidate.Size,
+		&candidate.AssetID, &candidate.BookID, &candidate.Format, &candidate.Size,
 		&candidate.Title, &candidate.Description, &candidate.Publisher,
 		&candidate.PublishedDate, &candidate.Language, &candidate.Series, &candidate.SeriesIndex,
 		&candidate.AddedAt, &candidate.ModifiedAt, &authors,
@@ -453,26 +453,26 @@ func scanKoboCandidate(row rowScanner) (koboCandidate, error) {
 
 func listKoboChanges(ctx context.Context, tx *sql.Tx, connectionID string, after int64, limit int) ([]KoboChange, bool, error) {
 	rows, err := tx.QueryContext(ctx, `
-		SELECT ki.asset_id, ki.work_id, COALESCE(a.format, ''),
+		SELECT ki.asset_id, ki.book_id, COALESCE(a.format, ''),
 		       COALESCE(a.current_size, a.original_size, 0),
-		       COALESCE(w.title, ''), COALESCE(w.description, ''),
-		       COALESCE(w.publisher, ''), COALESCE(w.published_date, ''),
-		       COALESCE(w.language, ''), COALESCE(w.series, ''), w.series_index,
-		       COALESCE(w.added_at, ki.updated_at), COALESCE(MAX(w.updated_at, a.updated_at), ki.updated_at),
+		       COALESCE(b.title, ''), COALESCE(b.description, ''),
+		       COALESCE(b.publisher, ''), COALESCE(b.published_date, ''),
+		       COALESCE(b.language, ''), COALESCE(b.series, ''), b.series_index,
+		       COALESCE(b.added_at, ki.updated_at), COALESCE(MAX(b.updated_at, a.updated_at), ki.updated_at),
 		       COALESCE((
 			   SELECT group_concat(author_name, char(31))
 			   FROM (
 			       SELECT au.name AS author_name
-			       FROM work_authors wa
-			       JOIN authors au ON au.id = wa.author_id
-			       WHERE wa.work_id = w.id
-			       ORDER BY wa.author_order, au.name COLLATE NOCASE, au.id
+			       FROM book_authors ba
+			       JOIN authors au ON au.id = ba.author_id
+			       WHERE ba.book_id = b.id
+			       ORDER BY ba.author_order, au.name COLLATE NOCASE, au.id
 			   )
 		       ), ''),
 		       ki.revision, ki.first_revision, ki.present, ki.updated_at
 		FROM kobo_items ki
 		LEFT JOIN assets a ON a.id = ki.asset_id
-		LEFT JOIN works w ON w.id = ki.work_id
+		LEFT JOIN books b ON b.id = ki.book_id
 		WHERE ki.connection_id = ? AND ki.revision > ?
 		ORDER BY ki.revision
 		LIMIT ?
@@ -487,7 +487,7 @@ func listKoboChanges(ctx context.Context, tx *sql.Tx, connectionID string, after
 		var change KoboChange
 		var authors string
 		if err := rows.Scan(
-			&change.AssetID, &change.WorkID, &change.Format, &change.Size,
+			&change.AssetID, &change.BookID, &change.Format, &change.Size,
 			&change.Title, &change.Description, &change.Publisher,
 			&change.PublishedDate, &change.Language, &change.Series, &change.SeriesIndex,
 			&change.AddedAt, &change.ModifiedAt, &authors,
@@ -515,25 +515,25 @@ func listKoboChanges(ctx context.Context, tx *sql.Tx, connectionID string, after
 // shelf additions/removals become projection changes at the next library sync.
 func (db *DB) KoboPublicationForAsset(connectionID, assetID string) (*KoboPublication, error) {
 	row := db.QueryRow(`
-		SELECT ki.asset_id, ki.work_id, a.format,
+		SELECT ki.asset_id, ki.book_id, a.format,
 		       COALESCE(a.current_size, a.original_size, 0),
-		       w.title, COALESCE(w.description, ''), COALESCE(w.publisher, ''),
-		       COALESCE(w.published_date, ''),
-		       COALESCE(w.language, ''), COALESCE(w.series, ''), w.series_index,
-		       w.added_at, MAX(w.updated_at, a.updated_at),
+		       b.title, COALESCE(b.description, ''), COALESCE(b.publisher, ''),
+		       COALESCE(b.published_date, ''),
+		       COALESCE(b.language, ''), COALESCE(b.series, ''), b.series_index,
+		       b.added_at, MAX(b.updated_at, a.updated_at),
 		       COALESCE((
 			   SELECT group_concat(author_name, char(31))
 			   FROM (
 			       SELECT au.name AS author_name
-			       FROM work_authors wa
-			       JOIN authors au ON au.id = wa.author_id
-			       WHERE wa.work_id = w.id
-			       ORDER BY wa.author_order, au.name COLLATE NOCASE, au.id
+			       FROM book_authors ba
+			       JOIN authors au ON au.id = ba.author_id
+			       WHERE ba.book_id = b.id
+			       ORDER BY ba.author_order, au.name COLLATE NOCASE, au.id
 			   )
 		       ), '')
 		FROM kobo_items ki
 		JOIN assets a ON a.id = ki.asset_id
-		JOIN works w ON w.id = ki.work_id AND w.deleted_at IS NULL
+		JOIN books b ON b.id = ki.book_id AND b.deleted_at IS NULL
 		WHERE ki.connection_id = ? AND ki.asset_id = ? AND ki.present = 1
 	`, connectionID, assetID)
 	candidate, err := scanKoboCandidate(row)

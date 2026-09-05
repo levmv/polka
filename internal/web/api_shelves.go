@@ -140,14 +140,14 @@ func (s *Server) handleAPIShelfDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAPIShelfAddBook(w http.ResponseWriter, r *http.Request) {
-	workID := r.PathValue("workID")
-	if _, ok := s.requireWorkAccess(w, r, workID); !ok {
+	bookID := r.PathValue("bookID")
+	if _, ok := s.requireBookAccess(w, r, bookID); !ok {
 		return
 	}
 	if _, ok := s.requireMutableShelf(w, r, r.PathValue("id")); !ok {
 		return
 	}
-	err := s.db.AddBookToShelf(r.PathValue("id"), UserID(r.Context()), workID)
+	err := s.db.AddBookToShelf(r.PathValue("id"), UserID(r.Context()), bookID)
 	if writeShelfError(w, err) {
 		return
 	}
@@ -155,14 +155,14 @@ func (s *Server) handleAPIShelfAddBook(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAPIShelfRemoveBook(w http.ResponseWriter, r *http.Request) {
-	workID := r.PathValue("workID")
-	if _, ok := s.requireWorkAccess(w, r, workID); !ok {
+	bookID := r.PathValue("bookID")
+	if _, ok := s.requireBookAccess(w, r, bookID); !ok {
 		return
 	}
 	if _, ok := s.requireMutableShelf(w, r, r.PathValue("id")); !ok {
 		return
 	}
-	err := s.db.RemoveBookFromShelf(r.PathValue("id"), UserID(r.Context()), workID)
+	err := s.db.RemoveBookFromShelf(r.PathValue("id"), UserID(r.Context()), bookID)
 	if writeShelfError(w, err) {
 		return
 	}
@@ -181,7 +181,7 @@ type bulkShelfResponse struct {
 
 // handleAPIShelfBulkBooks adds or removes a selection of books to/from one manual
 // shelf. Like the single membership routes it is per-user (reader+), but only
-// touches the works the caller can actually see; already-present adds and
+// touches the books the caller can actually see; already-present adds and
 // absent removes are silently skipped, so `changed` is the real delta.
 func (s *Server) handleAPIShelfBulkBooks(w http.ResponseWriter, r *http.Request) {
 	shelfID := r.PathValue("id")
@@ -235,13 +235,13 @@ func (s *Server) handleAPIShelfBulkBooks(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleAPIBookShelves(w http.ResponseWriter, r *http.Request) {
-	workID := r.PathValue("id")
+	bookID := r.PathValue("id")
 	u := contextUser(r.Context())
-	if _, ok := s.requireWorkAccess(w, r, workID); !ok {
+	if _, ok := s.requireBookAccess(w, r, bookID); !ok {
 		return
 	}
 
-	rows, err := s.db.ListBookShelfMemberships(UserID(r.Context()), workID)
+	rows, err := s.db.ListBookShelfMemberships(UserID(r.Context()), bookID)
 	if err != nil {
 		serverError(w, err)
 		return

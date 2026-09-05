@@ -37,7 +37,6 @@ import type {
     KoboConnection,
     MetadataCandidate,
     ReaderLocator,
-    ReaderPreferences,
     ReaderState,
     ReadingStatus,
     ReadingStatusState,
@@ -305,15 +304,18 @@ export async function fetchUserSettings(): Promise<UserSettings> {
     return await userSettingsPromise;
 }
 
-export type UserSettingsUpdate = Partial<
-    Pick<UserSettings, 'theme' | 'hide_continue_reading' | 'time_zone'>
->;
+export type UserSettingsUpdate = Partial<Omit<UserSettings, 'updated_at'>>;
 
 export async function saveUserSettings(payload: UserSettingsUpdate): Promise<UserSettings> {
     const request: UserSettingsUpdate = {
         theme: payload.theme,
-        hide_continue_reading: payload.hide_continue_reading,
+        show_continue_reading: payload.show_continue_reading,
         time_zone: payload.time_zone,
+        reader_flow: payload.reader_flow,
+        reader_style: payload.reader_style,
+        reader_font_size: payload.reader_font_size,
+        reader_column_width: payload.reader_column_width,
+        reader_line_height: payload.reader_line_height,
     };
     const saved = await fetchJSON<UserSettings>(
         '/api/settings',
@@ -537,8 +539,8 @@ export async function deleteDeliveryDevice(deviceId: string): Promise<void> {
     });
 }
 
-export async function fetchSendOptions(workId: string): Promise<SendOptions> {
-    const params = new URLSearchParams({ work: workId });
+export async function fetchSendOptions(bookId: string): Promise<SendOptions> {
+    const params = new URLSearchParams({ book: bookId });
     return await fetchJSON<SendOptions>(
         `/api/send/options?${params.toString()}`,
         'Failed to fetch send options',
@@ -546,7 +548,7 @@ export async function fetchSendOptions(workId: string): Promise<SendOptions> {
 }
 
 export async function createDelivery(payload: {
-    work_id: string;
+    book_id: string;
     device_id?: string;
     asset_id?: string;
     target?: string;
@@ -702,16 +704,16 @@ export async function deleteShelf(shelfId: string): Promise<void> {
     });
 }
 
-export async function fetchBookShelves(workId: string): Promise<BookShelfMembership[]> {
+export async function fetchBookShelves(bookId: string): Promise<BookShelfMembership[]> {
     return await fetchJSON<BookShelfMembership[]>(
-        `/api/books/${encodeURIComponent(workId)}/shelves`,
+        `/api/books/${encodeURIComponent(bookId)}/shelves`,
         'Failed to fetch book shelves',
     );
 }
 
-export async function addBookToShelf(shelfId: string, workId: string): Promise<void> {
+export async function addBookToShelf(shelfId: string, bookId: string): Promise<void> {
     await apiFetch(
-        `/api/shelves/${encodeURIComponent(shelfId)}/books/${encodeURIComponent(workId)}`,
+        `/api/shelves/${encodeURIComponent(shelfId)}/books/${encodeURIComponent(bookId)}`,
         'Failed to add book to shelf',
         {
             method: 'PUT',
@@ -719,9 +721,9 @@ export async function addBookToShelf(shelfId: string, workId: string): Promise<v
     );
 }
 
-export async function removeBookFromShelf(shelfId: string, workId: string): Promise<void> {
+export async function removeBookFromShelf(shelfId: string, bookId: string): Promise<void> {
     await apiFetch(
-        `/api/shelves/${encodeURIComponent(shelfId)}/books/${encodeURIComponent(workId)}`,
+        `/api/shelves/${encodeURIComponent(shelfId)}/books/${encodeURIComponent(bookId)}`,
         'Failed to remove book from shelf',
         {
             method: 'DELETE',
@@ -729,22 +731,22 @@ export async function removeBookFromShelf(shelfId: string, workId: string): Prom
     );
 }
 
-export async function fetchBook(workId: string, signal?: AbortSignal): Promise<Book> {
-    return await fetchJSON<Book>(`/api/books/${encodeURIComponent(workId)}`, 'Not found', {
+export async function fetchBook(bookId: string, signal?: AbortSignal): Promise<Book> {
+    return await fetchJSON<Book>(`/api/books/${encodeURIComponent(bookId)}`, 'Not found', {
         signal,
     });
 }
 
-export async function writebackBook(workId: string): Promise<BookWritebackResult> {
+export async function writebackBook(bookId: string): Promise<BookWritebackResult> {
     return await fetchJSON<BookWritebackResult>(
-        `/api/books/${encodeURIComponent(workId)}/writeback`,
+        `/api/books/${encodeURIComponent(bookId)}/writeback`,
         'Failed to write metadata to file',
         { method: 'POST' },
     );
 }
 
 export async function fetchBookSequence(
-    workId: string,
+    bookId: string,
     context: BookListContext,
     before = 25,
     after = 25,
@@ -753,28 +755,28 @@ export async function fetchBookSequence(
     params.set('before', String(before));
     params.set('after', String(after));
     return await fetchJSON<BookSequenceWindow>(
-        `/api/books/${encodeURIComponent(workId)}/sequence?${params.toString()}`,
+        `/api/books/${encodeURIComponent(bookId)}/sequence?${params.toString()}`,
         'Failed to fetch book sequence',
     );
 }
 
-// Soft-delete (trash) a work. Reversible — the files stay until an admin purge.
-export async function deleteBook(workId: string): Promise<void> {
-    await apiFetch(`/api/books/${encodeURIComponent(workId)}`, 'Failed to remove book', {
+// Soft-delete (trash) a book. Reversible — the files stay until an admin purge.
+export async function deleteBook(bookId: string): Promise<void> {
+    await apiFetch(`/api/books/${encodeURIComponent(bookId)}`, 'Failed to remove book', {
         method: 'DELETE',
     });
 }
 
-export async function restoreBook(workId: string): Promise<void> {
-    await apiFetch(`/api/books/${encodeURIComponent(workId)}/restore`, 'Failed to restore book', {
+export async function restoreBook(bookId: string): Promise<void> {
+    await apiFetch(`/api/books/${encodeURIComponent(bookId)}/restore`, 'Failed to restore book', {
         method: 'POST',
     });
 }
 
-// Permanently delete a trashed work and its files. Admin-only (server-enforced).
-export async function purgeBook(workId: string): Promise<void> {
+// Permanently delete a trashed book and its files. Admin-only (server-enforced).
+export async function purgeBook(bookId: string): Promise<void> {
     await apiFetch(
-        `/api/books/${encodeURIComponent(workId)}/purge`,
+        `/api/books/${encodeURIComponent(bookId)}/purge`,
         'Failed to permanently delete book',
         {
             method: 'DELETE',
@@ -790,8 +792,8 @@ export async function fetchTrash(signal?: AbortSignal): Promise<TrashedBook[]> {
     );
 }
 
-// Permanently delete every trashed work and its files. Admin-only
-// (server-enforced); returns how many works were purged.
+// Permanently delete every trashed book and its files. Admin-only
+// (server-enforced); returns how many books were purged.
 export async function emptyTrash(): Promise<{ purged: number }> {
     return await fetchJSON<{ purged: number }>('/api/trash', 'Failed to empty trash', {
         method: 'DELETE',
@@ -832,22 +834,22 @@ export async function sendReadingActivity(
 }
 
 export async function setReadingStatus(
-    workId: string,
+    bookId: string,
     status: ReadingStatus,
 ): Promise<ReadingStatusState> {
     return await fetchJSON<ReadingStatusState>(
-        `/api/books/${encodeURIComponent(workId)}/reading-status`,
+        `/api/books/${encodeURIComponent(bookId)}/reading-status`,
         'Failed to change reading status',
         jsonBody('PUT', { status }),
     );
 }
 
 export async function undoReadingStatus(
-    workId: string,
+    bookId: string,
     eventId: string,
 ): Promise<ReadingStatusState> {
     return await fetchJSON<ReadingStatusState>(
-        `/api/books/${encodeURIComponent(workId)}/reading-status/undo`,
+        `/api/books/${encodeURIComponent(bookId)}/reading-status/undo`,
         'Failed to undo reading status',
         jsonBody('POST', { event_id: eventId }),
     );
@@ -927,46 +929,15 @@ export async function deleteAnnotation(assetId: string, annotationId: string): P
     );
 }
 
-export async function fetchReaderPreferences(): Promise<ReaderPreferences> {
-    return await fetchJSON<ReaderPreferences>(
-        '/api/reader/preferences',
-        'Failed to fetch reader preferences',
-    );
-}
-
-export type ReaderPreferencesUpdate = Partial<
-    Pick<
-        ReaderPreferences,
-        'epub_flow' | 'display_style' | 'font_scale' | 'custom_column_width' | 'custom_line_height'
-    >
->;
-
-export async function saveReaderPreferences(
-    payload: ReaderPreferencesUpdate,
-): Promise<ReaderPreferences> {
-    const request: ReaderPreferencesUpdate = {
-        epub_flow: payload.epub_flow,
-        display_style: payload.display_style,
-        font_scale: payload.font_scale,
-        custom_column_width: payload.custom_column_width,
-        custom_line_height: payload.custom_line_height,
-    };
-    return await fetchJSON<ReaderPreferences>(
-        '/api/reader/preferences',
-        'Failed to save reader preferences',
-        jsonBody('PUT', request),
-    );
-}
-
 export async function fetchMetadataCandidates(
-    workId: string,
+    bookId: string,
     provider: string = 'openlibrary',
     signal?: AbortSignal,
 ): Promise<MetadataCandidate[]> {
     const params = new URLSearchParams();
     if (provider) params.set('provider', provider);
     return await fetchJSON<MetadataCandidate[]>(
-        `/api/books/${encodeURIComponent(workId)}/metadata-candidates?${params.toString()}`,
+        `/api/books/${encodeURIComponent(bookId)}/metadata-candidates?${params.toString()}`,
         'Failed to fetch metadata candidates',
         signal ? { signal } : undefined,
     );
@@ -989,16 +960,16 @@ export async function fetchMetadataDescription(
     return data.description || '';
 }
 
-export async function updateBook(workId: string, payload: BookPatch): Promise<Book> {
+export async function updateBook(bookId: string, payload: BookPatch): Promise<Book> {
     return await fetchJSON<Book>(
-        `/api/books/${encodeURIComponent(workId)}`,
+        `/api/books/${encodeURIComponent(bookId)}`,
         'Failed to update book',
         jsonBody('PATCH', payload),
     );
 }
 
 // bulkEditBooks applies operation-specific transforms (tags, series) to a set of
-// loaded works. The server returns updated summaries so the caller can patch the
+// loaded books. The server returns updated summaries so the caller can patch the
 // rendered grid/table in place.
 export async function bulkEditBooks(payload: BulkEditRequest): Promise<BulkEditResult> {
     return await fetchJSON<BulkEditResult>(
@@ -1008,7 +979,7 @@ export async function bulkEditBooks(payload: BulkEditRequest): Promise<BulkEditR
     );
 }
 
-// bulkTrashBooks soft-deletes a set of loaded works. The server returns the ids
+// bulkTrashBooks soft-deletes a set of loaded books. The server returns the ids
 // it actually trashed (visible, live), so the caller can drop just those rows.
 export async function bulkTrashBooks(ids: string[]): Promise<BulkTrashResult> {
     return await fetchJSON<BulkTrashResult>(
@@ -1026,7 +997,7 @@ export async function bulkWritebackBooks(ids: string[]): Promise<BulkWritebackRe
     );
 }
 
-// bulkShelfBooks adds or removes a set of works to/from one manual shelf. The
+// bulkShelfBooks adds or removes a set of books to/from one manual shelf. The
 // server returns how many memberships actually changed (skipping already-present
 // adds and absent removes).
 export async function bulkShelfBooks(
@@ -1041,12 +1012,12 @@ export async function bulkShelfBooks(
     );
 }
 
-export async function uploadCover(workId: string, file: File): Promise<Book> {
+export async function uploadCover(bookId: string, file: File): Promise<Book> {
     const formData = new FormData();
     formData.append('cover', file);
 
     return await fetchJSON<Book>(
-        `/api/books/${encodeURIComponent(workId)}/cover`,
+        `/api/books/${encodeURIComponent(bookId)}/cover`,
         'Request failed',
         {
             method: 'POST',
@@ -1056,11 +1027,11 @@ export async function uploadCover(workId: string, file: File): Promise<Book> {
 }
 
 export async function generateCoverPreview(
-    workId: string,
+    bookId: string,
     payload: { title: string; author: string; seed?: number; style?: string },
 ): Promise<Blob> {
     const res = await apiFetch(
-        `/api/books/${encodeURIComponent(workId)}/cover-generated-preview`,
+        `/api/books/${encodeURIComponent(bookId)}/cover-generated-preview`,
         'Request failed',
         jsonBody('POST', payload),
     );
@@ -1068,30 +1039,30 @@ export async function generateCoverPreview(
 }
 
 export async function searchCoverImages(
-    workId: string,
+    bookId: string,
     title: string,
     author: string,
     signal?: AbortSignal,
 ): Promise<CoverSearchResult[]> {
     const params = new URLSearchParams({ title, author });
     return await fetchJSON<CoverSearchResult[]>(
-        `/api/books/${encodeURIComponent(workId)}/cover-search?${params.toString()}`,
+        `/api/books/${encodeURIComponent(bookId)}/cover-search?${params.toString()}`,
         'Request failed',
         signal ? { signal } : undefined,
     );
 }
 
-export async function applyCoverSearchResult(workId: string, token: string): Promise<Book> {
+export async function applyCoverSearchResult(bookId: string, token: string): Promise<Book> {
     return await fetchJSON<Book>(
-        `/api/books/${encodeURIComponent(workId)}/cover-search`,
+        `/api/books/${encodeURIComponent(bookId)}/cover-search`,
         'Request failed',
         jsonBody('POST', { token }),
     );
 }
 
-export async function applyCoverURL(workId: string, url: string): Promise<Book> {
+export async function applyCoverURL(bookId: string, url: string): Promise<Book> {
     return await fetchJSON<Book>(
-        `/api/books/${encodeURIComponent(workId)}/cover-url`,
+        `/api/books/${encodeURIComponent(bookId)}/cover-url`,
         'Request failed',
         jsonBody('POST', { url }),
     );
@@ -1135,20 +1106,20 @@ export async function fetchCleanup(signal?: AbortSignal): Promise<Cleanup> {
 
 export async function mergeCleanupDuplicates(
     survivorId: string,
-    workIds: string[],
+    bookIds: string[],
 ): Promise<CleanupDuplicateMergeResult> {
     return await fetchJSON<CleanupDuplicateMergeResult>(
         '/api/cleanup/duplicates/merge',
         'Failed to merge duplicates',
-        jsonBody('POST', { survivor_id: survivorId, work_ids: workIds }),
+        jsonBody('POST', { survivor_id: survivorId, book_ids: bookIds }),
     );
 }
 
-export async function dismissCleanupDuplicates(workIds: string[]): Promise<void> {
+export async function dismissCleanupDuplicates(bookIds: string[]): Promise<void> {
     await apiFetch(
         '/api/cleanup/duplicates/dismiss',
         'Failed to dismiss duplicates',
-        jsonBody('POST', { work_ids: workIds }),
+        jsonBody('POST', { book_ids: bookIds }),
     );
 }
 
@@ -1166,7 +1137,7 @@ export async function fetchAuthorPage(
     );
 }
 
-// fetchAuthorInfo returns one author's sort_name and work count by exact name,
+// fetchAuthorInfo returns one author's sort_name and book count by exact name,
 // or null when no such author exists (404). Book edit uses the count for
 // author-sort scope hints and conservative rename convergence prompts.
 export async function fetchAuthorInfo(name: string): Promise<AuthorAdmin | null> {

@@ -9,7 +9,7 @@ import (
 	"github.com/levmv/polka/internal/relayout"
 )
 
-// AuthorAdmin is a manage-authors list row: an author plus its work count.
+// AuthorAdmin is a manage-authors list row: an author plus its book count.
 type AuthorAdmin struct {
 	Name      string `json:"name"`
 	SortName  string `json:"sort_name"`
@@ -87,7 +87,7 @@ func (s *Server) handleAPIAuthorList(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleAPIAuthorInfo serves GET /api/authors/info?name=... — the sort_name and
-// work count for one author by exact name. The book-edit convergence prompt uses
+// book count for one author by exact name. The book-edit convergence prompt uses
 // the count to ask whether a per-book author rename should also apply to the
 // other books still crediting the old name. 404 when no such author exists.
 func (s *Server) handleAPIAuthorInfo(w http.ResponseWriter, r *http.Request) {
@@ -115,7 +115,7 @@ func (s *Server) handleAPIAuthorInfo(w http.ResponseWriter, r *http.Request) {
 
 // handleAPIAuthorRename renames an author in place, or merges into an existing
 // author when `new` already names one. Mirrors `polka library authors rename`:
-// it relayouts every affected work's files (primary author is part of the path).
+// it relayouts every affected book's files (primary author is part of the path).
 func (s *Server) handleAPIAuthorRename(w http.ResponseWriter, r *http.Request) {
 	if !s.requireFullCatalogScope(w, r) {
 		return
@@ -150,7 +150,7 @@ func (s *Server) handleAPIAuthorRename(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleAPIAuthorSortName overrides an author's sort_name (canonical-path sort
-// key) and relayouts its works. The display name is unchanged.
+// key) and relayouts its books. The display name is unchanged.
 func (s *Server) handleAPIAuthorSortName(w http.ResponseWriter, r *http.Request) {
 	if !s.requireFullCatalogScope(w, r) {
 		return

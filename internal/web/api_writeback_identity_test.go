@@ -17,17 +17,17 @@ import (
 	"github.com/levmv/polka/internal/writeback"
 )
 
-func TestMergeEditedWorkAutoWritebackUpdatesEveryFile(t *testing.T) {
+func TestMergeEditedBookAutoWritebackUpdatesEveryFile(t *testing.T) {
 	s, handler, userID := writebackIdentityServer(t)
 	a, _ := addWritebackIdentityBook(t, s, "one")
 	b, _ := addWritebackIdentityBook(t, s, "two")
-	writebackIdentityJSON(t, s, handler, userID, http.MethodPatch, "/api/books/"+b.WorkID, map[string]any{"publisher": "Former publisher"})
-	writebackIdentityJSON(t, s, handler, userID, http.MethodPost, "/api/books/"+b.WorkID+"/writeback", nil)
+	writebackIdentityJSON(t, s, handler, userID, http.MethodPatch, "/api/books/"+b.BookID, map[string]any{"publisher": "Former publisher"})
+	writebackIdentityJSON(t, s, handler, userID, http.MethodPost, "/api/books/"+b.BookID+"/writeback", nil)
 	writebackIdentityJSON(t, s, handler, userID, http.MethodPost, "/api/cleanup/duplicates/merge", map[string]any{
-		"survivor_id": a.WorkID, "work_ids": []string{a.WorkID, b.WorkID},
+		"survivor_id": a.BookID, "book_ids": []string{a.BookID, b.BookID},
 	})
 
-	state, err := db.GetWorkWritebackState(s.db, a.WorkID)
+	state, err := db.GetBookWritebackState(s.db, a.BookID)
 	if err != nil || state.Dirty != 2 {
 		t.Fatalf("merged writeback state = %+v, %v; want both files dirty", state, err)
 	}
@@ -53,8 +53,8 @@ func TestRestoreWritebackAcknowledgementMatchesRestoredBytes(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s, handler, userID := writebackIdentityServer(t)
 			a, original := addWritebackIdentityBook(t, s, "restore")
-			writebackIdentityJSON(t, s, handler, userID, http.MethodPatch, "/api/books/"+a.WorkID, map[string]any{"title": "Edited title"})
-			writebackIdentityJSON(t, s, handler, userID, http.MethodPost, "/api/books/"+a.WorkID+"/writeback", nil)
+			writebackIdentityJSON(t, s, handler, userID, http.MethodPatch, "/api/books/"+a.BookID, map[string]any{"title": "Edited title"})
+			writebackIdentityJSON(t, s, handler, userID, http.MethodPost, "/api/books/"+a.BookID+"/writeback", nil)
 			current := readWritebackIdentityAsset(t, s, a.AssetID)
 			row, err := db.GetMetadataWritebackAsset(s.db, a.AssetID)
 			if err != nil {
@@ -77,7 +77,7 @@ func TestRestoreWritebackAcknowledgementMatchesRestoredBytes(t *testing.T) {
 			if data := readWritebackIdentityAsset(t, s, a.AssetID); !bytes.Equal(data, source) {
 				t.Fatal("restored file differs from uploaded bytes")
 			}
-			state, err := db.GetWorkWritebackState(s.db, a.WorkID)
+			state, err := db.GetBookWritebackState(s.db, a.BookID)
 			if err != nil || state.Dirty != tc.wantDirty {
 				t.Fatalf("restored writeback state = %+v, %v; want dirty=%d", state, err, tc.wantDirty)
 			}
