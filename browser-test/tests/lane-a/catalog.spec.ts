@@ -9,6 +9,51 @@ async function expectImageLoaded(img: Locator): Promise<void> {
 }
 
 test.describe('Catalog', () => {
+  test('Tag links select a whole tag while unquoted search stays broad', async ({ page }) => {
+    await page.goto('/');
+    const books: Array<{ id: string; tags: string | null }> = [];
+    const titles = ['With Cover Book', 'No Cover Book'];
+    try {
+      for (const [i, title] of titles.entries()) {
+        const card = page.locator('.book-card', { hasText: title });
+        await expect(card).toBeVisible();
+        const href = await card.locator('.book-title-link').getAttribute('href');
+        const id = href ? new URL(href, page.url()).pathname.split('/').pop() : '';
+        if (!id) throw new Error('missing book id');
+        const response = await page.request.get(`/api/books/${id}`);
+        expect(response.ok()).toBe(true);
+        const book = await response.json();
+        books.push({ id, tags: book.tags });
+        const update = await page.request.patch(`/api/books/${id}`, {
+          data: { tags: i === 0 ? 'История' : 'История искусства' },
+        });
+        expect(update.ok()).toBe(true);
+      }
+
+      await page.goto(`/book/${books[0].id}`);
+      await page.locator('.detail-tag').filter({ hasText: /^История$/ }).click();
+      await expect(page).toHaveURL((url) => url.searchParams.get('q') === 'tag:"История"');
+      await expect(page.locator('.book-card')).toHaveCount(1);
+      await expect(page.locator('.book-card')).toContainText(titles[0]);
+      await expectImageLoaded(page.locator('.book-card img'));
+      await page.locator('.book-card').hover();
+      await page.screenshot({ path: 'screenshots/exact-tag-search.png', fullPage: true });
+
+      await page.locator('#search-input').fill('tag:Ист');
+      await expect(page.locator('.book-card')).toHaveCount(2);
+      for (const title of titles) {
+        await expect(page.locator('.book-card', { hasText: title })).toBeVisible();
+      }
+    } finally {
+      for (const book of books) {
+        const response = await page.request.patch(`/api/books/${book.id}`, {
+          data: { tags: book.tags },
+        });
+        expect(response.ok()).toBe(true);
+      }
+    }
+  });
+
   test('Library page renders correctly', async ({ page }) => {
     await page.setViewportSize({ width: 1600, height: 1000 });
     await page.goto('/');
