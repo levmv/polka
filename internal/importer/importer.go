@@ -799,7 +799,19 @@ func stageSource(ctx context.Context, root storage.Root, assetID string, info so
 	}
 	defer f.Close()
 
-	return storage.Stage(root, fmt.Sprintf("[%s]%s", assetID, info.Extension), contextReader{ctx: ctx, r: f})
+	// Bound the copy to the fingerprinted size plus one byte: a growing source
+	// must fail rather than keep staging indefinitely. Hash the bytes we copy.
+	source := &io.LimitedReader{R: contextReader{ctx: ctx, r: f}, N: info.Size + 1}
+	h := sha256.New()
+	staged, err := storage.Stage(root, fmt.Sprintf("[%s]%s", assetID, info.Extension), io.TeeReader(source, h))
+	if err != nil {
+		return storage.StagedFile{}, err
+	}
+	if source.N != 1 || hex.EncodeToString(h.Sum(nil)) != info.SourceSHA256 {
+		staged.Cleanup()
+		return storage.StagedFile{}, fmt.Errorf("source changed during import: %s; retry when the file is stable", info.sourceName())
+	}
+	return staged, nil
 }
 
 func stageBytes(ctx context.Context, root storage.Root, label string, data []byte) (storage.StagedFile, error) {
@@ -1214,20 +1226,17 @@ func restoreDuplicateAsset(ctx context.Context, database db.Execer, root storage
 		return fmt.Errorf("stat duplicate asset %s (%s): %w", existing.AssetID, existing.StoragePath, err)
 	}
 
-	f, err := os.Open(info.Source.Path)
+	staged, err := stageSource(ctx, root, existing.AssetID, info)
 	if err != nil {
-		return fmt.Errorf("open duplicate source %s: %w", info.Source.Path, err)
+		return fmt.Errorf("stage duplicate source: %w", err)
 	}
-	defer f.Close()
-	if err := storage.Place(root, existing.StoragePath, contextReader{ctx: ctx, r: f}, nil); err != nil {
-		return fmt.Errorf("restore duplicate asset %s (%s): %w", existing.AssetID, existing.StoragePath, err)
-	}
-	if _, err := database.Exec(`
-		UPDATE assets
-		SET current_sha256 = ?, current_size = ?, koreader_hash = NULL, updated_at = unixepoch()
-		WHERE id = ?
-	`, info.SourceSHA256, info.Size, existing.AssetID); err != nil {
+	if err := db.RecordAssetRestore(database, existing.AssetID, info.SourceSHA256, info.Size); err != nil {
+		staged.Cleanup()
 		return fmt.Errorf("update restored duplicate asset %s: %w", existing.AssetID, err)
+	}
+	// Keep the complete staged copy for repair if placement fails after the DB update.
+	if err := staged.Finalize(root, existing.StoragePath); err != nil {
+		return fmt.Errorf("restore duplicate asset %s (%s): %w", existing.AssetID, existing.StoragePath, err)
 	}
 	return nil
 }

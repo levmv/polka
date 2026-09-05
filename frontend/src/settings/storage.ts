@@ -9,11 +9,13 @@ import { notifyCatalogChanged } from '../catalog-events';
 import { createToggle } from '../components/toggle';
 import { textEl } from '../dom';
 import { errorMessage } from '../errors';
+import { createImportResult } from '../import-result';
 import { showToast } from '../toast';
 import type {
     AdminStorageStatus,
     BooksStorage,
     FolderImportPreview,
+    FolderImportResult,
     StorageScanResult,
 } from '../types';
 import {
@@ -31,6 +33,7 @@ type StorageState = AsyncLoadState & {
     folderImportExpanded: boolean;
     folderImportPath: string;
     folderImportPreview: FolderImportPreview | null;
+    folderImportResult: FolderImportResult | null;
     folderImportBusy: boolean;
 };
 
@@ -47,6 +50,7 @@ export function createStoragePanel(): StoragePanel {
         folderImportExpanded: false,
         folderImportPath: '',
         folderImportPreview: null,
+        folderImportResult: null,
         folderImportBusy: false,
         loadError: '',
     };
@@ -257,8 +261,14 @@ function folderImportControl(state: StorageState, rerender: () => void): HTMLEle
             showToast(errorMessage(err, 'Preview failed'), { type: 'error' });
         } finally {
             state.folderImportBusy = false;
-            previewButton.textContent = 'Preview';
-            updateButtons();
+            // Hiding the form or reopening Storage can replace these controls
+            // while the request is pending. Update the current form in that case.
+            if (wrap.isConnected) {
+                previewButton.textContent = 'Preview';
+                updateButtons();
+            } else {
+                rerender();
+            }
         }
     });
 
@@ -279,23 +289,19 @@ function folderImportControl(state: StorageState, rerender: () => void): HTMLEle
             state.status = result.storage;
             state.loaded = true;
             state.folderImportPreview = null;
+            state.folderImportResult = result.failed > 0 ? result : null;
             window.dispatchEvent(
                 new CustomEvent<AdminStorageStatus>('polka:admin-storage', {
                     detail: result.storage,
                 }),
             );
             if (result.imported > 0) notifyCatalogChanged();
-            showToast(
-                folderImportResultText(result),
-                result.failed > 0 ? { type: 'error' } : undefined,
-            );
-            rerender();
+            if (result.failed === 0) showToast(folderImportResultText(result));
         } catch (err) {
             showToast(errorMessage(err, 'Import failed'), { type: 'error' });
         } finally {
             state.folderImportBusy = false;
-            importButton.textContent = 'Import';
-            updateButtons();
+            rerender();
         }
     });
 
@@ -327,6 +333,20 @@ function folderImportControl(state: StorageState, rerender: () => void): HTMLEle
     pathRow.className = 'settings-path-control settings-folder-import-path';
     pathRow.append(pathInput, previewButton, importButton);
     wrap.append(pathRow, summary);
+    const result = state.folderImportResult;
+    if (result) {
+        const report = createImportResult(
+            folderImportResultText(result),
+            result.errors || [],
+            result.failed,
+            () => {
+                state.folderImportResult = null;
+                report.remove();
+                pathInput.focus();
+            },
+        );
+        wrap.append(report);
+    }
     updateButtons();
     return wrap;
 }

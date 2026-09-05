@@ -2,6 +2,7 @@ import { uploadBook } from './api';
 import { bookURL } from './book-list-context';
 import { notifyCatalogChanged } from './catalog-events';
 import { errorMessage } from './errors';
+import { createImportResult } from './import-result';
 import { navigateApp } from './router';
 import { showToast } from './toast';
 import type { BookImportResult, CurrentUser } from './types';
@@ -12,6 +13,7 @@ export interface UploadFailure {
 }
 
 let uploadingBooks = false;
+let uploadResult: HTMLElement | null = null;
 
 export function initSidebarUpload(currentUserPromise: Promise<CurrentUser>): void {
     const input = document.getElementById('book-upload-input') as HTMLInputElement | null;
@@ -94,7 +96,10 @@ function wireSidebarUpload(input: HTMLInputElement, btn: HTMLButtonElement): voi
 }
 
 async function importBookFiles(files: File[], acceptedExtensions: string[]): Promise<void> {
-    if (uploadingBooks) return;
+    if (uploadingBooks) {
+        showToast('An upload is in progress. Wait for it to finish, then drop your files again.');
+        return;
+    }
 
     const accepted = files.filter((file) => isAcceptedBookUpload(file, acceptedExtensions));
     const rejected = files
@@ -143,14 +148,8 @@ function reportUploadResult(
     duplicates: BookImportResult[],
     failures: UploadFailure[],
 ): void {
-    showUploadToast(imported, duplicates, failures);
-}
-
-function showUploadToast(
-    imported: BookImportResult[],
-    duplicates: BookImportResult[],
-    failures: UploadFailure[],
-): void {
+    uploadResult?.remove();
+    uploadResult = null;
     const total = imported.length + duplicates.length + failures.length;
     if (total === 1 && failures.length === 0) {
         const result = imported[0] || duplicates[0];
@@ -183,9 +182,22 @@ function showUploadToast(
     if (restoredCount > 0) parts.push(`Restored ${restoredCount}`);
     if (duplicates.length > 0) parts.push(`Duplicates ${duplicates.length}`);
     if (failures.length > 0) parts.push(`Failed ${failures.length}`);
-    showToast(parts.join(', ') || 'No books imported', {
-        type: failures.length > 0 ? 'error' : 'success',
-    });
+    const summary = parts.join(', ') || 'No books imported';
+    if (failures.length > 0) {
+        uploadResult = createImportResult(
+            summary,
+            failures.map((failure) => `${failure.name}: ${failure.message}`),
+            failures.length,
+            () => {
+                uploadResult?.remove();
+                uploadResult = null;
+            },
+        );
+        uploadResult.classList.add('upload-result');
+        document.body.append(uploadResult);
+        return;
+    }
+    showToast(summary);
 }
 
 function acceptedUploadExtensions(input: HTMLInputElement): string[] {

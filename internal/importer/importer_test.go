@@ -2145,6 +2145,87 @@ func TestPersistStoresAssetHashesAndCover(t *testing.T) {
 	}
 }
 
+func TestPersistRejectsChangedSource(t *testing.T) {
+	for _, restore := range []bool{false, true} {
+		for _, changed := range []string{"short", "another source", "a source that grew during import"} {
+			name := "import/"
+			if restore {
+				name = "restore/"
+			}
+			t.Run(name+changed, func(t *testing.T) {
+				dataDir := t.TempDir()
+				database, err := db.InitPath(filepath.Join(dataDir, "library.db"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer database.Close()
+				root := storage.NewRoot(filepath.Join(dataDir, "books"))
+				if err := storage.EnsureLayout(root); err != nil {
+					t.Fatal(err)
+				}
+				const original = "initial source"
+				srcPath := filepath.Join(dataDir, "source.txt")
+				if err := os.WriteFile(srcPath, []byte(original), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				plan, err := Resolve(context.Background(), Source{Path: srcPath}, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				wantCount := 0
+				var missingPath string
+				if restore {
+					result, err := Persist(context.Background(), database, root, plan, Options{})
+					if err != nil {
+						t.Fatal(err)
+					}
+					missingPath = root.Abs(result.StoragePath)
+					if err := os.Remove(missingPath); err != nil {
+						t.Fatal(err)
+					}
+					wantCount = 1
+				}
+				if err := os.WriteFile(srcPath, []byte(changed), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := Persist(context.Background(), database, root, plan, Options{}); err == nil || !strings.Contains(err.Error(), "source changed during import") {
+					t.Fatalf("Persist = %v; want changed source error", err)
+				}
+				var works, assets int
+				if err := database.QueryRow("SELECT (SELECT COUNT(*) FROM works), (SELECT COUNT(*) FROM assets)").Scan(&works, &assets); err != nil {
+					t.Fatal(err)
+				}
+				if works != wantCount || assets != wantCount {
+					t.Fatalf("works/assets = %d/%d; want %d/%d", works, assets, wantCount, wantCount)
+				}
+				if restore {
+					if _, err := os.Stat(missingPath); !os.IsNotExist(err) {
+						t.Fatalf("changed source was placed: %v", err)
+					}
+					var hash string
+					if err := database.QueryRow("SELECT current_sha256 FROM assets").Scan(&hash); err != nil || hash != plan.SourceSHA256 {
+						t.Fatalf("current hash = %q, %v; want original fingerprint", hash, err)
+					}
+				}
+				entries, err := os.ReadDir(root.StagingDir())
+				if err != nil || len(entries) != 0 {
+					t.Fatalf("staging = %v, %v; want empty", entries, err)
+				}
+				if err := os.WriteFile(srcPath, []byte(original), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				result, err := Persist(context.Background(), database, root, plan, Options{})
+				if err != nil {
+					t.Fatalf("retry stable source: %v", err)
+				}
+				if data, err := os.ReadFile(root.Abs(result.StoragePath)); err != nil || string(data) != original {
+					t.Fatalf("retry bytes = %q, %v; want original source", data, err)
+				}
+			})
+		}
+	}
+}
+
 func TestPersistCanceledContextRollsBackAndCleansStaging(t *testing.T) {
 	dataDir := t.TempDir()
 	database, err := db.InitPath(filepath.Join(dataDir, "library.db"))
