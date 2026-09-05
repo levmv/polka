@@ -93,6 +93,9 @@ func TestWASMFallbackRendersWithoutHostFilesystem(t *testing.T) {
 
 func TestEmbeddedPDFiumWASMMatchesManifest(t *testing.T) {
 	type manifest struct {
+		GoPDFium struct {
+			PDFiumVersion int `json:"pdfium_version"`
+		} `json:"go_pdfium"`
 		Output struct {
 			Bytes  int    `json:"bytes"`
 			SHA256 string `json:"sha256"`
@@ -109,6 +112,9 @@ func TestEmbeddedPDFiumWASMMatchesManifest(t *testing.T) {
 	}
 	if len(pdfiumCoverWASM) != expected.Output.Bytes {
 		t.Fatalf("embedded PDFium Wasm is %d bytes, manifest says %d", len(pdfiumCoverWASM), expected.Output.Bytes)
+	}
+	if pdfiumVersion != fmt.Sprint(expected.GoPDFium.PDFiumVersion) {
+		t.Fatalf("PDFium version = %s, manifest says %d", pdfiumVersion, expected.GoPDFium.PDFiumVersion)
 	}
 	sum := sha256.Sum256(pdfiumCoverWASM)
 	if got := fmt.Sprintf("%x", sum); got != expected.Output.SHA256 {

@@ -8,3 +8,6 @@ import _ "embed"
 //
 //go:embed pdfium-cover.wasm
 var pdfiumCoverWASM []byte
+
+// TestEmbeddedPDFiumWASMMatchesManifest keeps this version tied to the artifact.
+const pdfiumVersion = "7961"
