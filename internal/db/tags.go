@@ -7,21 +7,29 @@ import (
 	"unicode"
 )
 
-// ListTags returns distinct comma-list tags from works, optionally filtered by a
-// case-insensitive substring. Tags are stored as text today, so this keeps the
-// read model lightweight without pretending tags are a separate entity.
+// ListTags returns visible tags sorted and deduplicated case-insensitively,
+// optionally filtered by a substring. A nonpositive limit returns all matches.
 func ListTags(queryer Queryer, scope VisibilityScope, q string, limit int) ([]string, error) {
 	filter := strings.ToLower(strings.TrimSpace(q))
 	where := `w.deleted_at IS NULL
 		  AND w.tags IS NOT NULL
 		  AND trim(w.tags) <> ''`
+	var withSQL string
 	var args []any
+	if !scope.IsFull() {
+		withSQL = scope.visibleWorksCTE()
+		// IN drives primary-key lookups of visible works; a join may scan the catalog.
+		where += ` AND w.id IN (SELECT work_id FROM visible_scope)`
+		args = append(args, scope.UserID)
+	}
 	if filter != "" && isASCII(filter) {
-		where += ` AND w.tags LIKE ? ESCAPE '\'`
+		// LIKE folds only ASCII. Different byte/character lengths let non-ASCII
+		// tags reach Go's Unicode-aware filter, including İ/i and K/k matches.
+		where += ` AND (w.tags LIKE ? ESCAPE '\'
+			OR length(CAST(w.tags AS BLOB)) <> length(w.tags))`
 		args = append(args, "%"+escapeLike(filter)+"%")
 	}
-	where, args = scope.AppendWorkWhere(where, "w.id", args...)
-	query := `
+	query := withClause(withSQL) + `
 		SELECT w.tags FROM works w
 		WHERE ` + where + `
 	`
@@ -57,14 +65,15 @@ func ListTags(queryer Queryer, scope VisibilityScope, q string, limit int) ([]st
 	}
 
 	tags := make([]string, 0, len(seen))
-	for _, tag := range seen {
-		tags = append(tags, tag)
+	for key := range seen {
+		tags = append(tags, key)
 	}
-	slices.SortFunc(tags, func(a, b string) int {
-		return strings.Compare(strings.ToLower(a), strings.ToLower(b))
-	})
+	slices.Sort(tags)
 	if limit > 0 && len(tags) > limit {
 		tags = tags[:limit]
+	}
+	for i, key := range tags {
+		tags[i] = seen[key]
 	}
 	return tags, nil
 }
