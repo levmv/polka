@@ -89,7 +89,7 @@ func GetPossibleDuplicates(queryer Queryer, scope VisibilityScope, maxGroups int
 type DuplicateMergeRequest struct {
 	SurvivorID  string
 	WorkIDs     []string
-	DeletedBy   string
+	DeletedBy   int64
 	CoverFromID string
 }
 
@@ -122,7 +122,7 @@ type duplicateSet struct {
 }
 
 type duplicateReadingState struct {
-	userID      string
+	userID      int64
 	workID      string
 	status      string
 	lastEventID sql.NullString
@@ -203,7 +203,7 @@ func DuplicateMergeCoverSource(queryer Queryer, scope VisibilityScope, survivorI
 // later metadata edit or import changes the key/member set and should surface a
 // fresh cleanup item; dismissals are not broad "never show this title again"
 // suppressions.
-func DismissDuplicateGroup(tx *sql.Tx, scope VisibilityScope, workIDs []string, userID string) error {
+func DismissDuplicateGroup(tx *sql.Tx, scope VisibilityScope, workIDs []string, userID int64) error {
 	set, err := validateDuplicateSet(tx, scope, "", workIDs)
 	if err != nil {
 		return err
@@ -213,7 +213,7 @@ func DismissDuplicateGroup(tx *sql.Tx, scope VisibilityScope, workIDs []string, 
 	_, err = tx.Exec(`
 		INSERT INTO duplicate_dismissals (id, reason, detector_key, work_ids, created_by)
 		VALUES (?, ?, ?, ?, ?)
-	`, id.New(id.DuplicateDismissal), set.reason, set.key, strings.Join(ids, "\n"), nullString(userID))
+	`, id.New(id.DuplicateDismissal), set.reason, set.key, strings.Join(ids, "\n"), sql.NullInt64{Int64: userID, Valid: userID > 0})
 	if err != nil {
 		return fmt.Errorf("insert duplicate dismissal: %w", err)
 	}
@@ -368,7 +368,7 @@ func mergeDuplicateReadingData(tx *sql.Tx, survivorID string, loserIDs []string)
 		return fmt.Errorf("query duplicate reading states: %w", err)
 	}
 
-	winners := make(map[string]duplicateReadingState)
+	winners := make(map[int64]duplicateReadingState)
 	for rows.Next() {
 		var candidate duplicateReadingState
 		if err := rows.Scan(&candidate.userID, &candidate.workID, &candidate.status, &candidate.lastEventID, &candidate.updatedAt); err != nil {
@@ -414,7 +414,7 @@ func mergeDuplicateReadingData(tx *sql.Tx, survivorID string, loserIDs []string)
 				last_event_id = excluded.last_event_id,
 				updated_at = excluded.updated_at
 		`, state.userID, survivorID, state.status, state.lastEventID, state.updatedAt); err != nil {
-			return fmt.Errorf("merge duplicate reading state for user %s: %w", state.userID, err)
+			return fmt.Errorf("merge duplicate reading state for user %d: %w", state.userID, err)
 		}
 	}
 	return nil

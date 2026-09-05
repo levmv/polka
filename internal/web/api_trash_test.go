@@ -28,7 +28,7 @@ func TestTrashLifecycleHTTP(t *testing.T) {
 	s := newTestServer(database, dir)
 	handler := testRoutes(t, s)
 
-	do := func(userID, method, target string) *httptest.ResponseRecorder {
+	do := func(userID int64, method string, target string) *httptest.ResponseRecorder {
 		req := jsonRequest(t, s, userID, method, target, nil)
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, req)
@@ -95,7 +95,7 @@ func TestEmptyTrashHTTP(t *testing.T) {
 
 	s := newTestServer(database, dir)
 	handler := testRoutes(t, s)
-	do := func(userID, method, target string) *httptest.ResponseRecorder {
+	do := func(userID int64, method string, target string) *httptest.ResponseRecorder {
 		req := jsonRequest(t, s, userID, method, target, nil)
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, req)

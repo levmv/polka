@@ -67,7 +67,7 @@ func TestAuthMiddleware(t *testing.T) {
 	h := s.authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ran = true
 		if got := UserID(r.Context()); got != u.ID {
-			t.Errorf("context user id = %q, want %q", got, u.ID)
+			t.Errorf("context user id = %d, want %d", got, u.ID)
 		}
 	}))
 	req := httptest.NewRequest("GET", "/", nil)
@@ -91,7 +91,7 @@ func TestAuthMiddlewareBasicAuth(t *testing.T) {
 			h := s.authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				ran = true
 				if got := UserID(r.Context()); got != u.ID {
-					t.Errorf("context user id = %q, want %q", got, u.ID)
+					t.Errorf("context user id = %d, want %d", got, u.ID)
 				}
 			}))
 			req := httptest.NewRequest("GET", path, nil)
@@ -172,7 +172,7 @@ func TestAuthMiddlewareAppToken(t *testing.T) {
 		h := s.authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ran = true
 			if got := UserID(r.Context()); got != u.ID {
-				t.Errorf("context user id = %q, want %q", got, u.ID)
+				t.Errorf("context user id = %d, want %d", got, u.ID)
 			}
 		}))
 		req := httptest.NewRequest("GET", "/opds", nil)
@@ -188,7 +188,7 @@ func TestAuthMiddlewareAppToken(t *testing.T) {
 	hKO := s.authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		kosyncRan = true
 		if got := UserID(r.Context()); got != u.ID {
-			t.Errorf("kosync context user id = %q, want %q", got, u.ID)
+			t.Errorf("kosync context user id = %d, want %d", got, u.ID)
 		}
 	}))
 	reqKO := httptest.NewRequest("GET", "/kosync/"+token+"/users/auth", nil)

@@ -12,7 +12,7 @@ import (
 // deletedBy records who trashed it, for a legible "Deleted by X — Restore?"
 // trash view. Returns sql.ErrNoRows when no *live* work has this id (unknown id
 // or already trashed), so the handler can answer 404 / no-op uniformly.
-func SoftDeleteWork(execer Execer, workID, deletedBy string) error {
+func SoftDeleteWork(execer Execer, workID string, deletedBy int64) error {
 	res, err := execer.Exec(`
 		UPDATE works SET deleted_at = unixepoch(), deleted_by = ?
 		WHERE id = ? AND deleted_at IS NULL

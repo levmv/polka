@@ -25,7 +25,7 @@ func TestVisibilityScopeManualShelf(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create shelf: %v", err)
 	}
-	if err := database.AddBookToShelf(shelf.ID, "", "w_kid"); err != nil {
+	if err := database.AddBookToShelf(shelf.ID, 0, "w_kid"); err != nil {
 		t.Fatalf("add book: %v", err)
 	}
 	if _, err := database.UpdateUserAccess(user.ID, UserAccess{Role: RoleReader, ContentScope: ContentScopeShelves, ShelfIDs: []string{shelf.ID}}); err != nil {
@@ -43,7 +43,7 @@ func TestVisibilityScopeManualShelf(t *testing.T) {
 		t.Fatalf("adult access = %v, %v; want false, nil", ok, err)
 	}
 
-	rows, err := ListBooks(database, scope, "", "", SortTitle, 10, 0)
+	rows, err := ListBooks(database, scope, 0, "", SortTitle, 10, 0)
 	if err != nil {
 		t.Fatalf("list scoped books: %v", err)
 	}
@@ -177,21 +177,21 @@ func TestVisibilityScopeQueryShelf(t *testing.T) {
 	if ok, err := CanAccessWork(database, scope, "w_adult"); err != nil || ok {
 		t.Fatalf("adult access = %v, %v; want false, nil", ok, err)
 	}
-	rows, err := ListBooks(database, scope, "", "", SortAdded, 10, 0)
+	rows, err := ListBooks(database, scope, 0, "", SortAdded, 10, 0)
 	if err != nil {
 		t.Fatalf("list query-scoped books: %v", err)
 	}
 	if len(rows) != 1 || rows[0].ID != "w_kid" {
 		t.Fatalf("query-scoped rows = %+v; want only w_kid once", rows)
 	}
-	rows, err = ListBooks(database, scope, "", "tag:adult", SortRelevance, 10, 0)
+	rows, err = ListBooks(database, scope, 0, "tag:adult", SortRelevance, 10, 0)
 	if err != nil {
 		t.Fatalf("search query-scoped books: %v", err)
 	}
 	if len(rows) != 0 {
 		t.Fatalf("query-scoped adult search = %+v; want none", rows)
 	}
-	sequence, err := BookSequenceInList(database, scope, "", "w_kid", "", SortAdded, 1, 1)
+	sequence, err := BookSequenceInList(database, scope, 0, "w_kid", "", SortAdded, 1, 1)
 	if err != nil {
 		t.Fatalf("query-scoped sequence: %v", err)
 	}
@@ -209,7 +209,7 @@ func TestVisibilityScopeTrash(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create shelf: %v", err)
 	}
-	if err := database.AddBookToShelf(shelf.ID, "", "w_kid"); err != nil {
+	if err := database.AddBookToShelf(shelf.ID, 0, "w_kid"); err != nil {
 		t.Fatalf("add book: %v", err)
 	}
 	if _, err := database.UpdateUserAccess(user.ID, UserAccess{Role: RoleReader, ContentScope: ContentScopeShelves, ShelfIDs: []string{shelf.ID}}); err != nil {

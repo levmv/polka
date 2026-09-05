@@ -49,7 +49,7 @@ func ListOPDSPublications(queryer Queryer, scope VisibilityScope, limit, offset 
 // SearchOPDSPublications applies the same FTS terms and structural/per-user
 // filters as browser search. Filter-only queries (including status:unread) are
 // valid saved shelves; a genuinely empty query still returns no rows.
-func SearchOPDSPublications(queryer Queryer, scope VisibilityScope, userID, q string, limit, offset int) ([]OPDSPublicationRow, error) {
+func SearchOPDSPublications(queryer Queryer, scope VisibilityScope, userID int64, q string, limit, offset int) ([]OPDSPublicationRow, error) {
 	plan := newBookSearchPlan(scope, userID, q)
 	if !plan.hasClauses {
 		return nil, nil
@@ -176,7 +176,7 @@ func CountOPDSPublications(queryer Queryer, scope VisibilityScope) (int, error) 
 	return count, nil
 }
 
-func CountSearchOPDSPublications(queryer Queryer, scope VisibilityScope, userID, q string) (int, error) {
+func CountSearchOPDSPublications(queryer Queryer, scope VisibilityScope, userID int64, q string) (int, error) {
 	plan := newBookSearchPlan(scope, userID, q)
 	if !plan.hasClauses {
 		return 0, nil

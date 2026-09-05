@@ -62,7 +62,7 @@ func TestQuotedTagsMatchWholeValues(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assertTagSearchResults(t, database, FullVisibilityScope(), "", tt.query, tt.want)
+			assertTagSearchResults(t, database, FullVisibilityScope(), 0, tt.query, tt.want)
 		})
 	}
 }
@@ -129,7 +129,7 @@ func setSearchTags(t *testing.T, database *DB, workID, tags string) {
 	}
 }
 
-func assertTagSearchResults(t *testing.T, database *DB, scope VisibilityScope, userID, query string, want []string) {
+func assertTagSearchResults(t *testing.T, database *DB, scope VisibilityScope, userID int64, query string, want []string) {
 	t.Helper()
 	books, err := ListBooks(database, scope, userID, query, SortTitle, 50, 0)
 	if err != nil || !slices.Equal(bookIDs(books), want) {

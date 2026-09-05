@@ -74,7 +74,7 @@ type SeriesCard struct {
 // query then enriches only that page with its cover work and finished count, so
 // the per-request work stays proportional to the page instead of the library.
 // limit is the positive page size.
-func ListSeriesCardsPage(queryer Queryer, scope VisibilityScope, userID, q, afterName string, limit int) ([]SeriesCard, error) {
+func ListSeriesCardsPage(queryer Queryer, scope VisibilityScope, userID int64, q, afterName string, limit int) ([]SeriesCard, error) {
 	counts, err := ListSeriesCountsPage(queryer, scope, q, afterName, limit)
 	if err != nil {
 		return nil, err
@@ -105,7 +105,7 @@ func ListSeriesCardsPage(queryer Queryer, scope VisibilityScope, userID, q, afte
 // finished books for each named series. The representative is the first volume
 // in series order that actually has a cover, so a missing cover on book one does
 // not leave the whole series blank; its primary author names the series.
-func seriesCardDetails(queryer Queryer, scope VisibilityScope, userID string, names []string) (map[string]SeriesCard, error) {
+func seriesCardDetails(queryer Queryer, scope VisibilityScope, userID int64, names []string) (map[string]SeriesCard, error) {
 	withSQL, fromSQL, args := scope.joinVisibleWorks("works w")
 	args = append(args, userID)
 	placeholders, nameArgs := idPlaceholders(names)

@@ -50,7 +50,7 @@ func TestSeriesQueries(t *testing.T) {
 	// Series order groups by series name, then numbered volumes by index, then
 	// the unnumbered ones by title; series-less books come last.
 	database.Exec("INSERT INTO works (id, title, sort_title) VALUES ('w8', 'Standalone', 'Standalone')")
-	ordered, err := ListBooks(database, FullVisibilityScope(), "", "", SortSeries, 10, 0)
+	ordered, err := ListBooks(database, FullVisibilityScope(), 0, "", SortSeries, 10, 0)
 	if err != nil {
 		t.Fatalf("list books by series order: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestSeriesCardsPage(t *testing.T) {
 		t.Fatalf("create shelf: %v", err)
 	}
 	for _, workID := range []string{"w1", "w3"} {
-		if err := database.AddBookToShelf(shelf.ID, "", workID); err != nil {
+		if err := database.AddBookToShelf(shelf.ID, 0, workID); err != nil {
 			t.Fatalf("add %s to shelf: %v", workID, err)
 		}
 	}

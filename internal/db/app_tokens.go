@@ -41,7 +41,7 @@ func appTokenHash(token string) string {
 // CreateAppToken issues a new random token for a user, stores only its hash, and
 // returns the raw token (the single time it is ever available). name must be
 // non-empty and unique for that user.
-func (db *DB) CreateAppToken(userID, name string) (string, error) {
+func (db *DB) CreateAppToken(userID int64, name string) (string, error) {
 	if name == "" {
 		return "", errorWithDetail(ErrInvalidAppTokenInput, "token name must not be empty")
 	}
@@ -68,7 +68,7 @@ func (db *DB) CreateAppToken(userID, name string) (string, error) {
 }
 
 // ListAppTokens returns a user's tokens (no secrets), newest first.
-func (db *DB) ListAppTokens(userID string) ([]AppToken, error) {
+func (db *DB) ListAppTokens(userID int64) ([]AppToken, error) {
 	rows, err := db.Query(
 		"SELECT id, name, created_at, last_used_at FROM app_tokens WHERE user_id = ? ORDER BY created_at DESC",
 		userID,
@@ -91,7 +91,7 @@ func (db *DB) ListAppTokens(userID string) ([]AppToken, error) {
 
 // RevokeAppToken deletes a user's token by name. Returns sql.ErrNoRows if no such
 // token exists for that user.
-func (db *DB) RevokeAppToken(userID, name string) error {
+func (db *DB) RevokeAppToken(userID int64, name string) error {
 	res, err := db.Exec("DELETE FROM app_tokens WHERE user_id = ? AND name = ?", userID, name)
 	if err != nil {
 		return fmt.Errorf("revoke app token: %w", err)
@@ -104,7 +104,7 @@ func (db *DB) RevokeAppToken(userID, name string) error {
 
 // RevokeAppTokenByID deletes a user's token by id. It is used by the web UI so
 // token names never have to become URL path components.
-func (db *DB) RevokeAppTokenByID(userID, tokenID string) error {
+func (db *DB) RevokeAppTokenByID(userID int64, tokenID string) error {
 	res, err := db.Exec("DELETE FROM app_tokens WHERE user_id = ? AND id = ?", userID, tokenID)
 	if err != nil {
 		return fmt.Errorf("revoke app token: %w", err)
@@ -119,28 +119,28 @@ func (db *DB) RevokeAppTokenByID(userID, tokenID string) error {
 // live token matched. It opportunistically records last_used_at (throttled to at
 // most once per hour, like session bumps) so ordinary OPDS browsing does not turn
 // every request into a write.
-func (db *DB) AppTokenUserID(token string) (string, bool, error) {
+func (db *DB) AppTokenUserID(token string) (int64, bool, error) {
 	if token == "" {
-		return "", false, nil
+		return 0, false, nil
 	}
 	hash := appTokenHash(token)
 
-	var userID string
+	var userID int64
 	var lastUsed sql.NullInt64
 	err := db.QueryRow(
 		"SELECT user_id, last_used_at FROM app_tokens WHERE token_hash = ?", hash,
 	).Scan(&userID, &lastUsed)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", false, nil
+		return 0, false, nil
 	}
 	if err != nil {
-		return "", false, fmt.Errorf("lookup app token: %w", err)
+		return 0, false, fmt.Errorf("lookup app token: %w", err)
 	}
 
 	now := time.Now().Unix()
 	if !lastUsed.Valid || now-lastUsed.Int64 >= 3600 {
 		if _, err := db.Exec("UPDATE app_tokens SET last_used_at = ? WHERE token_hash = ?", now, hash); err != nil {
-			return "", false, fmt.Errorf("bump app token: %w", err)
+			return 0, false, fmt.Errorf("bump app token: %w", err)
 		}
 	}
 	return userID, true, nil

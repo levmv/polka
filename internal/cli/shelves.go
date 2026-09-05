@@ -86,7 +86,7 @@ func shelfList(database *db.DB, args []string) error {
 		printShelfSubcommandUsage("list")
 		return errors.New("usage: polka library shelves list")
 	}
-	shelves, err := database.ListShelves("")
+	shelves, err := database.ListShelves(0)
 	if err != nil {
 		return err
 	}
@@ -132,10 +132,10 @@ func shelfCreate(database *db.DB, args []string) error {
 	return nil
 }
 
-func defaultShelfOwner(database *db.DB) (string, error) {
+func defaultShelfOwner(database *db.DB) (int64, error) {
 	users, err := database.ListUsers()
 	if err != nil {
-		return "", err
+		return 0, err
 	}
 	for _, u := range users {
 		if u.Role == db.RoleAdmin {
@@ -150,7 +150,7 @@ func defaultShelfOwner(database *db.DB) (string, error) {
 	if len(users) > 0 {
 		return users[0].ID, nil
 	}
-	return "", errors.New("cannot create a shelf before creating a user")
+	return 0, errors.New("cannot create a shelf before creating a user")
 }
 
 func shelfRemove(database *db.DB, args []string) error {
@@ -158,7 +158,7 @@ func shelfRemove(database *db.DB, args []string) error {
 		printShelfSubcommandUsage("remove")
 		return errors.New("usage: polka library shelves remove <shelf-id>")
 	}
-	if err := database.DeleteShelf(args[0], ""); err != nil {
+	if err := database.DeleteShelf(args[0], 0); err != nil {
 		return err
 	}
 	fmt.Printf("Removed shelf %s\n", args[0])
@@ -176,7 +176,7 @@ func shelfBooks(database *db.DB, args []string) error {
 		return reportedErrorf("usage: polka library shelves books [--limit N] <shelf-id>")
 	}
 
-	shelf, err := database.GetShelf(fs.Args()[0], "")
+	shelf, err := database.GetShelf(fs.Args()[0], 0)
 	if err != nil {
 		return err
 	}
@@ -219,7 +219,7 @@ func shelfAddBook(database *db.DB, args []string) error {
 		printShelfSubcommandUsage("add-book")
 		return errors.New("usage: polka library shelves add-book <shelf-id> <work-id>")
 	}
-	if err := database.AddBookToShelf(args[0], "", args[1]); err != nil {
+	if err := database.AddBookToShelf(args[0], 0, args[1]); err != nil {
 		return err
 	}
 	fmt.Printf("Added %s to shelf %s\n", args[1], args[0])
@@ -231,7 +231,7 @@ func shelfRemoveBook(database *db.DB, args []string) error {
 		printShelfSubcommandUsage("remove-book")
 		return errors.New("usage: polka library shelves remove-book <shelf-id> <work-id>")
 	}
-	if err := database.RemoveBookFromShelf(args[0], "", args[1]); err != nil {
+	if err := database.RemoveBookFromShelf(args[0], 0, args[1]); err != nil {
 		return err
 	}
 	fmt.Printf("Removed %s from shelf %s\n", args[1], args[0])

@@ -127,7 +127,7 @@ func TestMemberIgnoresStaleShelfScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create scope shelf: %v", err)
 	}
-	if err := database.AddBookToShelf(scopeShelf.ID, "", "w_1"); err != nil {
+	if err := database.AddBookToShelf(scopeShelf.ID, 0, "w_1"); err != nil {
 		t.Fatalf("seed scope shelf: %v", err)
 	}
 	if _, err := database.Exec(`UPDATE users SET content_scope = 'shelves' WHERE id = ?`, member.ID); err != nil {

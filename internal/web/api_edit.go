@@ -370,7 +370,7 @@ func (s *Server) handleAPIBookDetailReturn(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, b)
 }
 
-func (s *Server) bookDetailDTO(scope db.VisibilityScope, viewerID, workID string, viewerIsAdmin bool) (BookDetailDTO, error) {
+func (s *Server) bookDetailDTO(scope db.VisibilityScope, viewerID int64, workID string, viewerIsAdmin bool) (BookDetailDTO, error) {
 	bRow, err := db.GetBook(s.db, scope, workID)
 	if err != nil {
 		return BookDetailDTO{}, err
@@ -393,7 +393,7 @@ func (s *Server) bookDetailDTO(scope db.VisibilityScope, viewerID, workID string
 	b.AuthorsList, b.AuthorsDisplay = authorsToDTO(authorsByWork[b.ID])
 
 	readingStatus := db.ReadingStatusState{WorkID: b.ID, Status: db.ReadingStatusUnread}
-	if viewerID != "" {
+	if viewerID > 0 {
 		readingStatus, err = db.GetReadingStatus(s.db, viewerID, b.ID)
 		if err != nil {
 			return BookDetailDTO{}, err

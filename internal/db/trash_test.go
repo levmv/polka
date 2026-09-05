@@ -9,7 +9,7 @@ import (
 func seedTrashFixture(t *testing.T, d *DB) {
 	t.Helper()
 	stmts := []string{
-		`INSERT INTO users (id, username, password_hash, role) VALUES ('u1','alice','x','admin')`,
+		`INSERT INTO users (id, username, password_hash, role) VALUES (1,'alice','x','admin')`,
 		`INSERT INTO authors (id, name, sort_name) VALUES ('a1','Frank Herbert','Herbert, Frank')`,
 		`INSERT INTO works (id, title, sort_title) VALUES ('w1','Dune','Dune')`,
 		`INSERT INTO works (id, title, sort_title) VALUES ('w2','Hyperion','Hyperion')`,
@@ -17,7 +17,7 @@ func seedTrashFixture(t *testing.T, d *DB) {
 		`INSERT INTO search (rowid, work_id, title, authors) VALUES (1,'w1','Dune','Frank Herbert')`,
 		`INSERT INTO search (rowid, work_id, title, authors) VALUES (2,'w2','Hyperion','')`,
 		`INSERT INTO assets (id, work_id, storage_path, filename, extension) VALUES ('as1','w1','H/Dune/as1.epub','as1.epub','.epub')`,
-		`INSERT INTO shelves (id, name, kind, owner_id, visibility) VALUES ('s1','Faves','manual','u1','shared')`,
+		`INSERT INTO shelves (id, name, kind, owner_id, visibility) VALUES ('s1','Faves','manual',1,'shared')`,
 		`INSERT INTO shelf_books (shelf_id, work_id) VALUES ('s1','w1')`,
 	}
 	for _, q := range stmts {
@@ -41,7 +41,7 @@ func TestSoftDeleteHidesWorkEverywhere(t *testing.T) {
 		t.Fatalf("baseline list = %d works, want 2", got)
 	}
 
-	if err := SoftDeleteWork(d, "w1", "u1"); err != nil {
+	if err := SoftDeleteWork(d, "w1", 1); err != nil {
 		t.Fatalf("soft delete: %v", err)
 	}
 
@@ -78,14 +78,14 @@ func TestSoftDeleteHidesWorkEverywhere(t *testing.T) {
 	}
 
 	// Re-deleting a trashed work is a no-op miss, not a double-delete.
-	if err := SoftDeleteWork(d, "w1", "u1"); !errors.Is(err, sql.ErrNoRows) {
+	if err := SoftDeleteWork(d, "w1", 1); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("re-delete err = %v, want ErrNoRows", err)
 	}
 }
 
 func TestRestoreBringsWorkBack(t *testing.T) {
 	d := newTrashTestDB(t)
-	if err := SoftDeleteWork(d, "w1", "u1"); err != nil {
+	if err := SoftDeleteWork(d, "w1", 1); err != nil {
 		t.Fatalf("soft delete: %v", err)
 	}
 
@@ -115,7 +115,7 @@ func TestPurgeRemovesRowsAndRefusesLiveWork(t *testing.T) {
 	}
 	tx.Rollback()
 
-	if err := SoftDeleteWork(d, "w1", "u1"); err != nil {
+	if err := SoftDeleteWork(d, "w1", 1); err != nil {
 		t.Fatalf("soft delete: %v", err)
 	}
 
@@ -192,7 +192,7 @@ func TestPurgeAllTrashedWorksExceedsSQLiteParameterLimit(t *testing.T) {
 
 func mustListBooks(t *testing.T, d *DB, q string) []BookSummaryRow {
 	t.Helper()
-	books, err := ListBooks(d, FullVisibilityScope(), "", q, SortRelevance, 50, 0)
+	books, err := ListBooks(d, FullVisibilityScope(), 0, q, SortRelevance, 50, 0)
 	if err != nil {
 		t.Fatalf("list books %q: %v", q, err)
 	}

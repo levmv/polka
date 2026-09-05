@@ -110,7 +110,7 @@ func testRoutes(t *testing.T, s *Server) http.Handler {
 	return s.authMiddleware(mux)
 }
 
-func addSessionCookie(t *testing.T, s *Server, req *http.Request, userID string) {
+func addSessionCookie(t *testing.T, s *Server, req *http.Request, userID int64) {
 	t.Helper()
 	sid, err := s.sessions.issue(userID)
 	if err != nil {

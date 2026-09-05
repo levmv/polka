@@ -13,7 +13,7 @@ type ShelfDTO struct {
 	Name       string `json:"name"`
 	Kind       string `json:"kind"`
 	Query      string `json:"query,omitempty"`
-	OwnerID    string `json:"owner_id"`
+	OwnerID    int64  `json:"owner_id"`
 	Visibility string `json:"visibility"`
 	Position   int    `json:"position"`
 }

@@ -1,6 +1,7 @@
 package db
 
 import (
+	"database/sql"
 	"errors"
 	"strings"
 	"testing"
@@ -59,6 +60,18 @@ func TestUserLifecycle(t *testing.T) {
 	}
 	if n, _ := database.CountUsers(); n != 0 {
 		t.Errorf("count after delete = %d, want 0", n)
+	}
+	// A stale account URL must not address a later account, even if its name
+	// is reused and the deleted account was the database's highest ID.
+	replacement, err := database.CreateUser("Alice", "replacement", RoleMember)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replacement.ID == u.ID {
+		t.Fatal("deleted account identity was reused")
+	}
+	if err := database.SetUserPassword(u.ID, "stale request"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("password change for a deleted identity: %v", err)
 	}
 }
 

@@ -26,7 +26,7 @@ var (
 
 type KoboConnection struct {
 	ID         string
-	UserID     string
+	UserID     int64
 	ShelfID    string
 	ShelfName  string
 	Revision   int64
@@ -82,7 +82,7 @@ func newKoboToken() string {
 // ReplaceKoboConnection creates a fresh URL credential for one selected shelf.
 // Replacing instead of editing makes both revocation and a shelf change atomic:
 // the old token and its projection disappear in the same transaction.
-func (db *DB) ReplaceKoboConnection(ctx context.Context, userID, shelfID string) (*KoboConnection, string, error) {
+func (db *DB) ReplaceKoboConnection(ctx context.Context, userID int64, shelfID string) (*KoboConnection, string, error) {
 	shelf, err := db.GetShelfForUser(shelfID, userID)
 	if err != nil {
 		return nil, "", err
@@ -112,7 +112,7 @@ func (db *DB) ReplaceKoboConnection(ctx context.Context, userID, shelfID string)
 	return connection, token, nil
 }
 
-func (db *DB) KoboConnectionForUser(userID string) (*KoboConnection, error) {
+func (db *DB) KoboConnectionForUser(userID int64) (*KoboConnection, error) {
 	return scanKoboConnection(db.QueryRow(`
 		SELECT kc.id, kc.user_id, kc.shelf_id, s.name, kc.revision,
 		       kc.created_at, kc.updated_at, kc.last_used_at
@@ -137,7 +137,7 @@ func scanKoboConnection(row *sql.Row) (*KoboConnection, error) {
 	return &connection, nil
 }
 
-func (db *DB) DeleteKoboConnection(userID string) error {
+func (db *DB) DeleteKoboConnection(userID int64) error {
 	result, err := db.Exec("DELETE FROM kobo_connections WHERE user_id = ?", userID)
 	if err != nil {
 		return fmt.Errorf("delete kobo connection: %w", err)
@@ -346,7 +346,7 @@ func reconcileKoboItems(ctx context.Context, tx *sql.Tx, connection *KoboConnect
 	return revision, nil
 }
 
-func listKoboCandidates(ctx context.Context, tx *sql.Tx, userID string, shelf *Shelf, scope VisibilityScope, capacityHint int) ([]koboCandidate, error) {
+func listKoboCandidates(ctx context.Context, tx *sql.Tx, userID int64, shelf *Shelf, scope VisibilityScope, capacityHint int) ([]koboCandidate, error) {
 	var withSQL, fromSQL, whereSQL string
 	var args []any
 

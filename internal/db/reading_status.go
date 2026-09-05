@@ -37,7 +37,7 @@ const (
 )
 
 type ReadingStatusState struct {
-	UserID      string
+	UserID      int64
 	WorkID      string
 	Status      string
 	LastEventID string
@@ -59,10 +59,9 @@ func ValidReadingStatus(status string) bool {
 	}
 }
 
-func GetReadingStatus(queryer Queryer, userID, workID string) (ReadingStatusState, error) {
-	userID = strings.TrimSpace(userID)
+func GetReadingStatus(queryer Queryer, userID int64, workID string) (ReadingStatusState, error) {
 	workID = strings.TrimSpace(workID)
-	if userID == "" {
+	if userID <= 0 {
 		return ReadingStatusState{}, ErrUserIDRequired
 	}
 	var state ReadingStatusState
@@ -86,7 +85,7 @@ func GetReadingStatus(queryer Queryer, userID, workID string) (ReadingStatusStat
 	return state, nil
 }
 
-func (db *DB) SetReadingStatus(ctx context.Context, userID, workID, status string, source ReadingStatusSource) (ReadingStatusChange, error) {
+func (db *DB) SetReadingStatus(ctx context.Context, userID int64, workID, status string, source ReadingStatusSource) (ReadingStatusChange, error) {
 	status = strings.ToLower(strings.TrimSpace(status))
 	if !ValidReadingStatus(status) {
 		return ReadingStatusChange{}, ErrInvalidReadingStatus
@@ -100,7 +99,7 @@ func (db *DB) SetReadingStatus(ctx context.Context, userID, workID, status strin
 	return change, err
 }
 
-func setReadingStatus(tx *sql.Tx, userID, workID, status string, source ReadingStatusSource) (ReadingStatusChange, error) {
+func setReadingStatus(tx *sql.Tx, userID int64, workID, status string, source ReadingStatusSource) (ReadingStatusChange, error) {
 	current, err := GetReadingStatus(tx, userID, workID)
 	if err != nil {
 		return ReadingStatusChange{}, err
@@ -135,7 +134,7 @@ func setReadingStatus(tx *sql.Tx, userID, workID, status string, source ReadingS
 	return ReadingStatusChange{State: next, Changed: true, EventID: eventID}, nil
 }
 
-func (db *DB) AdvanceReadingStatusForDocumentHash(ctx context.Context, userID, documentHash string, progress float64) (ReadingStatusChange, error) {
+func (db *DB) AdvanceReadingStatusForDocumentHash(ctx context.Context, userID int64, documentHash string, progress float64) (ReadingStatusChange, error) {
 	var change ReadingStatusChange
 	err := db.Transact(ctx, func(tx *sql.Tx) error {
 		var err error
@@ -145,7 +144,7 @@ func (db *DB) AdvanceReadingStatusForDocumentHash(ctx context.Context, userID, d
 	return change, err
 }
 
-func advanceReadingStatusForDocumentHash(tx *sql.Tx, userID, documentHash string, progress float64) (ReadingStatusChange, error) {
+func advanceReadingStatusForDocumentHash(tx *sql.Tx, userID int64, documentHash string, progress float64) (ReadingStatusChange, error) {
 	target, err := ResolveKOReaderHash(tx, documentHash)
 	if err != nil {
 		return ReadingStatusChange{}, fmt.Errorf("resolve koreader reading status: %w", err)
@@ -156,7 +155,7 @@ func advanceReadingStatusForDocumentHash(tx *sql.Tx, userID, documentHash string
 	return advanceReadingStatus(tx, userID, target.WorkID, progress, ReadingStatusSourceKOSync)
 }
 
-func advanceReadingStatus(tx *sql.Tx, userID, workID string, progress float64, source ReadingStatusSource) (ReadingStatusChange, error) {
+func advanceReadingStatus(tx *sql.Tx, userID int64, workID string, progress float64, source ReadingStatusSource) (ReadingStatusChange, error) {
 	current, err := GetReadingStatus(tx, userID, workID)
 	if err != nil {
 		return ReadingStatusChange{}, err
@@ -179,7 +178,7 @@ func advanceReadingStatus(tx *sql.Tx, userID, workID string, progress float64, s
 	return setReadingStatus(tx, userID, workID, target, source)
 }
 
-func (db *DB) UndoAutomaticReadingStatus(ctx context.Context, userID, workID, eventID string) (ReadingStatusChange, error) {
+func (db *DB) UndoAutomaticReadingStatus(ctx context.Context, userID int64, workID, eventID string) (ReadingStatusChange, error) {
 	var change ReadingStatusChange
 	err := db.Transact(ctx, func(tx *sql.Tx) error {
 		current, err := GetReadingStatus(tx, userID, workID)

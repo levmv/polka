@@ -261,7 +261,7 @@ func TestUpdateShelfEditsQueryAndVisibility(t *testing.T) {
 		t.Fatalf("updated query shelf = %+v", updated)
 	}
 	if updated.OwnerID != admin.ID || updated.Visibility != ShelfShared {
-		t.Fatalf("updated owner/visibility = %q/%q, want %q/%q", updated.OwnerID, updated.Visibility, admin.ID, ShelfShared)
+		t.Fatalf("updated owner/visibility = %d/%q, want %d/%q", updated.OwnerID, updated.Visibility, admin.ID, ShelfShared)
 	}
 }
 

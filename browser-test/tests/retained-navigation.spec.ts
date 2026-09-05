@@ -233,9 +233,10 @@ test.describe('Retained library navigation', () => {
     expect(listRequests).toBe(0);
 
     await page.goBack();
-    // One deferred rebuild, asking for everything that had been loaded: the
-    // sequence the reader was browsing does not shrink back to one page, and
-    // the position does not jump while it is replaced.
+    // Retained cards already have the right count. Wait for the deferred rebuild
+    // before checking that it preserves the loaded extent and scroll position.
+    await expect.poll(() => listRequests).toBe(1);
+    await expect(page.locator('#library-grid')).toHaveAttribute('aria-busy', 'false');
     await expect(page.locator('.book-card')).toHaveCount(extent);
     expect(listRequests).toBe(1);
     expect(Math.abs((await bookTop(page, '.book-card', anchor.id)) - anchor.top)).toBeLessThan(2);

@@ -41,7 +41,7 @@ var (
 
 type DeliveryDevice struct {
 	ID        string
-	UserID    string
+	UserID    int64
 	Name      string
 	Email     string
 	Preset    string
@@ -52,7 +52,7 @@ type DeliveryDevice struct {
 
 type DeliveryJob struct {
 	ID          string
-	UserID      string
+	UserID      int64
 	DeviceID    sql.NullString
 	DeviceName  string
 	DeviceEmail string
@@ -94,8 +94,8 @@ func ValidDeliveryPreset(preset string) bool {
 	}
 }
 
-func (db *DB) ListDeliveryDevices(userID string) ([]DeliveryDevice, error) {
-	if userID == "" {
+func (db *DB) ListDeliveryDevices(userID int64) ([]DeliveryDevice, error) {
+	if userID <= 0 {
 		return nil, ErrUserIDRequired
 	}
 	rows, err := db.Query(`
@@ -120,8 +120,8 @@ func (db *DB) ListDeliveryDevices(userID string) ([]DeliveryDevice, error) {
 	return devices, rows.Err()
 }
 
-func (db *DB) GetDeliveryDevice(userID, deviceID string) (*DeliveryDevice, error) {
-	if userID == "" {
+func (db *DB) GetDeliveryDevice(userID int64, deviceID string) (*DeliveryDevice, error) {
+	if userID <= 0 {
 		return nil, ErrUserIDRequired
 	}
 	device, err := scanDeliveryDevice(db.QueryRow(`
@@ -138,8 +138,8 @@ func (db *DB) GetDeliveryDevice(userID, deviceID string) (*DeliveryDevice, error
 	return &device, nil
 }
 
-func (db *DB) DefaultDeliveryDevice(userID string) (*DeliveryDevice, error) {
-	if userID == "" {
+func (db *DB) DefaultDeliveryDevice(userID int64) (*DeliveryDevice, error) {
+	if userID <= 0 {
 		return nil, ErrUserIDRequired
 	}
 	device, err := scanDeliveryDevice(db.QueryRow(`
@@ -158,7 +158,7 @@ func (db *DB) DefaultDeliveryDevice(userID string) (*DeliveryDevice, error) {
 	return &device, nil
 }
 
-func (db *DB) CreateDeliveryDevice(ctx context.Context, userID, name, email, preset string, isDefault bool) (*DeliveryDevice, error) {
+func (db *DB) CreateDeliveryDevice(ctx context.Context, userID int64, name, email, preset string, isDefault bool) (*DeliveryDevice, error) {
 	if err := validateDeliveryDeviceInput(userID, name, email, preset); err != nil {
 		return nil, err
 	}
@@ -194,7 +194,7 @@ func (db *DB) CreateDeliveryDevice(ctx context.Context, userID, name, email, pre
 	return db.GetDeliveryDevice(userID, deviceID)
 }
 
-func (db *DB) UpdateDeliveryDevice(ctx context.Context, userID string, device DeliveryDevice) (*DeliveryDevice, error) {
+func (db *DB) UpdateDeliveryDevice(ctx context.Context, userID int64, device DeliveryDevice) (*DeliveryDevice, error) {
 	if device.ID == "" {
 		return nil, ErrDeliveryDeviceNotFound
 	}
@@ -234,8 +234,8 @@ func (db *DB) UpdateDeliveryDevice(ctx context.Context, userID string, device De
 	return db.GetDeliveryDevice(userID, device.ID)
 }
 
-func (db *DB) DeleteDeliveryDevice(ctx context.Context, userID, deviceID string) error {
-	if userID == "" {
+func (db *DB) DeleteDeliveryDevice(ctx context.Context, userID int64, deviceID string) error {
+	if userID <= 0 {
 		return ErrUserIDRequired
 	}
 	return db.Transact(ctx, func(tx *sql.Tx) error {
@@ -250,7 +250,7 @@ func (db *DB) DeleteDeliveryDevice(ctx context.Context, userID, deviceID string)
 	})
 }
 
-func ensureDeliveryDefault(tx *sql.Tx, userID string) error {
+func ensureDeliveryDefault(tx *sql.Tx, userID int64) error {
 	var defaults int
 	if err := tx.QueryRow("SELECT COUNT(*) FROM delivery_devices WHERE user_id = ? AND is_default = 1", userID).Scan(&defaults); err != nil {
 		return fmt.Errorf("count delivery defaults: %w", err)
@@ -274,8 +274,8 @@ func ensureDeliveryDefault(tx *sql.Tx, userID string) error {
 	return nil
 }
 
-func validateDeliveryDeviceInput(userID, name, email, preset string) error {
-	if userID == "" {
+func validateDeliveryDeviceInput(userID int64, name, email, preset string) error {
+	if userID <= 0 {
 		return ErrUserIDRequired
 	}
 	if strings.TrimSpace(name) == "" {
@@ -357,8 +357,8 @@ func (db *DB) CreateDeliveryJob(job DeliveryJob) (*DeliveryJob, error) {
 	return db.GetDeliveryJob(job.UserID, job.ID)
 }
 
-func (db *DB) GetDeliveryJob(userID, jobID string) (*DeliveryJob, error) {
-	if userID == "" {
+func (db *DB) GetDeliveryJob(userID int64, jobID string) (*DeliveryJob, error) {
+	if userID <= 0 {
 		return nil, ErrUserIDRequired
 	}
 	job, err := scanDeliveryJobRow(db.QueryRow(`
@@ -410,8 +410,8 @@ func (db *DB) NextQueuedDeliveryJob() (*DeliveryJob, error) {
 	return job, nil
 }
 
-func (db *DB) ListDeliveryJobs(userID string, limit int) ([]DeliveryJob, error) {
-	if userID == "" {
+func (db *DB) ListDeliveryJobs(userID int64, limit int) ([]DeliveryJob, error) {
+	if userID <= 0 {
 		return nil, ErrUserIDRequired
 	}
 	if limit <= 0 {

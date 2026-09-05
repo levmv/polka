@@ -210,6 +210,7 @@ export type ThemePreference = 'system' | 'light' | 'dark' | 'sepia';
 export interface UserSettings {
     theme: ThemePreference;
     hide_continue_reading: boolean;
+    time_zone: string;
     updated_at?: number;
 }
 
@@ -217,14 +218,14 @@ export type AccountRole = 'admin' | 'member' | 'reader';
 export type ContentScope = 'all' | 'shelves';
 
 export interface CurrentUser {
-    id: string;
+    id: number;
     username: string;
     role: AccountRole;
     content_scope: ContentScope;
 }
 
 export interface UserAccount {
-    id: string;
+    id: number;
     username: string;
     role: AccountRole;
     content_scope: ContentScope;
@@ -417,7 +418,7 @@ export interface Shelf {
     name: string;
     kind: ShelfKind;
     query?: string;
-    owner_id: string;
+    owner_id: number;
     visibility: ShelfVisibility;
     position: number;
 }

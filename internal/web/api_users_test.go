@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -56,7 +57,7 @@ func TestAPIUsersAdminListAndCreate(t *testing.T) {
 	if err := json.UnmarshalRead(w.Body, &created); err != nil {
 		t.Fatalf("decode created user: %v", err)
 	}
-	if created.Username != "carol" || created.Role != db.RoleMember || created.ID == "" {
+	if created.Username != "carol" || created.Role != db.RoleMember || created.ID <= 0 {
 		t.Fatalf("created = %+v, want carol member", created)
 	}
 	if u, err := database.Authenticate("carol", "newpw"); err != nil || u == nil {
@@ -169,7 +170,7 @@ func TestAPIUserAccessCanUseAdminPrivateShelf(t *testing.T) {
 	handler := testRoutes(t, s)
 
 	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, admin.ID, http.MethodPatch, "/api/users/"+reader.ID, userAccessRequest{
+	handler.ServeHTTP(w, jsonRequest(t, s, admin.ID, http.MethodPatch, "/api/users/"+strconv.FormatInt(reader.ID, 10), userAccessRequest{
 		Role:          db.RoleReader,
 		ContentScope:  db.ContentScopeShelves,
 		ScopeShelfIDs: []string{private.ID},
@@ -225,7 +226,7 @@ func TestAPIUserPasswordSelfAndAdmin(t *testing.T) {
 	}
 
 	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequestWithSession(t, memberCurrentSession, http.MethodPost, "/api/users/"+member.ID+"/password", userPasswordRequest{Password: "self-new"}))
+	handler.ServeHTTP(w, jsonRequestWithSession(t, memberCurrentSession, http.MethodPost, "/api/users/"+strconv.FormatInt(member.ID, 10)+"/password", userPasswordRequest{Password: "self-new"}))
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("self password status = %d, want %d; body: %s", w.Code, http.StatusNoContent, w.Body.String())
 	}
@@ -236,7 +237,7 @@ func TestAPIUserPasswordSelfAndAdmin(t *testing.T) {
 	assertSessionLive(t, s.sessions, memberOtherSession, false)
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, member.ID, http.MethodPost, "/api/users/"+admin.ID+"/password", userPasswordRequest{Password: "stolen"}))
+	handler.ServeHTTP(w, jsonRequest(t, s, member.ID, http.MethodPost, "/api/users/"+strconv.FormatInt(admin.ID, 10)+"/password", userPasswordRequest{Password: "stolen"}))
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("member reset admin status = %d, want %d", w.Code, http.StatusForbidden)
 	}
@@ -250,7 +251,7 @@ func TestAPIUserPasswordSelfAndAdmin(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, admin.ID, http.MethodPost, "/api/users/"+member.ID+"/password", userPasswordRequest{Password: "admin-reset"}))
+	handler.ServeHTTP(w, jsonRequest(t, s, admin.ID, http.MethodPost, "/api/users/"+strconv.FormatInt(member.ID, 10)+"/password", userPasswordRequest{Password: "admin-reset"}))
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("admin reset status = %d, want %d; body: %s", w.Code, http.StatusNoContent, w.Body.String())
 	}
@@ -260,13 +261,13 @@ func TestAPIUserPasswordSelfAndAdmin(t *testing.T) {
 	assertSessionLive(t, s.sessions, memberResetSession, false)
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, admin.ID, http.MethodPost, "/api/users/"+member.ID+"/password", userPasswordRequest{}))
+	handler.ServeHTTP(w, jsonRequest(t, s, admin.ID, http.MethodPost, "/api/users/"+strconv.FormatInt(member.ID, 10)+"/password", userPasswordRequest{}))
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("empty password status = %d, want %d", w.Code, http.StatusBadRequest)
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, admin.ID, http.MethodPost, "/api/users/"+member.ID+"/password", userPasswordRequest{Password: strings.Repeat("x", 73)}))
+	handler.ServeHTTP(w, jsonRequest(t, s, admin.ID, http.MethodPost, "/api/users/"+strconv.FormatInt(member.ID, 10)+"/password", userPasswordRequest{Password: strings.Repeat("x", 73)}))
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("long password status = %d, want %d", w.Code, http.StatusBadRequest)
 	}
@@ -283,19 +284,19 @@ func TestAPIUserDeleteGuardsLastAdminAndRevokesSessions(t *testing.T) {
 	handler := testRoutes(t, s)
 
 	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, member.ID, http.MethodDelete, "/api/users/"+admin.ID, nil))
+	handler.ServeHTTP(w, jsonRequest(t, s, member.ID, http.MethodDelete, "/api/users/"+strconv.FormatInt(admin.ID, 10), nil))
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("member delete status = %d, want %d", w.Code, http.StatusForbidden)
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, admin.ID, http.MethodPatch, "/api/users/"+admin.ID, userAccessRequest{Role: db.RoleMember}))
+	handler.ServeHTTP(w, jsonRequest(t, s, admin.ID, http.MethodPatch, "/api/users/"+strconv.FormatInt(admin.ID, 10), userAccessRequest{Role: db.RoleMember}))
 	if w.Code != http.StatusConflict {
 		t.Fatalf("last admin demote status = %d, want %d; body: %s", w.Code, http.StatusConflict, w.Body.String())
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, admin.ID, http.MethodDelete, "/api/users/"+admin.ID, nil))
+	handler.ServeHTTP(w, jsonRequest(t, s, admin.ID, http.MethodDelete, "/api/users/"+strconv.FormatInt(admin.ID, 10), nil))
 	if w.Code != http.StatusConflict {
 		t.Fatalf("last admin delete status = %d, want %d; body: %s", w.Code, http.StatusConflict, w.Body.String())
 	}
@@ -305,7 +306,7 @@ func TestAPIUserDeleteGuardsLastAdminAndRevokesSessions(t *testing.T) {
 		t.Fatalf("issue member session: %v", err)
 	}
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, admin.ID, http.MethodDelete, "/api/users/"+member.ID, nil))
+	handler.ServeHTTP(w, jsonRequest(t, s, admin.ID, http.MethodDelete, "/api/users/"+strconv.FormatInt(member.ID, 10), nil))
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("delete member status = %d, want %d; body: %s", w.Code, http.StatusNoContent, w.Body.String())
 	}
@@ -323,13 +324,13 @@ func TestAPIUserDeleteGuardsLastAdminAndRevokesSessions(t *testing.T) {
 
 	admin2 := mustUser(t, database, "OtherAdmin", db.RoleAdmin)
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, admin.ID, http.MethodDelete, "/api/users/"+admin2.ID, nil))
+	handler.ServeHTTP(w, jsonRequest(t, s, admin.ID, http.MethodDelete, "/api/users/"+strconv.FormatInt(admin2.ID, 10), nil))
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("delete second admin status = %d, want %d; body: %s", w.Code, http.StatusNoContent, w.Body.String())
 	}
 }
 
-func jsonRequest(t *testing.T, s *Server, userID, method, target string, payload any) *http.Request {
+func jsonRequest(t *testing.T, s *Server, userID int64, method, target string, payload any) *http.Request {
 	t.Helper()
 
 	var body *bytes.Reader
@@ -344,7 +345,7 @@ func jsonRequest(t *testing.T, s *Server, userID, method, target string, payload
 	}
 	req := httptest.NewRequest(method, target, body)
 	req.Header.Set("Content-Type", "application/json")
-	if userID != "" {
+	if userID > 0 {
 		sid, err := s.sessions.issue(userID)
 		if err != nil {
 			t.Fatalf("issue session: %v", err)

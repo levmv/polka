@@ -36,7 +36,7 @@ func newSessionStore(database *db.DB) *sessionStore {
 // issue creates and records a new random session id (256 bits, hex-encoded)
 // bound to userID. The returned id is the only value that can authenticate; only
 // its hash is persisted.
-func (s *sessionStore) issue(userID string) (string, error) {
+func (s *sessionStore) issue(userID int64) (string, error) {
 	now := s.now().Unix()
 	if err := s.cleanupExpired(now); err != nil {
 		return "", err
@@ -58,15 +58,15 @@ func (s *sessionStore) issue(userID string) (string, error) {
 // live. Expired rows are removed opportunistically. last_seen_at is bumped at
 // most once per sessionBumpEvery so ordinary page loads and asset requests do
 // not turn every authenticated request into a write.
-func (s *sessionStore) lookup(sid string) (string, bool, error) {
+func (s *sessionStore) lookup(sid string) (int64, bool, error) {
 	if sid == "" {
-		return "", false, nil
+		return 0, false, nil
 	}
 
 	now := s.now().Unix()
 	tokenHash := sessionTokenHash(sid)
 
-	var uid string
+	var uid int64
 	var lastSeen, expiresAt int64
 	err := s.db.QueryRow(`
 		SELECT user_id, last_seen_at, expires_at
@@ -74,22 +74,22 @@ func (s *sessionStore) lookup(sid string) (string, bool, error) {
 		WHERE token_hash = ?
 	`, tokenHash).Scan(&uid, &lastSeen, &expiresAt)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", false, nil
+		return 0, false, nil
 	}
 	if err != nil {
-		return "", false, fmt.Errorf("lookup session: %w", err)
+		return 0, false, fmt.Errorf("lookup session: %w", err)
 	}
 
 	if sessionExpired(now, lastSeen, expiresAt) {
 		if err := s.deleteByHash(tokenHash); err != nil {
-			return "", false, err
+			return 0, false, err
 		}
-		return "", false, nil
+		return 0, false, nil
 	}
 
 	if now-lastSeen >= int64(sessionBumpEvery.Seconds()) {
 		if _, err := s.db.Exec("UPDATE sessions SET last_seen_at = ? WHERE token_hash = ?", now, tokenHash); err != nil {
-			return "", false, fmt.Errorf("bump session: %w", err)
+			return 0, false, fmt.Errorf("bump session: %w", err)
 		}
 	}
 
@@ -106,7 +106,7 @@ func (s *sessionStore) revoke(sid string) error {
 
 // revokeUser drops every live browser session for userID. Admin password resets
 // use this to force the target user to log in again on every device.
-func (s *sessionStore) revokeUser(userID string) error {
+func (s *sessionStore) revokeUser(userID int64) error {
 	if _, err := s.db.Exec("DELETE FROM sessions WHERE user_id = ?", userID); err != nil {
 		return fmt.Errorf("revoke user sessions: %w", err)
 	}
@@ -116,7 +116,7 @@ func (s *sessionStore) revokeUser(userID string) error {
 // revokeUserExcept drops every session for userID except keepSID. Password
 // self-change uses this to preserve the browser that initiated the change while
 // invalidating other devices.
-func (s *sessionStore) revokeUserExcept(userID, keepSID string) error {
+func (s *sessionStore) revokeUserExcept(userID int64, keepSID string) error {
 	if keepSID == "" {
 		return s.revokeUser(userID)
 	}

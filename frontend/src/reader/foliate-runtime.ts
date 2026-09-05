@@ -1,6 +1,7 @@
 import { fetchReaderPreferences, fetchReaderState, touchReaderState } from '../api';
 import { errorMessage } from '../errors';
 import type { ReaderPreferences } from '../types';
+import { createReadingActivity } from './activity';
 import { wireAnnotations } from './annotations';
 import {
     revealChrome,
@@ -61,6 +62,7 @@ async function initFoliateReader(
     const stateSaver = createReaderStateSaver(page, assetId, {
         onStateSaved: handleReadingStatusChange,
     });
+    const activity = createReadingActivity(assetId);
 
     const statePromise = fetchReaderState(assetId).catch((e) => {
         console.error('Failed to fetch reader state:', e);
@@ -88,12 +90,16 @@ async function initFoliateReader(
         fallbackURL,
     );
     const positionSaver = wirePositionSaving(page, view, stateSaver, { savingEnabled: false });
+    const onNavigate = () => {
+        positionSaver.markUserNavigation();
+        activity.recordAction();
+    };
     const search = wireReaderSearch(page, view, {
-        onNavigate: () => positionSaver.markUserNavigation(),
+        onNavigate,
     });
     let selectionController: ReturnType<typeof wireReaderSelection> | undefined;
     const annotations = wireAnnotations(page, assetId, view, {
-        onNavigate: () => positionSaver.markUserNavigation(),
+        onNavigate,
         onShowActions: (target) => selectionController?.showAnnotationActions(target),
     });
     selectionController = wireReaderSelection(page, view, {
@@ -107,11 +113,11 @@ async function initFoliateReader(
     applyFoliateDisplay(view, preferences);
     await annotations.hydrate();
     wireReaderControls(page, stage, view, {
-        onNavigate: () => positionSaver.markUserNavigation(),
+        onNavigate,
         beforeClose: annotations.savePendingNote,
     });
     wireReaderTOC(page, view, {
-        onNavigate: () => positionSaver.markUserNavigation(),
+        onNavigate,
     });
 
     const state = await statePromise;
@@ -125,17 +131,23 @@ async function initFoliateReader(
     void stateSaver.flush();
     wireReaderPreferences(page, view, preferences);
     await waitForRendererContents(view);
-    wireCurrentFoliateDocuments(view, (doc) =>
+    wireCurrentFoliateDocuments(view, (doc) => {
+        activity.observeScrolling(doc);
         wireEPUBDocumentControls(page, view, doc, {
-            onNavigate: () => positionSaver.markUserNavigation(),
-        }),
-    );
+            onNavigate,
+        });
+    });
+    view.addEventListener('load', (event) => {
+        activity.observeScrolling((event as CustomEvent<FoliateLoadDetail>).detail.doc);
+    });
+    activity.observeScrolling(stage);
 
     loading?.remove();
     page.classList.add('reader-ready');
     stage.dataset.readerReady = 'true';
     stage.focus({ preventScroll: true });
     revealChrome(page);
+    activity.start();
     touchReaderState(assetId)
         .then(handleReadingStatusChange)
         .catch((e) => {

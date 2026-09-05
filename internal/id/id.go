@@ -16,7 +16,6 @@ const (
 	Work               Kind = "w_"
 	Asset              Kind = "a_"
 	Author             Kind = "au_"
-	User               Kind = "u_"
 	AppToken           Kind = "t_"
 	Shelf              Kind = "s_"
 	KoboConnection     Kind = "kc_"

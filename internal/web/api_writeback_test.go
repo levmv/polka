@@ -43,7 +43,7 @@ func TestBulkWritebackAdmissionStatus(t *testing.T) {
 			}
 			req := httptest.NewRequest(http.MethodPost, "/api/books/bulk/writeback", bytes.NewReader(body))
 			req = req.WithContext(withUser(req.Context(), &db.User{
-				ID:           "admin",
+				ID:           1,
 				Role:         db.RoleAdmin,
 				ContentScope: db.ContentScopeAll,
 			}))

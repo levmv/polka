@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test';
 
 export interface TestUser {
-  id: string;
+  id: number;
   username: string;
   password: string;
 }
@@ -64,7 +64,7 @@ export async function createReaderTestUser(page: Page, prefix: string): Promise<
     },
   });
   if (!res.ok()) throw new Error(`create user status ${res.status()}: ${await res.text()}`);
-  const body = (await res.json()) as { id: string; username: string };
+  const body = (await res.json()) as { id: number; username: string };
   return { id: body.id, username: body.username, password };
 }
 

@@ -73,7 +73,7 @@ func TestDeliveryWorkForPlanAppliesScope(t *testing.T) {
 	`); err != nil {
 		t.Fatalf("seed works/assets: %v", err)
 	}
-	if err := database.AddBookToShelf(shelf.ID, "", "allowed"); err != nil {
+	if err := database.AddBookToShelf(shelf.ID, 0, "allowed"); err != nil {
 		t.Fatalf("add allowed to shelf: %v", err)
 	}
 	if _, err := database.UpdateUserAccess(user.ID, UserAccess{Role: RoleReader, ContentScope: ContentScopeShelves, ShelfIDs: []string{shelf.ID}}); err != nil {
