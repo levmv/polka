@@ -201,8 +201,8 @@ func TestAPIUserAccessCanUseAdminPrivateShelf(t *testing.T) {
 	if err := json.UnmarshalRead(w.Body, &shelves); err != nil {
 		t.Fatalf("decode shelves: %v", err)
 	}
-	if len(shelves) != 0 {
-		t.Fatalf("reader shelves = %+v, want hidden admin private scope shelf", shelves)
+	if len(shelves) != 1 || shelves[0].Name != "Want to read" || shelves[0].OwnerID != reader.ID {
+		t.Fatalf("reader shelves = %+v, want only the reader's default shelf", shelves)
 	}
 }
 

@@ -69,8 +69,8 @@ func TestAPIShelvesManualAndQuery(t *testing.T) {
 	if err := json.UnmarshalRead(w.Body, &memberships); err != nil {
 		t.Fatalf("decode memberships: %v", err)
 	}
-	if len(memberships) != 1 || memberships[0].ID != manual.ID || !memberships[0].InShelf {
-		t.Fatalf("memberships = %+v, want manual shelf checked", memberships)
+	if len(memberships) != 2 || memberships[0].Name != "Want to read" || memberships[0].InShelf || memberships[1].ID != manual.ID || !memberships[1].InShelf {
+		t.Fatalf("memberships = %+v, want default shelf unchecked and manual shelf checked", memberships)
 	}
 
 	createBody = bytes.NewBufferString(`{"name":"Hobbit search","kind":"query","query":"Hobbit"}`)
@@ -314,8 +314,8 @@ func TestAPIShelvesSharedCreationAndScopedVisibility(t *testing.T) {
 		t.Fatalf("decode scoped shelves: %v", err)
 	}
 	got := shelfDTOIDs(shelves)
-	if len(got) != 2 || got[0] != kids.ID || got[1] != private.ID {
-		t.Fatalf("scoped shelves = %+v, want kids and private", got)
+	if len(got) != 3 || got[0] != kids.ID || shelves[1].Name != "Want to read" || shelves[1].OwnerID != reader.ID || got[2] != private.ID {
+		t.Fatalf("scoped shelves = %+v, want kids, default, and private", shelves)
 	}
 
 	w = httptest.NewRecorder()

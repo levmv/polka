@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/levmv/polka/internal/id"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -171,8 +172,8 @@ func (db *DB) CreateUser(username, password, role string) (*User, error) {
 	})
 }
 
-// CreateUserWithAccess inserts an account and its final shelf scope in one
-// transaction.
+// CreateUserWithAccess inserts an account, its default personal shelf, and its
+// final shelf scope in one transaction.
 func (db *DB) CreateUserWithAccess(username, password string, access UserAccess) (*User, error) {
 	return db.createUser(username, password, access, false)
 }
@@ -219,6 +220,12 @@ func (db *DB) createUser(username, password string, access UserAccess, requireEm
 			u.Username, u.PasswordHash, u.Role, u.ContentScope,
 		).Scan(&u.ID); err != nil {
 			return fmt.Errorf("insert user: %w", err)
+		}
+		if _, err := tx.Exec(
+			`INSERT INTO shelves (id, name, kind, owner_id, visibility, position) VALUES (?, ?, ?, ?, ?, 0)`,
+			id.New(id.Shelf), "Want to read", ShelfManual, u.ID, ShelfPersonal,
+		); err != nil {
+			return fmt.Errorf("create default shelf: %w", err)
 		}
 		return replaceUserScopeShelves(tx, u.ID, access.ShelfViewerID, contentScope, shelfIDs)
 	})

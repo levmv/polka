@@ -112,6 +112,9 @@ Reading status is personal, so `status:` can produce different results for
 different accounts even when the rest of the query is shared. `/` focuses the
 search field, and `Esc` clears it.
 
+Every new account starts with a personal **Want to read** shelf for books to
+read later. You can rename or delete it like any other shelf.
+
 Shelves can be filled manually or backed by a saved search. A saved-search
 shelf updates whenever books begin or stop matching its query. After you enter
 a search, a bookmark button appears inside the search field; use it to save the

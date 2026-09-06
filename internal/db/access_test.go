@@ -139,8 +139,8 @@ func TestVisibilityScopePrivateCuratorShelf(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list scoped shelves: %v", err)
 	}
-	if len(shelves) != 0 {
-		t.Fatalf("reader-visible shelves = %+v, want hidden private scope shelf", shelves)
+	if len(shelves) != 1 || shelves[0].Name != "Want to read" || shelves[0].OwnerID != user.ID {
+		t.Fatalf("reader-visible shelves = %+v, want only the reader's default shelf", shelves)
 	}
 }
 

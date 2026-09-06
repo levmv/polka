@@ -293,8 +293,8 @@ func TestListShelvesForScopedUser(t *testing.T) {
 		t.Fatalf("list scoped shelves: %v", err)
 	}
 	got := shelfNames(shelves)
-	if len(got) != 2 || got[0] != kids.Name || got[1] != private.Name {
-		t.Fatalf("scoped shelves = %+v, want Kids and Mine", got)
+	if len(got) != 3 || got[0] != kids.Name || got[1] != "Want to read" || got[2] != private.Name {
+		t.Fatalf("scoped shelves = %+v, want Kids, Want to read, and Mine", got)
 	}
 	if _, err := database.GetShelfForUser(adult.ID, reader.ID); !errors.Is(err, ErrShelfNotFound) {
 		t.Fatalf("get unassigned shared shelf err = %v, want ErrShelfNotFound", err)
