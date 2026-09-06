@@ -57,7 +57,7 @@ func TestAPIMeRequiresAuth(t *testing.T) {
 	}
 }
 
-func TestLogoutRequiresPost(t *testing.T) {
+func TestLogoutRequiresSameOriginPost(t *testing.T) {
 	database, dir := setupTestDB(t)
 	defer database.Close()
 
@@ -78,7 +78,18 @@ func TestLogoutRequiresPost(t *testing.T) {
 	}
 	assertSessionLive(t, s.sessions, sid, true)
 
+	crossReq := httptest.NewRequest("POST", "/logout", nil)
+	crossReq.Header.Set("Origin", "https://other.example")
+	crossReq.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sid})
+	crossRec := httptest.NewRecorder()
+	handler.ServeHTTP(crossRec, crossReq)
+	if crossRec.Code != http.StatusForbidden {
+		t.Fatalf("cross-origin logout status = %d, want 403", crossRec.Code)
+	}
+	assertSessionLive(t, s.sessions, sid, true)
+
 	postReq := httptest.NewRequest("POST", "/logout", nil)
+	postReq.Header.Set("Origin", "http://example.com")
 	postReq.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sid})
 	postRec := httptest.NewRecorder()
 	handler.ServeHTTP(postRec, postReq)

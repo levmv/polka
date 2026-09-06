@@ -131,11 +131,8 @@ func sendSMTPMessage(ctx context.Context, cfg SMTPConfig, to, subject, body stri
 	if !cfg.Configured() {
 		return newSMTPUserError("Email delivery is not configured", nil)
 	}
-	if _, ok := ctx.Deadline(); !ok {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, DefaultDeliveryTimeout)
-		defer cancel()
-	}
+	ctx, cancel := context.WithTimeout(ctx, DefaultDeliveryTimeout)
+	defer cancel()
 
 	fromAddr, err := mail.ParseAddress(cfg.FromAddress)
 	if err != nil {
@@ -154,6 +151,8 @@ func sendSMTPMessage(ctx context.Context, cfg SMTPConfig, to, subject, body stri
 		return newSMTPUserError("Could not reach the mail server", err)
 	}
 	defer conn.Close()
+	stopCancel := context.AfterFunc(ctx, func() { conn.Close() })
+	defer stopCancel()
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = conn.SetDeadline(deadline)
 	}
@@ -192,12 +191,13 @@ func sendSMTPMessage(ctx context.Context, cfg SMTPConfig, to, subject, body stri
 		return newSMTPUserError("The mail server rejected the message", err)
 	}
 	err = WriteMIMEMessage(data, *fromAddr, *toAddr, subject, body, attachment)
-	closeErr := data.Close()
 	if err != nil {
+		// Closing DATA sends the final dot and can deliver a truncated attachment.
+		// Abort the connection instead; the server must discard the incomplete mail.
 		return newSMTPUserError("Could not prepare email message", err)
 	}
-	if closeErr != nil {
-		return newSMTPUserError("The mail server rejected the message", closeErr)
+	if err := data.Close(); err != nil {
+		return newSMTPUserError("The mail server rejected the message", err)
 	}
 	if err := client.Quit(); err != nil {
 		log.Printf("SMTP session did not close cleanly after accepted message: %v", err)

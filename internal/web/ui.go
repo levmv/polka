@@ -244,10 +244,10 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		user, err := s.db.CreateUser(username, password, db.RoleAdmin)
+		user, err := s.db.CreateInitialAdmin(username, password)
 		if err != nil {
-			if errors.Is(err, db.ErrUserExists) {
-				renderErr("That username is taken")
+			if errors.Is(err, db.ErrSetupComplete) {
+				http.Redirect(w, r, "/login", http.StatusFound)
 				return
 			}
 			renderErr(err.Error())
