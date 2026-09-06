@@ -34,6 +34,7 @@ export function renderLibraryPage(): string {
         </div>
         <div id="library-grid" class="library-grid"></div>
         <div id="load-more-container" class="load-more-container" hidden>
+            <div id="load-more-status" role="status" aria-live="polite" hidden></div>
             <button id="load-more-btn" class="load-more-btn">Load more</button>
         </div>
         <nav id="library-jump-rail" class="library-jump-rail" aria-label="Jump through books" hidden></nav>

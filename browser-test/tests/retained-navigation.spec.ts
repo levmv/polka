@@ -1,6 +1,6 @@
 import { expect, type Page, test } from './fixtures';
 
-// Runs against the filler-only library (:8098, 55 books) so "Load more" and a
+// Runs against the filler-only library (:8098, 55 books) so pagination and a
 // scrollable document are available — see playwright.config `pager-chromium`.
 //
 // What is under test is that Back returns the *same* library instance: the
@@ -40,11 +40,11 @@ test.describe('Retained library navigation', () => {
     page,
   }) => {
     await page.goto('/');
-    await expect(page.locator('#load-more-btn')).toBeVisible();
+    await expect(page.locator('.book-card').first()).toBeVisible();
     const firstPage = await page.locator('.book-card').count();
 
-    await page.locator('#load-more-btn').click();
-    await expect(page.locator('#load-more-btn')).toBeHidden();
+    await page.locator('.book-card').last().scrollIntoViewIfNeeded();
+    await expect(page.locator('.book-card')).toHaveCount(55);
     // What the reader accumulated, whatever the page size happens to be.
     const extent = await page.locator('.book-card').count();
     expect(extent).toBeGreaterThan(firstPage);
@@ -93,7 +93,7 @@ test.describe('Retained library navigation', () => {
     page,
   }) => {
     await page.goto('/');
-    await expect(page.locator('#load-more-btn')).toBeVisible();
+    await expect(page.locator('.book-card').first()).toBeVisible();
     await page.locator('.book-card').nth(30).scrollIntoViewIfNeeded();
     const scrollBefore = await page.evaluate(() => window.scrollY);
     expect(scrollBefore).toBeGreaterThan(0);
@@ -130,10 +130,10 @@ test.describe('Retained library navigation', () => {
 
   test('Leaving the relationship destroys the retained library', async ({ page }) => {
     await page.goto('/');
-    await expect(page.locator('#load-more-btn')).toBeVisible();
+    await expect(page.locator('.book-card').first()).toBeVisible();
     const firstPage = await page.locator('.book-card').count();
-    await page.locator('#load-more-btn').click();
-    await expect(page.locator('#load-more-btn')).toBeHidden();
+    await page.locator('.book-card').last().scrollIntoViewIfNeeded();
+    await expect(page.locator('.book-card')).toHaveCount(55);
     expect(await page.locator('.book-card').count()).toBeGreaterThan(firstPage);
 
     await page.locator('.book-card').first().locator('.book-title-link').click();
@@ -142,7 +142,7 @@ test.describe('Retained library navigation', () => {
     // The sidebar Library link is the deliberate escape hatch: an ordinary
     // navigation that rebuilds the list from its first page.
     await page.locator('#nav-library').click();
-    await expect(page.locator('#load-more-btn')).toBeVisible();
+    await expect(page.locator('.book-card').first()).toBeVisible();
     await expect(page.locator('.book-card')).toHaveCount(firstPage);
 
     // A destroyed instance still holding its subscriptions would answer this
@@ -163,7 +163,7 @@ test.describe('Retained library navigation', () => {
 
   test('An edit made on the book page patches the retained card in place', async ({ page }) => {
     await page.goto('/');
-    await expect(page.locator('#load-more-btn')).toBeVisible();
+    await expect(page.locator('.book-card').first()).toBeVisible();
     const extent = await page.locator('.book-card').count();
 
     const card = page.locator('.book-card').nth(3);
@@ -206,9 +206,9 @@ test.describe('Retained library navigation', () => {
     page,
   }) => {
     await page.goto('/');
-    await expect(page.locator('#load-more-btn')).toBeVisible();
-    await page.locator('#load-more-btn').click();
-    await expect(page.locator('#load-more-btn')).toBeHidden();
+    await expect(page.locator('.book-card').first()).toBeVisible();
+    await page.locator('.book-card').last().scrollIntoViewIfNeeded();
+    await expect(page.locator('.book-card')).toHaveCount(55);
     const extent = await page.locator('.book-card').count();
 
     await page.locator('.book-card').nth(50).scrollIntoViewIfNeeded();
@@ -244,7 +244,7 @@ test.describe('Retained library navigation', () => {
 
   test('A removal reaches the retained view and keeps the old neighbourhood', async ({ page }) => {
     await page.goto('/');
-    await expect(page.locator('#load-more-btn')).toBeVisible();
+    await expect(page.locator('.book-card').first()).toBeVisible();
     const extent = await page.locator('.book-card').count();
     const doomedId = await page.locator('.book-card').nth(10).getAttribute('data-id');
 

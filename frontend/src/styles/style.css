@@ -56,6 +56,8 @@
        implicit heights drifted apart (46 / 42 / 40). Keep it >= 44px, the
        comfortable touch-target floor. */
     --toolbar-control-height: 44px;
+    /* Keep the desktop content and sidebar wordmark at the same top inset. */
+    --app-top-inset: 1.6875rem;
     /* Corner scale. Controls (buttons, inputs, selects) share one radius;
        larger floating surfaces (modals, popovers, cards) get a slightly softer
        one. Small inner bits stay at a literal 4px and deliberate pills at
@@ -182,7 +184,7 @@ a:hover {
     flex-shrink: 0;
     border-right: 1px solid var(--border-color);
     background-color: var(--bg-color);
-    padding: 2rem 1.5rem;
+    padding: var(--app-top-inset) 1.5rem 0.75rem;
     display: flex;
     flex-direction: column;
     height: 100vh;
@@ -958,7 +960,7 @@ a:hover {
     flex: 1;
     min-width: 0;
     width: 100%;
-    padding: 2rem;
+    padding: var(--app-top-inset) 2rem 2rem;
     margin: 0 auto;
     /* Cap at the reading width, but never wider than the viewport. A wide table
        (min-width) inside the column-flex layout otherwise stretches the whole
@@ -1655,7 +1657,9 @@ body.busy .busy__loader {
 /* Load more */
 .load-more-container {
     display: flex;
+    align-items: center;
     justify-content: center;
+    gap: 0.75rem;
     padding: 1.5rem 0;
 }
 
