@@ -218,11 +218,6 @@ function initNavigation(router: Router, closeSidebar: () => void): (href: string
             return;
         }
         const scroll = readScrollPosition(event.state);
-        if (url.pathname === activeRoutePathname && handlesQueryPopstateLocally(url.pathname)) {
-            closeSidebar();
-            restoreScrollPosition(scroll);
-            return;
-        }
         const targetID = readEntryID(event.state) ?? ensureEntryID();
         const retention = retentionForPop({
             targetPathname: url.pathname,
@@ -395,8 +390,4 @@ function restoreScrollPosition(scroll: ScrollPosition | null): void {
             window.scrollTo(scroll.x, scroll.y);
         });
     });
-}
-
-function handlesQueryPopstateLocally(pathname: string): boolean {
-    return pathname === '/series';
 }

@@ -1,3 +1,4 @@
+import { copyText } from '../clipboard';
 import { textEl } from '../dom';
 import { errorMessage } from '../errors';
 import { icon, iconElement } from '../icons';
@@ -263,7 +264,7 @@ export function createCopyButton(
     let revert: number | undefined;
     button.addEventListener('click', async () => {
         try {
-            await copyToClipboard(getValue());
+            await copyText(getValue());
             button.innerHTML = icon('check', 18);
             button.classList.add('is-copied');
             window.clearTimeout(revert);
@@ -277,24 +278,6 @@ export function createCopyButton(
         }
     });
     return button;
-}
-
-async function copyToClipboard(value: string): Promise<void> {
-    if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(value);
-        return;
-    }
-
-    const input = document.createElement('textarea');
-    input.value = value;
-    input.style.position = 'fixed';
-    input.style.left = '-9999px';
-    document.body.appendChild(input);
-    input.focus();
-    input.select();
-    const copied = document.execCommand('copy');
-    input.remove();
-    if (!copied) throw new Error('copy failed');
 }
 
 // openFormModal stacks a small form on top of the settings modal. The submit

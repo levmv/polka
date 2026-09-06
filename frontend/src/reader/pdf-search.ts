@@ -155,9 +155,7 @@ export function wirePDFSearch(
         else close(true);
     });
     controls.backdrop.addEventListener('click', () => close(true));
-    controls.panel
-        .querySelector<HTMLButtonElement>('[data-reader-search-close]')
-        ?.addEventListener('click', () => close(true));
+    controls.closeButton.addEventListener('click', () => close(true));
     document.addEventListener('keydown', (event) => {
         if (event.key === '/' && controls.panel.hidden && !shouldIgnoreReaderShortcut(event)) {
             event.preventDefault();

@@ -1,3 +1,4 @@
+import { copyText } from '../clipboard';
 import { clamp } from '../dom';
 import { iconElement } from '../icons';
 import type {
@@ -557,25 +558,4 @@ function normalizeSnippet(text: string): string {
 function clipSnippet(text: string, maxLength: number, keep: 'start' | 'end'): string {
     if (text.length <= maxLength) return text;
     return keep === 'start' ? text.slice(text.length - maxLength) : text.slice(0, maxLength);
-}
-
-async function copyText(text: string): Promise<void> {
-    if (navigator.clipboard?.writeText) {
-        try {
-            await navigator.clipboard.writeText(text);
-            return;
-        } catch {
-            // Fall through to the execCommand path below.
-        }
-    }
-    const area = document.createElement('textarea');
-    area.value = text;
-    area.setAttribute('readonly', '');
-    area.style.position = 'fixed';
-    area.style.top = '-1000px';
-    area.style.opacity = '0';
-    document.body.append(area);
-    area.select();
-    document.execCommand('copy');
-    area.remove();
 }

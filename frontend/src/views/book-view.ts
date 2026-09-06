@@ -58,10 +58,6 @@ import { type BookDetailHost, registerActiveBookDetailHost } from './book-detail
 import { openEditModal } from './book-edit';
 import { renderShelfPicker } from './book-shelf-picker';
 
-// Re-exported so existing importers (library/table view) keep pulling the edit
-// modal from the book-view facade.
-export { openEditModal };
-
 // One mounted book page. The book it shows, the list it was opened from, the
 // request that fills it, and the cleanup for whatever is currently rendered all
 // belong to this instance. Two of them exist for a moment during a navigation,

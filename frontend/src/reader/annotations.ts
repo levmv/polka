@@ -1,11 +1,11 @@
 import { Overlayer } from 'foliate-js/overlayer.js';
-
 import { createAnnotation, deleteAnnotation, fetchAnnotations, updateAnnotationNote } from '../api';
 import { clamp } from '../dom';
 import { iconElement } from '../icons';
 import type { Annotation } from '../types';
 import { focusReaderSurface, revealChrome } from './chrome';
 import type { FoliateAnnotation, FoliateLoadDetail, FoliateViewElement } from './foliate-engine';
+import { createReaderPanel, type ReaderPanelElements } from './panel';
 import type {
     ReaderAnnotationActionTarget,
     ReaderAnnotationReference,
@@ -35,10 +35,7 @@ interface RenderedAnnotation {
     range: Range;
 }
 
-interface AnnotationPanel {
-    backdrop: HTMLButtonElement;
-    panel: HTMLElement;
-    toggle: HTMLButtonElement;
+interface AnnotationPanel extends ReaderPanelElements {
     status: HTMLElement;
     list: HTMLOListElement;
 }
@@ -412,44 +409,12 @@ function foliateAnnotation(annotation: Annotation): FoliateAnnotation {
 function createAnnotationPanel(page: HTMLElement): AnnotationPanel | null {
     const actions = page.querySelector<HTMLElement>('.reader-actions');
     if (!actions) return null;
-    const panelID = 'reader-annotations-panel';
-
-    const toggle = document.createElement('button');
-    toggle.className = 'reader-annotations-toggle';
-    toggle.type = 'button';
-    toggle.dataset.readerAnnotationsToggle = 'true';
-    toggle.title = 'Highlights';
-    toggle.setAttribute('aria-label', 'Highlights');
-    toggle.setAttribute('aria-controls', panelID);
-    toggle.setAttribute('aria-expanded', 'false');
-    toggle.append(iconElement('ink_highlighter'));
-
-    const backdrop = document.createElement('button');
-    backdrop.className = 'reader-annotations-backdrop';
-    backdrop.type = 'button';
-    backdrop.hidden = true;
-    backdrop.tabIndex = -1;
-    backdrop.setAttribute('aria-label', 'Close highlights');
-
-    const panel = document.createElement('aside');
-    panel.id = panelID;
-    panel.className = 'reader-annotations-panel';
-    panel.hidden = true;
-    panel.setAttribute('aria-label', 'Highlights');
-
-    const header = document.createElement('div');
-    header.className = 'reader-annotations-header';
-    const title = document.createElement('h2');
-    title.className = 'reader-annotations-title';
-    title.textContent = 'Highlights';
-    const close = document.createElement('button');
-    close.className = 'reader-annotations-close';
-    close.type = 'button';
-    close.title = 'Close highlights';
-    close.dataset.readerAnnotationsClose = 'true';
-    close.setAttribute('aria-label', 'Close highlights');
-    close.append(iconElement('close'));
-    header.append(title, close);
+    const elements = createReaderPanel(page, {
+        name: 'annotations',
+        title: 'Highlights',
+        closeLabel: 'Close highlights',
+        icon: 'ink_highlighter',
+    });
 
     const status = document.createElement('div');
     status.className = 'reader-annotations-status';
@@ -460,11 +425,10 @@ function createAnnotationPanel(page: HTMLElement): AnnotationPanel | null {
     list.className = 'reader-annotations-list';
     list.setAttribute('aria-label', 'Highlights');
 
-    panel.append(header, status, list);
-    actions.prepend(toggle);
-    page.append(backdrop, panel);
+    elements.panel.append(status, list);
+    actions.prepend(elements.toggle);
 
-    return { backdrop, panel, toggle, status, list };
+    return { ...elements, status, list };
 }
 
 function wireAnnotationPanel(
@@ -477,9 +441,9 @@ function wireAnnotationPanel(
         else closeAnnotationPanel(page, controls, true);
     });
     controls.backdrop.addEventListener('click', () => closeAnnotationPanel(page, controls, true));
-    controls.panel
-        .querySelector<HTMLButtonElement>('[data-reader-annotations-close]')
-        ?.addEventListener('click', () => closeAnnotationPanel(page, controls, true));
+    controls.closeButton.addEventListener('click', () =>
+        closeAnnotationPanel(page, controls, true),
+    );
     document.addEventListener('keydown', (event) => {
         if (event.key !== 'Escape' || controls.panel.hidden) return;
         event.preventDefault();
@@ -497,9 +461,7 @@ function openAnnotationPanel(
     controls.panel.hidden = false;
     controls.backdrop.hidden = false;
     controls.toggle.setAttribute('aria-expanded', 'true');
-    controls.panel
-        .querySelector<HTMLElement>('.reader-annotations-item, .reader-annotations-close')
-        ?.focus();
+    controls.closeButton.focus();
 }
 
 function closeAnnotationPanel(
