@@ -18,6 +18,8 @@ import (
 	"github.com/levmv/polka/internal/format"
 )
 
+const deliveryConversionTimeout = 2 * time.Minute
+
 type deliveryTransport interface {
 	Send(ctx context.Context, copy delivery.DeliveryCopy, profile delivery.SMTPProfile) error
 }
@@ -195,6 +197,8 @@ func (s *Server) prepareDeliveryCopy(ctx context.Context, job db.DeliveryJob) (d
 	if err := s.db.SetDeliveryJobStatus(job.ID, db.DeliveryStatusConverting, ""); err != nil {
 		return delivery.DeliveryCopy{}, func() {}, err
 	}
+	ctx, cancel := context.WithTimeout(ctx, deliveryConversionTimeout)
+	defer cancel()
 	convertOpts, err := s.assetConversionOptions(asset)
 	if err != nil {
 		return delivery.DeliveryCopy{}, func() {}, newDeliveryPrepError(deliveryMessagePrepareFailed, err)

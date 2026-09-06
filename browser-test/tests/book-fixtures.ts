@@ -87,7 +87,12 @@ function buildEPUB(
   title: string,
   author: string,
   name: string,
-  options: { chapterName?: string; description?: string; verticalWriting?: boolean } = {},
+  options: {
+    chapterName?: string;
+    description?: string;
+    verticalWriting?: boolean;
+    scriptURL?: string;
+  } = {},
 ): UploadFile {
   const chapterName = options.chapterName || 'chapter.xhtml';
   const description = options.description || '';
@@ -108,11 +113,14 @@ function buildEPUB(
   const verticalStyle = options.verticalWriting
     ? '<style>body { writing-mode: vertical-rl; }</style>'
     : '';
+  const scripts = options.scriptURL
+    ? `<script>parent.document.documentElement.dataset.bookScript = 'inline';</script><script src="${xmlEscape(options.scriptURL)}"></script>`
+    : '';
   const body = options.verticalWriting
     ? `<h1>${t}</h1><p>縦書きの合成テスト本文です。ページの高さと余白を確認します。</p><p>${a}</p>`
     : `<p>${a}</p>`;
   const chapter = `<?xml version="1.0" encoding="utf-8"?>
-<html xmlns="http://www.w3.org/1999/xhtml"><head><title>${t}</title>${verticalStyle}</head><body>${body}</body></html>`;
+<html xmlns="http://www.w3.org/1999/xhtml"><head><title>${t}</title>${verticalStyle}${scripts}</head><body>${body}</body></html>`;
   const buffer = zipStore([
     { name: 'mimetype', data: Buffer.from('application/epub+zip') },
     {
@@ -125,6 +133,10 @@ function buildEPUB(
     { name: `OEBPS/${chapterName}`, data: Buffer.from(chapter) },
   ]);
   return { name: `${name}.epub`, mimeType: 'application/epub+zip', buffer };
+}
+
+export function epubWithScripts(title: string, scriptURL: string, name: string): UploadFile {
+  return buildEPUB(title, 'Script probe author', name, { scriptURL });
 }
 
 export function epub(

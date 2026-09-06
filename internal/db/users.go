@@ -58,6 +58,9 @@ const (
 // (usernames are compared case-insensitively).
 var ErrUserExists = errors.New("username already taken")
 
+// ErrSetupComplete prevents unauthenticated setup from creating another admin.
+var ErrSetupComplete = errors.New("initial account already exists")
+
 // ErrInvalidUserInput classifies account values that are safe to return as a
 // client error; its concrete error retains the useful validation detail.
 var ErrInvalidUserInput = errors.New("invalid user input")
@@ -171,6 +174,16 @@ func (db *DB) CreateUser(username, password, role string) (*User, error) {
 // CreateUserWithAccess inserts an account and its final shelf scope in one
 // transaction.
 func (db *DB) CreateUserWithAccess(username, password string, access UserAccess) (*User, error) {
+	return db.createUser(username, password, access, false)
+}
+
+// CreateInitialAdmin creates an administrator only while the library has no
+// accounts. The check and insertion share the same write transaction.
+func (db *DB) CreateInitialAdmin(username, password string) (*User, error) {
+	return db.createUser(username, password, UserAccess{Role: RoleAdmin}, true)
+}
+
+func (db *DB) createUser(username, password string, access UserAccess, requireEmpty bool) (*User, error) {
 	uname := normalizeUsername(username)
 	if uname == "" {
 		return nil, errorWithDetail(ErrInvalidUserInput, "username must not be empty")
@@ -192,6 +205,15 @@ func (db *DB) CreateUserWithAccess(username, password string, access UserAccess)
 
 	u := &User{Username: uname, PasswordHash: hash, Role: access.Role, ContentScope: contentScope}
 	err = db.Transact(context.Background(), func(tx *sql.Tx) error {
+		if requireEmpty {
+			var exists bool
+			if err := tx.QueryRow("SELECT EXISTS(SELECT 1 FROM users)").Scan(&exists); err != nil {
+				return fmt.Errorf("check initial account: %w", err)
+			}
+			if exists {
+				return ErrSetupComplete
+			}
+		}
 		if err := tx.QueryRow(
 			"INSERT INTO users (username, password_hash, role, content_scope) VALUES (?, ?, ?, ?) RETURNING id",
 			u.Username, u.PasswordHash, u.Role, u.ContentScope,

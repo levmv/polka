@@ -576,7 +576,10 @@ func (s *Server) route(mux *http.ServeMux, pattern, minRole string, h http.Handl
 }
 
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// Protect the public login/setup forms as well as authenticated mutations.
+	return http.NewCrossOriginProtection().Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// A book must not turn another uploaded text asset into a same-origin script.
+		w.Header().Set("X-Content-Type-Options", "nosniff")
 		// The auth entry points and static assets must be reachable before login.
 		path := r.URL.Path
 		if path == "/login" || path == "/setup" || strings.HasPrefix(path, "/static/") {
@@ -660,7 +663,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		http.Redirect(w, r, "/login", http.StatusFound)
-	})
+	}))
 }
 
 func (s *Server) basicAuthUserID(r *http.Request) (int64, bool, error) {
@@ -793,7 +796,10 @@ func bootstrapAdmin(database *db.DB, adminUser, adminPassword string) error {
 		log.Println("No users yet — open the web UI to create the first admin, or set POLKA_ADMIN_USER/POLKA_ADMIN_PASSWORD (or run `polka user add --admin`).")
 		return nil
 	}
-	if _, err := database.CreateUser(adminUser, adminPassword, db.RoleAdmin); err != nil {
+	if _, err := database.CreateInitialAdmin(adminUser, adminPassword); err != nil {
+		if errors.Is(err, db.ErrSetupComplete) {
+			return nil
+		}
 		return fmt.Errorf("bootstrap admin %q: %w", adminUser, err)
 	}
 	log.Printf("Created initial admin user %q.", adminUser)
