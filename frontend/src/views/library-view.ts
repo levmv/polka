@@ -33,7 +33,7 @@ import type {
     BookSummary,
     UserSettings,
 } from '../types';
-import { openEditModal } from './book-view';
+import { openEditModal } from './book-edit';
 import { type ContinueReadingRail, createContinueReadingRail } from './continue-reading';
 import { createLibrarySelection, type LibrarySelection } from './library-selection';
 import { createReturnPosition, type ReturnPosition } from './return-position';

@@ -1,6 +1,5 @@
 import { saveUserSettings } from '../api';
 import { clamp } from '../dom';
-import { iconElement } from '../icons';
 import type { ReaderFlow, ReaderPreferences } from '../types';
 import { focusReaderSurface, revealChrome } from './chrome';
 import {
@@ -12,6 +11,7 @@ import {
     readerDisplayPalette,
     setCurrentFoliateDocumentJustification,
 } from './foliate-engine';
+import { createReaderPanel, type ReaderPanelElements } from './panel';
 
 export { DEFAULT_READER_DISPLAY_STYLE, normalizeReaderDisplayStyle } from './foliate-engine';
 
@@ -27,10 +27,7 @@ export const DEFAULT_READER_PREFERENCES: ReaderPreferences = {
     reader_line_height: DEFAULT_READER_LINE_HEIGHT,
 };
 
-interface DisplayPanelControls {
-    backdrop: HTMLButtonElement;
-    panel: HTMLElement;
-    toggle: HTMLButtonElement;
+interface DisplayPanelControls extends ReaderPanelElements {
     styleButtons: HTMLButtonElement[];
     flowButtons: HTMLButtonElement[];
     smallerButton: HTMLButtonElement;
@@ -70,9 +67,7 @@ export function wireReaderPreferences(
         else closeDisplayPanel(page, controls, true);
     });
     controls.backdrop.addEventListener('click', () => closeDisplayPanel(page, controls, true));
-    controls.panel
-        .querySelector<HTMLButtonElement>('[data-reader-display-close]')
-        ?.addEventListener('click', () => closeDisplayPanel(page, controls, true));
+    controls.closeButton.addEventListener('click', () => closeDisplayPanel(page, controls, true));
     document.addEventListener('keydown', (event) => {
         if (event.key !== 'Escape' || controls.panel.hidden) return;
         event.preventDefault();
@@ -202,36 +197,13 @@ function setReaderFlow(page: HTMLElement, view: FoliateViewElement, flow: Reader
 }
 
 function createDisplayPanel(page: HTMLElement, toggle: HTMLButtonElement): DisplayPanelControls {
-    const panelID = 'reader-display-panel';
-    toggle.setAttribute('aria-controls', panelID);
-    toggle.setAttribute('aria-expanded', 'false');
-
-    const backdrop = document.createElement('button');
-    backdrop.className = 'reader-display-backdrop';
-    backdrop.type = 'button';
-    backdrop.hidden = true;
-    backdrop.tabIndex = -1;
-    backdrop.setAttribute('aria-label', 'Close display settings');
-
-    const panel = document.createElement('aside');
-    panel.id = panelID;
-    panel.className = 'reader-display-panel';
-    panel.hidden = true;
-    panel.setAttribute('aria-label', 'Display settings');
-
-    const header = document.createElement('div');
-    header.className = 'reader-display-header';
-    const title = document.createElement('h2');
-    title.className = 'reader-display-title';
-    title.textContent = 'Display';
-    const close = document.createElement('button');
-    close.className = 'reader-display-close';
-    close.type = 'button';
-    close.title = 'Close display settings';
-    close.dataset.readerDisplayClose = 'true';
-    close.setAttribute('aria-label', 'Close display settings');
-    close.append(iconElement('close'));
-    header.append(title, close);
+    const elements = createReaderPanel(page, {
+        name: 'display',
+        title: 'Display',
+        label: 'Display settings',
+        closeLabel: 'Close display settings',
+        toggle,
+    });
 
     const styleSection = createSection('Style');
     const styleGroup = createSegmentedGroup('Style');
@@ -277,13 +249,10 @@ function createDisplayPanel(page: HTMLElement, toggle: HTMLButtonElement): Displ
     const line = createRangeRow('Line', 'readerLineInput', '1.2', '2.2', '0.05');
     customSection.append(width.row, line.row);
 
-    panel.append(header, styleSection, textSection, flowSection, customSection);
-    page.append(backdrop, panel);
+    elements.panel.append(styleSection, textSection, flowSection, customSection);
 
     return {
-        backdrop,
-        panel,
-        toggle,
+        ...elements,
         styleButtons,
         flowButtons,
         smallerButton,
@@ -389,9 +358,7 @@ function openDisplayPanel(page: HTMLElement, controls: DisplayPanelControls): vo
     controls.panel.hidden = false;
     controls.backdrop.hidden = false;
     controls.toggle.setAttribute('aria-expanded', 'true');
-    controls.panel
-        .querySelector<HTMLElement>('.reader-display-option, .reader-display-close')
-        ?.focus();
+    controls.closeButton.focus();
 }
 
 function closeDisplayPanel(

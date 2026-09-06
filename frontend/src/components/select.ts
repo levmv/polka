@@ -1,3 +1,4 @@
+import { positionFloating } from '../dom';
 import { icon } from '../icons';
 
 export type SelectOption = {
@@ -23,14 +24,11 @@ export type SelectOptions = {
     className?: string;
 };
 
-// Tracks the single open select so opening another (or a menu) closes it.
+// Opening another select closes the current listbox.
 let openSelect: { close(): void } | null = null;
 
-// createSelect builds a floating choice control: a trigger showing the
-// current value + a down chevron, opening a floating listbox whose selected
-// option carries a trailing check. Keyboard-navigable; reuses the floating-layer
-// look (`.floating-menu`). Works inside a modal — Escape/Tab close only the
-// listbox (handled on the listbox root, which stops them reaching the modal).
+// The listbox lives in document.body. Escape and Tab close only the listbox,
+// without dismissing the containing modal.
 export function createSelect(opts: SelectOptions): ManagedSelect {
     let value = opts.value;
 
@@ -127,23 +125,9 @@ export function createSelect(opts: SelectOptions): ManagedSelect {
     }
 
     function position(): void {
-        const margin = 8;
         const rect = trigger.getBoundingClientRect();
-        list.style.left = '0px';
-        list.style.top = '0px';
         list.style.minWidth = `${Math.round(rect.width)}px`;
-
-        const menuRect = list.getBoundingClientRect();
-        const belowTop = rect.bottom + 4;
-        const aboveTop = rect.top - menuRect.height - 4;
-        const fitsBelow = belowTop + menuRect.height + margin <= window.innerHeight;
-        const top = fitsBelow ? belowTop : Math.max(margin, aboveTop);
-        const left = Math.min(
-            Math.max(rect.left, margin),
-            Math.max(margin, window.innerWidth - menuRect.width - margin),
-        );
-        list.style.left = `${Math.round(left)}px`;
-        list.style.top = `${Math.round(top)}px`;
+        positionFloating(rect, list, { align: 'left', gap: 4 });
     }
 
     function moveFocus(delta: number): void {

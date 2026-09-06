@@ -1,12 +1,9 @@
-import { iconElement } from '../icons';
+import { createReaderPanel, type ReaderPanelElements } from './panel';
 
 export const READER_SEARCH_DEBOUNCE_MS = 260;
 export const READER_SEARCH_TOO_SHORT_MESSAGE = 'Type 2 characters, or one Han ideograph.';
 
-export interface ReaderSearchControls {
-    backdrop: HTMLButtonElement;
-    panel: HTMLElement;
-    toggle: HTMLButtonElement;
+export interface ReaderSearchControls extends ReaderPanelElements {
     input: HTMLInputElement;
     status: HTMLElement;
     results: HTMLOListElement;
@@ -19,44 +16,13 @@ interface ReaderSearchExcerpt {
 }
 
 export function createSearchPanel(page: HTMLElement): ReaderSearchControls {
-    const panelID = 'reader-search-panel';
-
-    const toggle = document.createElement('button');
-    toggle.className = 'reader-search-toggle';
-    toggle.type = 'button';
-    toggle.dataset.readerSearchToggle = 'true';
-    toggle.title = 'Search in book';
-    toggle.setAttribute('aria-label', 'Search in book');
-    toggle.setAttribute('aria-controls', panelID);
-    toggle.setAttribute('aria-expanded', 'false');
-    toggle.append(iconElement('search'));
-
-    const backdrop = document.createElement('button');
-    backdrop.className = 'reader-search-backdrop';
-    backdrop.type = 'button';
-    backdrop.hidden = true;
-    backdrop.tabIndex = -1;
-    backdrop.setAttribute('aria-label', 'Close search');
-
-    const panel = document.createElement('aside');
-    panel.id = panelID;
-    panel.className = 'reader-search-panel';
-    panel.hidden = true;
-    panel.setAttribute('aria-label', 'Search in book');
-
-    const header = document.createElement('div');
-    header.className = 'reader-search-header';
-    const title = document.createElement('h2');
-    title.className = 'reader-search-title';
-    title.textContent = 'Search';
-    const close = document.createElement('button');
-    close.className = 'reader-search-close';
-    close.type = 'button';
-    close.title = 'Close search';
-    close.dataset.readerSearchClose = 'true';
-    close.setAttribute('aria-label', 'Close search');
-    close.append(iconElement('close'));
-    header.append(title, close);
+    const elements = createReaderPanel(page, {
+        name: 'search',
+        title: 'Search',
+        label: 'Search in book',
+        closeLabel: 'Close search',
+        icon: 'search',
+    });
 
     const form = document.createElement('div');
     form.className = 'reader-search-form';
@@ -78,10 +44,9 @@ export function createSearchPanel(page: HTMLElement): ReaderSearchControls {
     results.className = 'reader-search-results';
     results.setAttribute('aria-label', 'Search results');
 
-    panel.append(header, form, status, results);
-    page.append(backdrop, panel);
+    elements.panel.append(form, status, results);
 
-    return { backdrop, panel, toggle, input, status, results };
+    return { ...elements, input, status, results };
 }
 
 export function openSearch(

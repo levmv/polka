@@ -117,8 +117,15 @@ test.describe('Account settings', () => {
       new URL(`/kosync/${secretValue}`, page.url()).toString(),
     );
     const copyPassword = submodal.getByRole('button', { name: 'Copy app password', exact: true });
+    // Exercise the real legacy copy path when the Clipboard API is blocked.
+    await page.evaluate(() => {
+      navigator.clipboard.writeText = async () => {
+        throw new DOMException('Clipboard API blocked', 'NotAllowedError');
+      };
+    });
     await copyPassword.click();
     await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(secretValue);
+    await expect(copyPassword).toBeFocused();
     await page.screenshot({
       path: 'screenshots/settings-reading-app-details-mobile.png',
       animations: 'disabled',

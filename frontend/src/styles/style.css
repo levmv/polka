@@ -2583,16 +2583,10 @@ body.reader-shell .app-layout {
     text-decoration: none;
 }
 
-.reader-display-toggle,
-.reader-display-close,
+.reader-panel-toggle,
+.reader-panel-close,
 .reader-close,
-.reader-pdf-tool,
-.reader-search-toggle,
-.reader-search-close,
-.reader-annotations-toggle,
-.reader-annotations-close,
-.reader-toc-toggle,
-.reader-toc-close {
+.reader-pdf-tool {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -2606,26 +2600,14 @@ body.reader-shell .app-layout {
     cursor: pointer;
 }
 
-.reader-display-toggle:hover,
-.reader-display-toggle:focus-visible,
-.reader-display-close:hover,
-.reader-display-close:focus-visible,
+.reader-panel-toggle:hover,
+.reader-panel-toggle:focus-visible,
+.reader-panel-close:hover,
+.reader-panel-close:focus-visible,
 .reader-close:hover,
 .reader-close:focus-visible,
 .reader-pdf-tool:hover:not(:disabled),
-.reader-pdf-tool:focus-visible:not(:disabled),
-.reader-search-toggle:hover,
-.reader-search-toggle:focus-visible,
-.reader-search-close:hover,
-.reader-search-close:focus-visible,
-.reader-annotations-toggle:hover,
-.reader-annotations-toggle:focus-visible,
-.reader-annotations-close:hover,
-.reader-annotations-close:focus-visible,
-.reader-toc-toggle:hover,
-.reader-toc-toggle:focus-visible,
-.reader-toc-close:hover,
-.reader-toc-close:focus-visible {
+.reader-pdf-tool:focus-visible:not(:disabled) {
     background: var(--surface-hover);
     color: var(--text-main);
     outline: none;
@@ -2660,10 +2642,7 @@ body.reader-shell .app-layout {
     display: none;
 }
 
-.reader-display-backdrop,
-.reader-search-backdrop,
-.reader-annotations-backdrop,
-.reader-toc-backdrop {
+.reader-panel-backdrop {
     position: absolute;
     z-index: 5;
     inset: 0;
@@ -2672,21 +2651,12 @@ body.reader-shell .app-layout {
     cursor: default;
 }
 
-.reader-display-backdrop[hidden],
-.reader-display-panel[hidden],
-.reader-search-backdrop[hidden],
-.reader-search-panel[hidden],
-.reader-annotations-backdrop[hidden],
-.reader-annotations-panel[hidden],
-.reader-toc-backdrop[hidden],
-.reader-toc-panel[hidden] {
+.reader-panel-backdrop[hidden],
+.reader-panel[hidden] {
     display: none;
 }
 
-.reader-display-panel,
-.reader-search-panel,
-.reader-annotations-panel,
-.reader-toc-panel {
+.reader-panel {
     position: absolute;
     z-index: 6;
     top: 0;
@@ -2705,10 +2675,7 @@ body.reader-shell .app-layout {
     width: min(22rem, 100%);
 }
 
-.reader-display-header,
-.reader-search-header,
-.reader-annotations-header,
-.reader-toc-header {
+.reader-panel-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -2717,10 +2684,7 @@ body.reader-shell .app-layout {
     border-bottom: 1px solid var(--border-color);
 }
 
-.reader-display-title,
-.reader-search-title,
-.reader-annotations-title,
-.reader-toc-title {
+.reader-panel-title {
     margin: 0;
     font-size: 0.95rem;
     font-weight: 600;

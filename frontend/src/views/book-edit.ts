@@ -616,52 +616,48 @@ function openLoadedEditModal(
         let saved: Book | null = null;
         const authorChange = { changed: false, previous: '', next: '' };
         if (metadataDirty) {
-            await saveEditForm(
-                b,
-                form,
-                savedState,
-                uiID,
-                {
-                    beforeSave: () => {
-                        saving = true;
+            normalizeFormBeforeSave(form);
+            if (!validateTitle(form, uiID)) return null;
+            const previousState = savedState;
+            const payload = submitPayload(readEditForm(form), previousState);
+            saving = true;
+            updateDirtyState();
+            try {
+                const updated = await updateBook(b.id, payload);
+                host?.applySaved(updated);
+                Object.assign(b, updated);
+                syncEditFormFromBook(form, b, uiID);
+                coverDraft?.renderPending();
+                savedState = readEditForm(form);
+                fetchedFieldSources.clear();
+                titleSortControls.close();
+                titleSortControls.resetFollow();
+                if (!authorSortChange) resetAuthorSortFromBook(b);
+                const prevAuthors = previousState.authors || '';
+                const nextAuthors = savedState.authors || '';
+                if (prevAuthors !== nextAuthors) {
+                    authorChange.changed = true;
+                    authorChange.previous = prevAuthors;
+                    authorChange.next = nextAuthors;
+                }
+                if (savedFlashTimer) window.clearTimeout(savedFlashTimer);
+                savedFlashTimer = undefined;
+                if (flash && !coverDraft?.hasPending()) {
+                    savedFlashTimer = flashSaved(uiID, () => {
+                        savedFlashTimer = undefined;
                         updateDirtyState();
-                    },
-                    afterSave: (ok, updated, previousState) => {
-                        saving = false;
-                        if (ok && updated) {
-                            Object.assign(b, updated);
-                            syncEditFormFromBook(form, b, uiID);
-                            coverDraft?.renderPending();
-                            savedState = readEditForm(form);
-                            fetchedFieldSources.clear();
-                            titleSortControls.close();
-                            titleSortControls.resetFollow();
-                            if (!authorSortChange) resetAuthorSortFromBook(b);
-                            const prevAuthors = previousState.authors || '';
-                            const nextAuthors = savedState.authors || '';
-                            if (prevAuthors !== nextAuthors) {
-                                authorChange.changed = true;
-                                authorChange.previous = prevAuthors;
-                                authorChange.next = nextAuthors;
-                            }
-                            if (savedFlashTimer) window.clearTimeout(savedFlashTimer);
-                            savedFlashTimer = undefined;
-                            if (flash && !coverDraft?.hasPending()) {
-                                savedFlashTimer = flashSaved(uiID, () => {
-                                    savedFlashTimer = undefined;
-                                    updateDirtyState();
-                                });
-                            }
-                            saved = updated;
-                            notifyCatalogChanged({ kind: 'books-updated', books: [updated] });
-                        }
-                        updateIdentifiersValidation();
-                        renderDateHint(document.getElementById(`date-validation-${uiID}`), b);
-                        updateDirtyState();
-                    },
-                },
-                host,
-            );
+                    });
+                }
+                saved = updated;
+                notifyCatalogChanged({ kind: 'books-updated', books: [updated] });
+            } catch (err) {
+                showToast(`Save failed: ${errorMessage(err)}`, { type: 'error' });
+            } finally {
+                saving = false;
+                updateIdentifiersValidation();
+                renderDateHint(document.getElementById(`date-validation-${uiID}`), b);
+                updateDirtyState();
+            }
             if (!saved) return null;
         }
         if (authorSortChange) {
@@ -1136,11 +1132,6 @@ function attachIdentifierAutocomplete(input: HTMLInputElement) {
     });
 }
 
-type SaveCallbacks = {
-    beforeSave: () => void;
-    afterSave: (ok: boolean, updated: Book | null, previousState: BookUpdate) => void;
-};
-
 type AuthorSortState = {
     baseName: string;
     baseSortName: string;
@@ -1180,32 +1171,6 @@ function authorSortHintText(
         parts.push('Only the first author controls book sorting.');
     }
     return parts.join(' ');
-}
-
-// saveEditForm persists the current draft in one explicit write. Keeping the
-// previous saved state lets the caller run post-save flows such as the
-// single-author convergence prompt only after the write has landed.
-async function saveEditForm(
-    b: Book,
-    form: HTMLFormElement,
-    previousState: BookUpdate,
-    uiID: string,
-    callbacks: SaveCallbacks,
-    host?: BookDetailHost | null,
-): Promise<void> {
-    normalizeFormBeforeSave(form);
-    if (!validateTitle(form, uiID)) return;
-    const payload = submitPayload(readEditForm(form), previousState);
-    callbacks.beforeSave();
-
-    try {
-        const updatedBook = await updateBook(b.id, payload);
-        host?.applySaved(updatedBook);
-        callbacks.afterSave(true, updatedBook, previousState);
-    } catch (err) {
-        showToast(`Save failed: ${errorMessage(err)}`, { type: 'error' });
-        callbacks.afterSave(false, null, previousState);
-    }
 }
 
 function setSaveIndicator(uiID: string, text: string, kind: string) {

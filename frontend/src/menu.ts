@@ -1,4 +1,4 @@
-import { clamp } from './dom';
+import { positionFloating } from './dom';
 
 export type MenuItem = {
     label: string;
@@ -19,9 +19,6 @@ type MenuOptions = {
 };
 
 let openMenu: ManagedMenu | null = null;
-let openMenuRoot: HTMLElement | null = null;
-let openMenuTrigger: HTMLElement | null = null;
-let documentListenersAttached = false;
 
 export function createMenu(
     trigger: HTMLElement,
@@ -59,13 +56,12 @@ export function createMenu(
             if (controller.isOpen()) return;
             openMenu?.close();
             openMenu = controller;
-            openMenuRoot = root;
-            openMenuTrigger = trigger;
             root.hidden = false;
             trigger.setAttribute('aria-expanded', 'true');
             options.onOpen?.();
             positionMenu(trigger, root);
-            ensureDocumentListeners();
+            document.addEventListener('pointerdown', handleDocumentPointerDown);
+            document.addEventListener('keydown', handleDocumentKeydown);
             window.addEventListener('resize', reposition);
             window.addEventListener('scroll', reposition, true);
             window.setTimeout(() => {
@@ -78,12 +74,9 @@ export function createMenu(
             trigger.setAttribute('aria-expanded', 'false');
             window.removeEventListener('resize', reposition);
             window.removeEventListener('scroll', reposition, true);
-            if (openMenu === controller) {
-                openMenu = null;
-                openMenuRoot = null;
-                openMenuTrigger = null;
-                detachDocumentListeners();
-            }
+            openMenu = null;
+            document.removeEventListener('pointerdown', handleDocumentPointerDown);
+            document.removeEventListener('keydown', handleDocumentKeydown);
             options.onClose?.();
             if (document.contains(trigger)) {
                 trigger.focus({ preventScroll: true });
@@ -129,40 +122,23 @@ export function createMenu(
         handleMenuKeydown(event, buttons, controller);
     }
 
+    function handleDocumentPointerDown(event: PointerEvent): void {
+        const target = event.target;
+        if (!(target instanceof Node)) return;
+        if (root.contains(target) || trigger.contains(target)) return;
+        controller.close();
+    }
+
+    function handleDocumentKeydown(event: KeyboardEvent): void {
+        if (event.key !== 'Escape') return;
+        event.preventDefault();
+        controller.close();
+    }
+
     trigger.addEventListener('click', handleTriggerClick);
     trigger.addEventListener('keydown', handleTriggerKeydown);
     root.addEventListener('keydown', handleRootKeydown);
-
     return controller;
-}
-
-function ensureDocumentListeners(): void {
-    if (documentListenersAttached) return;
-    documentListenersAttached = true;
-    document.addEventListener('pointerdown', handleDocumentPointerDown);
-    document.addEventListener('keydown', handleDocumentKeydown);
-}
-
-function detachDocumentListeners(): void {
-    if (!documentListenersAttached) return;
-    documentListenersAttached = false;
-    document.removeEventListener('pointerdown', handleDocumentPointerDown);
-    document.removeEventListener('keydown', handleDocumentKeydown);
-}
-
-function handleDocumentPointerDown(event: PointerEvent): void {
-    if (!openMenu) return;
-    const target = event.target;
-    if (!(target instanceof Node)) return;
-    if (openMenuRoot?.contains(target) || openMenuTrigger?.contains(target)) return;
-    openMenu.close();
-}
-
-function handleDocumentKeydown(event: KeyboardEvent): void {
-    if (event.key !== 'Escape') return;
-    if (!openMenu) return;
-    event.preventDefault();
-    openMenu.close();
 }
 
 function handleMenuKeydown(
@@ -216,25 +192,7 @@ function firstEnabledButton(buttons: HTMLButtonElement[]): HTMLButtonElement | n
 }
 
 function positionMenu(trigger: HTMLElement, root: HTMLElement): void {
-    const margin = 8;
-    const triggerRect = trigger.getBoundingClientRect();
-
-    root.style.left = '0px';
-    root.style.top = '0px';
-    root.style.minWidth = `${Math.max(160, Math.round(triggerRect.width))}px`;
-
-    const menuRect = root.getBoundingClientRect();
-    const belowTop = triggerRect.bottom + 6;
-    const aboveTop = triggerRect.top - menuRect.height - 6;
-    const fitsBelow = belowTop + menuRect.height + margin <= window.innerHeight;
-
-    const top = fitsBelow ? belowTop : Math.max(margin, aboveTop);
-    const left = clamp(
-        triggerRect.right - menuRect.width,
-        margin,
-        window.innerWidth - menuRect.width - margin,
-    );
-
-    root.style.left = `${Math.round(left)}px`;
-    root.style.top = `${Math.round(top)}px`;
+    const rect = trigger.getBoundingClientRect();
+    root.style.minWidth = `${Math.max(160, Math.round(rect.width))}px`;
+    positionFloating(rect, root);
 }

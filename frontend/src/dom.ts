@@ -62,3 +62,27 @@ export function debounce<TArgs extends unknown[], TResult>(
     debounced.cancel = cancel;
     return debounced;
 }
+
+// Position a fixed panel in viewport coordinates. The caller controls its width.
+export function positionFloating(
+    triggerRect: DOMRectReadOnly,
+    root: HTMLElement,
+    options: { align?: 'left' | 'right'; gap?: number } = {},
+): void {
+    const margin = 8;
+    const gap = options.gap ?? 6;
+    root.style.left = '0px';
+    root.style.top = '0px';
+    const panelRect = root.getBoundingClientRect();
+    const belowTop = triggerRect.bottom + gap;
+    const aboveTop = triggerRect.top - panelRect.height - gap;
+    const fitsBelow = belowTop + panelRect.height + margin <= window.innerHeight;
+    const top = fitsBelow ? belowTop : Math.max(margin, aboveTop);
+    const left = clamp(
+        options.align === 'left' ? triggerRect.left : triggerRect.right - panelRect.width,
+        margin,
+        window.innerWidth - panelRect.width - margin,
+    );
+    root.style.left = `${Math.round(left)}px`;
+    root.style.top = `${Math.round(top)}px`;
+}

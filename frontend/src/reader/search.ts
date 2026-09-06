@@ -59,9 +59,9 @@ export function wireReaderSearch(
     controls.backdrop.addEventListener('click', () =>
         closeSearch(page, view, controls, state, true),
     );
-    controls.panel
-        .querySelector<HTMLButtonElement>('[data-reader-search-close]')
-        ?.addEventListener('click', () => closeSearch(page, view, controls, state, true));
+    controls.closeButton.addEventListener('click', () =>
+        closeSearch(page, view, controls, state, true),
+    );
     document.addEventListener('keydown', (event) => {
         if (event.key === '/' && controls.panel.hidden && !shouldIgnoreReaderShortcut(event)) {
             event.preventDefault();
