@@ -13,7 +13,7 @@ import { fetchReaderState, touchReaderState } from '../api';
 import { clamp } from '../dom';
 import type { ReaderLocator, ReaderState } from '../types';
 import { createReadingActivity, type ReadingActivity } from './activity';
-import { closeReader, focusReaderSurface, revealChrome, toggleReaderChrome } from './controls';
+import { closeReader, focusReaderSurface, revealChrome, toggleReaderChrome } from './chrome';
 import { wirePDFOutline } from './pdf-outline';
 import { type PDFSearchController, wirePDFSearch } from './pdf-search';
 import { createReaderStateSaver, type ReaderPosition, type ReaderStateSaver } from './state-saver';

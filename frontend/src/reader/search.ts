@@ -1,4 +1,4 @@
-import { focusReaderSurface, revealChrome, shouldIgnoreReaderShortcut } from './controls';
+import { focusReaderSurface, revealChrome, shouldIgnoreReaderShortcut } from './chrome';
 import type { FoliateSearchResult, FoliateSearchYield, FoliateViewElement } from './foliate-engine';
 import {
     appendExcerpt,

@@ -1,5 +1,5 @@
 import { iconElement } from '../icons';
-import { focusReaderSurface, revealChrome } from './controls';
+import { focusReaderSurface, revealChrome } from './chrome';
 
 export interface ReaderTOCPanel {
     panel: HTMLElement;

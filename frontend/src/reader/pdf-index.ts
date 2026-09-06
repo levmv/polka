@@ -1,5 +1,5 @@
 import { bootReader } from './boot';
-import { showReaderError } from './controls';
+import { showReaderError } from './chrome';
 import { initPDFReader } from './pdf-reader';
 import { handleReadingStatusChange } from './reading-status';
 

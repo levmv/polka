@@ -4,7 +4,7 @@ import { createAnnotation, deleteAnnotation, fetchAnnotations, updateAnnotationN
 import { clamp } from '../dom';
 import { iconElement } from '../icons';
 import type { Annotation } from '../types';
-import { focusReaderSurface, revealChrome } from './controls';
+import { focusReaderSurface, revealChrome } from './chrome';
 import type { FoliateAnnotation, FoliateLoadDetail, FoliateViewElement } from './foliate-engine';
 import type {
     ReaderAnnotationActionTarget,

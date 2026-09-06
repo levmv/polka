@@ -58,8 +58,7 @@ interface LibraryViewState {
     phase: 'active' | 'suspended' | 'destroyed';
     // Putting the reader back where they were; see return-position.ts.
     returnPosition: ReturnPosition;
-    // A change arrived that cannot be patched into the retained result. The
-    // authoritative rebuild happens on resume, never as a jump on return.
+    // A suspended list needs rebuilding after a change or cancelled replacement.
     dirty: boolean;
     books: BookSummary[];
     view: LibraryViewMode;
@@ -69,7 +68,7 @@ interface LibraryViewState {
     pageOffset: number;
     hasMore: boolean;
     loadingMore: boolean;
-    loadMoreFailed: boolean;
+    loadFailure: { message: string; retry(): void } | null;
     loadMoreObserver: IntersectionObserver | null;
     userSettings: UserSettings | null;
     canCurateCatalog: boolean;
@@ -128,7 +127,7 @@ export function initLibrary(root: HTMLElement): RouteController {
         pageOffset: 0,
         hasMore: false,
         loadingMore: false,
-        loadMoreFailed: false,
+        loadFailure: null,
         loadMoreObserver: null,
         userSettings: null,
         canCurateCatalog: false,
@@ -162,12 +161,9 @@ export function initLibrary(root: HTMLElement): RouteController {
     let sortOverridden = requestedSort !== '' && requestedSort === sortValue;
     const initialOffset = initialLibraryOffset(params, sortValue, state.shelfId);
 
-    // Rebuild the retained view: same offset, and a limit covering everything
-    // that had been loaded, so a coarse change does not shrink the sequence.
-    const rebuildRetained = () => {
-        const limit = Math.max(PAGE_SIZE, Math.ceil(state.books.length / PAGE_SIZE) * PAGE_SIZE);
-        return loadBooks(state, searchInput?.value || '', sortValue, state.pageOffset, limit);
-    };
+    // Refresh the same offset and extent that the reader had accumulated.
+    const rebuildRetained = () =>
+        loadBooks(state, searchInput?.value || '', sortValue, state.pageOffset, state.books.length);
 
     const reload = (offset = 0) => {
         if (state.phase !== 'active') return;
@@ -183,13 +179,14 @@ export function initLibrary(root: HTMLElement): RouteController {
     };
 
     const loadMoreBtn = root.querySelector('#load-more-btn');
-    const handleLoadMoreClick = () => loadMore(state);
+    const handleLoadMoreClick = () =>
+        state.loadFailure ? state.loadFailure.retry() : loadMore(state);
     loadMoreBtn?.addEventListener('click', handleLoadMoreClick);
     addCleanup(() => loadMoreBtn?.removeEventListener('click', handleLoadMoreClick));
     if (typeof IntersectionObserver !== 'undefined') {
         state.loadMoreObserver = new IntersectionObserver(
             (entries) => {
-                if (!state.loadMoreFailed && entries.some((entry) => entry.isIntersecting)) {
+                if (!state.loadFailure && entries.some((entry) => entry.isIntersecting)) {
                     void loadMore(state);
                 }
             },
@@ -402,11 +399,11 @@ export function initLibrary(root: HTMLElement): RouteController {
     // anything is awaited; awaiting here would leave the global subscriptions
     // above live on whatever page the reader moved to next. The saved scroll is
     // re-applied once the grid actually has content to scroll.
-    void reload(initialOffset)?.then(() => {
+    void reload(initialOffset)?.then((loaded) => {
         // Only while this instance is the page on screen: a first load that
         // lands after the reader has already opened a book would otherwise
         // scroll the book page to the list's saved position.
-        if (state.phase === 'active') restoreSavedScroll();
+        if (loaded && state.phase === 'active') restoreSavedScroll();
     });
     return {
         // Everything this instance owns outside its own root is handed back to
@@ -437,11 +434,11 @@ export function initLibrary(root: HTMLElement): RouteController {
             // of the list first and jump afterwards.
             state.returnPosition.restore(pixelFallback);
             if (state.dirty) {
-                state.dirty = false;
                 state.jumpKey = '';
                 // Re-anchor once the authoritative result has replaced the DOM.
-                void rebuildRetained().then(() => {
-                    if (state.phase === 'active') state.returnPosition.settle(pixelFallback);
+                void rebuildRetained().then((loaded) => {
+                    if (loaded && state.phase === 'active')
+                        state.returnPosition.settle(pixelFallback);
                 });
             }
             // A search typed in the debounce window before the book opened was
@@ -625,11 +622,8 @@ async function loadBooks(
     query: string = '',
     sort: string = '',
     offset = 0,
-    // A rebuild of a view that had accumulated several pages asks for all of
-    // them in one request, so a coarse change does not silently shrink the
-    // sequence the reader was browsing back to one page.
-    limit = PAGE_SIZE,
-) {
+    count = PAGE_SIZE,
+): Promise<boolean> {
     const token = ++state.loadToken;
     // A new query/sort/shelf replaces the loaded set; selection must not linger.
     state.selection?.clearSelection();
@@ -642,8 +636,9 @@ async function loadBooks(
     state.finishLoading?.();
     state.finishLoading = finishGlobalLoading;
     state.loadingBooks = true;
+    state.dirty = false;
     state.loadingMore = false;
-    state.loadMoreFailed = false;
+    state.loadFailure = null;
     state.hasMore = false;
     setLibraryResultsLoading(state, true);
     updateLoadMore(state);
@@ -653,19 +648,42 @@ async function loadBooks(
     syncBookJumps(state);
     syncContinueReading(state);
     try {
-        const books = await fetchBooks(query, sort, limit, offset, state.shelfId, abort.signal);
-        if (state.phase !== 'active' || token !== state.loadToken) return;
+        // The API caps each response. Refresh in ordinary pages, committing
+        // only the complete range so a failed or cancelled page keeps the old
+        // list intact. Continuation depends on the last page, not total count.
+        const books: BookSummary[] = [];
+        let received: number;
+        do {
+            const page = await fetchBooks(
+                query,
+                sort,
+                PAGE_SIZE,
+                offset + books.length,
+                state.shelfId,
+                abort.signal,
+            );
+            if (state.phase !== 'active' || token !== state.loadToken) return false;
+            books.push(...page);
+            received = page.length;
+        } while (received === PAGE_SIZE && books.length < count);
         state.books = books;
-        state.hasMore = hasMoreBooks(state, state.books.length, limit);
+        state.hasMore = hasMoreBooks(state, received);
         renderBooks(state, state.books);
         renderBookJumpRail(state);
         updateLoadMore(state);
+        return true;
     } catch (e: unknown) {
         // An aborted fetch is the expected outcome of cancelling a stale
         // request (newer query/sort superseded it). A full-page navigation can
         // also reject in-flight fetches as a TypeError in Chromium.
         if (token === state.loadToken && !isExpectedFetchCancel(e)) {
             console.error('Failed to fetch books:', e);
+            state.loadFailure = {
+                message: 'Could not refresh books.',
+                retry: () => {
+                    void loadBooks(state, query, sort, offset, count);
+                },
+            };
         }
     } finally {
         finishGlobalLoading();
@@ -676,6 +694,7 @@ async function loadBooks(
             updateLoadMore(state);
         }
     }
+    return false;
 }
 
 // Discard whatever list work is in flight, leaving no stuck loading control.
@@ -717,7 +736,7 @@ async function loadMore(state: LibraryViewState) {
     const abort = new AbortController();
     state.booksAbort = abort;
     state.loadingMore = true;
-    state.loadMoreFailed = false;
+    state.loadFailure = null;
     updateLoadMore(state);
     try {
         const offset = state.pageOffset + state.books.length;
@@ -736,7 +755,12 @@ async function loadMore(state: LibraryViewState) {
     } catch (e: unknown) {
         if (token === state.loadToken && !isExpectedFetchCancel(e)) {
             console.error('Failed to load more books:', e);
-            state.loadMoreFailed = true;
+            state.loadFailure = {
+                message: 'Could not load more books.',
+                retry: () => {
+                    void loadMore(state);
+                },
+            };
         }
     } finally {
         if (state.phase === 'active' && token === state.loadToken) {
@@ -746,8 +770,8 @@ async function loadMore(state: LibraryViewState) {
     }
 }
 
-function hasMoreBooks(state: LibraryViewState, received: number, limit = PAGE_SIZE): boolean {
-    if (received < limit) return false;
+function hasMoreBooks(state: LibraryViewState, received: number): boolean {
+    if (received < PAGE_SIZE) return false;
     if (state.jumpTotal == null) return true;
     return state.pageOffset + state.books.length < state.jumpTotal;
 }
@@ -764,14 +788,15 @@ function updateLoadMore(state: LibraryViewState) {
     const status = state.root.querySelector<HTMLElement>('#load-more-status');
     if (!container || !btn || !status) return;
     state.loadMoreObserver?.disconnect();
-    container.hidden = !state.hasMore || state.books.length === 0;
+    container.hidden = !state.loadFailure && (!state.hasMore || state.books.length === 0);
     btn.disabled = state.loadingBooks || state.loadingMore;
-    btn.hidden = state.loadingMore || (state.loadMoreObserver !== null && !state.loadMoreFailed);
-    btn.textContent = state.loadMoreFailed ? 'Try again' : 'Load more';
-    status.hidden = !state.loadingMore && !state.loadMoreFailed;
-    status.innerHTML = state.loadMoreFailed
-        ? 'Could not load more books.'
-        : '<span class="local-loading-state"><span class="local-spinner" aria-hidden="true"></span>Loading more books…</span>';
+    btn.hidden = state.loadingMore || (state.loadMoreObserver !== null && !state.loadFailure);
+    btn.textContent = state.loadFailure ? 'Try again' : 'Load more';
+    status.hidden = !state.loadingMore && !state.loadFailure;
+    if (state.loadFailure) status.textContent = state.loadFailure.message;
+    else
+        status.innerHTML =
+            '<span class="local-loading-state"><span class="local-spinner" aria-hidden="true"></span>Loading more books…</span>';
     // Re-arm after each page: a short page or a tall viewport can leave the
     // sentinel in view without another intersection crossing. Failures wait
     // for an explicit retry instead of repeatedly hitting an unavailable API.
@@ -780,7 +805,7 @@ function updateLoadMore(state: LibraryViewState) {
         !container.hidden &&
         !state.loadingBooks &&
         !state.loadingMore &&
-        !state.loadMoreFailed
+        !state.loadFailure
     ) {
         state.loadMoreObserver?.observe(container);
     }

@@ -1,6 +1,6 @@
 import type { PDFDocumentProxy, PDFPageProxy, TextLayer } from 'pdfjs-dist/legacy/build/pdf.mjs';
 
-import { focusReaderSurface, revealChrome, shouldIgnoreReaderShortcut } from './controls';
+import { focusReaderSurface, revealChrome, shouldIgnoreReaderShortcut } from './chrome';
 import {
     appendExcerpt,
     createSearchPanel,

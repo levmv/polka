@@ -2,7 +2,7 @@ import { saveUserSettings } from '../api';
 import { clamp } from '../dom';
 import { iconElement } from '../icons';
 import type { ReaderFlow, ReaderPreferences } from '../types';
-import { focusReaderSurface, revealChrome } from './controls';
+import { focusReaderSurface, revealChrome } from './chrome';
 import {
     applyFoliateDisplay,
     DEFAULT_READER_COLUMN_WIDTH,

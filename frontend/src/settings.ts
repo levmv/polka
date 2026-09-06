@@ -4,7 +4,7 @@ import { createAppsPanel } from './settings/apps';
 import { createDevicesPanel } from './settings/devices';
 import { createGeneralPanel } from './settings/general';
 import { createStoragePanel } from './settings/storage';
-import { buttonEl } from './settings/ui';
+import { buttonEl, type SettingsPanel } from './settings/ui';
 import { createUsersPanel } from './settings/users';
 import type { CurrentUser } from './types';
 
@@ -45,6 +45,9 @@ export function openSettingsModal(
         backdropClass: 'modal-wide settings-backdrop',
         labelledBy: 'settings-title',
         closeExisting: true,
+        onClose: () => {
+            for (const panel of Object.values(panels)) panel.unmount?.();
+        },
     });
 
     const tabs = root.querySelector<HTMLElement>('.settings-tabs');
@@ -55,10 +58,10 @@ export function openSettingsModal(
     }
 
     const storagePanel = createStoragePanel();
-    const panels: Record<SettingsTab, (root: HTMLElement) => void> = {
+    const panels: Record<SettingsTab, SettingsPanel> = {
         general: createGeneralPanel(currentUser),
         devices: createDevicesPanel(currentUser),
-        storage: storagePanel.render,
+        storage: storagePanel,
         users: createUsersPanel(currentUser),
         apps: createAppsPanel(),
     };
@@ -79,7 +82,7 @@ export function openSettingsModal(
             containers.set(activeTab, container);
         }
         panel.replaceChildren(container);
-        panels[activeTab](container);
+        panels[activeTab].render(container);
     };
 
     // Storage shows live counts and free space. Refresh quietly whenever the tab
@@ -92,6 +95,7 @@ export function openSettingsModal(
 
     const tabButtons = renderTabs(tabs, availableTabs, activeTab, (tab) => {
         if (tab === activeTab) return;
+        panels[activeTab].unmount?.();
         activeTab = tab;
         updateTabSelection(tabButtons, activeTab);
         renderPanel();
