@@ -90,7 +90,7 @@ export function createModal(root: HTMLElement, options: ModalOptions = {}): Mana
                 document.removeEventListener('keydown', handleKeydown);
                 restoreFocus(state.returnFocus);
             } else {
-                focusTopModal();
+                focusTopModal(state.returnFocus);
             }
         },
         isOpen(): boolean {
@@ -589,14 +589,12 @@ function restoreFocus(target: HTMLElement | null): void {
     }
 }
 
-function focusTopModal(): void {
+function focusTopModal(returnFocus: HTMLElement | null): void {
     const state = modalStack[modalStack.length - 1];
     if (!state) return;
     const target =
-        state.returnFocus &&
-        document.contains(state.returnFocus) &&
-        state.controller.root.contains(state.returnFocus)
-            ? state.returnFocus
+        returnFocus && document.contains(returnFocus) && state.controller.root.contains(returnFocus)
+            ? returnFocus
             : state.controller.root;
     focusElement(target, true);
 }

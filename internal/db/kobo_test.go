@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -50,14 +51,12 @@ func TestKoboConnectionIncrementalLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	connection, token, err := database.ReplaceKoboConnection(context.Background(), user.ID, shelf.ID)
+	connection, err := database.ReplaceKoboConnection(context.Background(), user.ID, shelf.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if token == "" {
-		t.Fatal("empty raw token")
-	}
-	resolved, ok, err := database.KoboConnectionByToken(token)
+	token := connection.Token
+	resolved, ok, err := database.KoboConnectionByToken(strings.ToUpper(token))
 	if err != nil || !ok || resolved.ID != connection.ID {
 		t.Fatalf("resolve token = %+v, %v, %v", resolved, ok, err)
 	}
@@ -125,17 +124,17 @@ func TestKoboConnectionIncrementalLifecycle(t *testing.T) {
 		t.Fatalf("re-add = %+v", readded)
 	}
 
-	replacement, replacementToken, err := database.ReplaceKoboConnection(context.Background(), user.ID, shelf.ID)
+	replacement, err := database.ReplaceKoboConnection(context.Background(), user.ID, shelf.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if replacement.ID == connection.ID || replacementToken == token {
+	if replacement.ID == connection.ID || replacement.Token == token {
 		t.Fatal("connection replacement reused identity or token")
 	}
 	if _, ok, err := database.KoboConnectionByToken(token); err != nil || ok {
 		t.Fatalf("old token still resolves: ok=%v err=%v", ok, err)
 	}
-	if _, ok, err := database.KoboConnectionByToken(replacementToken); err != nil || !ok {
+	if _, ok, err := database.KoboConnectionByToken(replacement.Token); err != nil || !ok {
 		t.Fatalf("replacement token: ok=%v err=%v", ok, err)
 	}
 }
@@ -156,7 +155,7 @@ func TestKoboSyncPaginationQueryShelfAndCursorValidation(t *testing.T) {
 	if _, err := database.UpdateUserAccess(user.ID, UserAccess{Role: RoleReader, ContentScope: ContentScopeShelves, ShelfIDs: []string{shelf.ID}}); err != nil {
 		t.Fatal(err)
 	}
-	connection, _, err := database.ReplaceKoboConnection(context.Background(), user.ID, shelf.ID)
+	connection, err := database.ReplaceKoboConnection(context.Background(), user.ID, shelf.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +193,7 @@ func TestKoboConnectionCannotSelectInvisibleShelf(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := database.ReplaceKoboConnection(context.Background(), bob.ID, shelf.ID); !errors.Is(err, ErrShelfNotFound) {
+	if _, err := database.ReplaceKoboConnection(context.Background(), bob.ID, shelf.ID); !errors.Is(err, ErrShelfNotFound) {
 		t.Fatalf("invisible shelf error = %v", err)
 	}
 }

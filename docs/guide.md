@@ -177,13 +177,13 @@ device in Settings → Reading apps. An app password can read the catalog and
 update that account's reading progress, but cannot sign into the web app or
 edit and administer the shared library.
 
-The password is shown once. Use it over plain HTTP only on a trusted network,
-and use HTTPS or a VPN elsewhere.
+Letter case does not matter when entering an app password. Use plain HTTP only
+on a trusted network, and use HTTPS or a VPN elsewhere.
 
 ### OPDS
 
 Connect an OPDS client such as KOReader, Moon+ Reader, or PocketBook to
-`http://your-host/opds` with the account username and an app password. The
+`http://your-host/opds` with username `polka` and an app password. The
 catalog includes search, series, tags, and the shelves visible to that account.
 
 ### KOReader progress sync

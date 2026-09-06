@@ -12,6 +12,7 @@ import (
 type AppTokenDTO struct {
 	ID         string `json:"id"`
 	Name       string `json:"name"`
+	Token      string `json:"token"`
 	CreatedAt  int64  `json:"created_at"`
 	LastUsedAt *int64 `json:"last_used_at,omitzero"`
 }
@@ -20,15 +21,11 @@ type appTokenCreateRequest struct {
 	Name string `json:"name"`
 }
 
-type appTokenCreateDTO struct {
-	Name  string `json:"name"`
-	Token string `json:"token"`
-}
-
 func appTokenDTO(t db.AppToken) AppTokenDTO {
 	dto := AppTokenDTO{
 		ID:        t.ID,
 		Name:      t.Name,
+		Token:     t.Token,
 		CreatedAt: t.CreatedAt,
 	}
 	if t.LastUsedAt.Valid {
@@ -46,6 +43,7 @@ func appTokenDTOs(tokens []db.AppToken) []AppTokenDTO {
 }
 
 func (s *Server) handleAPIAppTokens(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "private, no-store")
 	tokens, err := s.db.ListAppTokens(UserID(r.Context()))
 	if err != nil {
 		serverError(w, err)
@@ -55,6 +53,7 @@ func (s *Server) handleAPIAppTokens(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAPIAppTokenCreate(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "private, no-store")
 	var req appTokenCreateRequest
 	if !readJSON(w, r, &req) {
 		return
@@ -74,7 +73,7 @@ func (s *Server) handleAPIAppTokenCreate(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, appTokenCreateDTO{Name: name, Token: token})
+	writeJSON(w, http.StatusCreated, appTokenDTO(*token))
 }
 
 func (s *Server) handleAPIAppTokenDelete(w http.ResponseWriter, r *http.Request) {

@@ -374,10 +374,11 @@ func TestOPDSDeliveryAcceptsAppToken(t *testing.T) {
 	defer database.Close()
 
 	u := mustUser(t, database, "alice", db.RoleMember)
-	token, err := database.CreateAppToken(u.ID, "koreader")
+	created, err := database.CreateAppToken(u.ID, "koreader")
 	if err != nil {
 		t.Fatalf("create app token: %v", err)
 	}
+	token := created.Token
 	s := newTestServer(database, dir)
 	handler := testRoutes(t, s)
 

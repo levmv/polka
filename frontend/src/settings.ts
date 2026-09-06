@@ -60,7 +60,7 @@ export function openSettingsModal(
         devices: createDevicesPanel(currentUser),
         storage: storagePanel.render,
         users: createUsersPanel(currentUser),
-        apps: createAppsPanel(currentUser),
+        apps: createAppsPanel(),
     };
 
     // Admins need Devices to enable sending; other roles see it only when enabled.

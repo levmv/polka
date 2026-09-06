@@ -25,12 +25,12 @@ func TestAPIAppTokensLifecycle(t *testing.T) {
 	if w.Code != http.StatusCreated {
 		t.Fatalf("create status = %d, want %d; body: %s", w.Code, http.StatusCreated, w.Body.String())
 	}
-	var created appTokenCreateDTO
+	var created AppTokenDTO
 	if err := json.UnmarshalRead(w.Body, &created); err != nil {
 		t.Fatalf("decode created token: %v", err)
 	}
-	if created.Name != "KOReader" || created.Token == "" {
-		t.Fatalf("created = %+v; want trimmed name and one-time token", created)
+	if created.Name != "KOReader" || created.Token == "" || created.ID == "" || created.CreatedAt == 0 {
+		t.Fatalf("created = %+v; want saved token with trimmed name", created)
 	}
 
 	w = httptest.NewRecorder()
@@ -42,11 +42,11 @@ func TestAPIAppTokensLifecycle(t *testing.T) {
 	if err := json.UnmarshalRead(w.Body, &tokens); err != nil {
 		t.Fatalf("decode tokens: %v", err)
 	}
-	if len(tokens) != 1 || tokens[0].Name != "KOReader" || tokens[0].ID == "" {
+	if len(tokens) != 1 || tokens[0] != created {
 		t.Fatalf("tokens = %+v; want one KOReader token", tokens)
 	}
-	if stringsContains(w.Body.String(), created.Token) {
-		t.Fatalf("raw token leaked in list response: %s", w.Body.String())
+	if got := w.Header().Get("Cache-Control"); got != "private, no-store" {
+		t.Fatalf("credential cache control = %q", got)
 	}
 
 	w = httptest.NewRecorder()
@@ -60,6 +60,14 @@ func TestAPIAppTokensLifecycle(t *testing.T) {
 	}
 	if len(bobTokens) != 0 {
 		t.Fatalf("tokens leaked across users: %+v", bobTokens)
+	}
+
+	w = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/app-tokens", nil)
+	req.SetBasicAuth("polka", created.Token)
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("device credential can retrieve credentials: %d", w.Code)
 	}
 
 	w = httptest.NewRecorder()
@@ -131,8 +139,4 @@ func TestAPIAppTokensErrors(t *testing.T) {
 	if w.Code != http.StatusInternalServerError || strings.TrimSpace(w.Body.String()) != "Internal server error" {
 		t.Fatalf("unexpected persistence error = %d %q; want generic 500", w.Code, w.Body.String())
 	}
-}
-
-func stringsContains(s, substr string) bool {
-	return substr != "" && strings.Contains(s, substr)
 }

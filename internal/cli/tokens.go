@@ -88,6 +88,10 @@ func tokenAdd(database *db.DB, args []string) error {
 		fs.Usage()
 		return reportedErrorf("usage: polka token add [--base-url <url>] <username> <name>")
 	}
+	base, err := tokenBaseURL(*baseURL)
+	if err != nil {
+		return err
+	}
 	user, err := resolveUser(database, positional[0])
 	if err != nil {
 		return err
@@ -101,11 +105,7 @@ func tokenAdd(database *db.DB, args []string) error {
 		return err
 	}
 
-	opdsURL, koSyncURL, err := tokenServiceURLs(*baseURL, token)
-	if err != nil {
-		return err
-	}
-	printCreatedToken(os.Stdout, positional[1], user.Username, token, opdsURL, koSyncURL)
+	printCreatedToken(os.Stdout, token.Name, user.Username, token.Token, base)
 	return nil
 }
 
@@ -133,39 +133,34 @@ func splitTokenAddArgs(args []string) (flags, positional []string, err error) {
 	return flags, positional, nil
 }
 
-func tokenServiceURLs(baseURL, token string) (string, string, error) {
-	koSyncPath := "/kosync/" + url.PathEscape(token)
+func tokenBaseURL(baseURL string) (string, error) {
 	baseURL = strings.TrimSpace(baseURL)
 	if baseURL == "" {
-		return "/opds", koSyncPath, nil
+		return "", nil
 	}
 
 	u, err := url.Parse(baseURL)
 	if err != nil {
-		return "", "", fmt.Errorf("parse --base-url: %w", err)
+		return "", fmt.Errorf("parse --base-url: %w", err)
 	}
 	if u.Scheme != "http" && u.Scheme != "https" || u.Host == "" {
-		return "", "", fmt.Errorf("--base-url must be an absolute http(s) URL")
+		return "", fmt.Errorf("--base-url must be an absolute http(s) URL")
 	}
 	u.RawQuery = ""
 	u.Fragment = ""
-	base := strings.TrimRight(u.String(), "/")
-	return base + "/opds", base + koSyncPath, nil
+	return strings.TrimRight(u.String(), "/"), nil
 }
 
-func printCreatedToken(w io.Writer, name, username, token, opdsURL, koSyncURL string) {
+func printCreatedToken(w io.Writer, name, username, token, baseURL string) {
 	fmt.Fprintf(w, "Created token %q for %q.\n\n", name, username)
 	fmt.Fprintf(w, "    %s\n\n", token)
-	fmt.Fprintln(w, "This is shown once. Store it now; it cannot be retrieved later,")
-	fmt.Fprintln(w, "only revoked.")
-	fmt.Fprintln(w)
 	fmt.Fprintln(w, "OPDS:")
-	fmt.Fprintf(w, "    URL:      %s\n", opdsURL)
-	fmt.Fprintf(w, "    Username: %s\n", username)
+	fmt.Fprintf(w, "    URL:      %s/opds\n", baseURL)
+	fmt.Fprintln(w, "    Username: polka")
 	fmt.Fprintln(w, "    Password: this token")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "KOReader sync:")
-	fmt.Fprintf(w, "    Server:   %s\n", koSyncURL)
+	fmt.Fprintf(w, "    Server:   %s/kosync/%s\n", baseURL, token)
 }
 
 func tokenList(database *db.DB, args []string) error {
@@ -191,8 +186,8 @@ func tokenList(database *db.DB, args []string) error {
 		if t.LastUsedAt.Valid {
 			used = time.Unix(t.LastUsedAt.Int64, 0).Format("2006-01-02")
 		}
-		fmt.Printf("%-24s created %s  last used %s\n",
-			t.Name, time.Unix(t.CreatedAt, 0).Format("2006-01-02"), used)
+		fmt.Printf("%-24s %s  created %s  last used %s\n",
+			t.Name, t.Token, time.Unix(t.CreatedAt, 0).Format("2006-01-02"), used)
 	}
 	return nil
 }

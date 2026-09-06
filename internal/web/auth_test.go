@@ -159,10 +159,11 @@ func TestAuthMiddlewareAppToken(t *testing.T) {
 	defer database.Close()
 
 	u := mustUser(t, database, "alice", "admin")
-	token, err := database.CreateAppToken(u.ID, "kobo")
+	created, err := database.CreateAppToken(u.ID, "kobo")
 	if err != nil {
 		t.Fatalf("create token: %v", err)
 	}
+	token := created.Token
 	s := newTestServer(database, dir)
 
 	// The token used as the Basic-auth password authenticates on a delivery path,

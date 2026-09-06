@@ -1,61 +1,70 @@
 package cli
 
 import (
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
+
+	"github.com/levmv/polka/internal/db"
 )
 
-func TestTokenServiceURLs(t *testing.T) {
-	tests := []struct {
-		name       string
-		baseURL    string
-		token      string
-		wantOPDS   string
-		wantKOSync string
-		wantErr    bool
-	}{
-		{
-			name:       "relative paths without base URL",
-			token:      "abc123",
-			wantOPDS:   "/opds",
-			wantKOSync: "/kosync/abc123",
-		},
-		{
-			name:       "absolute public URL",
-			baseURL:    "https://books.example/",
-			token:      "abc123",
-			wantOPDS:   "https://books.example/opds",
-			wantKOSync: "https://books.example/kosync/abc123",
-		},
-		{
-			name:       "reverse proxy prefix",
-			baseURL:    "https://example.test/polka/",
-			token:      "a/b c",
-			wantOPDS:   "https://example.test/polka/opds",
-			wantKOSync: "https://example.test/polka/kosync/a%2Fb%20c",
-		},
-		{
-			name:    "reject relative base",
-			baseURL: "books.example",
-			token:   "abc123",
-			wantErr: true,
-		},
+func TestTokenAddAndList(t *testing.T) {
+	database, err := db.InitPath(filepath.Join(t.TempDir(), "library.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	user, err := database.CreateUser("reader:name", "pw", db.RoleMember)
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	for _, tt := range tests {
+	for _, tt := range []struct {
+		name    string
+		baseURL string
+		wantURL string
+		wantErr bool
+	}{
+		{"relative paths", "", "", false},
+		{"public URL", "https://books.example/", "https://books.example", false},
+		{"proxy prefix", "https://books.example/polka/?query=1#fragment", "https://books.example/polka", false},
+		{"relative base", "books.example", "", true},
+		{"wrong scheme", "ftp://books.example", "", true},
+	} {
 		t.Run(tt.name, func(t *testing.T) {
-			gotOPDS, gotKOSync, err := tokenServiceURLs(tt.baseURL, tt.token)
+			output, err := captureStdout(t, func() error {
+				return tokenAdd(database, []string{"--base-url", tt.baseURL, user.Username, tt.name})
+			})
+			defer database.RevokeAppToken(user.ID, tt.name)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("token add error = %v, wantErr=%v", err, tt.wantErr)
+			}
+			tokens, err := database.ListAppTokens(user.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
 			if tt.wantErr {
-				if err == nil {
-					t.Fatalf("tokenServiceURLs returned nil error")
+				if len(tokens) != 0 {
+					t.Fatal("invalid base URL created a credential")
 				}
 				return
 			}
-			if err != nil {
-				t.Fatalf("tokenServiceURLs: %v", err)
+			if len(tokens) != 1 {
+				t.Fatalf("created tokens = %+v", tokens)
 			}
-			if gotOPDS != tt.wantOPDS || gotKOSync != tt.wantKOSync {
-				t.Fatalf("URLs = %q / %q; want %q / %q", gotOPDS, gotKOSync, tt.wantOPDS, tt.wantKOSync)
+			for _, want := range []string{
+				"Username: polka",
+				tt.wantURL + "/opds",
+				tt.wantURL + "/kosync/" + tokens[0].Token,
+			} {
+				if !strings.Contains(output, want) {
+					t.Fatalf("setup output missing %q: %s", want, output)
+				}
+			}
+			listed, err := captureStdout(t, func() error { return tokenList(database, []string{user.Username}) })
+			if err != nil || !strings.Contains(listed, tokens[0].Token) {
+				t.Fatalf("token list = %q, err=%v", listed, err)
 			}
 		})
 	}
