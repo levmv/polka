@@ -671,7 +671,7 @@ func (s *Server) basicAuthUserID(r *http.Request) (int64, bool, error) {
 	if !ok {
 		return 0, false, nil
 	}
-	// App tokens are self-identifying app passwords. Try the cheap token hash
+	// App tokens are self-identifying app passwords. Try the cheap token
 	// lookup before bcrypt so OPDS/download/cover clients do not pay password
 	// verification on every request.
 	if uid, ok, err := s.db.AppTokenUserID(password); err != nil || ok {

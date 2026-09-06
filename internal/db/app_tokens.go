@@ -1,10 +1,7 @@
 package db
 
 import (
-	"crypto/rand"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
@@ -12,12 +9,12 @@ import (
 	"github.com/levmv/polka/internal/id"
 )
 
-// AppToken is a long-lived per-device credential ("app password"). The raw token
-// is shown to the user exactly once at creation; only its SHA-256 hash is stored,
-// so this struct never carries the secret.
+// AppToken is a long-lived per-device credential ("app password"). Its secret
+// remains available to its owner so device setup can be resumed at any time.
 type AppToken struct {
 	ID         string
 	Name       string
+	Token      string
 	CreatedAt  int64
 	LastUsedAt sql.NullInt64
 }
@@ -30,47 +27,31 @@ var ErrTokenNameExists = errors.New("token name already in use")
 // client error; its concrete error retains the useful validation detail.
 var ErrInvalidAppTokenInput = errors.New("invalid app token input")
 
-// appTokenHash hashes a raw token the same way sessions hash theirs: the stored
-// value is never the secret itself, so a DB dump is not a set of working
-// credentials.
-func appTokenHash(token string) string {
-	sum := sha256.Sum256([]byte(token))
-	return hex.EncodeToString(sum[:])
-}
-
-// CreateAppToken issues a new random token for a user, stores only its hash, and
-// returns the raw token (the single time it is ever available). name must be
+// CreateAppToken issues and stores a random token for a user. name must be
 // non-empty and unique for that user.
-func (db *DB) CreateAppToken(userID int64, name string) (string, error) {
+func (db *DB) CreateAppToken(userID int64, name string) (*AppToken, error) {
 	if name == "" {
-		return "", errorWithDetail(ErrInvalidAppTokenInput, "token name must not be empty")
+		return nil, errorWithDetail(ErrInvalidAppTokenInput, "token name must not be empty")
 	}
 
-	// 16 bytes (128-bit) is ample for a personal-library credential and keeps the
-	// hex string short enough to copy comfortably; only its hash is stored.
-	buf := make([]byte, 16)
-	if _, err := rand.Read(buf); err != nil {
-		return "", fmt.Errorf("generate app token: %w", err)
-	}
-	token := hex.EncodeToString(buf)
-
-	_, err := db.Exec(
-		"INSERT INTO app_tokens (id, user_id, name, token_hash) VALUES (?, ?, ?, ?)",
-		id.New(id.AppToken), userID, name, appTokenHash(token),
-	)
+	token := &AppToken{ID: id.New(id.AppToken), Name: name, Token: newDeviceToken()}
+	err := db.QueryRow(
+		"INSERT INTO app_tokens (id, user_id, name, token) VALUES (?, ?, ?, ?) RETURNING created_at",
+		token.ID, userID, token.Name, token.Token,
+	).Scan(&token.CreatedAt)
 	if err != nil {
 		if isUniqueViolation(err) {
-			return "", ErrTokenNameExists
+			return nil, ErrTokenNameExists
 		}
-		return "", fmt.Errorf("insert app token: %w", err)
+		return nil, fmt.Errorf("insert app token: %w", err)
 	}
 	return token, nil
 }
 
-// ListAppTokens returns a user's tokens (no secrets), newest first.
+// ListAppTokens returns a user's tokens, including their secrets, newest first.
 func (db *DB) ListAppTokens(userID int64) ([]AppToken, error) {
 	rows, err := db.Query(
-		"SELECT id, name, created_at, last_used_at FROM app_tokens WHERE user_id = ? ORDER BY created_at DESC",
+		"SELECT id, name, token, created_at, last_used_at FROM app_tokens WHERE user_id = ? ORDER BY created_at DESC",
 		userID,
 	)
 	if err != nil {
@@ -81,7 +62,7 @@ func (db *DB) ListAppTokens(userID int64) ([]AppToken, error) {
 	var tokens []AppToken
 	for rows.Next() {
 		var t AppToken
-		if err := rows.Scan(&t.ID, &t.Name, &t.CreatedAt, &t.LastUsedAt); err != nil {
+		if err := rows.Scan(&t.ID, &t.Name, &t.Token, &t.CreatedAt, &t.LastUsedAt); err != nil {
 			return nil, fmt.Errorf("scan app token: %w", err)
 		}
 		tokens = append(tokens, t)
@@ -120,15 +101,14 @@ func (db *DB) RevokeAppTokenByID(userID int64, tokenID string) error {
 // most once per hour, like session bumps) so ordinary OPDS browsing does not turn
 // every request into a write.
 func (db *DB) AppTokenUserID(token string) (int64, bool, error) {
+	token = normalizeDeviceToken(token)
 	if token == "" {
 		return 0, false, nil
 	}
-	hash := appTokenHash(token)
-
 	var userID int64
 	var lastUsed sql.NullInt64
 	err := db.QueryRow(
-		"SELECT user_id, last_used_at FROM app_tokens WHERE token_hash = ?", hash,
+		"SELECT user_id, last_used_at FROM app_tokens WHERE token = ?", token,
 	).Scan(&userID, &lastUsed)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, false, nil
@@ -139,7 +119,7 @@ func (db *DB) AppTokenUserID(token string) (int64, bool, error) {
 
 	now := time.Now().Unix()
 	if !lastUsed.Valid || now-lastUsed.Int64 >= 3600 {
-		if _, err := db.Exec("UPDATE app_tokens SET last_used_at = ? WHERE token_hash = ?", now, hash); err != nil {
+		if _, err := db.Exec("UPDATE app_tokens SET last_used_at = ? WHERE token = ?", now, token); err != nil {
 			return 0, false, fmt.Errorf("bump app token: %w", err)
 		}
 	}

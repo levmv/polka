@@ -11,7 +11,7 @@ import { formField, textEl } from '../dom';
 import { errorMessage } from '../errors';
 import { confirmModal } from '../modal';
 import { showToast } from '../toast';
-import type { AppToken, CurrentUser, KoboConnection, Shelf } from '../types';
+import type { AppToken, KoboConnection, Shelf } from '../types';
 import {
     type AsyncLoadState,
     buttonEl,
@@ -37,7 +37,9 @@ type KoboState = AsyncLoadState & {
 // this value fixed because Basic authentication cannot encode ':' in a user ID.
 const appPasswordBasicUsername = 'polka';
 
-export function createAppsPanel(currentUser: CurrentUser): (root: HTMLElement) => void {
+// An experimental Kobo endpoint must not hide stable app-password and OPDS
+// settings when it fails, so these sections load independently.
+export function createAppsPanel(): (root: HTMLElement) => void {
     const state: AppsState = {
         loaded: false,
         loading: false,
@@ -51,15 +53,10 @@ export function createAppsPanel(currentUser: CurrentUser): (root: HTMLElement) =
         koboConnection: null,
         loadError: '',
     };
-    return (root) => renderAppsPanel(root, currentUser, state, koboState);
+    return (root) => renderAppsPanel(root, state, koboState);
 }
 
-function renderAppsPanel(
-    root: HTMLElement,
-    currentUser: CurrentUser,
-    state: AppsState,
-    koboState: KoboState,
-): void {
+function renderAppsPanel(root: HTMLElement, state: AppsState, koboState: KoboState): void {
     root.replaceChildren();
 
     root.append(
@@ -79,7 +76,7 @@ function renderAppsPanel(
     passwords.className = 'settings-app-passwords settings-block';
     root.append(passwords);
     renderAppPasswords(passwords, state);
-    root.append(createReadingAppConnections(currentUser));
+    root.append(createReadingAppConnections());
 }
 
 function renderAppPasswords(root: HTMLElement, state: AppsState): void {
@@ -89,11 +86,11 @@ function renderAppPasswords(root: HTMLElement, state: AppsState): void {
 
     const action = document.createElement('div');
     action.className = 'settings-section-action';
-    action.append(
-        buttonEl('settings-btn settings-primary-btn', 'New app password', () =>
-            openCreateAppPasswordModal(state, rerender),
-        ),
+    const create = buttonEl('settings-btn settings-primary-btn', 'New app password', () =>
+        openCreateAppPasswordModal(state, rerender),
     );
+    create.disabled = !state.loaded;
+    action.append(create);
 
     root.append(
         textEl('h4', 'settings-subsection-title', 'App passwords'),
@@ -177,6 +174,10 @@ function renderKoboConnection(root: HTMLElement, state: KoboState): void {
     }
 
     if (state.koboConnection) {
+        const connection = state.koboConnection;
+        const details = buttonEl('settings-btn', 'Details', () =>
+            openKoboConnectionDetails(connection.setup_url),
+        );
         const actions = [
             buttonEl('settings-btn', 'Replace…', () => openKoboSetupModal(state, rerender)),
             buttonEl('settings-btn settings-danger-btn', 'Revoke', async () => {
@@ -201,11 +202,11 @@ function renderKoboConnection(root: HTMLElement, state: KoboState): void {
         ];
         root.append(
             settingsItemRow({
-                name: state.koboConnection.shelf_name,
-                meta: `Connected ${formatTokenDate(state.koboConnection.created_at)} · Last used ${formatTokenDate(state.koboConnection.last_used_at)}`,
+                name: connection.shelf_name,
+                meta: `Connected ${formatTokenDate(connection.created_at)} · Last used ${formatTokenDate(connection.last_used_at)}`,
+                primaryAction: details,
                 actions,
                 rowClass: 'settings-kobo-row',
-                actionsClass: 'settings-kobo-actions',
             }),
         );
         return;
@@ -260,7 +261,7 @@ function openKoboSetupModal(state: KoboState, rerender: () => void): void {
                 const created = await createKoboConnection(shelf.value);
                 state.koboConnection = created;
                 rerender();
-                openKoboSecretModal(created.setup_url);
+                openKoboConnectionDetails(created.setup_url);
                 return true;
             } catch (err) {
                 showToast(errorMessage(err, 'Create Kobo connection failed'), { type: 'error' });
@@ -270,17 +271,11 @@ function openKoboSetupModal(state: KoboState, rerender: () => void): void {
     });
 }
 
-function openKoboSecretModal(setupURL: string): void {
+function openKoboConnectionDetails(setupURL: string): void {
     const body = document.createElement('div');
     body.className = 'settings-submodal-fields';
     body.append(
-        textEl(
-            'div',
-            'settings-submodal-hint',
-            "Finish setup now — this private URL isn't shown again. Hardware compatibility is still experimental.",
-        ),
         createReadonlyCopyField('Kobo setup URL', setupURL, {
-            inputClass: 'settings-kobo-url',
             copyLabel: 'Copy Kobo setup URL',
         }),
         textEl(
@@ -314,15 +309,9 @@ function openCreateAppPasswordModal(state: AppsState, rerender: () => void): voi
             }
             try {
                 const created = await createAppToken(name.value.trim());
-                try {
-                    state.tokens = await fetchAppTokens();
-                } catch {
-                    // The token exists; the list just failed to refresh. The
-                    // secret below still lets the user finish setup.
-                }
-                state.loaded = true;
+                state.tokens.unshift(created);
                 rerender();
-                openSecretModal(created.name, created.token);
+                openAppConnectionDetails(created.name, created.token);
                 return true;
             } catch (err) {
                 showToast(errorMessage(err, 'Create app password failed'), { type: 'error' });
@@ -332,18 +321,10 @@ function openCreateAppPasswordModal(state: AppsState, rerender: () => void): voi
     });
 }
 
-// Shown right after creation — polka stores only a hash, so this is the one
-// place where secret-bearing connection details can be copied. Stable OPDS
-// details are repeated here to keep setup in one contained flow.
-function openSecretModal(name: string, token: string): void {
+function openAppConnectionDetails(name: string, token: string): void {
     const body = document.createElement('div');
     body.className = 'settings-submodal-fields';
 
-    const hint = textEl(
-        'div',
-        'settings-submodal-hint',
-        "Finish setup now — polka keeps only a hash, so the password and URLs containing it aren't shown again.",
-    );
     const password = createReadonlyCopyField('App password', token, {
         copyLabel: 'Copy app password',
     });
@@ -381,12 +362,11 @@ function openSecretModal(name: string, token: string): void {
             "Set this as KOReader's custom progress sync server. The URL already includes the app password.",
         ),
         createReadonlyCopyField('Sync server URL', koSyncServerURL(token), {
-            inputClass: 'settings-kosync-url',
             copyLabel: 'Copy KOReader sync server URL',
         }),
     );
 
-    body.append(hint, password, catalog, progress);
+    body.append(password, catalog, progress);
 
     openInfoModal(
         `Connect ${name}`,
@@ -396,6 +376,9 @@ function openSecretModal(name: string, token: string): void {
 }
 
 function createTokenRow(token: AppToken, state: AppsState, rerender: () => void): HTMLElement {
+    const details = buttonEl('settings-btn', 'Details', () =>
+        openAppConnectionDetails(token.name, token.token),
+    );
     const revoke = buttonEl('settings-btn settings-danger-btn', 'Revoke', async () => {
         const confirmed = await confirmModal({
             title: 'Revoke app password',
@@ -417,11 +400,12 @@ function createTokenRow(token: AppToken, state: AppsState, rerender: () => void)
     return settingsItemRow({
         name: token.name,
         meta: `Created ${formatTokenDate(token.created_at)} · Last used ${formatTokenDate(token.last_used_at)}`,
+        primaryAction: details,
         actions: [revoke],
     });
 }
 
-function createReadingAppConnections(currentUser: CurrentUser): HTMLElement {
+function createReadingAppConnections(): HTMLElement {
     const wrap = document.createElement('section');
     wrap.className = 'settings-app-connections settings-block';
 
@@ -443,7 +427,7 @@ function createReadingAppConnections(currentUser: CurrentUser): HTMLElement {
         }),
     );
     catalog.append(
-        createReadonlyCopyField('Username', currentUser.username, {
+        createReadonlyCopyField('Username', appPasswordBasicUsername, {
             copyLabel: 'Copy username',
         }),
     );
@@ -455,7 +439,7 @@ function createReadingAppConnections(currentUser: CurrentUser): HTMLElement {
         textEl(
             'p',
             'settings-block-hint',
-            'When you create an app password, the setup screen gives you a complete custom sync server URL, ready to copy.',
+            'Open an app password’s connection details for a complete custom sync server URL, ready to copy.',
         ),
     );
 

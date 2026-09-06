@@ -195,13 +195,31 @@ export function createReadonlyCopyField(
 export function settingsItemRow(opts: {
     name: string;
     meta: string;
+    primaryAction?: HTMLButtonElement;
     actions?: readonly HTMLElement[];
     rowClass?: string;
-    actionsClass?: string;
 }): HTMLElement {
     const row = document.createElement('div');
     row.className = 'settings-item-row';
     if (opts.rowClass) row.classList.add(opts.rowClass);
+
+    const primaryAction = opts.primaryAction;
+    if (primaryAction) {
+        row.classList.add('is-clickable');
+        // The native button supplies keyboard access and receives focus when
+        // clicking elsewhere in the row. Other actions keep their own behavior.
+        row.addEventListener('click', (event) => {
+            if (
+                event.defaultPrevented ||
+                !(event.target instanceof Element) ||
+                event.target.closest('.settings-item-actions')
+            ) {
+                return;
+            }
+            primaryAction.focus();
+            primaryAction.click();
+        });
+    }
 
     const main = document.createElement('div');
     main.className = 'settings-item-main';
@@ -211,11 +229,11 @@ export function settingsItemRow(opts: {
     );
     row.appendChild(main);
 
-    if (opts.actions?.length) {
+    const itemActions = [...(primaryAction ? [primaryAction] : []), ...(opts.actions || [])];
+    if (itemActions.length) {
         const actions = document.createElement('div');
         actions.className = 'settings-item-actions';
-        if (opts.actionsClass) actions.classList.add(opts.actionsClass);
-        actions.append(...opts.actions);
+        actions.append(...itemActions);
         row.appendChild(actions);
     }
     return row;
@@ -332,8 +350,7 @@ export function openFormModal(opts: {
     modal.open(opts.focus);
 }
 
-// openInfoModal is a read-only stacked modal (one dismiss button), used for the
-// shown-once app-password secret.
+// openInfoModal is a read-only stacked modal with one dismiss button.
 export function openInfoModal(title: string, body: HTMLElement, focus?: HTMLElement): void {
     const { modal } = openModal({
         title,

@@ -25,8 +25,6 @@ import type {
     CleanupDuplicateMergeResult,
     ContinueReadingItem,
     CoverSearchResult,
-    CreatedAppToken,
-    CreatedKoboConnection,
     CurrentUser,
     CursorPage,
     DeliveryDevice,
@@ -575,8 +573,8 @@ export async function fetchDeliveries(limit: number = 20): Promise<DeliveryJob[]
     );
 }
 
-export async function createAppToken(name: string): Promise<CreatedAppToken> {
-    return await fetchJSON<CreatedAppToken>(
+export async function createAppToken(name: string): Promise<AppToken> {
+    return await fetchJSON<AppToken>(
         '/api/app-tokens',
         'Failed to create app password',
         jsonBody('POST', { name }),
@@ -591,8 +589,8 @@ export async function revokeAppToken(tokenId: string): Promise<void> {
     );
 }
 
-export async function createKoboConnection(shelfId: string): Promise<CreatedKoboConnection> {
-    return await fetchJSON<CreatedKoboConnection>(
+export async function createKoboConnection(shelfId: string): Promise<KoboConnection> {
+    return await fetchJSON<KoboConnection>(
         '/api/kobo-connection',
         'Failed to create Kobo connection',
         jsonBody('POST', { shelf_id: shelfId }),

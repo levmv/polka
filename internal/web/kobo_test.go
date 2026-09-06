@@ -57,13 +57,13 @@ func TestKoboNativeLibraryRoutesAndRevocation(t *testing.T) {
 	if err := database.AddBookToShelf(shelf.ID, user.ID, "w_kobo"); err != nil {
 		t.Fatal(err)
 	}
-	connection, token, err := database.ReplaceKoboConnection(context.Background(), user.ID, shelf.ID)
+	connection, err := database.ReplaceKoboConnection(context.Background(), user.ID, shelf.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := newTestServer(database, dir)
 	handler := testRoutes(t, s)
-	basePath := "/kobo/" + url.PathEscape(token)
+	basePath := "/kobo/" + url.PathEscape(connection.Token)
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, basePath+"/v1/initialization", nil)
@@ -289,7 +289,7 @@ func TestKoboMetadataRequiresCurrentUserScope(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	connection, token, err := database.ReplaceKoboConnection(context.Background(), reader.ID, shelf.ID)
+	connection, err := database.ReplaceKoboConnection(context.Background(), reader.ID, shelf.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -299,7 +299,7 @@ func TestKoboMetadataRequiresCurrentUserScope(t *testing.T) {
 
 	s := newTestServer(database, dir)
 	handler := testRoutes(t, s)
-	path := "/kobo/" + url.PathEscape(token) + "/v1/library/a_scoped_kobo/metadata"
+	path := "/kobo/" + url.PathEscape(connection.Token) + "/v1/library/a_scoped_kobo/metadata"
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
 	if w.Code != http.StatusOK {

@@ -16,14 +16,15 @@ func TestKOReaderSyncRoutes(t *testing.T) {
 
 	alice := mustUser(t, database, "alice", db.RoleMember)
 	bob := mustUser(t, database, "bob", db.RoleMember)
-	aliceToken, err := database.CreateAppToken(alice.ID, "koreader-a")
+	aliceCredential, err := database.CreateAppToken(alice.ID, "koreader-a")
 	if err != nil {
 		t.Fatalf("create alice token: %v", err)
 	}
-	bobToken, err := database.CreateAppToken(bob.ID, "koreader-b")
+	bobCredential, err := database.CreateAppToken(bob.ID, "koreader-b")
 	if err != nil {
 		t.Fatalf("create bob token: %v", err)
 	}
+	aliceToken, bobToken := aliceCredential.Token, bobCredential.Token
 
 	s := newTestServer(database, dir)
 	handler := testRoutes(t, s)
@@ -133,10 +134,11 @@ func TestKOReaderOfflineReplaySequence(t *testing.T) {
 	defer database.Close()
 
 	user := mustUser(t, database, "reader", db.RoleMember)
-	token, err := database.CreateAppToken(user.ID, "koreader")
+	created, err := database.CreateAppToken(user.ID, "koreader")
 	if err != nil {
 		t.Fatalf("create app token: %v", err)
 	}
+	token := created.Token
 	s := newTestServer(database, dir)
 	handler := testRoutes(t, s)
 

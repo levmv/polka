@@ -37,7 +37,7 @@ func TestAPIKoboConnectionLifecycleAndIsolation(t *testing.T) {
 	if w.Code != http.StatusCreated {
 		t.Fatalf("create = %d %s", w.Code, w.Body.String())
 	}
-	var created koboConnectionCreateDTO
+	var created KoboConnectionDTO
 	if err := json.UnmarshalRead(w.Body, &created); err != nil {
 		t.Fatal(err)
 	}
@@ -45,15 +45,31 @@ func TestAPIKoboConnectionLifecycleAndIsolation(t *testing.T) {
 	if err != nil || setupURL.Scheme != "https" || setupURL.Host != "books.example" || !strings.HasPrefix(setupURL.Path, "/kobo/") {
 		t.Fatalf("setup URL = %q, err=%v", created.SetupURL, err)
 	}
-	secret := strings.TrimPrefix(setupURL.Path, "/kobo/")
-	if secret == "" {
+	if setupURL.Path == "/kobo/" {
 		t.Fatal("setup URL has no token")
 	}
 
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodGet, "/api/kobo-connection", nil))
-	if w.Code != http.StatusOK || strings.Contains(w.Body.String(), secret) || !strings.Contains(w.Body.String(), `"shelf_name":"Travel"`) {
+	if w.Code != http.StatusOK {
 		t.Fatalf("listed connection = %d %s", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("Cache-Control"); got != "private, no-store" {
+		t.Fatalf("credential cache control = %q", got)
+	}
+	var listed KoboConnectionDTO
+	if err := json.UnmarshalRead(w.Body, &listed); err != nil {
+		t.Fatal(err)
+	}
+	listedURL, err := url.Parse(listed.SetupURL)
+	if err != nil || listedURL.Path != setupURL.Path || listed.ShelfID != shelf.ID {
+		t.Fatalf("retrieved connection = %+v, err=%v", listed, err)
+	}
+
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/kobo-connection", nil))
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated connection = %d", w.Code)
 	}
 
 	w = httptest.NewRecorder()

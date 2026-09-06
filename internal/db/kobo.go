@@ -2,10 +2,8 @@ package db
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
@@ -29,6 +27,7 @@ type KoboConnection struct {
 	UserID     int64
 	ShelfID    string
 	ShelfName  string
+	Token      string
 	Revision   int64
 	CreatedAt  int64
 	UpdatedAt  int64
@@ -68,26 +67,15 @@ type koboCandidate struct {
 	Fingerprint string
 }
 
-func koboTokenHash(token string) string {
-	sum := sha256.Sum256([]byte(token))
-	return hex.EncodeToString(sum[:])
-}
-
-func newKoboToken() string {
-	buf := make([]byte, 24)
-	rand.Read(buf)
-	return base64.RawURLEncoding.EncodeToString(buf)
-}
-
 // ReplaceKoboConnection creates a fresh URL credential for one selected shelf.
 // Replacing instead of editing makes both revocation and a shelf change atomic:
 // the old token and its projection disappear in the same transaction.
-func (db *DB) ReplaceKoboConnection(ctx context.Context, userID int64, shelfID string) (*KoboConnection, string, error) {
+func (db *DB) ReplaceKoboConnection(ctx context.Context, userID int64, shelfID string) (*KoboConnection, error) {
 	shelf, err := db.GetShelfForUser(shelfID, userID)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
-	token := newKoboToken()
+	token := newDeviceToken()
 	connectionID := id.New(id.KoboConnection)
 
 	err = db.Transact(ctx, func(tx *sql.Tx) error {
@@ -95,26 +83,22 @@ func (db *DB) ReplaceKoboConnection(ctx context.Context, userID int64, shelfID s
 			return fmt.Errorf("replace kobo connection: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO kobo_connections (id, user_id, shelf_id, token_hash)
+			INSERT INTO kobo_connections (id, user_id, shelf_id, token)
 			VALUES (?, ?, ?, ?)
-		`, connectionID, userID, shelf.ID, koboTokenHash(token)); err != nil {
+		`, connectionID, userID, shelf.ID, token); err != nil {
 			return fmt.Errorf("insert kobo connection: %w", err)
 		}
 		return nil
 	})
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
-	connection, err := db.KoboConnectionForUser(userID)
-	if err != nil {
-		return nil, "", err
-	}
-	return connection, token, nil
+	return db.KoboConnectionForUser(userID)
 }
 
 func (db *DB) KoboConnectionForUser(userID int64) (*KoboConnection, error) {
 	return scanKoboConnection(db.QueryRow(`
-		SELECT kc.id, kc.user_id, kc.shelf_id, s.name, kc.revision,
+		SELECT kc.id, kc.user_id, kc.shelf_id, s.name, kc.token, kc.revision,
 		       kc.created_at, kc.updated_at, kc.last_used_at
 		FROM kobo_connections kc
 		JOIN shelves s ON s.id = kc.shelf_id
@@ -125,7 +109,7 @@ func (db *DB) KoboConnectionForUser(userID int64) (*KoboConnection, error) {
 func scanKoboConnection(row *sql.Row) (*KoboConnection, error) {
 	var connection KoboConnection
 	err := row.Scan(
-		&connection.ID, &connection.UserID, &connection.ShelfID, &connection.ShelfName,
+		&connection.ID, &connection.UserID, &connection.ShelfID, &connection.ShelfName, &connection.Token,
 		&connection.Revision, &connection.CreatedAt, &connection.UpdatedAt, &connection.LastUsedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -148,20 +132,21 @@ func (db *DB) DeleteKoboConnection(userID int64) error {
 	return nil
 }
 
-// KoboConnectionByToken authenticates a Kobo URL without retaining its secret.
+// KoboConnectionByToken authenticates a Kobo URL using its device credential.
 // The last-used timestamp is throttled so cover and download traffic does not
 // turn every request into a database write.
 func (db *DB) KoboConnectionByToken(token string) (*KoboConnection, bool, error) {
+	token = normalizeDeviceToken(token)
 	if token == "" {
 		return nil, false, nil
 	}
 	connection, err := scanKoboConnection(db.QueryRow(`
-		SELECT kc.id, kc.user_id, kc.shelf_id, s.name, kc.revision,
+		SELECT kc.id, kc.user_id, kc.shelf_id, s.name, kc.token, kc.revision,
 		       kc.created_at, kc.updated_at, kc.last_used_at
 		FROM kobo_connections kc
 		JOIN shelves s ON s.id = kc.shelf_id
-		WHERE kc.token_hash = ?
-	`, koboTokenHash(token)))
+		WHERE kc.token = ?
+	`, token))
 	if errors.Is(err, ErrKoboConnectionNotFound) {
 		return nil, false, nil
 	}

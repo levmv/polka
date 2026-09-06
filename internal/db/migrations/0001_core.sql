@@ -187,13 +187,13 @@ CREATE TABLE sessions (
 
 CREATE INDEX idx_sessions_user_id ON sessions(user_id);
 
--- Device credentials ("app passwords") retain only a SHA-256 token hash and
--- have no automatic expiry. Auth middleware restricts their accepted routes.
+-- Device credentials remain retrievable for setup and have no automatic expiry.
+-- Auth middleware restricts their accepted routes.
 CREATE TABLE app_tokens (
     id           TEXT PRIMARY KEY,
     user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     name         TEXT NOT NULL,
-    token_hash   TEXT NOT NULL UNIQUE,
+    token        TEXT NOT NULL UNIQUE,
     created_at   INTEGER NOT NULL DEFAULT (unixepoch()),
     last_used_at INTEGER,
     UNIQUE (user_id, name)
@@ -382,13 +382,13 @@ CREATE TABLE user_annotations (
 
 CREATE INDEX idx_user_annotations_asset ON user_annotations(user_id, asset_id, created_at);
 
--- One native Kobo connection per account, projecting one shelf. Only the
--- SHA-256 URL-token hash is retained; replacing the connection revokes its URL.
+-- One native Kobo connection per account, projecting one shelf. Its setup URL
+-- remains retrievable; replacing the connection revokes the previous URL.
 CREATE TABLE kobo_connections (
     id           TEXT PRIMARY KEY,
     user_id      INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
     shelf_id     TEXT NOT NULL REFERENCES shelves(id) ON DELETE CASCADE,
-    token_hash   TEXT NOT NULL UNIQUE,
+    token        TEXT NOT NULL UNIQUE,
     revision     INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0),
     created_at   INTEGER NOT NULL DEFAULT (unixepoch()),
     updated_at   INTEGER NOT NULL DEFAULT (unixepoch()),

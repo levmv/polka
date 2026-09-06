@@ -5267,10 +5267,6 @@ body.modal_open {
     margin-top: 0.55rem;
 }
 
-.settings-kobo-actions {
-    gap: 0.4rem;
-}
-
 .settings-app-methods {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -5525,6 +5521,14 @@ body.modal_open {
     border-top: 0;
 }
 
+.settings-item-row.is-clickable {
+    cursor: pointer;
+}
+
+.settings-item-row.is-clickable:hover {
+    background: var(--surface-subtle);
+}
+
 .settings-item-main {
     min-width: 0;
 }
@@ -5545,6 +5549,7 @@ body.modal_open {
 .settings-item-actions {
     display: flex;
     justify-content: flex-end;
+    gap: 0.4rem;
 }
 
 .settings-user-list {
@@ -5929,6 +5934,10 @@ body.modal_open {
 
     .settings-opds-row {
         grid-template-columns: 1fr;
+    }
+
+    .settings-connection-field .settings-opds-row {
+        grid-template-columns: minmax(0, 1fr) auto;
     }
 
     .settings-app-methods {

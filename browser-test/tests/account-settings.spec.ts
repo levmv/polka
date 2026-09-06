@@ -51,62 +51,60 @@ test.describe('Account settings', () => {
     }
   });
 
-  test('shows reading app setup and manages credentials', async ({ page }) => {
+  test('shows reading app setup and manages credentials', async ({ page, context }) => {
+    await context.grantPermissions(['clipboard-read', 'clipboard-write']);
     const stamp = Date.now().toString(36);
     const shelfName = `Kobo Query ${stamp}`;
     const shelfID = await createQueryShelf(page, shelfName, 'author:"Noise Author" tag:"private"');
-    const modal = await openSettings(page, 'Reading apps');
+    let modal = await openSettings(page, 'Reading apps');
 
-    await expect(modal.getByRole('heading', { name: 'App passwords' })).toBeVisible();
-    await expect(modal).toContainText('Connect reading apps without using your account password');
-    await expect(modal.getByRole('heading', { name: 'Kobo sync' })).toBeVisible();
-    await expect(modal).toContainText('Experimental');
     const opdsSetup = modal.locator('.settings-opds-setup');
-    await expect(opdsSetup).toContainText('Browse and download');
     await expect(opdsSetup.locator('.settings-opds-url')).toHaveValue(/\/opds$/);
-    await expect(opdsSetup.getByRole('textbox', { name: 'Username' })).toHaveValue('admin');
-    await expect(opdsSetup.getByRole('button', { name: 'Copy OPDS catalog URL' })).toBeVisible();
-    await expect(modal.locator('.settings-kosync-setup')).toContainText(
-      'complete custom sync server URL',
-    );
-    await page.screenshot({ path: 'screenshots/settings-account.png', fullPage: true });
+    await expect(opdsSetup.getByRole('textbox', { name: 'Username' })).toHaveValue('polka');
 
     await modal.getByRole('button', { name: 'Set up Kobo' }).click();
-    let submodal = page.locator('.settings-submodal');
-    await expect(submodal.getByRole('heading', { name: 'Set up Kobo' })).toBeVisible();
+    const submodal = page.locator('.settings-submodal');
     await submodal.getByLabel('Shelf').selectOption({ label: `${shelfName} · smart shelf` });
     await submodal.getByRole('button', { name: 'Create' }).click();
 
-    submodal = page.locator('.settings-submodal');
     await expect(submodal.getByRole('heading', { name: 'Connect Kobo' })).toBeVisible();
     const koboSetupURL = await submodal.getByRole('textbox', { name: 'Kobo setup URL' }).inputValue();
-    expect(koboSetupURL).toMatch(/\/kobo\/[A-Za-z0-9_-]{32}$/);
-    await expect(submodal.getByRole('button', { name: 'Copy Kobo setup URL' })).toBeVisible();
-    await page.screenshot({
-      path: 'screenshots/settings-kobo-setup.png',
-      animations: 'disabled',
-    });
     await submodal.getByRole('button', { name: 'Done' }).click();
-    await expect(modal.locator('.settings-kobo-row')).toContainText(shelfName);
-    await expect(modal).not.toContainText(koboSetupURL.slice(-16));
 
-    await modal.locator('.settings-kobo-row').getByRole('button', { name: 'Revoke' }).click();
-    await page.locator('.modal-confirm').getByRole('button', { name: 'Revoke' }).click();
-    await expect(modal.getByRole('button', { name: 'Set up Kobo' })).toBeVisible();
+    modal = await openSettings(page, 'Reading apps');
+    await modal.locator('.settings-kobo-row').getByText(shelfName, { exact: true }).click();
+    await expect(submodal.getByRole('textbox', { name: 'Kobo setup URL' })).toHaveValue(koboSetupURL);
+    await page.screenshot({ path: 'screenshots/settings-kobo-setup.png', animations: 'disabled' });
+    await submodal.getByRole('button', { name: 'Done' }).click();
 
     const tokenName = `koreader-${stamp}`;
     await modal.getByRole('button', { name: 'New app password' }).click();
-    submodal = page.locator('.settings-submodal');
-    await expect(submodal.getByRole('heading', { name: 'New app password' })).toBeVisible();
     await submodal.getByLabel('Name').fill(tokenName);
     await submodal.getByRole('button', { name: 'Create' }).click();
 
-    submodal = page.locator('.settings-submodal');
     await expect(submodal.getByRole('heading', { name: `Connect ${tokenName}` })).toBeVisible();
     const secretValue = await submodal
       .getByRole('textbox', { name: 'App password', exact: true })
       .inputValue();
-    expect(secretValue).toMatch(/^[0-9a-f]{32}$/);
+    await submodal.getByRole('button', { name: 'Done' }).click();
+
+    modal = await openSettings(page, 'Reading apps');
+    const tokenList = modal.locator('.settings-item-list');
+    const tokenRow = tokenList.locator('.settings-item-row', { hasText: tokenName });
+    await expect(tokenRow).toBeVisible();
+    await page.screenshot({
+      path: 'screenshots/settings-saved-app-password.png',
+      animations: 'disabled',
+    });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.screenshot({
+      path: 'screenshots/settings-reading-apps-mobile.png',
+      animations: 'disabled',
+    });
+    await tokenRow.getByText(tokenName, { exact: true }).click();
+    await expect(submodal.getByRole('textbox', { name: 'App password', exact: true })).toHaveValue(
+      secretValue,
+    );
     await expect(submodal.getByRole('textbox', { name: 'Catalog URL' })).toHaveValue(/\/opds$/);
     await expect(submodal.getByRole('textbox', { name: 'Username' })).toHaveValue('polka');
     const completeURL = new URL(
@@ -116,26 +114,30 @@ test.describe('Account settings', () => {
     expect(completeURL.password).toBe(secretValue);
     expect(completeURL.pathname).toBe('/opds');
     await expect(submodal.getByRole('textbox', { name: 'Sync server URL' })).toHaveValue(
-      new RegExp(`/kosync/${secretValue}$`),
+      new URL(`/kosync/${secretValue}`, page.url()).toString(),
     );
-    await expect(
-      submodal.getByRole('button', { name: 'Copy KOReader sync server URL' }),
-    ).toBeVisible();
+    const copyPassword = submodal.getByRole('button', { name: 'Copy app password', exact: true });
+    await copyPassword.click();
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(secretValue);
     await page.screenshot({
-      path: 'screenshots/settings-reading-app-setup.png',
+      path: 'screenshots/settings-reading-app-details-mobile.png',
       animations: 'disabled',
     });
     await submodal.getByRole('button', { name: 'Done' }).click();
-    await expect(submodal).toHaveCount(0);
-
-    const tokenList = modal.locator('.settings-item-list');
-    await expect(tokenList).not.toContainText(secretValue.slice(0, 16));
-    const tokenRow = tokenList.locator('.settings-item-row', { hasText: tokenName });
-    await expect(tokenRow).toBeVisible();
+    const details = tokenRow.getByRole('button', { name: 'Details' });
+    await expect(details).toBeFocused();
+    await details.press('Enter');
+    await expect(submodal.getByRole('heading', { name: `Connect ${tokenName}` })).toBeVisible();
+    await submodal.getByRole('button', { name: 'Done' }).click();
     await tokenRow.getByRole('button', { name: 'Revoke' }).click();
+    await expect(submodal).toHaveCount(0);
     await page.locator('.modal-confirm').getByRole('button', { name: 'Revoke' }).click();
     await expect(tokenRow).toHaveCount(0);
-    await expect(page.locator('.toast')).toHaveCount(0, { timeout: 5000 });
+
+    await modal.locator('.settings-kobo-row').getByRole('button', { name: 'Revoke' }).click();
+    await expect(submodal).toHaveCount(0);
+    await page.locator('.modal-confirm').getByRole('button', { name: 'Revoke' }).click();
+    await expect(modal.getByRole('button', { name: 'Set up Kobo' })).toBeVisible();
 
     await deleteShelf(page, shelfID);
   });

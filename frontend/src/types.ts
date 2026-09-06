@@ -245,26 +245,19 @@ export interface UserAccount {
 export interface AppToken {
     id: string;
     name: string;
+    token: string;
     created_at: number;
     last_used_at?: number;
-}
-
-export interface CreatedAppToken {
-    name: string;
-    token: string;
 }
 
 export interface KoboConnection {
     id: string;
     shelf_id: string;
     shelf_name: string;
+    setup_url: string;
     created_at: number;
     updated_at: number;
     last_used_at?: number;
-}
-
-export interface CreatedKoboConnection extends KoboConnection {
-    setup_url: string;
 }
 
 export interface IngestStatus {

@@ -475,8 +475,3 @@ function emailSecurityValue(value: string): EmailDeliverySettings['security'] {
     if (value === 'starttls' || value === 'ssl' || value === 'plain') return value;
     return 'auto';
 }
-
-// Reading-app integrations load independently: an experimental Kobo endpoint
-// must not hide stable app-password and OPDS settings when it fails. KOSync's
-// secret URL is still shown only in the one-time result dialog after password
-// creation.

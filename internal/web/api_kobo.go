@@ -12,6 +12,7 @@ type KoboConnectionDTO struct {
 	ID         string `json:"id"`
 	ShelfID    string `json:"shelf_id"`
 	ShelfName  string `json:"shelf_name"`
+	SetupURL   string `json:"setup_url"`
 	CreatedAt  int64  `json:"created_at"`
 	UpdatedAt  int64  `json:"updated_at"`
 	LastUsedAt *int64 `json:"last_used_at,omitzero"`
@@ -21,16 +22,12 @@ type koboConnectionCreateRequest struct {
 	ShelfID string `json:"shelf_id"`
 }
 
-type koboConnectionCreateDTO struct {
-	KoboConnectionDTO
-	SetupURL string `json:"setup_url"`
-}
-
-func koboConnectionDTO(connection *db.KoboConnection) KoboConnectionDTO {
+func koboConnectionDTO(r *http.Request, connection *db.KoboConnection) KoboConnectionDTO {
 	dto := KoboConnectionDTO{
 		ID:        connection.ID,
 		ShelfID:   connection.ShelfID,
 		ShelfName: connection.ShelfName,
+		SetupURL:  absoluteURL(r, "/kobo/"+url.PathEscape(connection.Token), nil),
 		CreatedAt: connection.CreatedAt,
 		UpdatedAt: connection.UpdatedAt,
 	}
@@ -41,6 +38,7 @@ func koboConnectionDTO(connection *db.KoboConnection) KoboConnectionDTO {
 }
 
 func (s *Server) handleAPIKoboConnection(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "private, no-store")
 	connection, err := s.db.KoboConnectionForUser(UserID(r.Context()))
 	if errors.Is(err, db.ErrKoboConnectionNotFound) {
 		writeJSON(w, http.StatusOK, nil)
@@ -50,10 +48,11 @@ func (s *Server) handleAPIKoboConnection(w http.ResponseWriter, r *http.Request)
 		serverError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, koboConnectionDTO(connection))
+	writeJSON(w, http.StatusOK, koboConnectionDTO(r, connection))
 }
 
 func (s *Server) handleAPIKoboConnectionCreate(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "private, no-store")
 	var req koboConnectionCreateRequest
 	if !readJSON(w, r, &req) {
 		return
@@ -62,7 +61,7 @@ func (s *Server) handleAPIKoboConnectionCreate(w http.ResponseWriter, r *http.Re
 		http.Error(w, "Shelf is required", http.StatusBadRequest)
 		return
 	}
-	connection, token, err := s.db.ReplaceKoboConnection(r.Context(), UserID(r.Context()), req.ShelfID)
+	connection, err := s.db.ReplaceKoboConnection(r.Context(), UserID(r.Context()), req.ShelfID)
 	if errors.Is(err, db.ErrShelfNotFound) {
 		http.Error(w, "Shelf not found", http.StatusBadRequest)
 		return
@@ -71,11 +70,7 @@ func (s *Server) handleAPIKoboConnectionCreate(w http.ResponseWriter, r *http.Re
 		serverError(w, err)
 		return
 	}
-	setupPath := "/kobo/" + url.PathEscape(token)
-	writeJSON(w, http.StatusCreated, koboConnectionCreateDTO{
-		KoboConnectionDTO: koboConnectionDTO(connection),
-		SetupURL:          absoluteURL(r, setupPath, nil),
-	})
+	writeJSON(w, http.StatusCreated, koboConnectionDTO(r, connection))
 }
 
 func (s *Server) handleAPIKoboConnectionDelete(w http.ResponseWriter, r *http.Request) {
