@@ -21,6 +21,7 @@ import {
     openFormModal,
     openInfoModal,
     renderAsyncSection,
+    type SettingsPanel,
     settingsItemRow,
 } from './ui';
 
@@ -39,7 +40,7 @@ const appPasswordBasicUsername = 'polka';
 
 // An experimental Kobo endpoint must not hide stable app-password and OPDS
 // settings when it fails, so these sections load independently.
-export function createAppsPanel(): (root: HTMLElement) => void {
+export function createAppsPanel(): SettingsPanel {
     const state: AppsState = {
         loaded: false,
         loading: false,
@@ -53,7 +54,7 @@ export function createAppsPanel(): (root: HTMLElement) => void {
         koboConnection: null,
         loadError: '',
     };
-    return (root) => renderAppsPanel(root, state, koboState);
+    return { render: (root) => renderAppsPanel(root, state, koboState) };
 }
 
 function renderAppsPanel(root: HTMLElement, state: AppsState, koboState: KoboState): void {

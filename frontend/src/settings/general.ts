@@ -6,7 +6,7 @@ import {
     saveUserSettings,
 } from '../api';
 import { appVersion } from '../bootstrap';
-import { createSelect } from '../components/select';
+import { createSelect, type ManagedSelect } from '../components/select';
 import { createToggle } from '../components/toggle';
 import { textEl } from '../dom';
 import { errorMessage } from '../errors';
@@ -20,6 +20,7 @@ import {
     inlineSettingsButton,
     loadingNote,
     renderAsyncSection,
+    type SettingsPanel,
     settingsRow,
 } from './ui';
 
@@ -29,9 +30,11 @@ type GeneralState = AsyncLoadState & {
     storageLoading: boolean;
     storageError: string;
     writebackHost: HTMLElement | null;
+    themeSelect: ManagedSelect | null;
+    writebackSelect: ManagedSelect | null;
 };
 
-export function createGeneralPanel(currentUser: CurrentUser): (root: HTMLElement) => void {
+export function createGeneralPanel(currentUser: CurrentUser): SettingsPanel {
     const state: GeneralState = {
         loaded: false,
         loading: false,
@@ -40,9 +43,22 @@ export function createGeneralPanel(currentUser: CurrentUser): (root: HTMLElement
         storageLoading: false,
         storageError: '',
         writebackHost: null,
+        themeSelect: null,
+        writebackSelect: null,
         loadError: '',
     };
-    return (root) => renderGeneralPanel(root, currentUser, state);
+    return {
+        render: (root) => renderGeneralPanel(root, currentUser, state),
+        unmount: () => destroyGeneralControls(state),
+    };
+}
+
+function destroyGeneralControls(state: GeneralState): void {
+    state.themeSelect?.destroy();
+    state.writebackSelect?.destroy();
+    state.themeSelect = null;
+    state.writebackSelect = null;
+    state.writebackHost = null;
 }
 
 // The General panel autosaves: personal controls persist through PUT
@@ -54,6 +70,8 @@ function renderGeneralPanel(
     currentUser: CurrentUser,
     state: GeneralState,
 ): void {
+    if (!root.isConnected) return;
+    destroyGeneralControls(state);
     root.replaceChildren();
     root.append(textEl('h3', 'settings-section-title', 'General'));
 
@@ -108,6 +126,8 @@ function renderGeneralPanel(
             });
         },
     });
+
+    state.themeSelect = themeSelect;
 
     const continueToggle = createToggle({
         ariaLabel: 'Show Continue reading rail',
@@ -187,7 +207,10 @@ function appendWritebackRow(rows: HTMLElement, state: GeneralState): void {
     const rerender = () => {
         // Tab changes can replace the host during a request. Update the latest
         // host without rebuilding the personal controls and losing their edits.
-        state.writebackHost?.replaceChildren(
+        if (!state.writebackHost) return;
+        state.writebackSelect?.destroy();
+        state.writebackSelect = null;
+        state.writebackHost.replaceChildren(
             state.status
                 ? writebackControl(state, rerender)
                 : state.storageError
@@ -242,6 +265,7 @@ function writebackControl(state: GeneralState, rerender: () => void): HTMLElemen
             ),
     });
 
+    state.writebackSelect = select;
     wrap.append(select.el, writebackCountsLine(state, rerender));
     return wrap;
 }

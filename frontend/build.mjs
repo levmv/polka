@@ -16,29 +16,29 @@ const common = {
     write: true,
 };
 
-await esbuild.build({
-    ...common,
-    entryPoints: ['frontend/src/main.ts'],
-    outfile: `${staticRoot}/app.js`,
-});
-
-await esbuild.build({
-    ...common,
-    entryPoints: ['frontend/src/reader/index.ts'],
-    outfile: `${staticRoot}/reader.js`,
-});
-
-await esbuild.build({
-    ...common,
-    entryPoints: ['frontend/src/reader/pdf-index.ts'],
-    outfile: `${staticRoot}/pdf-reader.js`,
-});
-
-await esbuild.build({
-    ...common,
-    entryPoints: ['node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs'],
-    outfile: `${staticRoot}/pdf.worker.js`,
-});
+for (const [entry, name, allowedEngine] of [
+    ['frontend/src/main.ts', 'app.js', null],
+    ['frontend/src/reader/index.ts', 'reader.js', 'foliate-js'],
+    ['frontend/src/reader/pdf-index.ts', 'pdf-reader.js', 'pdfjs-dist'],
+    ['node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs', 'pdf.worker.js', 'pdfjs-dist'],
+]) {
+    const { metafile } = await esbuild.build({
+        ...common,
+        entryPoints: [entry],
+        outfile: `${staticRoot}/${name}`,
+        metafile: true,
+    });
+    // Shared UI must not pull a reader engine into the app or the other reader.
+    // Check bundled contributions, so erased type imports remain harmless.
+    for (const output of Object.values(metafile.outputs)) {
+        for (const [path, input] of Object.entries(output.inputs)) {
+            const engine = path.match(/node_modules\/(foliate-js|pdfjs-dist)\//)?.[1];
+            if (input.bytesInOutput > 0 && engine && engine !== allowedEngine) {
+                throw new Error(`${name} unexpectedly bundles ${engine} via ${path}`);
+            }
+        }
+    }
+}
 
 await esbuild.build({
     ...common,

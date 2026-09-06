@@ -4,6 +4,12 @@ import { icon, iconElement } from '../icons';
 import { openModal } from '../modal';
 import { showToast } from '../toast';
 
+export type SettingsPanel = {
+    render(root: HTMLElement): void;
+    // Release mounted controls while keeping cached data for the next render.
+    unmount?(): void;
+};
+
 export type AsyncLoadState = {
     loaded: boolean;
     loading: boolean;
@@ -301,6 +307,7 @@ export function openFormModal(opts: {
     fields: HTMLElement;
     focus?: HTMLElement;
     danger?: boolean;
+    onClose?: () => void;
     onSubmit: (setError: (message: string) => void) => Promise<boolean>;
 }): void {
     const formId = `settings-form-${Math.random().toString(36).slice(2, 8)}`;
@@ -330,6 +337,7 @@ export function openFormModal(opts: {
         bodyClass: 'settings-submodal-body',
         modalClass: 'modal-flow settings-submodal',
         actions: [cancel, submit],
+        onClose: opts.onClose,
     });
 
     const setError = (message: string) => setStatus(status, message, Boolean(message));

@@ -3,12 +3,8 @@ import { errorMessage } from '../errors';
 import type { ReaderPreferences } from '../types';
 import { createReadingActivity } from './activity';
 import { wireAnnotations } from './annotations';
-import {
-    revealChrome,
-    showReaderError,
-    wireEPUBDocumentControls,
-    wireReaderControls,
-} from './controls';
+import { revealChrome, showReaderError } from './chrome';
+import { wireEPUBDocumentControls, wireReaderControls } from './foliate-controls';
 import {
     applyFoliateDisplay,
     applyReaderCanvasColor,

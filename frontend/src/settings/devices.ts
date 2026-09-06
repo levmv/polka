@@ -10,7 +10,7 @@ import {
     updateDeliveryDevice,
 } from '../api';
 import { sendEnabled, setSendEnabled } from '../bootstrap';
-import { createSelect } from '../components/select';
+import { createSelect, type ManagedSelect } from '../components/select';
 import { createToggle } from '../components/toggle';
 import { formField, textEl } from '../dom';
 import { errorMessage } from '../errors';
@@ -30,6 +30,7 @@ import {
     makeInput,
     openFormModal,
     renderAsyncSection,
+    type SettingsPanel,
     settingsItemRow,
     settingsReveal,
     settingsRow,
@@ -42,18 +43,26 @@ type DevicesState = AsyncLoadState & {
     email: EmailDeliverySettings | null;
     devices: DeliveryDevice[];
     deliveries: DeliveryJob[];
+    securitySelect: ManagedSelect | null;
 };
 
-export function createDevicesPanel(currentUser: CurrentUser): (root: HTMLElement) => void {
+export function createDevicesPanel(currentUser: CurrentUser): SettingsPanel {
     const state: DevicesState = {
         loaded: false,
         loading: false,
         email: null,
         devices: [],
         deliveries: [],
+        securitySelect: null,
         loadError: '',
     };
-    return (root) => renderDevicesPanel(root, currentUser, state);
+    return {
+        render: (root) => renderDevicesPanel(root, currentUser, state),
+        unmount: () => {
+            state.securitySelect?.destroy();
+            state.securitySelect = null;
+        },
+    };
 }
 
 // Nothing below the switch exists for a library that does not send books. An
@@ -63,6 +72,9 @@ function renderDevicesPanel(
     currentUser: CurrentUser,
     state: DevicesState,
 ): void {
+    if (!root.isConnected) return;
+    state.securitySelect?.destroy();
+    state.securitySelect = null;
     root.replaceChildren();
     const isAdmin = currentUser.role === 'admin';
     const rerender = () => renderDevicesPanel(root, currentUser, state);
@@ -173,6 +185,7 @@ function createEmailDeliveryBlock(state: DevicesState, rerender: () => void): HT
         ],
         onChange: () => syncActions(),
     });
+    state.securitySelect = security;
 
     const rows = document.createElement('div');
     rows.className = 'settings-rows';
@@ -392,6 +405,7 @@ function openDeliveryDeviceModal(
         submitLabel: device ? 'Save device' : 'Add device',
         fields,
         focus: name,
+        onClose: preset.destroy,
         onSubmit: async (setError) => {
             if (!name.value.trim()) {
                 setError('Name is required');

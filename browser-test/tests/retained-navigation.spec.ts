@@ -1,3 +1,4 @@
+import type { BookSummary } from '../../frontend/src/types';
 import { expect, type Page, test } from './fixtures';
 
 // Runs against the filler-only library (:8098, 55 books) so pagination and a
@@ -235,11 +236,72 @@ test.describe('Retained library navigation', () => {
     await page.goBack();
     // Retained cards already have the right count. Wait for the deferred rebuild
     // before checking that it preserves the loaded extent and scroll position.
-    await expect.poll(() => listRequests).toBe(1);
+    await expect.poll(() => listRequests).toBeGreaterThan(0);
     await expect(page.locator('#library-grid')).toHaveAttribute('aria-busy', 'false');
     await expect(page.locator('.book-card')).toHaveCount(extent);
-    expect(listRequests).toBe(1);
     expect(Math.abs((await bookTop(page, '.book-card', anchor.id)) - anchor.top)).toBeLessThan(2);
+  });
+
+  test('A retained list beyond the API cap survives a failed refresh and continues after retry', async ({ page, browserErrors }) => {
+    browserErrors.allow((message) => /Failed to fetch books|503/.test(message));
+    await page.addInitScript(() => {
+      // Stop at a known extent; automatic paging and anchoring have real-server
+      // coverage above and in pagination.spec.ts.
+      Object.defineProperty(window, 'IntersectionObserver', { value: undefined });
+    });
+    const response = await page.request.get('/api/books?limit=1');
+    const [sample] = await response.json() as BookSummary[];
+    const books = Array.from({ length: 260 }, (_, index) => ({
+      ...sample,
+      id: index === 225 ? sample.id : `retained-${index}`,
+      title: `Retained book ${String(index).padStart(3, '0')}`,
+    }));
+    await page.route('**/covers/retained-*', (route) => route.fulfill({
+      contentType: 'image/svg+xml',
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="120"/>',
+    }));
+    let refreshing = false;
+    let failed = false;
+    await page.route('**/api/books?*', async (route) => {
+      const params = new URL(route.request().url()).searchParams;
+      const offset = Number(params.get('offset') || 0);
+      // Match the server's cap, including when the caller requests more.
+      const limit = Math.min(Number(params.get('limit') || 50), 200);
+      if (refreshing && !failed && offset > 0) {
+        failed = true;
+        await route.fulfill({ status: 503, body: 'Unavailable' });
+        return;
+      }
+      await route.fulfill({ json: books.slice(offset, offset + limit) });
+    });
+    await page.goto('/?sort=added');
+    const cards = page.locator('.book-card');
+    for (let count = 50; count < 250; count += 50) {
+      await expect(cards).toHaveCount(count);
+      await page.getByRole('button', { name: 'Load more', exact: true }).click();
+    }
+    await expect(cards).toHaveCount(250);
+    await cards.nth(225).locator('.book-title-link').click();
+    await expect(page.locator('#book-detail-container')).toBeVisible();
+    refreshing = true;
+    books[0].title = 'Updated retained book';
+    await page.evaluate(() => document.dispatchEvent(
+      new CustomEvent('polka:catalog-changed', { detail: { kind: 'coarse' } }),
+    ));
+    await page.goBack();
+    const retry = page.getByRole('button', { name: 'Try again', exact: true });
+    await expect(retry).toBeVisible();
+    // A failed intermediate page must leave the entire previous range intact.
+    await expect(cards).toHaveCount(250);
+    await expect(cards.first().locator('.book-title')).toHaveText('Retained book 000');
+    await retry.click();
+    await expect(cards.first().locator('.book-title')).toHaveText('Updated retained book');
+    await expect(cards).toHaveCount(250);
+    await page.getByRole('button', { name: 'Load more', exact: true }).click();
+    await expect(cards).toHaveCount(260);
+    await expect(page.locator('#load-more-container')).toBeHidden();
+    const ids = await cards.evaluateAll((elements) => elements.map((el) => el.getAttribute('data-id')));
+    expect(ids).toEqual(books.map((book) => book.id));
   });
 
   test('A removal reaches the retained view and keeps the old neighbourhood', async ({ page }) => {

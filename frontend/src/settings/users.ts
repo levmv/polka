@@ -20,20 +20,21 @@ import {
     makeInput,
     openFormModal,
     renderAsyncSection,
+    type SettingsPanel,
 } from './ui';
 
 type UsersState = AsyncLoadState & {
     users: UserAccount[];
 };
 
-export function createUsersPanel(currentUser: CurrentUser): (root: HTMLElement) => void {
+export function createUsersPanel(currentUser: CurrentUser): SettingsPanel {
     const state: UsersState = {
         loaded: false,
         loading: false,
         users: [],
         loadError: '',
     };
-    return (root) => renderUsersPanel(root, currentUser, state);
+    return { render: (root) => renderUsersPanel(root, currentUser, state) };
 }
 
 // The Users panel is a flat list of the people who can sign in. Members see a
@@ -53,7 +54,7 @@ function renderUsersPanel(root: HTMLElement, currentUser: CurrentUser, state: Us
         action.className = 'settings-section-action';
         action.append(
             buttonEl('settings-btn settings-primary-btn', 'Add user', () =>
-                openAddUserModal(state, rerender),
+                openAddUserModal(root, state, rerender),
             ),
         );
         root.append(action);
@@ -65,7 +66,7 @@ function renderUsersPanel(root: HTMLElement, currentUser: CurrentUser, state: Us
 
     const renderRows = (users: UserAccount[]) => {
         for (const user of users) {
-            list.appendChild(createPersonRow(user, currentUser, users, state, rerender));
+            list.appendChild(createPersonRow(root, user, currentUser, users, state, rerender));
         }
     };
 
@@ -98,6 +99,7 @@ function renderUsersPanel(root: HTMLElement, currentUser: CurrentUser, state: Us
 }
 
 function createPersonRow(
+    root: HTMLElement,
     user: UserAccount,
     currentUser: CurrentUser,
     allUsers: UserAccount[],
@@ -134,7 +136,7 @@ function createPersonRow(
     if (currentUser.role === 'admin' && !isSelf) {
         actions.append(
             buttonEl('settings-btn', 'Access', () => {
-                void openAccessModal(user, allUsers, state, rerender);
+                void openAccessModal(root, user, allUsers, state, rerender);
             }),
         );
 
@@ -196,7 +198,11 @@ function openPasswordModal(user: UserAccount, isSelf: boolean, rerender: () => v
     });
 }
 
-async function openAddUserModal(state: UsersState, rerender: () => void): Promise<void> {
+async function openAddUserModal(
+    root: HTMLElement,
+    state: UsersState,
+    rerender: () => void,
+): Promise<void> {
     let shelves: Shelf[];
     try {
         shelves = await fetchShelves();
@@ -205,6 +211,7 @@ async function openAddUserModal(state: UsersState, rerender: () => void): Promis
         return;
     }
 
+    if (!root.isConnected) return;
     const fields = fieldGroup();
     const username = makeInput('text', 'off');
     const password = makeInput('password', 'new-password');
@@ -225,6 +232,7 @@ async function openAddUserModal(state: UsersState, rerender: () => void): Promis
         submitLabel: 'Add user',
         fields,
         focus: username,
+        onClose: access.destroy,
         onSubmit: async (setError) => {
             if (!username.value.trim()) {
                 setError('Username is required');
@@ -257,6 +265,7 @@ async function openAddUserModal(state: UsersState, rerender: () => void): Promis
 }
 
 async function openAccessModal(
+    root: HTMLElement,
     user: UserAccount,
     allUsers: UserAccount[],
     state: UsersState,
@@ -270,6 +279,7 @@ async function openAccessModal(
         return;
     }
 
+    if (!root.isConnected) return;
     const fields = fieldGroup();
     const access = createAccessControls({
         role: user.role,
@@ -284,6 +294,7 @@ async function openAccessModal(
         submitLabel: 'Save access',
         fields,
         focus: access.focus,
+        onClose: access.destroy,
         onSubmit: async (setError) => {
             const nextRole = access.role();
             if (user.role === 'admin' && nextRole !== 'admin' && countAdmins(allUsers) <= 1) {
@@ -319,6 +330,7 @@ function createAccessControls(opts: {
     role(): UserAccount['role'];
     contentScope(): UserAccount['content_scope'];
     scopeShelfIDs(): string[];
+    destroy(): void;
 } {
     const role = createSelect({
         options: roleOptions(),
@@ -378,6 +390,10 @@ function createAccessControls(opts: {
     return {
         fields: [roleField, scopeField, shelfField],
         focus: role.el,
+        destroy: () => {
+            role.destroy();
+            scope.destroy();
+        },
         role: () => role.getValue() as UserAccount['role'],
         contentScope: () =>
             role.getValue() !== 'reader'
