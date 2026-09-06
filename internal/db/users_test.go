@@ -25,12 +25,20 @@ func TestUserLifecycle(t *testing.T) {
 		t.Errorf("password not hashed: %q", u.PasswordHash)
 	}
 
+	shelves, err := database.ListShelves(u.ID)
+	if err != nil || len(shelves) != 1 {
+		t.Fatalf("new account shelves = %+v, %v; want one", shelves, err)
+	}
+	shelf := shelves[0]
+	if shelf.Name != "Want to read" || shelf.Kind != ShelfManual || shelf.Visibility != ShelfPersonal || shelf.OwnerID != u.ID {
+		t.Fatalf("default shelf = %+v", shelf)
+	}
+
 	// Username uniqueness is case-insensitive.
 	if _, err := database.CreateUser("ALICE", "other", RoleMember); !errors.Is(err, ErrUserExists) {
 		t.Errorf("duplicate username: got %v, want ErrUserExists", err)
 	}
 
-	// Authenticate: right password (any case username) succeeds, wrong fails.
 	if got, _ := database.Authenticate("alice", "s3cret"); got == nil || got.ID != u.ID {
 		t.Errorf("authenticate valid: got %v", got)
 	}
@@ -44,7 +52,6 @@ func TestUserLifecycle(t *testing.T) {
 		t.Errorf("authenticate unknown user: got %v, want nil", got)
 	}
 
-	// Password change invalidates the old password.
 	if err := database.SetUserPassword(u.ID, "newpass"); err != nil {
 		t.Fatalf("set password: %v", err)
 	}
@@ -143,6 +150,26 @@ func TestCreateUserValidation(t *testing.T) {
 	}
 	if _, err := database.CreateUser("bob", strings.Repeat("x", 73), RoleAdmin); !errors.Is(err, ErrInvalidUserInput) {
 		t.Errorf("long password error = %v; want ErrInvalidUserInput", err)
+	}
+}
+
+func TestDefaultShelfFailureRollsBackAccount(t *testing.T) {
+	database := newTestDB(t)
+	if _, err := database.Exec(`CREATE TRIGGER fail_shelf BEFORE INSERT ON shelves
+		BEGIN SELECT RAISE(ABORT, 'shelf unavailable'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.CreateInitialAdmin("owner", "pw"); err == nil {
+		t.Fatal("account creation succeeded despite shelf failure")
+	}
+	if n, err := database.CountUsers(); err != nil || n != 0 {
+		t.Fatalf("accounts after failed creation = %d, %v; want zero", n, err)
+	}
+	if _, err := database.Exec(`DROP TRIGGER fail_shelf`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.CreateInitialAdmin("owner", "pw"); err != nil {
+		t.Fatalf("retry initial setup: %v", err)
 	}
 }
 

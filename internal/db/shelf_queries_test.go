@@ -40,8 +40,8 @@ func TestShelvesVisibilityAndMembership(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListShelves user: %v", err)
 	}
-	if len(visibleToUser) != 3 {
-		t.Fatalf("user-visible shelves = %d, want 3", len(visibleToUser))
+	if len(visibleToUser) != 4 {
+		t.Fatalf("user-visible shelves = %d, want 4", len(visibleToUser))
 	}
 
 	if err := database.AddBookToShelf(private.ID, user.ID, "w2"); err != nil {
