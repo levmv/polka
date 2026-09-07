@@ -6,14 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"time"
-
-	"github.com/levmv/polka/internal/id"
 )
 
 // AppToken is a long-lived per-device credential ("app password"). Its secret
 // remains available to its owner so device setup can be resumed at any time.
 type AppToken struct {
-	ID         string
+	ID         int64
 	Name       string
 	Token      string
 	CreatedAt  int64
@@ -35,12 +33,12 @@ func (db *DB) CreateAppToken(ctx context.Context, userID int64, name string) (*A
 		return nil, errorWithDetail(ErrInvalidAppTokenInput, "token name must not be empty")
 	}
 
-	token := &AppToken{ID: id.New(id.AppToken), Name: name, Token: newDeviceToken()}
+	token := &AppToken{Name: name, Token: newDeviceToken()}
 	err := db.Transact(ctx, func(tx *Tx) error {
 		return tx.QueryRow(
-			"INSERT INTO app_tokens (id, user_id, name, token) VALUES (?, ?, ?, ?) RETURNING created_at",
-			token.ID, userID, token.Name, token.Token,
-		).Scan(&token.CreatedAt)
+			"INSERT INTO app_tokens (user_id, name, token) VALUES (?, ?, ?) RETURNING id, created_at",
+			userID, token.Name, token.Token,
+		).Scan(&token.ID, &token.CreatedAt)
 	})
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -88,7 +86,7 @@ func (db *DB) RevokeAppToken(ctx context.Context, userID int64, name string) err
 
 // RevokeAppTokenByID deletes a user's token by id. It is used by the web UI so
 // token names never have to become URL path components.
-func (db *DB) RevokeAppTokenByID(ctx context.Context, userID int64, tokenID string) error {
+func (db *DB) RevokeAppTokenByID(ctx context.Context, userID int64, tokenID int64) error {
 	res, err := db.Write(ctx).Exec("DELETE FROM app_tokens WHERE user_id = ? AND id = ?", userID, tokenID)
 	if err != nil {
 		return fmt.Errorf("revoke app token: %w", err)

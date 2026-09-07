@@ -136,7 +136,7 @@ test.describe('Bulk actions', () => {
       data: { name: shelfName, kind: 'manual', query: '', shared: false },
     });
     expect(createShelf.ok()).toBe(true);
-    const shelfId = ((await createShelf.json()) as { id: string }).id;
+    const shelfId = ((await createShelf.json()) as { id: number }).id;
 
     await selectCards(page, [titleA, titleB]);
     await page.locator('.bulk-bar-action[data-action="shelves"]').click();
@@ -150,11 +150,11 @@ test.describe('Bulk actions', () => {
       page.locator('.toast', { hasText: `Added 2 books to “${shelfName}”` }),
     ).toBeVisible();
 
-    const inShelf = await page.request.get(`/api/books?shelf=${encodeURIComponent(shelfId)}`);
+    const inShelf = await page.request.get(`/api/books?shelf=${shelfId}`);
     expect(inShelf.ok()).toBe(true);
     expect((await inShelf.json()).length).toBe(2);
 
-    const deleteShelf = await page.request.delete(`/api/shelves/${encodeURIComponent(shelfId)}`);
+    const deleteShelf = await page.request.delete(`/api/shelves/${shelfId}`);
     expect(deleteShelf.status()).toBe(204);
   });
 

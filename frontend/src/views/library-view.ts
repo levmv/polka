@@ -5,7 +5,12 @@ import {
     fetchCurrentUser,
     fetchUserSettings,
 } from '../api';
-import { type BookListContext, bookURL, libraryBookListContext } from '../book-list-context';
+import {
+    type BookListContext,
+    bookURL,
+    libraryBookListContext,
+    parseShelfID,
+} from '../book-list-context';
 import { CATALOG_CHANGED, type CatalogChange } from '../catalog-events';
 import { createBookCard } from '../components/book-card';
 import { createSelect, type ManagedSelect } from '../components/select';
@@ -64,7 +69,7 @@ interface LibraryViewState {
     view: LibraryViewMode;
     query: string;
     sort: string;
-    shelfId: string;
+    shelfId: number;
     pageOffset: number;
     hasMore: boolean;
     loadingMore: boolean;
@@ -123,7 +128,7 @@ export function initLibrary(root: HTMLElement): RouteController {
         view: readLibraryViewMode(),
         query: '',
         sort: '',
-        shelfId: params.get('shelf') || '',
+        shelfId: parseShelfID(params.get('shelf')),
         pageOffset: 0,
         hasMore: false,
         loadingMore: false,
@@ -167,8 +172,8 @@ export function initLibrary(root: HTMLElement): RouteController {
 
     const reload = (offset = 0) => {
         if (state.phase !== 'active') return;
-        if (state.shelfId && searchInput?.value.trim()) {
-            state.shelfId = '';
+        if (state.shelfId !== 0 && searchInput?.value.trim()) {
+            state.shelfId = 0;
             const url = new URL(window.location.href);
             url.searchParams.delete('shelf');
             url.searchParams.set('q', searchInput.value.trim());
@@ -493,8 +498,9 @@ function normalizeSort(value: string, searching: boolean): string {
     return searching ? 'relevance' : 'added';
 }
 
-function initialLibraryOffset(params: URLSearchParams, sort: string, shelfId: string): number {
-    if (params.get('q')?.trim() || shelfId || (sort !== 'title' && sort !== 'author')) return 0;
+function initialLibraryOffset(params: URLSearchParams, sort: string, shelfId: number): number {
+    if (params.get('q')?.trim() || shelfId !== 0 || (sort !== 'title' && sort !== 'author'))
+        return 0;
     const value = Number(params.get('offset'));
     return Number.isSafeInteger(value) && value >= 0 ? value : 0;
 }
@@ -584,7 +590,7 @@ function setupSaveSearchButton(
                 return;
             }
             notifyShelvesChanged();
-            navigateApp(`/?shelf=${encodeURIComponent(shelf.id)}`);
+            navigateApp(`/?shelf=${shelf.id}`);
         } catch (e) {
             console.error('Failed to save search shelf:', e);
             showToast(errorMessage(e, 'Save search failed'), { type: 'error' });
@@ -726,7 +732,7 @@ function setLibraryResultsLoading(state: LibraryViewState, loading: boolean): vo
 }
 
 function shouldShowContinueReading(state: LibraryViewState): boolean {
-    return state.shelfId === '' && state.query.trim() === '';
+    return state.shelfId === 0 && state.query.trim() === '';
 }
 
 async function loadMore(state: LibraryViewState) {
@@ -850,7 +856,7 @@ function currentLibrarySequence(
 
 function syncBookJumps(state: LibraryViewState): void {
     const key =
-        state.shelfId === '' &&
+        state.shelfId === 0 &&
         state.query.trim() === '' &&
         (state.sort === 'title' || state.sort === 'author')
             ? state.sort
@@ -1074,7 +1080,7 @@ function createLibraryEmptyState(state: LibraryViewState): HTMLElement {
             input.dispatchEvent(new Event('input'));
             input.focus();
         });
-    } else if (state.shelfId) {
+    } else if (state.shelfId !== 0) {
         title.textContent = 'Shelf is empty';
         body.textContent = 'No books are on this shelf.';
         action.textContent = 'Library';

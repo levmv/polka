@@ -25,7 +25,7 @@ type TrashedBookDTO struct {
 // so readers cannot do it; the physical files stay untouched until admin purge.
 func (s *Server) handleAPIBookDelete(w http.ResponseWriter, r *http.Request) {
 	u := contextUser(r.Context())
-	bookID, validID := pathBookID(w, r, "id")
+	bookID, validID := pathID(w, r, "id")
 	if !validID {
 		return
 	}
@@ -45,7 +45,7 @@ func (s *Server) handleAPIBookDelete(w http.ResponseWriter, r *http.Request) {
 
 // handleAPIBookRestore returns a trashed book to the live catalog.
 func (s *Server) handleAPIBookRestore(w http.ResponseWriter, r *http.Request) {
-	bookID, validID := pathBookID(w, r, "id")
+	bookID, validID := pathID(w, r, "id")
 	if !validID {
 		return
 	}
@@ -67,7 +67,7 @@ func (s *Server) handleAPIBookRestore(w http.ResponseWriter, r *http.Request) {
 // operation below owns storage admission, serialization, DB ordering, and file
 // cleanup; the handler only maps the domain outcome to HTTP.
 func (s *Server) handleAPIBookPurge(w http.ResponseWriter, r *http.Request) {
-	bookID, validID := pathBookID(w, r, "id")
+	bookID, validID := pathID(w, r, "id")
 	if !validID {
 		return
 	}
@@ -165,7 +165,7 @@ func (s *Server) purgeTrashedBooks(ctx context.Context, requested []int64) (int,
 	// already-committed API result.
 	for _, asset := range assets {
 		if err := storage.Remove(root, asset.StoragePath); err != nil {
-			log.Printf("purge: remove asset %s: %v", asset.ID, err)
+			log.Printf("purge: remove asset %d: %v", asset.ID, err)
 		}
 	}
 	coverRoot := s.dataRoot()

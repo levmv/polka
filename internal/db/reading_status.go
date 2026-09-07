@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-
-	"github.com/levmv/polka/internal/id"
 )
 
 var (
@@ -40,14 +38,14 @@ type ReadingStatusState struct {
 	UserID      int64
 	BookID      int64
 	Status      string
-	LastEventID string
+	LastEventID int64
 	UpdatedAt   int64
 }
 
 type ReadingStatusChange struct {
 	State   ReadingStatusState
 	Changed bool
-	EventID string
+	EventID int64
 }
 
 func ValidReadingStatus(status string) bool {
@@ -64,22 +62,18 @@ func GetReadingStatus(queryer Queryer, userID int64, bookID int64) (ReadingStatu
 		return ReadingStatusState{}, ErrUserIDRequired
 	}
 	var state ReadingStatusState
-	var lastEvent sql.NullString
 	err := queryer.QueryRow(`
-		SELECT ?, b.id, COALESCE(rs.status, 'unread'), rs.last_event_id, COALESCE(rs.updated_at, 0)
+		SELECT ?, b.id, COALESCE(rs.status, 'unread'), COALESCE(rs.last_event_id, 0), COALESCE(rs.updated_at, 0)
 		FROM books b
 		JOIN users u ON u.id = ?
 		LEFT JOIN user_book_reading_state rs ON rs.user_id = u.id AND rs.book_id = b.id
 		WHERE b.id = ?
-	`, userID, userID, bookID).Scan(&state.UserID, &state.BookID, &state.Status, &lastEvent, &state.UpdatedAt)
+	`, userID, userID, bookID).Scan(&state.UserID, &state.BookID, &state.Status, &state.LastEventID, &state.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ReadingStatusState{}, ErrReadingStatusBookMissing
 	}
 	if err != nil {
 		return ReadingStatusState{}, fmt.Errorf("get reading status: %w", err)
-	}
-	if lastEvent.Valid {
-		state.LastEventID = lastEvent.String
 	}
 	return state, nil
 }
@@ -91,44 +85,44 @@ func (db *DB) SetReadingStatus(ctx context.Context, userID int64, bookID int64, 
 	}
 	var change ReadingStatusChange
 	err := db.Transact(ctx, func(tx *Tx) error {
-		var err error
-		change, err = setReadingStatus(tx, userID, bookID, status, source)
+		current, err := GetReadingStatus(tx, userID, bookID)
+		if err != nil {
+			return err
+		}
+		change, err = setReadingStatus(tx, current, status, source)
 		return err
 	})
 	return change, err
 }
 
-func setReadingStatus(tx *Tx, userID int64, bookID int64, status string, source ReadingStatusSource) (ReadingStatusChange, error) {
-	current, err := GetReadingStatus(tx, userID, bookID)
-	if err != nil {
-		return ReadingStatusChange{}, err
-	}
+func setReadingStatus(tx *Tx, current ReadingStatusState, status string, source ReadingStatusSource) (ReadingStatusChange, error) {
 	if current.Status == status {
 		return ReadingStatusChange{State: current}, nil
 	}
 
-	eventID := id.New(id.ReadingStatusEvent)
-	previousEventID := sql.NullString{String: current.LastEventID, Valid: current.LastEventID != ""}
-	if _, err := tx.Exec(`
+	previousEventID := sql.NullInt64{Int64: current.LastEventID, Valid: current.LastEventID != 0}
+	var eventID int64
+	err := tx.QueryRow(`
 		INSERT INTO user_book_reading_events
-			(id, user_id, book_id, previous_event_id, from_status, to_status, source)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, eventID, userID, bookID, previousEventID, current.Status, status, source); err != nil {
+			(user_id, book_id, previous_event_id, from_status, to_status, source)
+		VALUES (?, ?, ?, ?, ?, ?)
+		RETURNING id
+	`, current.UserID, current.BookID, previousEventID, current.Status, status, source).Scan(&eventID)
+	if err != nil {
 		return ReadingStatusChange{}, fmt.Errorf("record reading status change: %w", err)
 	}
-	if _, err := tx.Exec(`
+	next := ReadingStatusState{UserID: current.UserID, BookID: current.BookID}
+	err = tx.QueryRow(`
 		INSERT INTO user_book_reading_state (user_id, book_id, status, last_event_id, updated_at)
 		VALUES (?, ?, ?, ?, unixepoch())
 		ON CONFLICT(user_id, book_id) DO UPDATE SET
 			status = excluded.status,
 			last_event_id = excluded.last_event_id,
 			updated_at = unixepoch()
-	`, userID, bookID, status, eventID); err != nil {
-		return ReadingStatusChange{}, fmt.Errorf("set reading status: %w", err)
-	}
-	next, err := GetReadingStatus(tx, userID, bookID)
+		RETURNING status, last_event_id, updated_at
+	`, current.UserID, current.BookID, status, eventID).Scan(&next.Status, &next.LastEventID, &next.UpdatedAt)
 	if err != nil {
-		return ReadingStatusChange{}, err
+		return ReadingStatusChange{}, fmt.Errorf("set reading status: %w", err)
 	}
 	return ReadingStatusChange{State: next, Changed: true, EventID: eventID}, nil
 }
@@ -171,26 +165,23 @@ func advanceReadingStatus(tx *Tx, userID int64, bookID int64, progress float64, 
 			target = ReadingStatusFinished
 		}
 	}
-	if target == current.Status {
-		return ReadingStatusChange{State: current}, nil
-	}
-	return setReadingStatus(tx, userID, bookID, target, source)
+	return setReadingStatus(tx, current, target, source)
 }
 
-func (db *DB) UndoAutomaticReadingStatus(ctx context.Context, userID int64, bookID int64, eventID string) (ReadingStatusChange, error) {
+func (db *DB) UndoAutomaticReadingStatus(ctx context.Context, userID int64, bookID int64, eventID int64) (ReadingStatusChange, error) {
 	var change ReadingStatusChange
 	err := db.Transact(ctx, func(tx *Tx) error {
 		current, err := GetReadingStatus(tx, userID, bookID)
 		if err != nil {
 			return err
 		}
-		if current.LastEventID == "" || current.LastEventID != strings.TrimSpace(eventID) {
+		if current.LastEventID == 0 || current.LastEventID != eventID {
 			return ErrReadingStatusUndoUnavailable
 		}
 
 		var fromStatus, toStatus string
 		var source ReadingStatusSource
-		var previousEvent sql.NullString
+		var previousEvent sql.NullInt64
 		var revertedAt sql.NullInt64
 		err = tx.QueryRow(`
 			SELECT from_status, to_status, source, previous_event_id, reverted_at
@@ -210,16 +201,15 @@ func (db *DB) UndoAutomaticReadingStatus(ctx context.Context, userID int64, book
 		if _, err := tx.Exec("UPDATE user_book_reading_events SET reverted_at = unixepoch() WHERE id = ?", eventID); err != nil {
 			return fmt.Errorf("revert reading status event: %w", err)
 		}
-		if _, err := tx.Exec(`
+		next := ReadingStatusState{UserID: userID, BookID: bookID}
+		err = tx.QueryRow(`
 			UPDATE user_book_reading_state
 			SET status = ?, last_event_id = ?, updated_at = unixepoch()
 			WHERE user_id = ? AND book_id = ?
-		`, fromStatus, previousEvent, userID, bookID); err != nil {
-			return fmt.Errorf("restore reading status: %w", err)
-		}
-		next, err := GetReadingStatus(tx, userID, bookID)
+			RETURNING status, COALESCE(last_event_id, 0), updated_at
+		`, fromStatus, previousEvent, userID, bookID).Scan(&next.Status, &next.LastEventID, &next.UpdatedAt)
 		if err != nil {
-			return err
+			return fmt.Errorf("restore reading status: %w", err)
 		}
 		change = ReadingStatusChange{State: next, Changed: true, EventID: eventID}
 		return nil

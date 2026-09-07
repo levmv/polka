@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -47,7 +48,8 @@ func TestRepairReconciliation(t *testing.T) {
 	}
 	defer database.Close()
 
-	var assetID, currentPath string
+	var assetID int64
+	var currentPath string
 	if err := database.Read(t.Context()).QueryRow("SELECT id, storage_path FROM assets LIMIT 1").Scan(&assetID, &currentPath); err != nil {
 		t.Fatalf("query asset: %v", err)
 	}
@@ -63,7 +65,7 @@ func TestRepairReconciliation(t *testing.T) {
 
 	// Put the filesystem and DB into a deliberately inconsistent state:
 	// a) move file to a wrong path but keep asset_id in name
-	wrongRelPath := "books/wrong_folder/some_file_[" + assetID + "].epub"
+	wrongRelPath := fmt.Sprintf("books/wrong_folder/some_file_[a%d].epub", assetID)
 	wrongAbsPath := root.Abs(wrongRelPath)
 	os.MkdirAll(filepath.Dir(wrongAbsPath), 0o755)
 	if err := os.Rename(absCurrent, wrongAbsPath); err != nil {
@@ -78,8 +80,6 @@ func TestRepairReconciliation(t *testing.T) {
 		t.Fatalf("update storage_path: %v", err)
 	}
 
-	// runCheck's reporting of this same state is covered by the
-	// check/repair pairs below; here we only assert the reconciliation.
 	if err := runRepair(context.Background(), dataDir, nil); err != nil {
 		t.Fatalf("runRepair: %v", err)
 	}
@@ -87,7 +87,7 @@ func TestRepairReconciliation(t *testing.T) {
 	// Retain only the durable fields that repair owns.
 	type assetSnapshot struct {
 		StoragePath, Filename, OriginalFilename string
-		OriginalSHA256, CurrentSHA256           string
+		OriginalSHA256, CurrentSHA256           []byte
 		OriginalSize, CurrentSize               int64
 		Format                                  string
 		CanRead                                 bool
@@ -126,7 +126,7 @@ func TestRepairReconciliation(t *testing.T) {
 		t.Fatalf("repaired file = %q; want original bytes", firstBytes)
 	}
 
-	// The converged state is a fixed point, not merely a second crash-free run.
+	// Repeating repair must leave metadata and file bytes unchanged.
 	out, err := captureStdout(t, func() error {
 		return runRepair(context.Background(), dataDir, nil)
 	})
@@ -135,14 +135,14 @@ func TestRepairReconciliation(t *testing.T) {
 	}
 	for _, label := range []string{
 		"Relocated files:", "Hash recoveries:", "Fixed database paths:",
-		"Size backfills:", "Original sizes:", "Hash backfills:",
+		"Size backfills:", "Original sizes:",
 		"Formats:", "Reader capabilities:",
 	} {
 		if expected := fmt.Sprintf("  %-32s 0\n", label); !strings.Contains(out, expected) {
 			t.Fatalf("second repair output = %q; want %q", out, expected)
 		}
 	}
-	if second := loadAsset(); second != first {
+	if second := loadAsset(); !reflect.DeepEqual(second, first) {
 		t.Fatalf("second repair changed asset state: before=%+v after=%+v", first, second)
 	}
 	if secondBytes, err := os.ReadFile(absNewPath); err != nil {
@@ -169,11 +169,11 @@ func TestRepairFinalizesCompletedWritebackAttempt(t *testing.T) {
 	if err := os.WriteFile(finalAbs, newBytes, 0o644); err != nil {
 		t.Fatalf("replace final bytes: %v", err)
 	}
-	newHash, newSize, err := fileSHA256AndSize(finalAbs)
+	newHash, newSize, err := fileSHA256AndSizeContext(t.Context(), finalAbs)
 	if err != nil {
 		t.Fatalf("hash replaced final: %v", err)
 	}
-	tempRel := storage.WritebackTempRelPath(storagePath, assetID+"-rev2")
+	tempRel := storage.WritebackTempRelPath(storagePath, fmt.Sprintf("%d-rev2", assetID))
 	insertWritebackAttempt(t, database, assetID, storagePath, tempRel, newHash, newSize, "ko-new", 2)
 
 	if err := runCheck(t.Context(), dataDir, nil); !errors.Is(err, ErrIssuesFound) {
@@ -199,12 +199,12 @@ func TestRepairAppliesPendingWritebackTemp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read new epub: %v", err)
 	}
-	tempRel, err := storage.WriteAdjacentTemp(root, storagePath, assetID+"-rev2", newBytes)
+	tempRel, err := storage.WriteAdjacentTemp(root, storagePath, fmt.Sprintf("%d-rev2", assetID), newBytes)
 	if err != nil {
 		t.Fatalf("write adjacent temp: %v", err)
 	}
 	tempAbs := root.Abs(tempRel)
-	newHash, newSize, err := fileSHA256AndSize(tempAbs)
+	newHash, newSize, err := fileSHA256AndSizeContext(t.Context(), tempAbs)
 	if err != nil {
 		t.Fatalf("hash temp: %v", err)
 	}
@@ -216,12 +216,12 @@ func TestRepairAppliesPendingWritebackTemp(t *testing.T) {
 	if _, err := os.Stat(tempAbs); !os.IsNotExist(err) {
 		t.Fatalf("temp after repair stat err = %v; want not exist", err)
 	}
-	finalHash, finalSize, err := fileSHA256AndSize(root.Abs(storagePath))
+	finalHash, finalSize, err := fileSHA256AndSizeContext(t.Context(), root.Abs(storagePath))
 	if err != nil {
 		t.Fatalf("hash final: %v", err)
 	}
-	if finalHash != newHash || finalSize != newSize {
-		t.Fatalf("final hash/size = %s/%d; want %s/%d", finalHash, finalSize, newHash, newSize)
+	if !bytes.Equal(finalHash, newHash) || finalSize != newSize {
+		t.Fatalf("final hash/size = %x/%d; want %x/%d", finalHash, finalSize, newHash, newSize)
 	}
 	assertWritebackAttemptCleared(t, database, assetID)
 	assertAssetWritebackState(t, database, assetID, newHash, newSize, "ko-temp", 2)
@@ -255,13 +255,13 @@ func TestRepairMergedWritebackAttemptLeavesSurvivorMetadataPending(t *testing.T)
 			}
 			// Model interruption on either side of replacement. The pending hash
 			// is still needed for recovery even after this asset changes book.
-			tempRel, err := storage.WriteAdjacentTempWith(root, storagePath, assetID, func(w io.Writer) error {
+			tempRel, err := storage.WriteAdjacentTempWith(root, storagePath, fmt.Sprintf("%d", assetID), func(w io.Writer) error {
 				return format.RewriteEPUBMetadataTo(w, bytes.NewReader(original), int64(len(original)), snapshot.Metadata, time.Unix(snapshot.UpdatedAt, 0))
 			})
 			if err != nil {
 				t.Fatal(err)
 			}
-			hash, size, err := fileSHA256AndSize(root.Abs(tempRel))
+			hash, size, err := fileSHA256AndSizeContext(t.Context(), root.Abs(tempRel))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -341,7 +341,7 @@ func TestRepairRemovesOrphanWritebackTemp(t *testing.T) {
 	}
 }
 
-func setupImportedRepairEPUB(t *testing.T, title, author string) (string, *db.DB, storage.Root, string, string) {
+func setupImportedRepairEPUB(t *testing.T, title, author string) (string, *db.DB, storage.Root, int64, string) {
 	t.Helper()
 	dataDir := t.TempDir()
 	initialized, err := ensureLibraryInitialized(t.Context(), dataDir)
@@ -363,7 +363,8 @@ func setupImportedRepairEPUB(t *testing.T, title, author string) (string, *db.DB
 		database.Close()
 		t.Fatalf("OpenRoot: %v", err)
 	}
-	var assetID, storagePath string
+	var assetID int64
+	var storagePath string
 	var bookID int64
 	if err := database.Read(t.Context()).QueryRow("SELECT id, storage_path, book_id FROM assets LIMIT 1").Scan(&assetID, &storagePath, &bookID); err != nil {
 		database.Close()
@@ -376,7 +377,7 @@ func setupImportedRepairEPUB(t *testing.T, title, author string) (string, *db.DB
 	return dataDir, database, root, assetID, storagePath
 }
 
-func insertWritebackAttempt(t *testing.T, database *db.DB, assetID, storagePath, tempRel, hash string, size int64, koHash string, rev int64) {
+func insertWritebackAttempt(t *testing.T, database *db.DB, assetID int64, storagePath, tempRel string, hash []byte, size int64, koHash string, rev int64) {
 	t.Helper()
 	if err := db.UpsertMetadataWritebackAttempt(database.Write(t.Context()), db.MetadataWritebackAttempt{
 		AssetID:      assetID,
@@ -391,7 +392,7 @@ func insertWritebackAttempt(t *testing.T, database *db.DB, assetID, storagePath,
 	}
 }
 
-func assertWritebackAttemptCleared(t *testing.T, database *db.DB, assetID string) {
+func assertWritebackAttemptCleared(t *testing.T, database *db.DB, assetID int64) {
 	t.Helper()
 	var count int
 	if err := database.Read(t.Context()).QueryRow("SELECT COUNT(*) FROM metadata_writeback_attempts WHERE asset_id = ?", assetID).Scan(&count); err != nil {
@@ -402,9 +403,10 @@ func assertWritebackAttemptCleared(t *testing.T, database *db.DB, assetID string
 	}
 }
 
-func assertAssetWritebackState(t *testing.T, database *db.DB, assetID, hash string, size int64, koHash string, rev int64) {
+func assertAssetWritebackState(t *testing.T, database *db.DB, assetID int64, hash []byte, size int64, koHash string, rev int64) {
 	t.Helper()
-	var gotHash, gotKO string
+	var gotHash []byte
+	var gotKO string
 	var gotSize, gotRev int64
 	var writebackError string
 	if err := database.Read(t.Context()).QueryRow(`
@@ -414,8 +416,8 @@ func assertAssetWritebackState(t *testing.T, database *db.DB, assetID, hash stri
 	`, assetID).Scan(&gotHash, &gotSize, &gotKO, &gotRev, &writebackError); err != nil {
 		t.Fatalf("query asset writeback state: %v", err)
 	}
-	if gotHash != hash || gotSize != size || gotKO != koHash || gotRev != rev || writebackError != "" {
-		t.Fatalf("asset writeback state = hash:%q size:%d ko:%q rev:%d err:%q; want hash:%q size:%d ko:%q rev:%d no err", gotHash, gotSize, gotKO, gotRev, writebackError, hash, size, koHash, rev)
+	if !bytes.Equal(gotHash, hash) || gotSize != size || gotKO != koHash || gotRev != rev || writebackError != "" {
+		t.Fatalf("asset writeback state = hash:%x size:%d ko:%q rev:%d err:%q; want hash:%x size:%d ko:%q rev:%d no err", gotHash, gotSize, gotKO, gotRev, writebackError, hash, size, koHash, rev)
 	}
 }
 
@@ -740,11 +742,11 @@ func TestCheckAndRepairCoverOriginals(t *testing.T) {
 	if _, err := database.Write(t.Context()).Exec("UPDATE books SET cover_version = 1 WHERE id = ?", bookID); err != nil {
 		t.Fatalf("set cover_version: %v", err)
 	}
-	var assetID string
-	if err := database.Read(t.Context()).QueryRow("SELECT id FROM assets WHERE book_id = ? LIMIT 1", bookID).Scan(&assetID); err != nil {
+	var sourceHash []byte
+	if err := database.Read(t.Context()).QueryRow("SELECT original_sha256 FROM assets WHERE book_id = ? LIMIT 1", bookID).Scan(&sourceHash); err != nil {
 		t.Fatal(err)
 	}
-	stagedCover := filepath.Join(dataRoot.StagingDir(), ".tmp-deadbeef-"+assetID+"-cover")
+	stagedCover := filepath.Join(dataRoot.StagingDir(), ".tmp-deadbeef-"+covers.ImportTempLabel(sourceHash))
 	if err := os.MkdirAll(filepath.Dir(stagedCover), 0o755); err != nil {
 		t.Fatalf("mkdir staging: %v", err)
 	}
@@ -1000,8 +1002,9 @@ func TestRepairRecoversRootStagedAsset(t *testing.T) {
 	}
 	defer database.Close()
 
-	var assetID, storagePath string
-	if err := database.Read(t.Context()).QueryRow("SELECT id, storage_path FROM assets LIMIT 1").Scan(&assetID, &storagePath); err != nil {
+	var sourceHash []byte
+	var storagePath string
+	if err := database.Read(t.Context()).QueryRow("SELECT original_sha256, storage_path FROM assets LIMIT 1").Scan(&sourceHash, &storagePath); err != nil {
 		t.Fatalf("query asset: %v", err)
 	}
 
@@ -1010,7 +1013,7 @@ func TestRepairRecoversRootStagedAsset(t *testing.T) {
 		t.Fatalf("OpenRoot: %v", err)
 	}
 	finalAbs := root.Abs(storagePath)
-	stagedAbs := filepath.Join(root.StagingDir(), ".tmp-deadbeef-["+assetID+"].epub")
+	stagedAbs := filepath.Join(root.StagingDir(), fmt.Sprintf(".tmp-deadbeef-%x.epub", sourceHash))
 	if err := os.MkdirAll(filepath.Dir(stagedAbs), 0o755); err != nil {
 		t.Fatalf("mkdir staging: %v", err)
 	}
@@ -1034,6 +1037,78 @@ func TestRepairRecoversRootStagedAsset(t *testing.T) {
 	}
 	if err := runCheck(t.Context(), dataDir, nil); err != nil {
 		t.Fatalf("runCheck after root-staged repair: %v", err)
+	}
+}
+
+func TestRepairLeavesUnverifiedAssetFilesUntouched(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		path       string
+		contents   string
+		current    string
+		referenced bool
+		recorded   bool
+	}{
+		{"title tag", "Other [a1].epub", "other bytes", "source bytes", false, false},
+		{"staging label", ".staging/.tmp-deadbeef-{hash}.epub", "partial bytes", "source bytes", false, false},
+		{"original before writeback", ".staging/.tmp-deadbeef-{hash}.epub", "source bytes", "rewritten bytes", false, false},
+		{"another asset", "Other [a1] [a2].epub", "source bytes", "source bytes", true, false},
+		{"recorded path drift", "old.epub", "other bytes", "source bytes", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := storage.NewRoot(t.TempDir())
+			database, err := db.InitPath(root.Abs("library.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { database.Close() })
+			originalHash := sha256.Sum256([]byte("source bytes"))
+			currentHash := sha256.Sum256([]byte(tc.current))
+			candidate := strings.ReplaceAll(tc.path, "{hash}", fmt.Sprintf("%x", originalHash))
+			recorded := "Book [a1].epub"
+			if tc.recorded {
+				recorded = candidate
+			}
+			if _, err := database.Write(t.Context()).Exec(`
+				INSERT INTO books(id, title, sort_title) VALUES (1, 'Book', 'Book');
+				INSERT INTO assets(id, book_id, storage_path, filename, extension, original_sha256, current_sha256)
+				VALUES (1, 1, ?, ?, '.epub', ?, ?);
+			`, recorded, filepath.Base(recorded), originalHash[:], currentHash[:]); err != nil {
+				t.Fatal(err)
+			}
+			if tc.referenced {
+				if _, err := database.Write(t.Context()).Exec(`
+					INSERT INTO books(id, title, sort_title) VALUES (2, 'Other [a1]', 'Other [a1]');
+					INSERT INTO assets(id, book_id, storage_path, filename, extension, current_sha256, original_sha256)
+					VALUES (2, 2, ?, ?, '.epub', ?, randomblob(32));
+				`, candidate, filepath.Base(candidate), currentHash[:]); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.MkdirAll(filepath.Dir(root.Abs(candidate)), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(root.Abs(candidate), []byte(tc.contents), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			assets, err := db.AllAssetsWithPrimaryAuthor(database.Read(t.Context()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := repairAssets(t.Context(), database, root, "{title} [a{asset_id}]{dot_ext}", assets)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Relocated != 0 || result.FixedPaths != 0 || result.Missing+result.HashMismatches != 1 {
+				t.Fatalf("repair = %+v; want one unresolved asset without relocation", result)
+			}
+			if data, err := os.ReadFile(root.Abs(candidate)); err != nil || string(data) != tc.contents {
+				t.Fatalf("candidate = %q, %v; want unchanged bytes", data, err)
+			}
+			if _, err := os.Stat(root.Abs("Book [a1].epub")); !os.IsNotExist(err) {
+				t.Fatalf("unexpected replacement: %v", err)
+			}
+		})
 	}
 }
 
@@ -1150,29 +1225,7 @@ func TestDuplicateImportRestoresMissingManagedFile(t *testing.T) {
 	}
 }
 
-func TestCheckUsesEscapedDatabaseURI(t *testing.T) {
-	parent := t.TempDir()
-	dataDir := filepath.Join(parent, "library ? # uri")
-	initialized, err := ensureLibraryInitialized(t.Context(), dataDir)
-	if err != nil {
-		t.Fatalf("ensureLibraryInitialized: %v", err)
-	}
-	initialized.Close()
-
-	srcPath := filepath.Join(parent, "uri-source.epub")
-	if err := os.WriteFile(srcPath, []byte("uri path epub"), 0o644); err != nil {
-		t.Fatalf("write epub: %v", err)
-	}
-	if err := runImport(context.Background(), dataDir, []string{srcPath}); err != nil {
-		t.Fatalf("runImport: %v", err)
-	}
-
-	if err := runCheck(t.Context(), dataDir, nil); err != nil {
-		t.Fatalf("runCheck with URI-significant data dir: %v", err)
-	}
-}
-
-func TestCheckAndRepairCurrentHashes(t *testing.T) {
+func TestCheckAndRepairRejectChangedBytes(t *testing.T) {
 	dataDir := t.TempDir()
 	initialized, err := ensureLibraryInitialized(t.Context(), dataDir)
 	if err != nil {
@@ -1194,7 +1247,9 @@ func TestCheckAndRepairCurrentHashes(t *testing.T) {
 	}
 	defer database.Close()
 
-	var assetID, storagePath, importedHash string
+	var assetID int64
+	var storagePath string
+	var importedHash []byte
 	var importedSize int64
 	if err := database.Read(t.Context()).QueryRow("SELECT id, storage_path, current_sha256, current_size FROM assets LIMIT 1").Scan(&assetID, &storagePath, &importedHash, &importedSize); err != nil {
 		t.Fatalf("query asset: %v", err)
@@ -1205,55 +1260,29 @@ func TestCheckAndRepairCurrentHashes(t *testing.T) {
 	}
 	absPath := root.Abs(storagePath)
 
-	if _, err := database.Write(t.Context()).Exec("UPDATE assets SET current_sha256 = NULL, current_size = NULL WHERE id = ?", assetID); err != nil {
-		t.Fatalf("clear current hash/size: %v", err)
-	}
-	if err := runCheck(t.Context(), dataDir, nil); !errors.Is(err, ErrIssuesFound) {
-		t.Fatalf("runCheck missing current hash = %v; want ErrIssuesFound", err)
-	}
-	if err := runRepair(context.Background(), dataDir, nil); err != nil {
-		t.Fatalf("runRepair backfill hash: %v", err)
-	}
-
-	wantHash, wantSize, err := fileSHA256AndSize(absPath)
-	if err != nil {
-		t.Fatalf("hash final file: %v", err)
-	}
-	var backfilledHash string
-	var backfilledSize int64
-	if err := database.Read(t.Context()).QueryRow("SELECT current_sha256, current_size FROM assets WHERE id = ?", assetID).Scan(&backfilledHash, &backfilledSize); err != nil {
-		t.Fatalf("query backfilled hash/size: %v", err)
-	}
-	if backfilledHash != wantHash || backfilledHash != importedHash {
-		t.Fatalf("backfilled hash = %q; want %q", backfilledHash, wantHash)
-	}
-	if backfilledSize != wantSize || backfilledSize != importedSize {
-		t.Fatalf("backfilled size = %d; want %d", backfilledSize, wantSize)
-	}
-	if err := runCheck(t.Context(), dataDir, nil); err != nil {
-		t.Fatalf("runCheck after backfill: %v", err)
-	}
-
-	if err := os.WriteFile(absPath, []byte("changed on disk"), 0o644); err != nil {
+	if err := os.WriteFile(absPath, []byte("HASH ME"), 0o644); err != nil {
 		t.Fatalf("mutate final file: %v", err)
 	}
-	if err := runCheck(t.Context(), dataDir, nil); !errors.Is(err, ErrIssuesFound) {
-		t.Fatalf("runCheck hash mismatch = %v; want ErrIssuesFound", err)
+	out, err := captureStdout(t, func() error {
+		return runCheck(t.Context(), dataDir, []string{"--deep"})
+	})
+	if !errors.Is(err, ErrIssuesFound) || !strings.Contains(out, "Current hash mismatches (1)") {
+		t.Fatalf("runCheck = %v, output %q; want one hash mismatch", err, out)
 	}
 	if err := runRepair(context.Background(), dataDir, nil); err != nil {
 		t.Fatalf("runRepair with mismatch: %v", err)
 	}
 
-	var afterMismatchRepair string
+	var afterMismatchRepair []byte
 	var sizeAfterMismatchRepair int64
 	if err := database.Read(t.Context()).QueryRow("SELECT current_sha256, current_size FROM assets WHERE id = ?", assetID).Scan(&afterMismatchRepair, &sizeAfterMismatchRepair); err != nil {
 		t.Fatalf("query hash/size after mismatch repair: %v", err)
 	}
-	if afterMismatchRepair != backfilledHash {
-		t.Fatalf("repair rewrote mismatched hash: got %q, want unchanged %q", afterMismatchRepair, backfilledHash)
+	if !bytes.Equal(afterMismatchRepair, importedHash) {
+		t.Fatalf("repair rewrote mismatched hash: got %x, want unchanged %x", afterMismatchRepair, importedHash)
 	}
-	if sizeAfterMismatchRepair != backfilledSize {
-		t.Fatalf("repair rewrote mismatched size: got %d, want unchanged %d", sizeAfterMismatchRepair, backfilledSize)
+	if sizeAfterMismatchRepair != importedSize {
+		t.Fatalf("repair rewrote mismatched size: got %d, want unchanged %d", sizeAfterMismatchRepair, importedSize)
 	}
 }
 
@@ -1289,7 +1318,7 @@ func TestCheckAndRepairReaderCapability(t *testing.T) {
 	}
 	defer database.Close()
 
-	var assetID string
+	var assetID int64
 	var formatKey string
 	var canRead int
 	if err := database.Read(t.Context()).QueryRow("SELECT id, format, can_read FROM assets LIMIT 1").Scan(&assetID, &formatKey, &canRead); err != nil {

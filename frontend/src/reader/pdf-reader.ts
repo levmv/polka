@@ -56,7 +56,7 @@ interface PDFPointerGesture {
 
 export async function initPDFReader(
     page: HTMLElement,
-    assetId: string,
+    assetId: number,
     options: PDFReaderOptions = {},
 ): Promise<void> {
     const readURL = page.dataset.readerUrl;
@@ -87,7 +87,7 @@ class PDFReader {
 
     constructor(
         private readonly root: HTMLElement,
-        private readonly assetId: string,
+        private readonly assetId: number,
         private readonly readURL: string,
         private readonly elements: PDFReaderElements,
         private readonly options: PDFReaderOptions,

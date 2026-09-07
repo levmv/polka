@@ -398,7 +398,6 @@ export function openBulkSeriesDialog(books: BookSummary[], onApplied: OnApplied)
 // --- Authors dialog ---
 
 // Bulk authors is replace-only: every selected book gets the same author list.
-// Authors are required, so there is no clear mode (unlike series/tags).
 export function openBulkAuthorsDialog(books: BookSummary[], onApplied: OnApplied): void {
     const body = document.createElement('div');
     body.className = 'bulk-dialog';

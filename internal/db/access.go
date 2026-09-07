@@ -178,7 +178,7 @@ func CanAccessTrashedBook(queryer Queryer, scope VisibilityScope, bookID int64) 
 	return true, nil
 }
 
-func CanAccessAsset(queryer Queryer, scope VisibilityScope, assetID string) (bool, error) {
+func CanAccessAsset(queryer Queryer, scope VisibilityScope, assetID int64) (bool, error) {
 	where, args := scope.AppendBookWhere("a.id = ? AND b.deleted_at IS NULL", "b.id", assetID)
 	var exists int
 	err := queryer.QueryRow(`
@@ -197,7 +197,7 @@ func CanAccessAsset(queryer Queryer, scope VisibilityScope, assetID string) (boo
 	return true, nil
 }
 
-func UserScopeShelfIDs(queryer Queryer, userID int64) ([]string, error) {
+func UserScopeShelfIDs(queryer Queryer, userID int64) ([]int64, error) {
 	rows, err := queryer.Query(`
 		SELECT shelf_id
 		FROM user_scope_shelves
@@ -209,9 +209,9 @@ func UserScopeShelfIDs(queryer Queryer, userID int64) ([]string, error) {
 	}
 	defer rows.Close()
 
-	var ids []string
+	var ids []int64
 	for rows.Next() {
-		var id string
+		var id int64
 		if err := rows.Scan(&id); err != nil {
 			return nil, fmt.Errorf("scan user scope shelf: %w", err)
 		}

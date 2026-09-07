@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func seedKoboBook(t *testing.T, database *DB, bookID int64, assetID string, title string, formatKey string, tags string) {
+func seedKoboBook(t *testing.T, database *DB, bookID, assetID int64, title string, formatKey string, tags string) {
 	t.Helper()
 	mustExec(t, database, `
 		INSERT INTO books (id, title, sort_title, tags, language, publisher)
@@ -16,9 +16,9 @@ func seedKoboBook(t *testing.T, database *DB, bookID int64, assetID string, titl
 	`, bookID, title, title, tags)
 	mustExec(t, database, `
 		INSERT INTO assets
-		    (id, book_id, storage_path, filename, extension, format, is_primary, current_size)
-		VALUES (?, ?, ?, ?, ?, ?, 1, 1234)
-	`, assetID, bookID, strconv.FormatInt(bookID, 10)+"/"+assetID+"."+formatKey, assetID+"."+formatKey, formatKey, formatKey)
+		    (id, book_id, storage_path, filename, extension, format, is_primary, current_size, original_sha256, current_sha256)
+		VALUES (?, ?, ?, ?, ?, ?, 1, 1234, randomblob(32), randomblob(32))
+	`, assetID, bookID, strconv.FormatInt(bookID, 10)+"/"+strconv.FormatInt(assetID, 10)+"."+formatKey, strconv.FormatInt(assetID, 10)+"."+formatKey, formatKey, formatKey)
 	mustExec(t, database, `INSERT INTO search (rowid, title, tags) VALUES (?1, ?2, ?3)`, bookID, title, tags)
 
 }
@@ -33,13 +33,13 @@ func TestKoboConnectionIncrementalLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	seedKoboBook(t, database, 161, "a_epub", "One", "epub", "chosen")
-	seedKoboBook(t, database, 176, "a_two", "Two", "epub", "outside")
+	seedKoboBook(t, database, 161, 1, "One", "epub", "chosen")
+	seedKoboBook(t, database, 176, 2, "Two", "epub", "outside")
 	mustExec(t, database, `
-		UPDATE assets SET is_primary = 0 WHERE id = 'a_epub';
+		UPDATE assets SET is_primary = 0 WHERE id = 1;
 		INSERT INTO assets
-		    (id, book_id, storage_path, filename, extension, format, is_primary, current_size)
-		VALUES ('a_kepub', 161, '161/a_kepub.kepub', 'a_kepub.kepub', 'kepub', 'kepub', 0, 1400);
+		    (id, book_id, storage_path, filename, extension, format, is_primary, current_size, original_sha256, current_sha256)
+		VALUES (3, 161, '161/a_kepub.kepub', 'a_kepub.kepub', 'kepub', 'kepub', 0, 1400, randomblob(32), randomblob(32));
 	`)
 
 	if err := database.AddBookToShelf(t.Context(), shelf.ID, user.ID, 161); err != nil {
@@ -63,7 +63,7 @@ func TestKoboConnectionIncrementalLifecycle(t *testing.T) {
 	if more || current != 1 || len(changes) != 1 {
 		t.Fatalf("initial sync = %+v, current=%d more=%v", changes, current, more)
 	}
-	if changes[0].AssetID != "a_kepub" || !changes[0].Present || changes[0].Revision != changes[0].FirstRevision {
+	if changes[0].AssetID != 3 || !changes[0].Present || changes[0].Revision != changes[0].FirstRevision {
 		t.Fatalf("initial change = %+v", changes[0])
 	}
 
@@ -97,10 +97,10 @@ func TestKoboConnectionIncrementalLifecycle(t *testing.T) {
 	if len(removed) != 1 || removed[0].Present || removed[0].Revision != 3 {
 		t.Fatalf("removal = %+v", removed)
 	}
-	if _, err := KoboPublicationForAsset(database.Read(t.Context()), connection.ID, "a_kepub"); !errors.Is(err, ErrKoboConnectionNotFound) {
+	if _, err := KoboPublicationForAsset(database.Read(t.Context()), connection.ID, 3); !errors.Is(err, ErrKoboConnectionNotFound) {
 		t.Fatalf("removed asset lookup: %v", err)
 	}
-	if _, err := KoboPublicationForAsset(database.Read(t.Context()), connection.ID, "a_two"); !errors.Is(err, ErrKoboConnectionNotFound) {
+	if _, err := KoboPublicationForAsset(database.Read(t.Context()), connection.ID, 2); !errors.Is(err, ErrKoboConnectionNotFound) {
 		t.Fatalf("outside asset lookup: %v", err)
 	}
 
@@ -136,14 +136,14 @@ func TestKoboSyncPaginationQueryShelfAndCursorValidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	seedKoboBook(t, database, 103, "a_a", "A", "epub", "send")
-	seedKoboBook(t, database, 112, "a_b", "B", "epub", "send")
-	seedKoboBook(t, database, 115, "a_c", "C", "epub", "skip")
+	seedKoboBook(t, database, 103, 1, "A", "epub", "send")
+	seedKoboBook(t, database, 112, 2, "B", "epub", "send")
+	seedKoboBook(t, database, 115, 3, "C", "epub", "skip")
 	shelf, err := database.CreateShelf(t.Context(), user.ID, ShelfShared, "Send", ShelfQuery, "tag:send")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.UpdateUserAccess(t.Context(), user.ID, UserAccess{Role: RoleReader, ContentScope: ContentScopeShelves, ShelfIDs: []string{shelf.ID}}); err != nil {
+	if _, err := database.UpdateUserAccess(t.Context(), user.ID, UserAccess{Role: RoleReader, ContentScope: ContentScopeShelves, ShelfIDs: []int64{shelf.ID}}); err != nil {
 		t.Fatal(err)
 	}
 	connection, err := database.ReplaceKoboConnection(context.Background(), user.ID, shelf.ID)
@@ -155,14 +155,14 @@ func TestKoboSyncPaginationQueryShelfAndCursorValidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if current != 2 || !more || len(first) != 1 || first[0].AssetID != "a_a" {
+	if current != 2 || !more || len(first) != 1 || first[0].AssetID != 1 {
 		t.Fatalf("first page = %+v, current=%d more=%v", first, current, more)
 	}
 	second, _, more, err := database.SyncKoboConnection(context.Background(), connection.ID, first[0].Revision, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if more || len(second) != 1 || second[0].AssetID != "a_b" {
+	if more || len(second) != 1 || second[0].AssetID != 2 {
 		t.Fatalf("second page = %+v, more=%v", second, more)
 	}
 	if _, _, _, err := database.SyncKoboConnection(context.Background(), connection.ID, current+1, 1); !errors.Is(err, ErrKoboInvalidCursor) {

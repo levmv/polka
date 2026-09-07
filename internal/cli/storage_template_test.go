@@ -12,7 +12,7 @@ import (
 	"github.com/levmv/polka/internal/storage"
 )
 
-func TestStorageTemplatePreviewDetectsCollisions(t *testing.T) {
+func TestStorageTemplateReportsCollisions(t *testing.T) {
 	tempDir := t.TempDir()
 	dataDir := filepath.Join(tempDir, "data")
 	initDefaultTestLibrary(t, dataDir)
@@ -31,11 +31,26 @@ func TestStorageTemplatePreviewDetectsCollisions(t *testing.T) {
 		t.Fatalf("import folder: %v", err)
 	}
 
-	if err := runStorageTemplatePreview(t.Context(), dataDir, "books/{author_bucket}/{author_sort}/{title} [{asset_id}]{dot_ext}"); err != nil {
+	if err := runStorageTemplatePreview(t.Context(), dataDir, "books/{author_bucket}/{author_sort}/{title} [a{asset_id}]{dot_ext}"); err != nil {
 		t.Fatalf("default-like preview: %v", err)
 	}
 	if err := runStorageTemplatePreview(t.Context(), dataDir, "books/collide{dot_ext}"); !errors.Is(err, ErrIssuesFound) {
 		t.Fatalf("collision preview error = %v; want ErrIssuesFound", err)
+	}
+	if err := runStorageTemplateApply(t.Context(), dataDir, []string{"{title}{dot_ext}"}); err != nil {
+		t.Fatal(err)
+	}
+	database, err := db.InitPath(filepath.Join(dataDir, "library.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if _, err := database.Write(t.Context()).Exec("UPDATE books SET title = 'Same title', sort_title = 'Same title'"); err != nil {
+		t.Fatal(err)
+	}
+	out, err := captureStdout(t, func() error { return runCheck(t.Context(), dataDir, nil) })
+	if !errors.Is(err, ErrIssuesFound) || !strings.Contains(out, "Storage path collisions (1):") || !strings.Contains(out, "Same title.epub: assets [1 2]") {
+		t.Fatalf("check after metadata changes = %q, %v; want both assets reported at the colliding path", out, err)
 	}
 }
 
@@ -69,7 +84,7 @@ func TestStorageTemplateApplyPersistsRelayoutsAndAffectsNewImports(t *testing.T)
 	}
 	database.Close()
 
-	template := "books/flat/{title} [{asset_id}]{dot_ext}"
+	template := "books/flat/{title} [a{asset_id}]{dot_ext}"
 	if err := runStorageTemplateApply(context.Background(), dataDir, []string{template}); err != nil {
 		t.Fatalf("apply template: %v", err)
 	}

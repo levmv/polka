@@ -322,14 +322,14 @@ async function openAccessModal(
 function createAccessControls(opts: {
     role: UserAccount['role'];
     contentScope: UserAccount['content_scope'];
-    scopeShelfIDs: string[];
+    scopeShelfIDs: number[];
     shelves: Shelf[];
 }): {
     fields: HTMLElement[];
     focus: HTMLElement;
     role(): UserAccount['role'];
     contentScope(): UserAccount['content_scope'];
-    scopeShelfIDs(): string[];
+    scopeShelfIDs(): number[];
     destroy(): void;
 } {
     const role = createSelect({
@@ -360,7 +360,7 @@ function createAccessControls(opts: {
             const input = document.createElement('input');
             input.type = 'checkbox';
             input.className = 'settings-checkbox';
-            input.value = shelf.id;
+            input.value = String(shelf.id);
             input.checked = checked.has(shelf.id);
             shelfBox.append(shelfCheckboxField(shelf, input));
         }
@@ -406,7 +406,7 @@ function createAccessControls(opts: {
                       ...hiddenScopeShelfIDs,
                       ...Array.from(
                           shelfBox.querySelectorAll<HTMLInputElement>('input:checked'),
-                      ).map((input) => input.value),
+                      ).map((input) => Number(input.value)),
                   ],
     };
 }

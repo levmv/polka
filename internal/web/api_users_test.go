@@ -74,7 +74,7 @@ func TestAPIUsersAdminListAndCreate(t *testing.T) {
 		Password:      "pw",
 		Role:          db.RoleReader,
 		ContentScope:  db.ContentScopeShelves,
-		ScopeShelfIDs: []string{kids.ID},
+		ScopeShelfIDs: []int64{kids.ID},
 	}))
 	if w.Code != http.StatusCreated {
 		t.Fatalf("scoped create status = %d, want %d; body: %s", w.Code, http.StatusCreated, w.Body.String())
@@ -83,7 +83,7 @@ func TestAPIUsersAdminListAndCreate(t *testing.T) {
 		t.Fatalf("decode scoped user: %v", err)
 	}
 	if created.ContentScope != db.ContentScopeShelves || len(created.ScopeShelfIDs) != 1 || created.ScopeShelfIDs[0] != kids.ID {
-		t.Fatalf("scoped user = %+v, want only shelf %q", created, kids.ID)
+		t.Fatalf("scoped user = %+v, want only shelf %d", created, kids.ID)
 	}
 
 	w = httptest.NewRecorder()
@@ -102,7 +102,7 @@ func TestAPIUsersAdminListAndCreate(t *testing.T) {
 		Password:      "pw",
 		Role:          db.RoleReader,
 		ContentScope:  db.ContentScopeShelves,
-		ScopeShelfIDs: []string{"missing"},
+		ScopeShelfIDs: []int64{999},
 	}))
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("invalid scope create status = %d, want %d", w.Code, http.StatusBadRequest)
@@ -121,7 +121,7 @@ func TestAPIUsersAdminListAndCreate(t *testing.T) {
 		Password:      "pw",
 		Role:          db.RoleReader,
 		ContentScope:  db.ContentScopeShelves,
-		ScopeShelfIDs: []string{unread.ID},
+		ScopeShelfIDs: []int64{unread.ID},
 	}))
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status scope create status = %d, want %d; body: %s", w.Code, http.StatusBadRequest, w.Body.String())
@@ -171,7 +171,7 @@ func TestAPIUserAccessCanUseAdminPrivateShelf(t *testing.T) {
 	handler.ServeHTTP(w, jsonRequest(t, s, admin.ID, http.MethodPatch, "/api/users/"+strconv.FormatInt(reader.ID, 10), userAccessRequest{
 		Role:          db.RoleReader,
 		ContentScope:  db.ContentScopeShelves,
-		ScopeShelfIDs: []string{private.ID},
+		ScopeShelfIDs: []int64{private.ID},
 	}))
 	if w.Code != http.StatusOK {
 		t.Fatalf("scope private shelf status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())

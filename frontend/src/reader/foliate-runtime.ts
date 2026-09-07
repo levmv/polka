@@ -35,8 +35,8 @@ import { wireReaderTOC } from './toc';
 
 export function initReader(): void {
     const page = document.querySelector<HTMLElement>('.reader-page');
-    const assetId = page?.dataset.readerAssetId;
-    if (!assetId) return;
+    const assetId = Number(page?.dataset.readerAssetId);
+    if (!page || !assetId) return;
 
     const format = page.dataset.readerFormat || '';
     initFoliateReader(page, assetId, format).catch((e) => {
@@ -47,7 +47,7 @@ export function initReader(): void {
 
 async function initFoliateReader(
     page: HTMLElement,
-    assetId: string,
+    assetId: number,
     format: string,
 ): Promise<void> {
     const stage = page.querySelector<HTMLElement>('.reader-epub-stage');

@@ -434,7 +434,7 @@ function analyzeCandidate(
         const proposed = candidateFieldValue(field, candidate, draft);
         const deferredDescription =
             field.key === 'description' && hasDeferredDescription(candidate);
-        if (isEmptyMetadataValue(field.key, proposed) && !deferredDescription) continue;
+        if (isEmptyMetadataValue(proposed) && !deferredDescription) continue;
         const current = draft[field.key];
         if (!deferredDescription && sameMetadataValue(current, proposed)) continue;
         if (fieldIsDirty(field.key, draft, saved)) {
@@ -448,7 +448,7 @@ function analyzeCandidate(
             impact.missingFields += 1;
             continue;
         }
-        if (isEmptyMetadataValue(field.key, current)) {
+        if (isEmptyMetadataValue(current)) {
             impact.missingFields += 1;
         } else {
             impact.replaceFields += 1;
@@ -533,15 +533,11 @@ function candidatePatch(
     }
     for (const field of metadataFields) {
         const proposed = candidateFieldValue(field, candidate, draft);
-        if (isEmptyMetadataValue(field.key, proposed)) continue;
+        if (isEmptyMetadataValue(proposed)) continue;
         const current = draft[field.key];
         if (sameMetadataValue(current, proposed)) continue;
         if (fieldIsDirty(field.key, draft, saved)) continue;
-        if (
-            mode === 'missing' &&
-            field.key !== 'identifiers' &&
-            !isEmptyMetadataValue(field.key, current)
-        )
+        if (mode === 'missing' && field.key !== 'identifiers' && !isEmptyMetadataValue(current))
             continue;
         (patch as Record<MetadataFieldKey, string | number | null>)[field.key] =
             proposed == null ? null : proposed;
@@ -578,7 +574,7 @@ function metadataCandidateFields(candidate: MetadataCandidate): string[] {
     if (candidate.cover_url) fields.push('Cover');
     for (const field of metadataFields) {
         if (
-            !isEmptyMetadataValue(field.key, field.value(candidate)) ||
+            !isEmptyMetadataValue(field.value(candidate)) ||
             (field.key === 'description' && hasDeferredDescription(candidate))
         ) {
             fields.push(field.label);
@@ -595,11 +591,8 @@ function fieldIsDirty(key: MetadataFieldKey, draft: BookUpdate, saved: BookUpdat
     return !sameMetadataValue(draft[key], saved[key]);
 }
 
-function isEmptyMetadataValue(key: MetadataFieldKey, value: unknown): boolean {
-    if (value == null) return true;
-    const s = String(value).trim();
-    if (s === '') return true;
-    return key === 'authors' && s.toLowerCase() === 'unknown author';
+function isEmptyMetadataValue(value: unknown): boolean {
+    return value == null || String(value).trim() === '';
 }
 
 function sameMetadataValue(a: unknown, b: unknown): boolean {

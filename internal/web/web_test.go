@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
 	"encoding/json/v2"
 	"io"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/levmv/polka/internal/converter"
 	"github.com/levmv/polka/internal/db"
@@ -24,7 +26,7 @@ import (
 	"github.com/levmv/polka/internal/testfixture"
 )
 
-const testReaderCurrentSHA256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+var testReaderCurrentSHA256 = bytes.Repeat([]byte{0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef}, 4)
 
 func setupTestDB(t *testing.T) (*db.DB, string) {
 	t.Helper()
@@ -36,18 +38,21 @@ func setupTestDB(t *testing.T) (*db.DB, string) {
 		t.Fatalf("failed to init db: %v", err)
 	}
 
+	contents := []byte("epub content")
+	fileHash := sha256.Sum256(contents)
 	_, err = database.Write(t.Context()).Exec(`
 		INSERT INTO books (id, title, sort_title) VALUES (1, 'The Hobbit', 'Hobbit, The');
 		INSERT INTO books (id, title, sort_title) VALUES (2, 'Dune', 'Dune');
 
-		INSERT INTO authors (id, name, sort_name) VALUES ('a_1', 'J.R.R. Tolkien', 'Tolkien, J.R.R.');
-		INSERT INTO authors (id, name, sort_name) VALUES ('a_2', 'Frank Herbert', 'Herbert, Frank');
+		INSERT INTO authors (id, name, sort_name) VALUES (1, 'J.R.R. Tolkien', 'Tolkien, J.R.R.');
+		INSERT INTO authors (id, name, sort_name) VALUES (2, 'Frank Herbert', 'Herbert, Frank');
 
-		INSERT INTO book_authors (book_id, author_id) VALUES (1, 'a_1');
-		INSERT INTO book_authors (book_id, author_id) VALUES (2, 'a_2');
+		INSERT INTO book_authors (book_id, author_id) VALUES (1, 1);
+		INSERT INTO book_authors (book_id, author_id) VALUES (2, 2);
 
-		INSERT INTO assets (id, book_id, storage_path, filename, extension) VALUES ('asset_1', 1, 'Tolkien/The_Hobbit/a_1.epub', 'a_1.epub', '.epub');
-	`)
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, original_sha256, current_sha256)
+		VALUES (1, 1, 'Tolkien/The_Hobbit/a_1.epub', 'a_1.epub', '.epub', ?, ?);
+	`, fileHash[:], fileHash[:])
 	if err != nil {
 		t.Fatalf("failed to insert test data: %v", err)
 	}
@@ -56,7 +61,7 @@ func setupTestDB(t *testing.T) (*db.DB, string) {
 
 	fileDir := filepath.Join(dir, "Tolkien", "The_Hobbit")
 	os.MkdirAll(fileDir, 0o755)
-	os.WriteFile(filepath.Join(fileDir, "a_1.epub"), []byte("epub content"), 0o644)
+	os.WriteFile(filepath.Join(fileDir, "a_1.epub"), contents, 0o644)
 
 	return database, dir
 }
@@ -232,7 +237,7 @@ func TestDownloadHandler(t *testing.T) {
 
 	_, err := database.Write(t.Context()).Exec(`
 		INSERT INTO books (id, title, sort_title) VALUES (135, 'Zipped FB2', 'Zipped FB2');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format) VALUES ('asset_fb2zip_download', 135, 'FB2/Zipped/book.fb2.zip', 'book.fb2.zip', '.fb2.zip', 'fb2');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, original_sha256, current_sha256) VALUES (2, 135, 'FB2/Zipped/book.fb2.zip', 'book.fb2.zip', '.fb2.zip', 'fb2', randomblob(32), randomblob(32));
 	`)
 	if err != nil {
 		t.Fatalf("insert fb2.zip fixture: %v", err)
@@ -250,8 +255,25 @@ func TestDownloadHandler(t *testing.T) {
 		dataDir: dir,
 	}
 
-	req := httptest.NewRequest("GET", "/download/asset_1", nil)
-	req.SetPathValue("id", "asset_1")
+	t.Run("first download while writer is held", func(t *testing.T) {
+		tx, err := database.BeginWrite(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tx.Rollback()
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		defer cancel()
+		req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/download/1", nil)
+		req.SetPathValue("id", "1")
+		w := httptest.NewRecorder()
+		s.handleDownload(w, req)
+		if ctx.Err() != nil || w.Code != http.StatusOK || w.Body.String() != "epub content" {
+			t.Fatalf("download with busy writer = %d, %q, %v; want complete file before deadline", w.Code, w.Body.String(), ctx.Err())
+		}
+	})
+
+	req := httptest.NewRequest("GET", "/download/1", nil)
+	req.SetPathValue("id", "1")
 	w := httptest.NewRecorder()
 	s.handleDownload(w, req)
 
@@ -271,7 +293,7 @@ func TestDownloadHandler(t *testing.T) {
 		t.Fatalf("PartialMD5 fixture: %v", err)
 	}
 	var gotHash string
-	if err := database.Read(req.Context()).QueryRow("SELECT koreader_hash FROM assets WHERE id = 'asset_1'").Scan(&gotHash); err != nil {
+	if err := database.Read(req.Context()).QueryRow("SELECT koreader_hash FROM assets WHERE id = 1").Scan(&gotHash); err != nil {
 		t.Fatalf("select koreader hash: %v", err)
 	}
 	if gotHash != wantHash {
@@ -281,24 +303,24 @@ func TestDownloadHandler(t *testing.T) {
 	// Once present, the DB-owned identity is reused. Supported file replacement
 	// paths update or clear it themselves; an ordinary download is read-only.
 	const persistedHash = "already-computed"
-	mustExec(t, database, "UPDATE assets SET koreader_hash = ? WHERE id = 'asset_1'", persistedHash)
+	mustExec(t, database, "UPDATE assets SET koreader_hash = ? WHERE id = 1", persistedHash)
 
-	req = httptest.NewRequest("GET", "/download/asset_1", nil)
-	req.SetPathValue("id", "asset_1")
+	req = httptest.NewRequest("GET", "/download/1", nil)
+	req.SetPathValue("id", "1")
 	w = httptest.NewRecorder()
 	s.handleDownload(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("repeat download status = %d, want 200", w.Code)
 	}
-	if err := database.Read(req.Context()).QueryRow("SELECT koreader_hash FROM assets WHERE id = 'asset_1'").Scan(&gotHash); err != nil {
+	if err := database.Read(req.Context()).QueryRow("SELECT koreader_hash FROM assets WHERE id = 1").Scan(&gotHash); err != nil {
 		t.Fatalf("select persisted koreader hash: %v", err)
 	}
 	if gotHash != persistedHash {
 		t.Fatalf("repeat download koreader hash = %q; want persisted %q", gotHash, persistedHash)
 	}
 
-	req = httptest.NewRequest("GET", "/download/asset_fb2zip_download", nil)
-	req.SetPathValue("id", "asset_fb2zip_download")
+	req = httptest.NewRequest("GET", "/download/2", nil)
+	req.SetPathValue("id", "2")
 	w = httptest.NewRecorder()
 	s.handleDownload(w, req)
 
@@ -327,7 +349,7 @@ func TestDownloadAsAZW4PDF(t *testing.T) {
 
 	_, err := database.Write(t.Context()).Exec(`
 		INSERT INTO books (id, title, sort_title) VALUES (111, 'Print Replica', 'Print Replica');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format) VALUES ('asset_azw4', 111, 'Kindle/Print/print-replica.azw4', 'print-replica.azw4', '.azw4', 'azw4');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, original_sha256, current_sha256) VALUES (2, 111, 'Kindle/Print/print-replica.azw4', 'print-replica.azw4', '.azw4', 'azw4', randomblob(32), randomblob(32));
 	`)
 	if err != nil {
 		t.Fatalf("insert azw4 fixture: %v", err)
@@ -345,7 +367,7 @@ func TestDownloadAsAZW4PDF(t *testing.T) {
 	s := newTestServer(database, dir)
 	handler := testRoutes(t, s)
 
-	req := httptest.NewRequest("GET", "/download/asset_azw4/as/pdf", nil)
+	req := httptest.NewRequest("GET", "/download/2/as/pdf", nil)
 	addSessionCookie(t, s, req, user.ID)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -370,7 +392,7 @@ func TestDownloadAsRejectsUnsupportedConversion(t *testing.T) {
 
 	_, err := database.Write(t.Context()).Exec(`
 		INSERT INTO books (id, title, sort_title) VALUES (155, 'Legacy MOBI', 'Legacy MOBI');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format) VALUES ('asset_mobi_download', 155, 'Kindle/Legacy/legacy.mobi', 'legacy.mobi', '.mobi', 'mobi');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, original_sha256, current_sha256) VALUES (2, 155, 'Kindle/Legacy/legacy.mobi', 'legacy.mobi', '.mobi', 'mobi', randomblob(32), randomblob(32));
 	`)
 	if err != nil {
 		t.Fatalf("insert mobi fixture: %v", err)
@@ -387,7 +409,7 @@ func TestDownloadAsRejectsUnsupportedConversion(t *testing.T) {
 	s := newTestServer(database, dir)
 	handler := testRoutes(t, s)
 
-	req := httptest.NewRequest("GET", "/download/asset_mobi_download/as/pdf", nil)
+	req := httptest.NewRequest("GET", "/download/2/as/pdf", nil)
 	addSessionCookie(t, s, req, user.ID)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -406,7 +428,7 @@ func TestDownloadAsCBRToCBZ(t *testing.T) {
 
 	_, err := database.Write(t.Context()).Exec(`
 		INSERT INTO books (id, title, sort_title) VALUES (118, 'RAR Comic', 'RAR Comic');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format) VALUES ('asset_cbr_download', 118, 'Comics/RAR/rar-comic.cbr', 'rar-comic.cbr', '.cbr', 'cbr');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, original_sha256, current_sha256) VALUES (2, 118, 'Comics/RAR/rar-comic.cbr', 'rar-comic.cbr', '.cbr', 'cbr', randomblob(32), randomblob(32));
 	`)
 	if err != nil {
 		t.Fatalf("insert CBR fixture: %v", err)
@@ -422,7 +444,7 @@ func TestDownloadAsCBRToCBZ(t *testing.T) {
 	user := mustUser(t, database, "cbr-reader", db.RoleReader)
 	s := newTestServer(database, dir)
 	handler := testRoutes(t, s)
-	req := httptest.NewRequest("GET", "/download/asset_cbr_download/as/cbz", nil)
+	req := httptest.NewRequest("GET", "/download/2/as/cbz", nil)
 	addSessionCookie(t, s, req, user.ID)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -448,7 +470,7 @@ func TestDownloadAsAZW4WithoutPDFDoesNotSendAttachment(t *testing.T) {
 
 	_, err := database.Write(t.Context()).Exec(`
 		INSERT INTO books (id, title, sort_title) VALUES (126, 'Empty Print Replica', 'Empty Print Replica');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format) VALUES ('asset_empty_azw4', 126, 'Kindle/Empty/empty.azw4', 'empty.azw4', '.azw4', 'azw4');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, original_sha256, current_sha256) VALUES (2, 126, 'Kindle/Empty/empty.azw4', 'empty.azw4', '.azw4', 'azw4', randomblob(32), randomblob(32));
 	`)
 	if err != nil {
 		t.Fatalf("insert empty azw4 fixture: %v", err)
@@ -465,7 +487,7 @@ func TestDownloadAsAZW4WithoutPDFDoesNotSendAttachment(t *testing.T) {
 	s := newTestServer(database, dir)
 	handler := testRoutes(t, s)
 
-	req := httptest.NewRequest("GET", "/download/asset_empty_azw4/as/pdf", nil)
+	req := httptest.NewRequest("GET", "/download/2/as/pdf", nil)
 	addSessionCookie(t, s, req, user.ID)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -487,7 +509,7 @@ func TestDownloadAsTXTToEPUB(t *testing.T) {
 
 	_, err := database.Write(t.Context()).Exec(`
 		INSERT INTO books (id, title, sort_title) VALUES (177, 'Plain Notes', 'Plain Notes');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format) VALUES ('asset_txt', 177, 'Text/Plain/plain.txt', 'plain.txt', '.txt', 'txt');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, original_sha256, current_sha256) VALUES (2, 177, 'Text/Plain/plain.txt', 'plain.txt', '.txt', 'txt', randomblob(32), randomblob(32));
 	`)
 	if err != nil {
 		t.Fatalf("insert txt fixture: %v", err)
@@ -504,7 +526,7 @@ func TestDownloadAsTXTToEPUB(t *testing.T) {
 	s := newTestServer(database, dir)
 	handler := testRoutes(t, s)
 
-	req := httptest.NewRequest("GET", "/download/asset_txt/as/epub", nil)
+	req := httptest.NewRequest("GET", "/download/2/as/epub", nil)
 	addSessionCookie(t, s, req, user.ID)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -529,7 +551,7 @@ func TestDownloadAsOversizedTXTReturns413(t *testing.T) {
 
 	_, err := database.Write(t.Context()).Exec(`
 		INSERT INTO books (id, title, sort_title) VALUES (138, 'Huge Notes', 'Huge Notes');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format) VALUES ('asset_huge_txt', 138, 'Text/Huge/huge.txt', 'huge.txt', '.txt', 'txt');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, original_sha256, current_sha256) VALUES (2, 138, 'Text/Huge/huge.txt', 'huge.txt', '.txt', 'txt', randomblob(32), randomblob(32));
 	`)
 	if err != nil {
 		t.Fatalf("insert huge txt fixture: %v", err)
@@ -550,7 +572,7 @@ func TestDownloadAsOversizedTXTReturns413(t *testing.T) {
 	s := newTestServer(database, dir)
 	handler := testRoutes(t, s)
 
-	req := httptest.NewRequest("GET", "/download/asset_huge_txt/as/epub", nil)
+	req := httptest.NewRequest("GET", "/download/2/as/epub", nil)
 	addSessionCookie(t, s, req, user.ID)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -572,12 +594,12 @@ func TestDownloadAsEPUBToKEPUB(t *testing.T) {
 
 	_, err := database.Write(t.Context()).Exec(`
 		INSERT INTO books (id, title, sort_title) VALUES (128, 'Kobo Source', 'Kobo Source');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format) VALUES ('asset_epub_kepub', 128, 'EPUB/Kobo/source.epub', 'source.epub', '.epub', 'epub');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, original_sha256, current_sha256) VALUES (2, 128, 'EPUB/Kobo/source.epub', 'source.epub', '.epub', 'epub', randomblob(32), randomblob(32));
 	`)
 	if err != nil {
 		t.Fatalf("insert epub fixture: %v", err)
 	}
-	mustExec(t, database, "UPDATE assets SET current_sha256 = ? WHERE id = 'asset_epub_kepub'", testReaderCurrentSHA256)
+	mustExec(t, database, "UPDATE assets SET current_sha256 = ? WHERE id = 2", testReaderCurrentSHA256)
 
 	fileDir := filepath.Join(dir, "EPUB", "Kobo")
 	if err := os.MkdirAll(fileDir, 0o755); err != nil {
@@ -595,7 +617,7 @@ func TestDownloadAsEPUBToKEPUB(t *testing.T) {
 	if convertedVersion == "" {
 		t.Fatal("test build has no Polka version for converted asset cache key")
 	}
-	req := httptest.NewRequest("GET", "/download/asset_epub_kepub/as/kepub?v="+convertedVersion, nil)
+	req := httptest.NewRequest("GET", "/download/2/as/kepub?v="+convertedVersion, nil)
 	addSessionCookie(t, s, req, user.ID)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -634,7 +656,7 @@ func TestDownloadAsEPUBToRepairedEPUB(t *testing.T) {
 
 	_, err := database.Write(t.Context()).Exec(`
 		INSERT INTO books (id, title, sort_title) VALUES (129, 'Repair Source', 'Repair Source');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format) VALUES ('asset_epub_rebuild', 129, 'EPUB/Repair/source.epub', 'source.epub', '.epub', 'epub');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, original_sha256, current_sha256) VALUES (2, 129, 'EPUB/Repair/source.epub', 'source.epub', '.epub', 'epub', randomblob(32), randomblob(32));
 	`)
 	if err != nil {
 		t.Fatalf("insert EPUB rebuild fixture: %v", err)
@@ -650,7 +672,7 @@ func TestDownloadAsEPUBToRepairedEPUB(t *testing.T) {
 	user := mustUser(t, database, "repair-reader", db.RoleReader)
 	s := newTestServer(database, dir)
 	handler := testRoutes(t, s)
-	req := httptest.NewRequest("GET", "/download/asset_epub_rebuild/as/epub", nil)
+	req := httptest.NewRequest("GET", "/download/2/as/epub", nil)
 	addSessionCookie(t, s, req, user.ID)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -686,7 +708,7 @@ func TestDownloadAsConversionFailureDoesNotCommitAttachment(t *testing.T) {
 
 	_, err := database.Write(t.Context()).Exec(`
 		INSERT INTO books (id, title, sort_title) VALUES (114, 'Broken EPUB', 'Broken EPUB');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format) VALUES ('asset_broken_epub', 114, 'EPUB/Broken/source.epub', 'source.epub', '.epub', 'epub');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, original_sha256, current_sha256) VALUES (2, 114, 'EPUB/Broken/source.epub', 'source.epub', '.epub', 'epub', randomblob(32), randomblob(32));
 	`)
 	if err != nil {
 		t.Fatalf("insert broken EPUB fixture: %v", err)
@@ -702,7 +724,7 @@ func TestDownloadAsConversionFailureDoesNotCommitAttachment(t *testing.T) {
 	user := mustUser(t, database, "reader", db.RoleReader)
 	s := newTestServer(database, dir)
 	handler := testRoutes(t, s)
-	req := httptest.NewRequest("GET", "/download/asset_broken_epub/as/kepub", nil)
+	req := httptest.NewRequest("GET", "/download/2/as/kepub", nil)
 	addSessionCookie(t, s, req, user.ID)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -776,35 +798,35 @@ func TestReaderRoutesServeReadablePrimaryAssets(t *testing.T) {
 
 	_, err := database.Write(t.Context()).Exec(`
 		INSERT INTO books (id, title, sort_title) VALUES (165, 'PDF Book', 'PDF Book');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read) VALUES ('asset_pdf', 165, 'PDF/PDF_Book/asset_pdf.pdf', 'asset_pdf.pdf', '.pdf', 'pdf', 1, 1);
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_sha256, current_sha256) VALUES (2, 165, 'PDF/PDF_Book/asset_pdf.pdf', 'asset_pdf.pdf', '.pdf', 'pdf', 1, 1, randomblob(32), randomblob(32));
 		INSERT INTO books (id, title, sort_title) VALUES (127, 'EPUB Book', 'EPUB Book');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read) VALUES ('asset_epub', 127, 'EPUB/EPUB_Book/asset_epub.epub', 'asset_epub.epub', '.epub', 'epub', 1, 1);
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read) VALUES ('asset_epub_alt', 127, 'EPUB/EPUB_Book/asset_epub_alt.fb2', 'asset_epub_alt.fb2', '.fb2', 'fb2', 0, 1);
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_sha256, current_sha256) VALUES (3, 127, 'EPUB/EPUB_Book/asset_epub.epub', 'asset_epub.epub', '.epub', 'epub', 1, 1, randomblob(32), randomblob(32));
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_sha256, current_sha256) VALUES (4, 127, 'EPUB/EPUB_Book/asset_epub_alt.fb2', 'asset_epub_alt.fb2', '.fb2', 'fb2', 0, 1, randomblob(32), randomblob(32));
 		INSERT INTO books (id, title, sort_title) VALUES (153, 'Missing EPUB', 'Missing EPUB');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read) VALUES ('asset_missing_epub', 153, 'EPUB/Missing/asset_missing.epub', 'asset_missing.epub', '.epub', 'epub', 1, 1);
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_sha256, current_sha256) VALUES (5, 153, 'EPUB/Missing/asset_missing.epub', 'asset_missing.epub', '.epub', 'epub', 1, 1, randomblob(32), randomblob(32));
 		INSERT INTO books (id, title, sort_title) VALUES (141, 'KEPUB Book', 'KEPUB Book');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read) VALUES ('asset_kepub', 141, 'KEPUB/KEPUB_Book/asset_kepub.kepub.epub', 'asset_kepub.kepub.epub', '.kepub.epub', 'kepub', 1, 1);
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_sha256, current_sha256) VALUES (6, 141, 'KEPUB/KEPUB_Book/asset_kepub.kepub.epub', 'asset_kepub.kepub.epub', '.kepub.epub', 'kepub', 1, 1, randomblob(32), randomblob(32));
 		INSERT INTO books (id, title, sort_title) VALUES (154, 'MOBI Book', 'MOBI Book');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read) VALUES ('asset_mobi', 154, 'MOBI/MOBI_Book/asset_mobi.mobi', 'asset_mobi.mobi', '.mobi', 'mobi', 1, 1);
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_sha256, current_sha256) VALUES (7, 154, 'MOBI/MOBI_Book/asset_mobi.mobi', 'asset_mobi.mobi', '.mobi', 'mobi', 1, 1, randomblob(32), randomblob(32));
 		INSERT INTO books (id, title, sort_title) VALUES (130, 'FB2 Book', 'FB2 Book');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read) VALUES ('asset_fb2', 130, 'FB2/FB2_Book/asset_fb2.fb2', 'asset_fb2.fb2', '.fb2', 'fb2', 1, 1);
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_sha256, current_sha256) VALUES (8, 130, 'FB2/FB2_Book/asset_fb2.fb2', 'asset_fb2.fb2', '.fb2', 'fb2', 1, 1, randomblob(32), randomblob(32));
 		INSERT INTO books (id, title, sort_title) VALUES (134, 'Zipped FB2 Book', 'Zipped FB2 Book');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read) VALUES ('asset_fb2zip', 134, 'FB2Zip/FB2Zip_Book/asset_fb2zip.fb2.zip', 'asset_fb2zip.fb2.zip', '.fb2.zip', 'fb2', 1, 1);
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_sha256, current_sha256) VALUES (9, 134, 'FB2Zip/FB2Zip_Book/asset_fb2zip.fb2.zip', 'asset_fb2zip.fb2.zip', '.fb2.zip', 'fb2', 1, 1, randomblob(32), randomblob(32));
 		INSERT INTO books (id, title, sort_title) VALUES (131, 'Mislabeled Zipped FB2 Book', 'Mislabeled Zipped FB2 Book');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read) VALUES ('asset_fb2_mislabeled', 131, 'FB2Mislabeled/FB2Mislabeled_Book/asset_fb2_mislabeled.fb2', 'asset_fb2_mislabeled.fb2', '.fb2', 'fb2', 1, 1);
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_sha256, current_sha256) VALUES (10, 131, 'FB2Mislabeled/FB2Mislabeled_Book/asset_fb2_mislabeled.fb2', 'asset_fb2_mislabeled.fb2', '.fb2', 'fb2', 1, 1, randomblob(32), randomblob(32));
 		INSERT INTO books (id, title, sort_title) VALUES (133, 'Gzipped FB2 Book', 'Gzipped FB2 Book');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read) VALUES ('asset_fb2gz', 133, 'FB2Gzip/FB2Gzip_Book/asset_fb2gz.fb2.gz', 'asset_fb2gz.fb2.gz', '.fb2.gz', 'fb2', 1, 1);
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_sha256, current_sha256) VALUES (11, 133, 'FB2Gzip/FB2Gzip_Book/asset_fb2gz.fb2.gz', 'asset_fb2gz.fb2.gz', '.fb2.gz', 'fb2', 1, 1, randomblob(32), randomblob(32));
 		INSERT INTO books (id, title, sort_title) VALUES (119, 'CBZ Book', 'CBZ Book');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read) VALUES ('asset_cbz', 119, 'CBZ/CBZ_Book/asset_cbz.cbz', 'asset_cbz.cbz', '.cbz', 'cbz', 1, 1);
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_sha256, current_sha256) VALUES (12, 119, 'CBZ/CBZ_Book/asset_cbz.cbz', 'asset_cbz.cbz', '.cbz', 'cbz', 1, 1, randomblob(32), randomblob(32));
 		INSERT INTO books (id, title, sort_title) VALUES (117, 'CBR Book', 'CBR Book');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read) VALUES ('asset_cbr', 117, 'CBR/CBR_Book/asset_cbr.cbr', 'asset_cbr.cbr', '.cbr', 'cbr', 1, 1);
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_sha256, current_sha256) VALUES (13, 117, 'CBR/CBR_Book/asset_cbr.cbr', 'asset_cbr.cbr', '.cbr', 'cbr', 1, 1, randomblob(32), randomblob(32));
 		INSERT INTO books (id, title, sort_title) VALUES (116, 'CB7 Book', 'CB7 Book');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read) VALUES ('asset_cb7', 116, 'CB7/CB7_Book/asset_cb7.cb7', 'asset_cb7.cb7', '.cb7', 'cb7', 1, 1);
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_sha256, current_sha256) VALUES (14, 116, 'CB7/CB7_Book/asset_cb7.cb7', 'asset_cb7.cb7', '.cb7', 'cb7', 1, 1, randomblob(32), randomblob(32));
 		`)
 	if err != nil {
 		t.Fatalf("insert reader fixtures: %v", err)
 	}
-	mustExec(t, database, "UPDATE assets SET current_sha256 = ? WHERE id IN ('asset_epub', 'asset_missing_epub', 'asset_cbr', 'asset_cb7')", testReaderCurrentSHA256)
+	mustExec(t, database, "UPDATE assets SET current_sha256 = ? WHERE id IN (3, 5, 13, 14)", testReaderCurrentSHA256)
 
 	fileDir := filepath.Join(dir, "PDF", "PDF_Book")
 	if err := os.MkdirAll(fileDir, 0o755); err != nil {
@@ -899,7 +921,7 @@ func TestReaderRoutesServeReadablePrimaryAssets(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("read page status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
 	}
-	if body := w.Body.String(); !strings.Contains(body, `data-reader-url="/read/assets/asset_pdf"`) || !strings.Contains(body, `reader-pdf-stage`) || !strings.Contains(body, `data-pdf-page-input`) || !strings.Contains(body, `/static/pdf-reader.js`) {
+	if body := w.Body.String(); !strings.Contains(body, `data-reader-url="/read/assets/2?v=`) || !strings.Contains(body, `reader-pdf-stage`) || !strings.Contains(body, `data-pdf-page-input`) || !strings.Contains(body, `/static/pdf-reader.js`) {
 		t.Fatalf("read page did not render the PDF.js reader shell: %s", body)
 	}
 	if csp := w.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "script-src 'self'") || !strings.Contains(csp, "object-src 'none'") {
@@ -918,14 +940,14 @@ func TestReaderRoutesServeReadablePrimaryAssets(t *testing.T) {
 	if convertedVersion == "" {
 		t.Fatal("test build has no Polka version for converted asset cache key")
 	}
-	if body := w.Body.String(); !strings.Contains(body, `data-reader-url="/read/assets/asset_epub?v=0123456789abcdef"`) || !strings.Contains(body, `data-reader-fallback-url="/download/asset_epub/as/kepub?v=`+convertedVersion+`"`) || !strings.Contains(body, `reader-epub-stage`) || !strings.Contains(body, `/static/reader.js`) {
+	if body := w.Body.String(); !strings.Contains(body, `data-reader-url="/read/assets/3?v=0123456789abcdef"`) || !strings.Contains(body, `data-reader-fallback-url="/download/3/as/kepub?v=`+convertedVersion+`"`) || !strings.Contains(body, `reader-epub-stage`) || !strings.Contains(body, `/static/reader.js`) {
 		t.Fatalf("read page did not render EPUB reader shell: %s", body)
 	}
 	if got := w.Header().Get("Cache-Control"); got != "private, no-cache" {
 		t.Fatalf("reader page Cache-Control = %q, want private revalidation", got)
 	}
 
-	req = httptest.NewRequest("GET", "/read/assets/asset_epub?v=0123456789abcdef", nil)
+	req = httptest.NewRequest("GET", "/read/assets/3?v=0123456789abcdef", nil)
 	addSessionCookie(t, s, req, user.ID)
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -936,7 +958,7 @@ func TestReaderRoutesServeReadablePrimaryAssets(t *testing.T) {
 		t.Fatalf("versioned EPUB Cache-Control = %q, want immutable private cache", got)
 	}
 
-	req = httptest.NewRequest("GET", "/read/assets/asset_epub?v=stale", nil)
+	req = httptest.NewRequest("GET", "/read/assets/3?v=stale", nil)
 	addSessionCookie(t, s, req, user.ID)
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -944,7 +966,7 @@ func TestReaderRoutesServeReadablePrimaryAssets(t *testing.T) {
 		t.Fatalf("stale EPUB Cache-Control = %q, want private revalidation", got)
 	}
 
-	req = httptest.NewRequest("GET", "/read/assets/asset_missing_epub?v=0123456789abcdef", nil)
+	req = httptest.NewRequest("GET", "/read/assets/5?v=0123456789abcdef", nil)
 	addSessionCookie(t, s, req, user.ID)
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -955,7 +977,7 @@ func TestReaderRoutesServeReadablePrimaryAssets(t *testing.T) {
 		t.Fatalf("missing versioned EPUB Cache-Control = %q, must not cache an error as immutable", got)
 	}
 
-	req = httptest.NewRequest("GET", "/read/asset/asset_epub_alt", nil)
+	req = httptest.NewRequest("GET", "/read/asset/4", nil)
 	addSessionCookie(t, s, req, user.ID)
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -963,7 +985,7 @@ func TestReaderRoutesServeReadablePrimaryAssets(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("asset-specific read page status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
 	}
-	if body := w.Body.String(); !strings.Contains(body, `data-reader-url="/read/assets/asset_epub_alt"`) || !strings.Contains(body, `data-reader-format="fb2"`) || !strings.Contains(body, `href="/book/127"`) {
+	if body := w.Body.String(); !strings.Contains(body, `data-reader-url="/read/assets/4?v=`) || !strings.Contains(body, `data-reader-format="fb2"`) || !strings.Contains(body, `href="/book/127"`) {
 		t.Fatalf("asset-specific page did not retain the requested non-primary asset: %s", body)
 	}
 
@@ -975,11 +997,11 @@ func TestReaderRoutesServeReadablePrimaryAssets(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("kepub read page status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
 	}
-	if body := w.Body.String(); !strings.Contains(body, `data-reader-url="/read/assets/asset_kepub"`) || strings.Contains(body, `data-reader-fallback-url=`) || !strings.Contains(body, `reader-epub-stage`) || !strings.Contains(body, `data-reader-format="kepub"`) {
+	if body := w.Body.String(); !strings.Contains(body, `data-reader-url="/read/assets/6?v=`) || strings.Contains(body, `data-reader-fallback-url=`) || !strings.Contains(body, `reader-epub-stage`) || !strings.Contains(body, `data-reader-format="kepub"`) {
 		t.Fatalf("read page did not render KEPUB reader shell: %s", body)
 	}
 
-	req = httptest.NewRequest("GET", "/read/assets/asset_kepub", nil)
+	req = httptest.NewRequest("GET", "/read/assets/6", nil)
 	addSessionCookie(t, s, req, user.ID)
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -999,11 +1021,11 @@ func TestReaderRoutesServeReadablePrimaryAssets(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("mobi read page status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
 	}
-	if body := w.Body.String(); !strings.Contains(body, `data-reader-url="/read/assets/asset_mobi"`) || !strings.Contains(body, `reader-epub-stage`) || !strings.Contains(body, `data-reader-format="mobi"`) {
+	if body := w.Body.String(); !strings.Contains(body, `data-reader-url="/read/assets/7?v=`) || !strings.Contains(body, `reader-epub-stage`) || !strings.Contains(body, `data-reader-format="mobi"`) {
 		t.Fatalf("read page did not render MOBI reader shell: %s", body)
 	}
 
-	req = httptest.NewRequest("GET", "/read/assets/asset_mobi", nil)
+	req = httptest.NewRequest("GET", "/read/assets/7", nil)
 	addSessionCookie(t, s, req, user.ID)
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -1025,11 +1047,11 @@ func TestReaderRoutesServeReadablePrimaryAssets(t *testing.T) {
 	}
 	// FB2 shares the foliate reader shell with EPUB; data-reader-format retains
 	// the transport/container behavior within that already-selected engine.
-	if body := w.Body.String(); !strings.Contains(body, `data-reader-url="/read/assets/asset_fb2"`) || !strings.Contains(body, `reader-epub-stage`) || !strings.Contains(body, `data-reader-format="fb2"`) {
+	if body := w.Body.String(); !strings.Contains(body, `data-reader-url="/read/assets/8?v=`) || !strings.Contains(body, `reader-epub-stage`) || !strings.Contains(body, `data-reader-format="fb2"`) {
 		t.Fatalf("read page did not render FB2 reader shell: %s", body)
 	}
 
-	req = httptest.NewRequest("GET", "/read/assets/asset_fb2", nil)
+	req = httptest.NewRequest("GET", "/read/assets/8", nil)
 	addSessionCookie(t, s, req, user.ID)
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -1049,11 +1071,11 @@ func TestReaderRoutesServeReadablePrimaryAssets(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("zipped fb2 read page status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
 	}
-	if body := w.Body.String(); !strings.Contains(body, `data-reader-url="/read/assets/asset_fb2zip"`) || !strings.Contains(body, `reader-epub-stage`) || !strings.Contains(body, `data-reader-format="fb2"`) {
+	if body := w.Body.String(); !strings.Contains(body, `data-reader-url="/read/assets/9?v=`) || !strings.Contains(body, `reader-epub-stage`) || !strings.Contains(body, `data-reader-format="fb2"`) {
 		t.Fatalf("read page did not render zipped FB2 reader shell: %s", body)
 	}
 
-	req = httptest.NewRequest("GET", "/read/assets/asset_fb2zip", nil)
+	req = httptest.NewRequest("GET", "/read/assets/9", nil)
 	addSessionCookie(t, s, req, user.ID)
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -1071,7 +1093,7 @@ func TestReaderRoutesServeReadablePrimaryAssets(t *testing.T) {
 		t.Fatalf("zipped FB2 response did not stream inner book: %s", body)
 	}
 
-	req = httptest.NewRequest("GET", "/read/assets/asset_fb2_mislabeled", nil)
+	req = httptest.NewRequest("GET", "/read/assets/10", nil)
 	addSessionCookie(t, s, req, user.ID)
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -1097,11 +1119,11 @@ func TestReaderRoutesServeReadablePrimaryAssets(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("gzipped fb2 read page status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
 	}
-	if body := w.Body.String(); !strings.Contains(body, `data-reader-url="/read/assets/asset_fb2gz"`) || !strings.Contains(body, `reader-epub-stage`) || !strings.Contains(body, `data-reader-format="fb2"`) {
+	if body := w.Body.String(); !strings.Contains(body, `data-reader-url="/read/assets/11?v=`) || !strings.Contains(body, `reader-epub-stage`) || !strings.Contains(body, `data-reader-format="fb2"`) {
 		t.Fatalf("read page did not render gzipped FB2 reader shell: %s", body)
 	}
 
-	req = httptest.NewRequest("GET", "/read/assets/asset_fb2gz", nil)
+	req = httptest.NewRequest("GET", "/read/assets/11", nil)
 	addSessionCookie(t, s, req, user.ID)
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -1127,11 +1149,11 @@ func TestReaderRoutesServeReadablePrimaryAssets(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("cbz read page status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
 	}
-	if body := w.Body.String(); !strings.Contains(body, `data-reader-url="/read/assets/asset_cbz"`) || !strings.Contains(body, `reader-epub-stage`) || !strings.Contains(body, `data-reader-format="cbz"`) {
+	if body := w.Body.String(); !strings.Contains(body, `data-reader-url="/read/assets/12?v=`) || !strings.Contains(body, `reader-epub-stage`) || !strings.Contains(body, `data-reader-format="cbz"`) {
 		t.Fatalf("read page did not render CBZ reader shell: %s", body)
 	}
 
-	req = httptest.NewRequest("GET", "/read/assets/asset_cbz", nil)
+	req = httptest.NewRequest("GET", "/read/assets/12", nil)
 	addSessionCookie(t, s, req, user.ID)
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -1151,15 +1173,15 @@ func TestReaderRoutesServeReadablePrimaryAssets(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("cbr read page status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
 	}
-	if body := w.Body.String(); !strings.Contains(body, `data-reader-url="/read/assets/asset_cbr?v=`+convertedVersion+`"`) || !strings.Contains(body, `reader-epub-stage`) || !strings.Contains(body, `data-reader-format="cbz"`) {
+	if body := w.Body.String(); !strings.Contains(body, `data-reader-url="/read/assets/13?v=`+convertedVersion+`"`) || !strings.Contains(body, `reader-epub-stage`) || !strings.Contains(body, `data-reader-format="cbz"`) {
 		t.Fatalf("read page did not render normalized CBR reader shell: %s", body)
 	}
 
-	req = httptest.NewRequest("GET", "/read/assets/asset_cbr?v="+convertedVersion, nil)
+	req = httptest.NewRequest("GET", "/read/assets/13?v="+convertedVersion, nil)
 	addSessionCookie(t, s, req, user.ID)
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
-	if w.Code != http.StatusTemporaryRedirect || w.Header().Get("Location") != "/download/asset_cbr/as/cbz?v="+convertedVersion {
+	if w.Code != http.StatusTemporaryRedirect || w.Header().Get("Location") != "/download/13/as/cbz?v="+convertedVersion {
 		t.Fatalf("CBR read asset status/location = %d/%q; want 307 conversion redirect", w.Code, w.Header().Get("Location"))
 	}
 	if got := w.Header().Get("Cache-Control"); got != "private, max-age=31536000, immutable" {
@@ -1173,19 +1195,19 @@ func TestReaderRoutesServeReadablePrimaryAssets(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("cb7 read page status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
 	}
-	if body := w.Body.String(); !strings.Contains(body, `data-reader-url="/read/assets/asset_cb7?v=`+convertedVersion+`"`) || !strings.Contains(body, `reader-epub-stage`) || !strings.Contains(body, `data-reader-format="cbz"`) {
+	if body := w.Body.String(); !strings.Contains(body, `data-reader-url="/read/assets/14?v=`+convertedVersion+`"`) || !strings.Contains(body, `reader-epub-stage`) || !strings.Contains(body, `data-reader-format="cbz"`) {
 		t.Fatalf("read page did not render normalized CB7 reader shell: %s", body)
 	}
 
-	req = httptest.NewRequest("GET", "/read/assets/asset_cb7?v="+convertedVersion, nil)
+	req = httptest.NewRequest("GET", "/read/assets/14?v="+convertedVersion, nil)
 	addSessionCookie(t, s, req, user.ID)
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
-	if w.Code != http.StatusTemporaryRedirect || w.Header().Get("Location") != "/download/asset_cb7/as/cbz?v="+convertedVersion {
+	if w.Code != http.StatusTemporaryRedirect || w.Header().Get("Location") != "/download/14/as/cbz?v="+convertedVersion {
 		t.Fatalf("CB7 read asset status/location = %d/%q; want 307 conversion redirect", w.Code, w.Header().Get("Location"))
 	}
 
-	req = httptest.NewRequest("GET", "/read/assets/asset_pdf", nil)
+	req = httptest.NewRequest("GET", "/read/assets/2", nil)
 	addSessionCookie(t, s, req, user.ID)
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -1200,7 +1222,7 @@ func TestReaderRoutesServeReadablePrimaryAssets(t *testing.T) {
 		t.Fatalf("Content-Type = %q, want application/pdf", got)
 	}
 
-	req = httptest.NewRequest("GET", "/read/assets/asset_pdf", nil)
+	req = httptest.NewRequest("GET", "/read/assets/2", nil)
 	req.Header.Set("Range", "bytes=0-3")
 	addSessionCookie(t, s, req, user.ID)
 	w = httptest.NewRecorder()
@@ -1223,8 +1245,8 @@ func TestReaderRoutesRequireReadableStoredFormat(t *testing.T) {
 
 	_, err := database.Write(t.Context()).Exec(`
 		INSERT INTO books (id, title, sort_title) VALUES (172, 'Stale Reader', 'Stale Reader');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read)
-			VALUES ('asset_stale_reader', 172, 'Stale/Stale_Reader/asset_stale_reader.chm', 'asset_stale_reader.chm', '.chm', 'chm', 1, 1);
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_sha256, current_sha256)
+			VALUES (2, 172, 'Stale/Stale_Reader/asset_stale_reader.chm', 'asset_stale_reader.chm', '.chm', 'chm', 1, 1, randomblob(32), randomblob(32));
 	`)
 	if err != nil {
 		t.Fatalf("insert stale reader fixture: %v", err)
@@ -1255,7 +1277,7 @@ func TestReaderRoutesRequireReadableStoredFormat(t *testing.T) {
 		t.Fatalf("stale read page body = %q, want not-readable explanation", body)
 	}
 
-	req = httptest.NewRequest("GET", "/read/assets/asset_stale_reader", nil)
+	req = httptest.NewRequest("GET", "/read/assets/2", nil)
 	addSessionCookie(t, s, req, user.ID)
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -1274,7 +1296,7 @@ func TestReadZippedFB2AssetRejectsAmbiguousArchive(t *testing.T) {
 
 	_, err := database.Write(t.Context()).Exec(`
 		INSERT INTO books (id, title, sort_title) VALUES (156, 'Ambiguous FB2', 'Ambiguous FB2');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary) VALUES ('asset_multi_fb2', 156, 'FB2/Multi/ambiguous.fb2.zip', 'ambiguous.fb2.zip', '.fb2.zip', 'fb2', 1);
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, original_sha256, current_sha256) VALUES (2, 156, 'FB2/Multi/ambiguous.fb2.zip', 'ambiguous.fb2.zip', '.fb2.zip', 'fb2', 1, randomblob(32), randomblob(32));
 	`)
 	if err != nil {
 		t.Fatalf("insert ambiguous fb2 fixture: %v", err)
@@ -1313,7 +1335,7 @@ func TestReadZippedFB2AssetRejectsAmbiguousArchive(t *testing.T) {
 		t.Fatalf("ambiguous zipped FB2 read page status = %d, want %d; body: %s", w.Code, http.StatusUnprocessableEntity, w.Body.String())
 	}
 
-	req = httptest.NewRequest("GET", "/read/assets/asset_multi_fb2", nil)
+	req = httptest.NewRequest("GET", "/read/assets/2", nil)
 	addSessionCookie(t, s, req, user.ID)
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, req)

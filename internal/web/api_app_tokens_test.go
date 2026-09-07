@@ -4,6 +4,7 @@ import (
 	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -29,7 +30,7 @@ func TestAPIAppTokensLifecycle(t *testing.T) {
 	if err := json.UnmarshalRead(w.Body, &created); err != nil {
 		t.Fatalf("decode created token: %v", err)
 	}
-	if created.Name != "KOReader" || created.Token == "" || created.ID == "" || created.CreatedAt == 0 {
+	if created.Name != "KOReader" || created.Token == "" || created.ID <= 0 || created.CreatedAt == 0 {
 		t.Fatalf("created = %+v; want saved token with trimmed name", created)
 	}
 
@@ -71,13 +72,13 @@ func TestAPIAppTokensLifecycle(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, bob.ID, http.MethodDelete, "/api/app-tokens/"+tokens[0].ID, nil))
+	handler.ServeHTTP(w, jsonRequest(t, s, bob.ID, http.MethodDelete, "/api/app-tokens/"+strconv.FormatInt(tokens[0].ID, 10), nil))
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("bob delete status = %d, want %d", w.Code, http.StatusNotFound)
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodDelete, "/api/app-tokens/"+tokens[0].ID, nil))
+	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodDelete, "/api/app-tokens/"+strconv.FormatInt(tokens[0].ID, 10), nil))
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("delete status = %d, want %d; body: %s", w.Code, http.StatusNoContent, w.Body.String())
 	}

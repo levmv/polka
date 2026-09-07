@@ -27,7 +27,7 @@ func TestVisibilityScopeManualShelf(t *testing.T) {
 	if err := database.AddBookToShelf(t.Context(), shelf.ID, 0, 142); err != nil {
 		t.Fatalf("add book: %v", err)
 	}
-	if _, err := database.UpdateUserAccess(t.Context(), user.ID, UserAccess{Role: RoleReader, ContentScope: ContentScopeShelves, ShelfIDs: []string{shelf.ID}}); err != nil {
+	if _, err := database.UpdateUserAccess(t.Context(), user.ID, UserAccess{Role: RoleReader, ContentScope: ContentScopeShelves, ShelfIDs: []int64{shelf.ID}}); err != nil {
 		t.Fatalf("update access: %v", err)
 	}
 
@@ -113,7 +113,7 @@ func TestVisibilityScopePrivateCuratorShelf(t *testing.T) {
 	if _, err := database.UpdateUserAccess(t.Context(), user.ID, UserAccess{
 		Role:          RoleReader,
 		ContentScope:  ContentScopeShelves,
-		ShelfIDs:      []string{shelf.ID},
+		ShelfIDs:      []int64{shelf.ID},
 		ShelfViewerID: curator.ID,
 	}); err != nil {
 		t.Fatalf("update access: %v", err)
@@ -157,7 +157,7 @@ func TestVisibilityScopeQueryShelf(t *testing.T) {
 	if _, err := database.UpdateUserAccess(t.Context(), user.ID, UserAccess{
 		Role:         RoleReader,
 		ContentScope: ContentScopeShelves,
-		ShelfIDs:     []string{shelf.ID, overlapShelf.ID},
+		ShelfIDs:     []int64{shelf.ID, overlapShelf.ID},
 	}); err != nil {
 		t.Fatalf("update access: %v", err)
 	}
@@ -207,7 +207,7 @@ func TestVisibilityScopeTrash(t *testing.T) {
 	if err := database.AddBookToShelf(t.Context(), shelf.ID, 0, 142); err != nil {
 		t.Fatalf("add book: %v", err)
 	}
-	if _, err := database.UpdateUserAccess(t.Context(), user.ID, UserAccess{Role: RoleReader, ContentScope: ContentScopeShelves, ShelfIDs: []string{shelf.ID}}); err != nil {
+	if _, err := database.UpdateUserAccess(t.Context(), user.ID, UserAccess{Role: RoleReader, ContentScope: ContentScopeShelves, ShelfIDs: []int64{shelf.ID}}); err != nil {
 		t.Fatalf("update access: %v", err)
 	}
 	if err := SoftDeleteBook(database.Write(t.Context()), 142, user.ID); err != nil {

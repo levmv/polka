@@ -132,15 +132,15 @@ function assetFormatLabel(asset: Asset): string {
 }
 
 function assetDownloadUrl(asset: Asset): string {
-    return `/download/${encodeURIComponent(asset.id)}`;
+    return `/download/${asset.id}`;
 }
 
 function assetDownloadAsUrl(asset: Asset, target: string): string {
-    return `/download/${encodeURIComponent(asset.id)}/as/${encodeURIComponent(target)}`;
+    return `/download/${asset.id}/as/${encodeURIComponent(target)}`;
 }
 
 function annotationExportUrl(asset: Asset, format: 'html' | 'markdown'): string {
-    const url = `/api/reader/assets/${encodeURIComponent(asset.id)}/annotations/export`;
+    const url = `/api/reader/assets/${asset.id}/annotations/export`;
     return format === 'markdown' ? `${url}?format=markdown` : url;
 }
 
@@ -530,7 +530,7 @@ function renderBookDetail(
         <div class="detail-layout-info">
             <div class="detail-header">
                 <h1 class="detail-title">${escapeHtml(b.title)}</h1>
-                <h2 class="detail-authors">${authorsHtml}</h2>
+                ${authorsHtml ? `<h2 class="detail-authors">${authorsHtml}</h2>` : ''}
                 ${seriesHtml}
             </div>
             <div class="detail-actions">
@@ -593,7 +593,7 @@ function renderBookDetail(
     }
 
     container.querySelectorAll<HTMLButtonElement>('[data-download-menu-asset]').forEach((btn) => {
-        const asset = b.assets?.find((a) => a.id === btn.dataset.downloadMenuAsset);
+        const asset = b.assets?.find((a) => a.id === Number(btn.dataset.downloadMenuAsset));
         if (!asset) return;
         const menu = createMenu(
             btn,
@@ -700,7 +700,7 @@ function openSendBookModal(book: Book): void {
     modal.open(send);
 
     let selectedPlan: DeliveryPlan | null = null;
-    let preferredDeviceID = '';
+    let preferredDeviceID = 0;
     const state: SendBookModalState = {
         get preferredDeviceID() {
             return preferredDeviceID;
@@ -754,9 +754,9 @@ function openSendBookModal(book: Book): void {
 }
 
 type SendBookModalState = {
-    readonly preferredDeviceID: string;
-    reloadAfterDeviceAdd(deviceID: string): void;
-    setPreferredDeviceID(deviceID: string): void;
+    readonly preferredDeviceID: number;
+    reloadAfterDeviceAdd(deviceID: number): void;
+    setPreferredDeviceID(deviceID: number): void;
     setSelectedPlan(plan: DeliveryPlan | null): void;
 };
 
@@ -794,7 +794,7 @@ function renderSendBookOptions(
     deviceSelect.className = 'settings-input';
     for (const option of options.devices) {
         const item = document.createElement('option');
-        item.value = option.device.id;
+        item.value = String(option.device.id);
         item.textContent = `${option.device.name} · ${presetLabel(option.device.preset)}`;
         item.selected = option.device.id === defaultOption.device.id;
         deviceSelect.append(item);
@@ -824,8 +824,8 @@ function renderSendBookOptions(
     const syncPlan = () => {
         planArea.replaceChildren();
         const option =
-            options.devices.find((item) => item.device.id === deviceSelect.value) || null;
-        state.setPreferredDeviceID(option?.device.id || '');
+            options.devices.find((item) => item.device.id === Number(deviceSelect.value)) || null;
+        state.setPreferredDeviceID(option?.device.id || 0);
         const choices = option?.choices || [];
         if (!option || choices.length === 0) {
             send.disabled = true;
@@ -873,7 +873,7 @@ function renderSendBookOptions(
 
 function renderInlineDeviceAdd(
     body: HTMLElement,
-    reloadAfterDeviceAdd: (deviceID: string) => void,
+    reloadAfterDeviceAdd: (deviceID: number) => void,
 ): void {
     const form = document.createElement('form');
     form.className = 'settings-submodal-fields';
@@ -1008,9 +1008,9 @@ function pollDeliveryJob(initial: DeliveryJob): void {
     void tick(initial, 20);
 }
 
-function renderBookReaderProgress(container: HTMLElement, book: Book, assetID: string): void {
+function renderBookReaderProgress(container: HTMLElement, book: Book, assetID: number): void {
     const progressEl = container.querySelector<HTMLElement>('[data-reader-progress-asset]');
-    if (!progressEl || progressEl.dataset.readerProgressAsset !== assetID) return;
+    if (!progressEl || Number(progressEl.dataset.readerProgressAsset) !== assetID) return;
 
     fetchReaderState(assetID)
         .then((options) => {
@@ -1108,7 +1108,7 @@ async function resetBookReaderPosition(container: HTMLElement, asset: Asset): Pr
         await resetReaderState(asset.id);
         notifyCatalogChanged();
         const progressEl = container.querySelector<HTMLElement>(
-            `[data-reader-progress-asset="${CSS.escape(asset.id)}"]`,
+            `[data-reader-progress-asset="${asset.id}"]`,
         );
         if (progressEl) {
             const text = progressEl.querySelector<HTMLElement>('[data-reader-progress-text]');

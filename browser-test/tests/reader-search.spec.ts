@@ -18,7 +18,7 @@ test.describe('Reader local search', () => {
 
   test.afterEach(async ({ page }) => {
     for (const assetId of openedAssets) {
-      await page.request.put(`/api/reader/assets/${encodeURIComponent(assetId)}/state`, {
+      await page.request.put(`/api/reader/assets/${assetId}/state`, {
         data: { progress: 1, locator: { engine: 'browser-test', id: 'search-cleanup' } },
       });
     }
@@ -117,7 +117,7 @@ async function openReader(page: Page, title: string, openedAssets: string[]): Pr
   const assetId = await page.locator('.reader-page').getAttribute('data-reader-asset-id');
   if (assetId) {
     openedAssets.push(assetId);
-    await page.request.put(`/api/reader/assets/${encodeURIComponent(assetId)}/state`, {
+    await page.request.put(`/api/reader/assets/${assetId}/state`, {
       data: { progress: 1, locator: { engine: 'browser-test', id: 'search-open-cleanup' } },
     });
   }

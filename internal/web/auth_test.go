@@ -47,7 +47,7 @@ func TestAuthMiddleware(t *testing.T) {
 		t.Errorf("no-user redirect = %q, want /setup", loc)
 	}
 	check("api→401", "/api/books", "", http.StatusUnauthorized, false)
-	check("read asset→401", "/read/assets/asset_1", "", http.StatusUnauthorized, false)
+	check("read asset→401", "/read/assets/1", "", http.StatusUnauthorized, false)
 	check("opds→401", "/opds", "", http.StatusUnauthorized, false)
 	check("kosync→401", "/kosync/dead/users/auth", "", http.StatusUnauthorized, false)
 	check("cover→401", "/covers/1", "", http.StatusUnauthorized, false)
@@ -85,7 +85,7 @@ func TestAuthMiddlewareBasicAuth(t *testing.T) {
 	u := mustUser(t, database, "alice", "admin")
 	s := newTestServer(database, dir)
 
-	for _, path := range []string{"/opds", "/opds/books", "/download/asset_1", "/covers/1"} {
+	for _, path := range []string{"/opds", "/opds/books", "/download/1", "/covers/1"} {
 		t.Run(path, func(t *testing.T) {
 			var ran bool
 			h := s.authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

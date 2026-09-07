@@ -18,8 +18,8 @@ func TestMutateBooksBumpsMetadataRevAndReindexes(t *testing.T) {
 		t.Fatalf("insert book: %v", err)
 	}
 	if _, err := database.Write(t.Context()).Exec(`
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, writeback_rev)
-		VALUES ('a_1', 1, 'old/a_1.epub', 'a_1.epub', '.epub', 'epub', 0);
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, writeback_rev, original_sha256, current_sha256)
+		VALUES (1, 1, 'old/a_1.epub', 'a_1.epub', '.epub', 'epub', 0, randomblob(32), randomblob(32));
 		INSERT INTO search (rowid, title) VALUES (1, 'Old Title');
 	`); err != nil {
 		t.Fatalf("insert asset: %v", err)
@@ -73,8 +73,8 @@ func TestMutateBooksRefreshesSearchFilenameAfterRelayout(t *testing.T) {
 	}
 
 	authorSort := bookmeta.AuthorSort("Jane Doe")
-	oldPath := relayoutTestPath(t, "Old Title", "Jane Doe", authorSort, "a_1", ".epub")
-	seedRelayoutBook(t, database, 1, "a_1", "Old Title", "Jane Doe", authorSort, ".epub", oldPath)
+	oldPath := relayoutTestPath(t, "Old Title", "Jane Doe", authorSort, 1, ".epub")
+	seedRelayoutBook(t, database, 1, 1, "Old Title", "Jane Doe", authorSort, ".epub", oldPath)
 	if err := os.MkdirAll(filepath.Dir(root.Abs(oldPath)), 0o755); err != nil {
 		t.Fatalf("mkdir old path: %v", err)
 	}

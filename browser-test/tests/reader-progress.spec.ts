@@ -31,9 +31,9 @@ test.describe('Reader progress lifecycle', () => {
 
     await page.goto(href || `/book/${encodeURIComponent(bookId)}`);
     await expect(page.locator('.detail-title')).toHaveText('CBZ Reader Book');
-    const assetId = await page
+    const assetId = Number(await page
       .locator('[data-reader-progress-asset]')
-      .getAttribute('data-reader-progress-asset');
+      .getAttribute('data-reader-progress-asset'));
     if (!assetId) throw new Error('missing readable CBZ asset');
 
     // Foliate weights fixed-layout section progress by the compressed page
@@ -41,7 +41,7 @@ test.describe('Reader progress lifecycle', () => {
     // is much larger than the tiny PNG pages, so ArrowRight has somewhere to go.
     const savedProgress = 0.05;
     const saveRes = await page.request.put(
-      `/api/reader/assets/${encodeURIComponent(assetId)}/state`,
+      `/api/reader/assets/${assetId}/state`,
       {
         data: {
           progress: savedProgress,
@@ -111,7 +111,7 @@ test.describe('Reader progress lifecycle', () => {
 
     const continueRes = await page.request.get('/api/reader/continue?limit=20');
     expect(continueRes.ok()).toBe(true);
-    const continuing = (await continueRes.json()) as Array<{ asset_id: string }>;
+    const continuing = (await continueRes.json()) as Array<{ asset_id: number }>;
     expect(continuing.some((item) => item.asset_id === assetId)).toBe(false);
   });
 
@@ -159,9 +159,9 @@ test.describe('Reader progress lifecycle', () => {
     if (!bookId) throw new Error('missing CBZ book id');
 
     await page.goto(href || `/book/${encodeURIComponent(bookId)}`);
-    const assetId = await page
+    const assetId = Number(await page
       .locator('[data-reader-progress-asset]')
-      .getAttribute('data-reader-progress-asset');
+      .getAttribute('data-reader-progress-asset'));
     if (!assetId) throw new Error('missing readable CBZ asset');
     browserErrors.allow(
       (message) =>
@@ -175,7 +175,7 @@ test.describe('Reader progress lifecycle', () => {
 
     let failedSaves = 0;
     let allowSaves = false;
-    await page.route(`**/api/reader/assets/${encodeURIComponent(assetId)}/state`, async (route) => {
+    await page.route(`**/api/reader/assets/${assetId}/state`, async (route) => {
       if (route.request().method() !== 'PUT' || allowSaves) {
         await route.continue();
         return;
@@ -217,7 +217,7 @@ test.describe('Reader progress lifecycle', () => {
     await page.goto(href);
 
     const status = page.locator('#btn-reading-status');
-    const assetId = await status.getAttribute('data-reader-progress-asset');
+    const assetId = Number(await status.getAttribute('data-reader-progress-asset'));
     if (!assetId) throw new Error('missing readable CBZ asset');
 
     let releaseResponse = () => {};
@@ -229,7 +229,7 @@ test.describe('Reader progress lifecycle', () => {
     const responseDelivered = new Promise<void>((resolve) => {
       staleResponseDelivered = resolve;
     });
-    await page.route(`**/api/reader/assets/${encodeURIComponent(assetId)}/state`, async (route) => {
+    await page.route(`**/api/reader/assets/${assetId}/state`, async (route) => {
       if (route.request().method() !== 'GET' || staleRequestHeld) {
         await route.continue();
         return;
@@ -251,7 +251,7 @@ test.describe('Reader progress lifecycle', () => {
     await responseDelivered;
     await page.waitForTimeout(50);
     await expect(status).toContainText('Dropped');
-    await page.unroute(`**/api/reader/assets/${encodeURIComponent(assetId)}/state`);
+    await page.unroute(`**/api/reader/assets/${assetId}/state`);
 
     const saved = await fetchReaderState(page, assetId);
     expect(saved.reading_status.status).toBe('dropped');
@@ -260,7 +260,7 @@ test.describe('Reader progress lifecycle', () => {
 
 async function fetchReaderState(
   page: import('@playwright/test').Page,
-  assetId: string,
+  assetId: number,
 ): Promise<{
   progress: number;
   locator: { fraction?: number };
@@ -269,7 +269,7 @@ async function fetchReaderState(
   reading_status: { status: string };
 }> {
   const res = await page.request.get(
-    `/api/reader/assets/${encodeURIComponent(assetId)}/state`,
+    `/api/reader/assets/${assetId}/state`,
   );
   if (!res.ok()) throw new Error(`reader state status ${res.status()}: ${await res.text()}`);
   return await res.json();

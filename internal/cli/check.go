@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -64,7 +65,6 @@ func runCheck(ctx context.Context, dataDir string, args []string) error {
 	var ioErrors []string
 	var missingCurrentSizes []string
 	var sizeMismatches []string
-	var missingCurrentHashes []string
 	var hashMismatches []string
 	var formatMismatches []string
 	var readerCapabilityMismatches []string
@@ -75,38 +75,43 @@ func runCheck(ctx context.Context, dataDir string, args []string) error {
 
 	referencedPaths := make(map[string]bool)
 	referencedCoverPaths := make(map[string]bool)
+	canonicalPaths := make([]storage.BookPathCandidate, 0, len(assets))
 
 	for _, a := range assets {
+		if err := context.Cause(ctx); err != nil {
+			return err
+		}
 		absPath, pathErr := root.Resolve(a.StoragePath)
 		if pathErr != nil {
-			invalidStoragePaths = append(invalidStoragePaths, fmt.Sprintf("%s (%s): %v", a.ID, a.StoragePath, pathErr))
+			invalidStoragePaths = append(invalidStoragePaths, fmt.Sprintf("%d (%s): %v", a.ID, a.StoragePath, pathErr))
 		} else {
 			referencedPaths[absPath] = true
 
 			info, err := os.Stat(absPath)
 			if os.IsNotExist(err) {
-				missingFiles = append(missingFiles, fmt.Sprintf("%s (%s)", a.ID, a.StoragePath))
+				missingFiles = append(missingFiles, fmt.Sprintf("%d (%s)", a.ID, a.StoragePath))
 			} else if err != nil {
 				ioErrors = append(ioErrors, fmt.Sprintf("stat %s: %v", a.StoragePath, err))
 			} else {
 				sizeMatches := true
 				if !a.CurrentSize.Valid {
 					sizeMatches = false
-					missingCurrentSizes = append(missingCurrentSizes, fmt.Sprintf("%s (%s)", a.ID, a.StoragePath))
+					missingCurrentSizes = append(missingCurrentSizes, fmt.Sprintf("%d (%s)", a.ID, a.StoragePath))
 				} else if a.CurrentSize.Int64 != info.Size() {
 					sizeMatches = false
-					sizeMismatches = append(sizeMismatches, fmt.Sprintf("%s (%s): db %d, disk %d", a.ID, a.StoragePath, a.CurrentSize.Int64, info.Size()))
+					sizeMismatches = append(sizeMismatches, fmt.Sprintf("%d (%s): db %d, disk %d", a.ID, a.StoragePath, a.CurrentSize.Int64, info.Size()))
 				}
-				if a.CurrentSHA256 == "" {
-					missingCurrentHashes = append(missingCurrentHashes, fmt.Sprintf("%s (%s)", a.ID, a.StoragePath))
-				} else if *deep && sizeMatches {
-					gotHash, err := fileSHA256(absPath)
+				if *deep && sizeMatches {
+					gotHash, err := fileSHA256Context(ctx, absPath)
 					if err != nil {
+						if cause := context.Cause(ctx); cause != nil {
+							return cause
+						}
 						ioErrors = append(ioErrors, fmt.Sprintf("hash %s: %v", a.StoragePath, err))
 						continue
 					}
-					if gotHash != a.CurrentSHA256 {
-						hashMismatches = append(hashMismatches, fmt.Sprintf("%s (%s): db %s, disk %s", a.ID, a.StoragePath, a.CurrentSHA256, gotHash))
+					if !bytes.Equal(gotHash, a.CurrentSHA256) {
+						hashMismatches = append(hashMismatches, fmt.Sprintf("%d (%s): db %x, disk %x", a.ID, a.StoragePath, a.CurrentSHA256, gotHash))
 					}
 				}
 				if *deep {
@@ -116,10 +121,10 @@ func runCheck(ctx context.Context, dataDir string, args []string) error {
 						continue
 					}
 					if capability.Format != a.Format {
-						formatMismatches = append(formatMismatches, fmt.Sprintf("%s (%s): db %s, detected %s", a.ID, a.StoragePath, format.FormatLabel(a.Format), format.FormatLabel(capability.Format)))
+						formatMismatches = append(formatMismatches, fmt.Sprintf("%d (%s): db %s, detected %s", a.ID, a.StoragePath, format.FormatLabel(a.Format), format.FormatLabel(capability.Format)))
 					}
 					if capability.CanRead != a.CanRead {
-						readerCapabilityMismatches = append(readerCapabilityMismatches, fmt.Sprintf("%s (%s): db %t, detected %t (%s)", a.ID, a.StoragePath, a.CanRead, capability.CanRead, format.FormatLabel(capability.Format)))
+						readerCapabilityMismatches = append(readerCapabilityMismatches, fmt.Sprintf("%d (%s): db %t, detected %t (%s)", a.ID, a.StoragePath, a.CanRead, capability.CanRead, format.FormatLabel(capability.Format)))
 					}
 				}
 			}
@@ -130,11 +135,20 @@ func runCheck(ctx context.Context, dataDir string, args []string) error {
 			return err
 		}
 		if a.StoragePath != cPath {
-			staleLayouts = append(staleLayouts, fmt.Sprintf("%s: %s -> %s", a.ID, a.StoragePath, cPath))
+			staleLayouts = append(staleLayouts, fmt.Sprintf("%d: %s -> %s", a.ID, a.StoragePath, cPath))
 		}
+		canonicalPaths = append(canonicalPaths, storage.BookPathCandidate{AssetID: a.ID, Path: cPath})
+	}
+
+	var pathCollisions []string
+	for _, collision := range storage.DetectBookPathCollisions(canonicalPaths) {
+		pathCollisions = append(pathCollisions, fmt.Sprintf("%s: assets %v", collision.Path, collision.AssetIDs))
 	}
 
 	for _, w := range bookCovers {
+		if err := context.Cause(ctx); err != nil {
+			return err
+		}
 		rel := covers.OriginalPath(w.ID)
 		absPath, err := dataRoot.Resolve(rel)
 		if err != nil {
@@ -166,6 +180,9 @@ func runCheck(ctx context.Context, dataDir string, args []string) error {
 
 	booksDir := root.BooksDir()
 	err = storage.WalkBooks(root, func(path string, info os.FileInfo, err error) error {
+		if cause := context.Cause(ctx); cause != nil {
+			return cause
+		}
 		if err != nil {
 			if os.IsNotExist(err) {
 				return nil
@@ -199,6 +216,9 @@ func runCheck(ctx context.Context, dataDir string, args []string) error {
 		}
 		return nil
 	})
+	if cause := context.Cause(ctx); cause != nil {
+		return cause
+	}
 	if err != nil && !os.IsNotExist(err) {
 		ioErrors = append(ioErrors, fmt.Sprintf("walk books: %v", err))
 	}
@@ -215,6 +235,9 @@ func runCheck(ctx context.Context, dataDir string, args []string) error {
 		walkedStaging[stagingDir] = true
 		stagingRoot := sr
 		err = filepath.Walk(stagingDir, func(path string, info os.FileInfo, err error) error {
+			if cause := context.Cause(ctx); cause != nil {
+				return cause
+			}
 			if err != nil {
 				if os.IsNotExist(err) {
 					return nil
@@ -227,6 +250,9 @@ func runCheck(ctx context.Context, dataDir string, args []string) error {
 			}
 			return nil
 		})
+		if cause := context.Cause(ctx); cause != nil {
+			return cause
+		}
 		if err != nil && !os.IsNotExist(err) {
 			ioErrors = append(ioErrors, fmt.Sprintf("walk staging: %v", err))
 		}
@@ -234,6 +260,9 @@ func runCheck(ctx context.Context, dataDir string, args []string) error {
 
 	coversOriginalsDir := dataRoot.Abs("covers")
 	err = filepath.Walk(coversOriginalsDir, func(path string, info os.FileInfo, err error) error {
+		if cause := context.Cause(ctx); cause != nil {
+			return cause
+		}
 		if err != nil {
 			if os.IsNotExist(err) {
 				return nil
@@ -246,6 +275,9 @@ func runCheck(ctx context.Context, dataDir string, args []string) error {
 		}
 		return nil
 	})
+	if cause := context.Cause(ctx); cause != nil {
+		return cause
+	}
 	if err != nil && !os.IsNotExist(err) {
 		ioErrors = append(ioErrors, fmt.Sprintf("walk cover originals: %v", err))
 	}
@@ -256,7 +288,7 @@ func runCheck(ctx context.Context, dataDir string, args []string) error {
 		{"Missing files", missingFiles},
 		{"Missing cover originals", missingCoverOriginals},
 		{"Stale layout / drift", staleLayouts},
-		{"Missing current hashes", missingCurrentHashes},
+		{"Storage path collisions", pathCollisions},
 		{"Missing current sizes", missingCurrentSizes},
 		{"Current size mismatches", sizeMismatches},
 		{"Current hash mismatches", hashMismatches},

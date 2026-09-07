@@ -101,6 +101,7 @@ tag:"history"             one whole tag, not "art history"
 status:unread             your unread books
 status:dropped dune       status and text can be combined
 no:cover                  books without a selected cover
+no:author                 books with no author recorded
 ```
 
 Search completes the final unquoted word as you type, so `author:herb` finds

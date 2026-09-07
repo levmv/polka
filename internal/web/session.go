@@ -140,16 +140,16 @@ func (s *sessionStore) cleanupExpired(ctx context.Context, now int64) error {
 	return nil
 }
 
-func (s *sessionStore) deleteByHash(ctx context.Context, tokenHash string) error {
+func (s *sessionStore) deleteByHash(ctx context.Context, tokenHash []byte) error {
 	if _, err := s.db.Write(ctx).Exec("DELETE FROM sessions WHERE token_hash = ?", tokenHash); err != nil {
 		return fmt.Errorf("delete session: %w", err)
 	}
 	return nil
 }
 
-func sessionTokenHash(sid string) string {
+func sessionTokenHash(sid string) []byte {
 	sum := sha256.Sum256([]byte(sid))
-	return hex.EncodeToString(sum[:])
+	return sum[:]
 }
 
 func sessionExpired(now, lastSeen, expiresAt int64) bool {

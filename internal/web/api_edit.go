@@ -121,47 +121,17 @@ func sameNullableNumber(a, b sql.NullFloat64) bool {
 	return a.Valid == b.Valid && (!a.Valid || a.Float64 == b.Float64)
 }
 
-func normalizedAuthors(value string) string {
-	names := bookmeta.ParseAuthorList(value)
-	if len(names) == 0 {
-		return "Unknown Author"
-	}
-	return bookmeta.FormatAuthorList(names)
-}
-
-func replaceBookAuthors(ctx context.Context, tx *db.Tx, bookID int64, authorsStr string) error {
+func replaceBookAuthors(tx *db.Tx, bookID int64, authorsStr string) error {
 	var parsedAuthors []bookmeta.AuthorMeta
 	for _, n := range bookmeta.ParseAuthorList(authorsStr) {
-		n = strings.TrimSpace(n)
-		if n == "" {
-			continue
-		}
 		parsedAuthors = append(parsedAuthors, bookmeta.AuthorMeta{
 			Name:     n,
 			SortName: bookmeta.AuthorSort(n),
 		})
 	}
 
-	if len(parsedAuthors) == 0 {
-		parsedAuthors = append(parsedAuthors, bookmeta.AuthorMeta{
-			Name:     "Unknown Author",
-			SortName: bookmeta.AuthorSort("Unknown Author"),
-		})
-	}
-
-	// Shared with import: find-or-insert each author (adopting an existing row's
-	// sort_name, which the canonical path buckets on) and re-link book_authors.
-	if _, _, err := db.UpsertBookAuthors(tx, bookID, parsedAuthors); err != nil {
-		return err
-	}
-
-	// Re-linking to a different spelling can orphan the previous authors row;
-	// sweep any author no longer referenced by a book.
-	if _, err := db.DeleteOrphanAuthors(tx); err != nil {
-		return err
-	}
-
-	return nil
+	_, _, err := db.UpsertBookAuthors(tx, bookID, parsedAuthors)
+	return err
 }
 
 func (s *Server) handleAPIEditBook(w http.ResponseWriter, r *http.Request, bookID int64) {
@@ -282,9 +252,9 @@ func (s *Server) handleAPIEditBook(w http.ResponseWriter, r *http.Request, bookI
 		authorsChanged := false
 		nextAuthors := existing.Authors
 		if req.Authors.Present {
-			nextAuthors = "Unknown Author"
+			nextAuthors = ""
 			if !req.Authors.Null {
-				nextAuthors = normalizedAuthors(req.Authors.Value)
+				nextAuthors = bookmeta.FormatAuthorList(bookmeta.ParseAuthorList(req.Authors.Value))
 			}
 			authorsChanged = nextAuthors != existing.Authors
 			overrides["authors"] = true
@@ -322,8 +292,11 @@ func (s *Server) handleAPIEditBook(w http.ResponseWriter, r *http.Request, bookI
 		}
 
 		if authorsChanged {
-			if err := replaceBookAuthors(r.Context(), tx, bookID, nextAuthors); err != nil {
+			if err := replaceBookAuthors(tx, bookID, nextAuthors); err != nil {
 				return relayout.Changed{}, fmt.Errorf("replace book authors: %w", err)
+			}
+			if _, err := db.DeleteOrphanAuthors(tx); err != nil {
+				return relayout.Changed{}, err
 			}
 		}
 

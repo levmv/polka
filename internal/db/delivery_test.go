@@ -66,16 +66,16 @@ func TestDeliveryBookForPlanAppliesScope(t *testing.T) {
 	mustExec(t, database, `
 		INSERT INTO books (id, title, sort_title) VALUES (11, 'Allowed', 'Allowed');
 		INSERT INTO books (id, title, sort_title) VALUES (12, 'Blocked', 'Blocked');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, current_size, is_primary)
-			VALUES ('asset_allowed', 11, 'a.epub', 'a.epub', '.epub', 'epub', 100, 1);
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, current_size, is_primary)
-			VALUES ('asset_blocked', 12, 'b.epub', 'b.epub', '.epub', 'epub', 100, 1);
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, current_size, is_primary, original_sha256, current_sha256)
+			VALUES (1, 11, 'a.epub', 'a.epub', '.epub', 'epub', 100, 1, randomblob(32), randomblob(32));
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, current_size, is_primary, original_sha256, current_sha256)
+			VALUES (2, 12, 'b.epub', 'b.epub', '.epub', 'epub', 100, 1, randomblob(32), randomblob(32));
 	`)
 
 	if err := database.AddBookToShelf(t.Context(), shelf.ID, 0, 11); err != nil {
 		t.Fatalf("add allowed to shelf: %v", err)
 	}
-	if _, err := database.UpdateUserAccess(t.Context(), user.ID, UserAccess{Role: RoleReader, ContentScope: ContentScopeShelves, ShelfIDs: []string{shelf.ID}}); err != nil {
+	if _, err := database.UpdateUserAccess(t.Context(), user.ID, UserAccess{Role: RoleReader, ContentScope: ContentScopeShelves, ShelfIDs: []int64{shelf.ID}}); err != nil {
 		t.Fatalf("scope user: %v", err)
 	}
 	scope, err := VisibilityScopeForUser(database.Read(t.Context()), user.ID)
@@ -87,7 +87,7 @@ func TestDeliveryBookForPlanAppliesScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("allowed book: %v", err)
 	}
-	if book.ID != 11 || len(assets) != 1 || assets[0].ID != "asset_allowed" {
+	if book.ID != 11 || len(assets) != 1 || assets[0].ID != 1 {
 		t.Fatalf("allowed book/assets = %+v %+v", book, assets)
 	}
 	if _, _, err := DeliveryBookForPlan(database.Read(t.Context()), scope, 12); !errors.Is(err, sql.ErrNoRows) {
@@ -103,8 +103,8 @@ func TestDeliveryJobLifecycle(t *testing.T) {
 	}
 	mustExec(t, database, `
 		INSERT INTO books (id, title, sort_title) VALUES (1, 'Book', 'Book');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format)
-			VALUES ('a1', 1, 'a.epub', 'a.epub', '.epub', 'epub');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, original_sha256, current_sha256)
+			VALUES (1, 1, 'a.epub', 'a.epub', '.epub', 'epub', randomblob(32), randomblob(32));
 	`)
 
 	device, err := database.CreateDeliveryDevice(context.Background(), user.ID, "Kindle", "alice@kindle.com", DeliveryPresetKindle, true)
@@ -114,12 +114,12 @@ func TestDeliveryJobLifecycle(t *testing.T) {
 
 	job, err := database.CreateDeliveryJob(t.Context(), DeliveryJob{
 		UserID:      user.ID,
-		DeviceID:    sql.NullString{String: device.ID, Valid: true},
+		DeviceID:    sql.NullInt64{Int64: device.ID, Valid: true},
 		DeviceName:  device.Name,
 		DeviceEmail: device.Email,
 		Preset:      device.Preset,
 		BookID:      1,
-		AssetID:     sql.NullString{String: "a1", Valid: true},
+		AssetID:     sql.NullInt64{Int64: 1, Valid: true},
 		Title:       "Book",
 		Filename:    "Book.epub",
 		SizeBytes:   sql.NullInt64{Int64: 100, Valid: true},
@@ -134,13 +134,13 @@ func TestDeliveryJobLifecycle(t *testing.T) {
 		t.Fatalf("set sending: %v", err)
 	}
 	converting, err := database.CreateDeliveryJob(t.Context(), DeliveryJob{
-		ID:          "dj_converting",
+
 		UserID:      user.ID,
 		DeviceName:  device.Name,
 		DeviceEmail: device.Email,
 		Preset:      device.Preset,
 		BookID:      1,
-		AssetID:     sql.NullString{String: "a1", Valid: true},
+		AssetID:     sql.NullInt64{Int64: 1, Valid: true},
 		Title:       "Book",
 		Filename:    "Book.epub",
 	})
@@ -151,13 +151,13 @@ func TestDeliveryJobLifecycle(t *testing.T) {
 		t.Fatalf("set converting: %v", err)
 	}
 	queued, err := database.CreateDeliveryJob(t.Context(), DeliveryJob{
-		ID:          "dj_queued",
+
 		UserID:      user.ID,
 		DeviceName:  device.Name,
 		DeviceEmail: device.Email,
 		Preset:      device.Preset,
 		BookID:      1,
-		AssetID:     sql.NullString{String: "a1", Valid: true},
+		AssetID:     sql.NullInt64{Int64: 1, Valid: true},
 		Title:       "Book",
 		Filename:    "Book.epub",
 	})
@@ -194,6 +194,6 @@ func TestDeliveryJobLifecycle(t *testing.T) {
 		t.Fatalf("next queued delivery: %v", err)
 	}
 	if next == nil || next.ID != converting.ID {
-		t.Fatalf("next queued delivery = %+v, want %s", next, converting.ID)
+		t.Fatalf("next queued delivery = %+v, want %d", next, converting.ID)
 	}
 }

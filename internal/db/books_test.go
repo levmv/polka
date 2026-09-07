@@ -72,7 +72,7 @@ func TestListBookJumpsRespectsVisibilityScope(t *testing.T) {
 	if err := database.AddBookToShelf(t.Context(), shelf.ID, 0, 142); err != nil {
 		t.Fatalf("add book: %v", err)
 	}
-	if _, err := database.UpdateUserAccess(t.Context(), user.ID, UserAccess{Role: RoleReader, ContentScope: ContentScopeShelves, ShelfIDs: []string{shelf.ID}}); err != nil {
+	if _, err := database.UpdateUserAccess(t.Context(), user.ID, UserAccess{Role: RoleReader, ContentScope: ContentScopeShelves, ShelfIDs: []int64{shelf.ID}}); err != nil {
 		t.Fatalf("scope user: %v", err)
 	}
 	scope, err := VisibilityScopeForUser(database.Read(t.Context()), user.ID)
@@ -170,18 +170,18 @@ func TestListBooksSort(t *testing.T) {
 	database := newTestDB(t)
 
 	// Seed authors
-	mustExec(t, database, "INSERT INTO authors (id, name, sort_name) VALUES ('a1', 'Z Author', 'Z')")
-	mustExec(t, database, "INSERT INTO authors (id, name, sort_name) VALUES ('a2', 'A Author', 'A')")
+	mustExec(t, database, "INSERT INTO authors (id, name, sort_name) VALUES (1, 'Z Author', 'Z')")
+	mustExec(t, database, "INSERT INTO authors (id, name, sort_name) VALUES (2, 'A Author', 'A')")
 
 	// Seed books
 	mustExec(t, database, "INSERT INTO books (id, title, sort_title, added_at, published_date) VALUES (1, 'The B Title', 'B', 1672531200, '2000-01-01')")
-	mustExec(t, database, "INSERT INTO book_authors (book_id, author_id, author_order) VALUES (1, 'a1', 0)")
+	mustExec(t, database, "INSERT INTO book_authors (book_id, author_id, author_order) VALUES (1, 1, 0)")
 	mustExec(t, database, "INSERT INTO books (id, title, sort_title, added_at) VALUES (2, 'A Title', 'A', 1672617600)")
-	mustExec(t, database, "INSERT INTO book_authors (book_id, author_id, author_order) VALUES (2, 'a2', 0)")
+	mustExec(t, database, "INSERT INTO book_authors (book_id, author_id, author_order) VALUES (2, 2, 0)")
 	mustExec(t, database, "INSERT INTO books (id, title, sort_title, added_at, published_date) VALUES (3, 'C Title', 'C', 1672704000, '2020-01-01')")
-	mustExec(t, database, "INSERT INTO book_authors (book_id, author_id, author_order) VALUES (3, 'a2', 0)")
+	mustExec(t, database, "INSERT INTO book_authors (book_id, author_id, author_order) VALUES (3, 2, 0)")
 	mustExec(t, database, "INSERT INTO books (id, title, sort_title, added_at, deleted_at) VALUES (122, 'Deleted', 'Deleted', 1672790400, 1672790400)")
-	mustExec(t, database, "INSERT INTO book_authors (book_id, author_id, author_order) VALUES (122, 'a2', 0)")
+	mustExec(t, database, "INSERT INTO book_authors (book_id, author_id, author_order) VALUES (122, 2, 0)")
 	if err := database.Transact(t.Context(), func(tx *Tx) error {
 		return updatePrimaryAuthorSorts(tx, []int64{1, 2, 3, 122})
 	}); err != nil {

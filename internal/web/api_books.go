@@ -135,7 +135,7 @@ func authorsToDTO(rows []db.AuthorRow) ([]Author, string) {
 }
 
 type Asset struct {
-	ID         string             `json:"id"`
+	ID         int64              `json:"id"`
 	Extension  string             `json:"extension"`
 	Size       int64              `json:"size,omitzero"`
 	IsPrimary  bool               `json:"is_primary"`
@@ -237,7 +237,10 @@ func (s *Server) handleAPIBooks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	q := r.URL.Query().Get("q")
-	shelfID := r.URL.Query().Get("shelf")
+	shelfID, validShelf := queryID(w, r, "shelf")
+	if !validShelf {
+		return
+	}
 	sortParam := r.URL.Query().Get("sort")
 	limitStr := r.URL.Query().Get("limit")
 	offsetStr := r.URL.Query().Get("offset")
@@ -255,10 +258,7 @@ func (s *Server) handleAPIBooks(w http.ResponseWriter, r *http.Request) {
 	sort := bookSortFromParams(q, sortParam)
 
 	var bookRows []db.BookSummaryRow
-	if shelfID != "" {
-		// Note: assign with = (not :=) so we don't shadow the outer err that
-		// the `if err != nil` below checks. A shadowed err would silently turn
-		// a failed shelf query into an empty 200 response.
+	if shelfID != 0 {
 		shelf, gerr := db.GetShelfForUser(s.db.Read(r.Context()), shelfID, UserID(r.Context()))
 		if errors.Is(gerr, db.ErrShelfNotFound) {
 			http.Error(w, "Shelf not found", http.StatusNotFound)
@@ -326,7 +326,7 @@ func (s *Server) handleAPIBookJumps(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAPIBookSequence(w http.ResponseWriter, r *http.Request) {
-	bookID, validID := pathBookID(w, r, "id")
+	bookID, validID := pathID(w, r, "id")
 	if !validID {
 		return
 	}
@@ -344,10 +344,13 @@ func (s *Server) handleAPIBookSequence(w http.ResponseWriter, r *http.Request) {
 	switch params.Get("from") {
 	case "library":
 		q := params.Get("q")
-		shelfID := params.Get("shelf")
+		shelfID, validShelf := queryID(w, r, "shelf")
+		if !validShelf {
+			return
+		}
 		sortParam := params.Get("sort")
 		sort := bookSortFromParams(q, sortParam)
-		if shelfID != "" {
+		if shelfID != 0 {
 			shelf, gerr := db.GetShelfForUser(s.db.Read(r.Context()), shelfID, UserID(r.Context()))
 			if errors.Is(gerr, db.ErrShelfNotFound) {
 				http.Error(w, "Shelf not found", http.StatusNotFound)
@@ -443,7 +446,7 @@ func (s *Server) bookSummaryDTOs(ctx context.Context, bookRows []db.BookSummaryR
 // handleAPIBookDetail serves GET /api/books/{id}. PATCH routes to
 // handleAPIBookEdit; the cover sub-path to handleAPICoverUpload.
 func (s *Server) handleAPIBookDetail(w http.ResponseWriter, r *http.Request) {
-	bookID, validID := pathBookID(w, r, "id")
+	bookID, validID := pathID(w, r, "id")
 	if !validID {
 		return
 	}
@@ -452,7 +455,7 @@ func (s *Server) handleAPIBookDetail(w http.ResponseWriter, r *http.Request) {
 
 // handleAPIBookEdit serves PATCH /api/books/{id}.
 func (s *Server) handleAPIBookEdit(w http.ResponseWriter, r *http.Request) {
-	bookID, validID := pathBookID(w, r, "id")
+	bookID, validID := pathID(w, r, "id")
 	if !validID {
 		return
 	}

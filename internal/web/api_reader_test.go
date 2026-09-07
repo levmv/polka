@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/levmv/polka/internal/db"
@@ -21,7 +22,7 @@ func TestAPIReaderStateLifecycle(t *testing.T) {
 	handler := testRoutes(t, s)
 
 	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodGet, "/api/reader/assets/asset_1/state", nil))
+	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodGet, "/api/reader/assets/1/state", nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("default state status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
 	}
@@ -29,7 +30,7 @@ func TestAPIReaderStateLifecycle(t *testing.T) {
 	if err := json.UnmarshalRead(w.Body, &state); err != nil {
 		t.Fatalf("decode default state: %v", err)
 	}
-	if state.AssetID != "asset_1" || state.BookID != 1 || state.Progress != 0 || state.Locator.String() != "{}" || state.LastReadAt != 0 {
+	if state.AssetID != 1 || state.BookID != 1 || state.Progress != 0 || state.Locator.String() != "{}" || state.LastReadAt != 0 {
 		t.Fatalf("default state = %+v", state)
 	}
 	if state.ReadingStatus.Status != db.ReadingStatusUnread {
@@ -37,7 +38,7 @@ func TestAPIReaderStateLifecycle(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodPost, "/api/reader/assets/asset_1/touch", nil))
+	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodPost, "/api/reader/assets/1/touch", nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("touch status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
 	}
@@ -55,7 +56,7 @@ func TestAPIReaderStateLifecycle(t *testing.T) {
 	progress := 0.5
 	locator := jsontext.Value(`{"engine":"foliate","cfi":"epubcfi(/6/4)","fraction":0.5}`)
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodPut, "/api/reader/assets/asset_1/state", readerStateRequest{
+	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodPut, "/api/reader/assets/1/state", readerStateRequest{
 		Progress: &progress,
 		Locator:  locator,
 	}))
@@ -74,7 +75,7 @@ func TestAPIReaderStateLifecycle(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, bob.ID, http.MethodGet, "/api/reader/assets/asset_1/state", nil))
+	handler.ServeHTTP(w, jsonRequest(t, s, bob.ID, http.MethodGet, "/api/reader/assets/1/state", nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("other-user state status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
 	}
@@ -90,12 +91,12 @@ func TestAPIReaderStateLifecycle(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodDelete, "/api/reader/assets/asset_1/state", nil))
+	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodDelete, "/api/reader/assets/1/state", nil))
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("reset status = %d, want %d; body: %s", w.Code, http.StatusNoContent, w.Body.String())
 	}
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodGet, "/api/reader/assets/asset_1/state", nil))
+	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodGet, "/api/reader/assets/1/state", nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("state after reset status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
 	}
@@ -119,13 +120,13 @@ func TestAPIReaderAutoFinishCanBeUndone(t *testing.T) {
 	handler := testRoutes(t, s)
 
 	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, user.ID, http.MethodPost, "/api/reader/assets/asset_1/touch", nil))
+	handler.ServeHTTP(w, jsonRequest(t, s, user.ID, http.MethodPost, "/api/reader/assets/1/touch", nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("touch status = %d: %s", w.Code, w.Body.String())
 	}
 	progress := 0.995
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, user.ID, http.MethodPut, "/api/reader/assets/asset_1/state", readerStateRequest{
+	handler.ServeHTTP(w, jsonRequest(t, s, user.ID, http.MethodPut, "/api/reader/assets/1/state", readerStateRequest{
 		Progress: &progress,
 		Locator:  jsontext.Value(`{"engine":"foliate","fraction":0.995}`),
 	}))
@@ -136,7 +137,7 @@ func TestAPIReaderAutoFinishCanBeUndone(t *testing.T) {
 	if err := json.UnmarshalRead(w.Body, &state); err != nil {
 		t.Fatalf("decode finish: %v", err)
 	}
-	if !state.StatusChanged || state.StatusTransitionID == "" || state.ReadingStatus.Status != db.ReadingStatusFinished {
+	if !state.StatusChanged || state.StatusTransitionID == 0 || state.ReadingStatus.Status != db.ReadingStatusFinished {
 		t.Fatalf("finish response = %+v", state)
 	}
 
@@ -153,7 +154,7 @@ func TestAPIReaderAutoFinishCanBeUndone(t *testing.T) {
 		t.Fatalf("restored status = %+v", restored)
 	}
 
-	readerState, err := db.GetReaderState(database.Read(t.Context()), user.ID, "asset_1")
+	readerState, err := db.GetReaderState(database.Read(t.Context()), user.ID, 1)
 	if err != nil || readerState.Progress != progress {
 		t.Fatalf("undo changed reader position = %+v, err %v", readerState, err)
 	}
@@ -170,7 +171,7 @@ func TestAPIReaderStateErrors(t *testing.T) {
 	progress := 1.5
 	locator := jsontext.Value(`{"engine":"test"}`)
 	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, user.ID, http.MethodPut, "/api/reader/assets/asset_1/state", readerStateRequest{
+	handler.ServeHTTP(w, jsonRequest(t, s, user.ID, http.MethodPut, "/api/reader/assets/1/state", readerStateRequest{
 		Progress: &progress,
 		Locator:  locator,
 	}))
@@ -180,7 +181,7 @@ func TestAPIReaderStateErrors(t *testing.T) {
 
 	progress = 0.5
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, user.ID, http.MethodPut, "/api/reader/assets/asset_1/state", readerStateRequest{
+	handler.ServeHTTP(w, jsonRequest(t, s, user.ID, http.MethodPut, "/api/reader/assets/1/state", readerStateRequest{
 		Progress: &progress,
 		Locator:  jsontext.Value(`"bad"`),
 	}))
@@ -189,19 +190,19 @@ func TestAPIReaderStateErrors(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, user.ID, http.MethodPost, "/api/reader/assets/missing/touch", nil))
+	handler.ServeHTTP(w, jsonRequest(t, s, user.ID, http.MethodPost, "/api/reader/assets/999/touch", nil))
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("missing asset status = %d, want %d", w.Code, http.StatusNotFound)
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, user.ID, http.MethodDelete, "/api/reader/assets/missing/state", nil))
+	handler.ServeHTTP(w, jsonRequest(t, s, user.ID, http.MethodDelete, "/api/reader/assets/999/state", nil))
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("reset missing asset status = %d, want %d", w.Code, http.StatusNotFound)
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/reader/assets/asset_1/state", nil))
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/reader/assets/1/state", nil))
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("unauth state status = %d, want %d", w.Code, http.StatusUnauthorized)
 	}
@@ -217,17 +218,18 @@ func TestAPIAnnotationsLifecycle(t *testing.T) {
 	s := newTestServer(database, dir)
 	handler := testRoutes(t, s)
 
-	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodGet, "/api/reader/assets/asset_1/annotations", nil))
-	if w.Code != http.StatusOK {
-		t.Fatalf("list empty status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
-	}
-	var list []AnnotationDTO
-	if err := json.UnmarshalRead(w.Body, &list); err != nil {
-		t.Fatalf("decode empty annotations: %v", err)
-	}
-	if len(list) != 0 {
-		t.Fatalf("empty annotations = %+v", list)
+	listFor := func(userID int64) []AnnotationDTO {
+		t.Helper()
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, jsonRequest(t, s, userID, http.MethodGet, "/api/reader/assets/1/annotations", nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("list status = %d; body: %s", w.Code, w.Body.String())
+		}
+		var list []AnnotationDTO
+		if err := json.UnmarshalRead(w.Body, &list); err != nil {
+			t.Fatalf("decode annotations: %v", err)
+		}
+		return list
 	}
 
 	req := annotationRequest{
@@ -236,8 +238,8 @@ func TestAPIAnnotationsLifecycle(t *testing.T) {
 		ContextBefore: "before",
 		ContextAfter:  "after",
 	}
-	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodPost, "/api/reader/assets/asset_1/annotations", req))
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodPost, "/api/reader/assets/1/annotations", req))
 	if w.Code != http.StatusCreated {
 		t.Fatalf("create status = %d, want %d; body: %s", w.Code, http.StatusCreated, w.Body.String())
 	}
@@ -245,12 +247,12 @@ func TestAPIAnnotationsLifecycle(t *testing.T) {
 	if err := json.UnmarshalRead(w.Body, &created); err != nil {
 		t.Fatalf("decode created annotation: %v", err)
 	}
-	if created.ID == "" || created.AssetID != "asset_1" || created.Kind != db.AnnotationKindHighlight || created.Color != db.AnnotationColorYellow || created.Quote != req.Quote {
+	if created.ID <= 0 || created.AssetID != 1 || created.Kind != db.AnnotationKindHighlight || created.Color != db.AnnotationColorYellow || created.Quote != req.Quote {
 		t.Fatalf("created annotation = %+v", created)
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodPatch, "/api/reader/assets/asset_1/annotations/"+created.ID, annotationNoteRequest{Note: "  my note  "}))
+	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodPatch, "/api/reader/assets/1/annotations/"+strconv.FormatInt(created.ID, 10), annotationNoteRequest{Note: "  my note  "}))
 	if w.Code != http.StatusOK {
 		t.Fatalf("update note status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
 	}
@@ -262,39 +264,36 @@ func TestAPIAnnotationsLifecycle(t *testing.T) {
 		t.Fatalf("updated annotation = %+v", updated)
 	}
 
-	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, bob.ID, http.MethodGet, "/api/reader/assets/asset_1/annotations", nil))
-	if w.Code != http.StatusOK {
-		t.Fatalf("bob list status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
-	}
-	list = nil
-	if err := json.UnmarshalRead(w.Body, &list); err != nil {
-		t.Fatalf("decode bob annotations: %v", err)
-	}
-	if len(list) != 0 {
+	if list := listFor(bob.ID); len(list) != 0 {
 		t.Fatalf("annotation leaked to bob: %+v", list)
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, bob.ID, http.MethodPatch, "/api/reader/assets/asset_1/annotations/"+created.ID, annotationNoteRequest{Note: "stolen"}))
+	handler.ServeHTTP(w, jsonRequest(t, s, bob.ID, http.MethodPatch, "/api/reader/assets/1/annotations/"+strconv.FormatInt(created.ID, 10), annotationNoteRequest{Note: "stolen"}))
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("bob update status = %d, want %d", w.Code, http.StatusNotFound)
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, bob.ID, http.MethodDelete, "/api/reader/assets/asset_1/annotations/"+created.ID, nil))
+	handler.ServeHTTP(w, jsonRequest(t, s, bob.ID, http.MethodDelete, "/api/reader/assets/1/annotations/"+strconv.FormatInt(created.ID, 10), nil))
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("bob delete status = %d, want %d", w.Code, http.StatusNotFound)
 	}
-
-	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodDelete, "/api/reader/assets/asset_1/annotations/"+created.ID, nil))
-	if w.Code != http.StatusNoContent {
-		t.Fatalf("delete status = %d, want %d; body: %s", w.Code, http.StatusNoContent, w.Body.String())
+	if list := listFor(alice.ID); len(list) != 1 || list[0] != updated {
+		t.Fatalf("another user changed the annotation: %+v; want %+v", list, updated)
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodPost, "/api/reader/assets/asset_1/annotations", annotationRequest{CFI: "", Quote: "x"}))
+	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodDelete, "/api/reader/assets/1/annotations/"+strconv.FormatInt(created.ID, 10), nil))
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("delete status = %d, want %d; body: %s", w.Code, http.StatusNoContent, w.Body.String())
+	}
+	if list := listFor(alice.ID); len(list) != 0 {
+		t.Fatalf("annotations after delete = %+v; want empty", list)
+	}
+
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodPost, "/api/reader/assets/1/annotations", annotationRequest{CFI: "", Quote: "x"}))
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("invalid create status = %d, want %d", w.Code, http.StatusBadRequest)
 	}
@@ -307,7 +306,7 @@ func TestAPIContinueReading(t *testing.T) {
 	user := mustUser(t, database, "reader", db.RoleMember)
 	mustExec(t, database, `
 			INSERT INTO user_asset_state (user_id, asset_id, progress, locator, last_read_at, updated_at)
-			VALUES (?, 'asset_1', 0.42, '{"engine":"foliate","cfi":"epubcfi(/6/2)","fraction":0.42}', 100, 100);
+			VALUES (?, 1, 0.42, '{"engine":"foliate","cfi":"epubcfi(/6/2)","fraction":0.42}', 100, 100);
 			INSERT INTO user_book_reading_state (user_id, book_id, status, updated_at)
 			VALUES (?, 1, 'reading', 100)
 		`, user.ID, user.ID)
@@ -327,7 +326,7 @@ func TestAPIContinueReading(t *testing.T) {
 	if len(items) != 1 {
 		t.Fatalf("got %d continue items, want 1", len(items))
 	}
-	if items[0].ID != 1 || items[0].AssetID != "asset_1" || items[0].Progress != 0.42 || len(items[0].Assets) != 1 {
+	if items[0].ID != 1 || items[0].AssetID != 1 || items[0].Progress != 0.42 || len(items[0].Assets) != 1 {
 		t.Fatalf("continue item = %+v", items[0])
 	}
 

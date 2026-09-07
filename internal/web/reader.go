@@ -20,7 +20,7 @@ import (
 type readerPageData struct {
 	layoutPageData
 	BookID          int64
-	AssetID         string
+	AssetID         int64
 	Title           string
 	Extension       string
 	TransportFormat string
@@ -37,15 +37,15 @@ type readerPageData struct {
 
 type readerPageAsset struct {
 	BookID        int64
-	AssetID       string
+	AssetID       int64
 	Title         string
 	Extension     string
 	Format        format.Format
-	CurrentSHA256 string
+	CurrentSHA256 []byte
 }
 
 func (s *Server) handleRead(w http.ResponseWriter, r *http.Request) {
-	bookID, validID := pathBookID(w, r, "id")
+	bookID, validID := pathID(w, r, "id")
 	if !validID {
 		return
 	}
@@ -80,7 +80,10 @@ func (s *Server) handleRead(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleReadAssetPage(w http.ResponseWriter, r *http.Request) {
-	assetID := r.PathValue("id")
+	assetID, validID := pathID(w, r, "id")
+	if !validID {
+		return
+	}
 	if _, ok := s.requireAssetAccess(w, r, assetID); !ok {
 		return
 	}
@@ -130,32 +133,25 @@ func renderReaderPage(w http.ResponseWriter, asset readerPageAsset) {
 	renderPage(w, readerTmpl, "reader.html", data)
 }
 
-func readerFallbackURL(assetID string, kind format.Format, currentSHA256 string) string {
+func readerFallbackURL(assetID int64, kind format.Format, currentSHA256 []byte) string {
 	if kind != format.FormatEPUB || !converter.CanConvert(kind, converter.TargetKEPUB) {
 		return ""
 	}
-	return versionedURL("/download/"+assetID+"/as/kepub", conversionCacheVersion(currentSHA256))
+	return versionedURL("/download/"+strconv.FormatInt(assetID, 10)+"/as/kepub", conversionCacheVersion(currentSHA256))
 }
 
-func readerAssetURL(assetID string, kind format.Format, currentSHA256 string) string {
+func readerAssetURL(assetID int64, kind format.Format, currentSHA256 []byte) string {
 	version := assetCacheVersion(currentSHA256)
 	if kind == format.FormatCBR || kind == format.FormatCB7 {
 		version = conversionCacheVersion(currentSHA256)
 	}
-	return versionedURL("/read/assets/"+assetID, version)
+	return versionedURL("/read/assets/"+strconv.FormatInt(assetID, 10), version)
 }
 
-const assetCacheVersionHexLength = 16
+const assetCacheVersionBytes = 8
 
-func assetCacheVersion(currentSHA256 string) string {
-	if len(currentSHA256) < assetCacheVersionHexLength {
-		return ""
-	}
-	return currentSHA256[:assetCacheVersionHexLength]
-}
-
-func versionedAssetURL(baseURL, currentSHA256 string) string {
-	return versionedURL(baseURL, assetCacheVersion(currentSHA256))
+func assetCacheVersion(currentSHA256 []byte) string {
+	return hex.EncodeToString(currentSHA256[:assetCacheVersionBytes])
 }
 
 func versionedURL(baseURL, version string) string {
@@ -165,19 +161,22 @@ func versionedURL(baseURL, version string) string {
 	return baseURL + "?v=" + version
 }
 
-func conversionCacheVersion(currentSHA256 string) string {
-	if len(currentSHA256) < assetCacheVersionHexLength || version.Version == "" {
+func conversionCacheVersion(currentSHA256 []byte) string {
+	if version.Version == "" {
 		return ""
 	}
-	sum := sha256.Sum256([]byte(currentSHA256 + "\x00" + version.Version))
-	return hex.EncodeToString(sum[:assetCacheVersionHexLength/2])
+	h := sha256.New()
+	h.Write(currentSHA256)
+	h.Write([]byte{0})
+	h.Write([]byte(version.Version))
+	return hex.EncodeToString(h.Sum(nil)[:assetCacheVersionBytes])
 }
 
-func setVersionedAssetCacheControl(w http.ResponseWriter, r *http.Request, currentSHA256 string) {
+func setVersionedAssetCacheControl(w http.ResponseWriter, r *http.Request, currentSHA256 []byte) {
 	setCacheControlForVersion(w, r, assetCacheVersion(currentSHA256))
 }
 
-func setVersionedConversionCacheControl(w http.ResponseWriter, r *http.Request, currentSHA256 string) {
+func setVersionedConversionCacheControl(w http.ResponseWriter, r *http.Request, currentSHA256 []byte) {
 	setCacheControlForVersion(w, r, conversionCacheVersion(currentSHA256))
 }
 
@@ -203,17 +202,15 @@ const readerContentSecurityPolicy = "default-src 'self'; script-src 'self'; " +
 	"base-uri 'self'; form-action 'self'"
 
 func (s *Server) handleReadAsset(w http.ResponseWriter, r *http.Request) {
-	assetID := r.PathValue("id")
-	if assetID == "" {
-		http.Error(w, "Missing asset ID", http.StatusBadRequest)
+	assetID, validID := pathID(w, r, "id")
+	if !validID {
 		return
 	}
 	if _, ok := s.requireAssetAccess(w, r, assetID); !ok {
 		return
 	}
 
-	// Reader files are still addressed by asset_id and resolved from SQLite for
-	// this request. The reader page only carries the id, never a cached path.
+	// Resolve the current path for each request: metadata edits can move the file.
 	asset, err := s.assetFile(r.Context(), assetID)
 	if errors.Is(err, sql.ErrNoRows) {
 		http.Error(w, "Asset not found", http.StatusNotFound)
@@ -230,7 +227,7 @@ func (s *Server) handleReadAsset(w http.ResponseWriter, r *http.Request) {
 		// Foliate reads ZIP comic archives. Keep the original archive asset as the
 		// source of truth and normalize a bounded temporary CBZ for this read.
 		setVersionedConversionCacheControl(w, r, asset.CurrentSHA256)
-		http.Redirect(w, r, versionedURL("/download/"+assetID+"/as/cbz", conversionCacheVersion(asset.CurrentSHA256)), http.StatusTemporaryRedirect)
+		http.Redirect(w, r, versionedURL("/download/"+strconv.FormatInt(assetID, 10)+"/as/cbz", conversionCacheVersion(asset.CurrentSHA256)), http.StatusTemporaryRedirect)
 		return
 	}
 

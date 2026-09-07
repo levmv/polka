@@ -2,12 +2,13 @@ package db
 
 import (
 	"context"
+	"strconv"
 	"testing"
 )
 
 func TestEnsureReadablePrimaryAsset(t *testing.T) {
 	type assetSpec struct {
-		id        string
+		id        int64
 		canRead   int
 		isPrimary int
 		createdAt int
@@ -15,39 +16,39 @@ func TestEnsureReadablePrimaryAsset(t *testing.T) {
 	tests := []struct {
 		name   string
 		assets []assetSpec
-		want   string
+		want   int64
 	}{
 		{
 			name: "keeps current readable primary",
 			assets: []assetSpec{
-				{id: "current", canRead: 1, isPrimary: 1, createdAt: 20},
-				{id: "older", canRead: 1, createdAt: 10},
+				{id: 1, canRead: 1, isPrimary: 1, createdAt: 20},
+				{id: 2, canRead: 1, createdAt: 10},
 			},
-			want: "current",
+			want: 1,
 		},
 		{
 			name: "replaces unreadable primary",
 			assets: []assetSpec{
-				{id: "unreadable", isPrimary: 1, createdAt: 10},
-				{id: "readable", canRead: 1, createdAt: 20},
+				{id: 1, isPrimary: 1, createdAt: 10},
+				{id: 2, canRead: 1, createdAt: 20},
 			},
-			want: "readable",
+			want: 2,
 		},
 		{
 			name: "keeps unreadable primary without readable candidate",
 			assets: []assetSpec{
-				{id: "current", isPrimary: 1, createdAt: 20},
-				{id: "older", createdAt: 10},
+				{id: 1, isPrimary: 1, createdAt: 20},
+				{id: 2, createdAt: 10},
 			},
-			want: "current",
+			want: 1,
 		},
 		{
 			name: "fills missing primary with readable candidate",
 			assets: []assetSpec{
-				{id: "unreadable", createdAt: 10},
-				{id: "readable", canRead: 1, createdAt: 20},
+				{id: 1, createdAt: 10},
+				{id: 2, canRead: 1, createdAt: 20},
 			},
-			want: "readable",
+			want: 2,
 		},
 	}
 
@@ -58,9 +59,9 @@ func TestEnsureReadablePrimaryAsset(t *testing.T) {
 
 			for _, asset := range tt.assets {
 				mustExec(t, database, `
-					INSERT INTO assets (id, book_id, storage_path, filename, extension, can_read, is_primary, created_at)
-					VALUES (?, 1, ?, ?, '.book', ?, ?, ?)
-				`, asset.id, asset.id+".book", asset.id+".book", asset.canRead, asset.isPrimary, asset.createdAt)
+					INSERT INTO assets (id, book_id, storage_path, filename, extension, can_read, is_primary, created_at, original_sha256, current_sha256)
+					VALUES (?, 1, ?, ?, '.book', ?, ?, ?, randomblob(32), randomblob(32))
+				`, asset.id, strconv.FormatInt(asset.id, 10)+".book", strconv.FormatInt(asset.id, 10)+".book", asset.canRead, asset.isPrimary, asset.createdAt)
 
 			}
 
@@ -70,12 +71,12 @@ func TestEnsureReadablePrimaryAsset(t *testing.T) {
 				t.Fatalf("EnsureReadablePrimaryAsset: %v", err)
 			}
 
-			var got string
+			var got int64
 			if err := database.Read(t.Context()).QueryRow("SELECT id FROM assets WHERE book_id = 1 AND is_primary = 1").Scan(&got); err != nil {
 				t.Fatalf("query primary: %v", err)
 			}
 			if got != tt.want {
-				t.Fatalf("primary asset = %q, want %q", got, tt.want)
+				t.Fatalf("primary asset = %d, want %d", got, tt.want)
 			}
 		})
 	}

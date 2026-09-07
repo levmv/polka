@@ -29,7 +29,7 @@ func TestAPIAdminStorageStatus(t *testing.T) {
 	if err := storage.EnsureLayout(root); err != nil {
 		t.Fatalf("EnsureLayout: %v", err)
 	}
-	template := "{author_bucket}/{series|Standalone}/{title} [{asset_id}]{dot_ext}"
+	template := "{author_bucket}/{series|Standalone}/{title} [a{asset_id}]{dot_ext}"
 	if _, err := storage.SaveBookPathTemplate(database.Write(t.Context()), template); err != nil {
 		t.Fatalf("SaveBookPathTemplate: %v", err)
 	}

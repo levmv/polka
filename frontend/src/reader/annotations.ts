@@ -51,12 +51,12 @@ export interface AnnotationController {
 
 export function wireAnnotations(
     page: HTMLElement,
-    assetId: string,
+    assetId: number,
     view: FoliateViewElement,
     options: AnnotationOptions = {},
 ): AnnotationController {
     const annotations = new Map<string, Annotation>();
-    const sections = new Map<string, number>();
+    const sections = new Map<number, number>();
     const renderedAnnotations = new Map<string, RenderedAnnotation>();
     const wiredDocuments = new WeakSet<Document>();
     const panel = createAnnotationPanel(page);
@@ -72,9 +72,7 @@ export function wireAnnotations(
     let hydration: Promise<void> | null = null;
 
     const sortedAnnotations = (): Annotation[] =>
-        [...annotations.values()].sort(
-            (a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id),
-        );
+        [...annotations.values()].sort((a, b) => a.created_at - b.created_at || a.id - b.id);
 
     const hidePopover = (): void => {
         activePopoverAnnotation = null;
@@ -498,7 +496,7 @@ function renderAnnotationList(
         const button = document.createElement('button');
         button.className = 'reader-annotations-item';
         button.type = 'button';
-        button.dataset.readerAnnotationId = annotation.id;
+        button.dataset.readerAnnotationId = String(annotation.id);
 
         const quote = document.createElement('span');
         quote.className = 'reader-annotations-quote';
@@ -523,12 +521,12 @@ function renderAnnotationList(
     }
 }
 
-function markActiveAnnotation(controls: AnnotationPanel | null, annotationID: string): void {
+function markActiveAnnotation(controls: AnnotationPanel | null, annotationID: number): void {
     if (!controls) return;
     for (const button of controls.list.querySelectorAll<HTMLButtonElement>(
         '[data-reader-annotation-id]',
     )) {
-        const active = button.dataset.readerAnnotationId === annotationID;
+        const active = button.dataset.readerAnnotationId === String(annotationID);
         button.classList.toggle('active', active);
         if (active) button.setAttribute('aria-current', 'location');
         else button.removeAttribute('aria-current');

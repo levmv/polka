@@ -11,7 +11,7 @@ import (
 )
 
 type ReaderStateDTO struct {
-	AssetID            string           `json:"asset_id"`
+	AssetID            int64            `json:"asset_id"`
 	BookID             int64            `json:"book_id"`
 	Progress           float64          `json:"progress"`
 	Locator            db.ReaderLocator `json:"locator"`
@@ -19,19 +19,19 @@ type ReaderStateDTO struct {
 	UpdatedAt          int64            `json:"updated_at,omitzero"`
 	ReadingStatus      ReadingStatusDTO `json:"reading_status"`
 	StatusChanged      bool             `json:"status_changed,omitzero"`
-	StatusTransitionID string           `json:"status_transition_id,omitempty"`
+	StatusTransitionID int64            `json:"status_transition_id,omitzero"`
 }
 
 type ContinueReadingDTO struct {
 	BookSummaryDTO
-	AssetID    string  `json:"asset_id"`
+	AssetID    int64   `json:"asset_id"`
 	Progress   float64 `json:"progress"`
 	LastReadAt int64   `json:"last_read_at"`
 }
 
 type AnnotationDTO struct {
-	ID            string `json:"id"`
-	AssetID       string `json:"asset_id"`
+	ID            int64  `json:"id"`
+	AssetID       int64  `json:"asset_id"`
 	Kind          string `json:"kind"`
 	CFI           string `json:"cfi"`
 	Quote         string `json:"quote"`
@@ -168,7 +168,10 @@ func (s *Server) continueReadingDTOs(ctx context.Context, rows []db.ContinueRead
 }
 
 func (s *Server) handleAPIReaderState(w http.ResponseWriter, r *http.Request) {
-	assetID := r.PathValue("id")
+	assetID, validID := pathID(w, r, "id")
+	if !validID {
+		return
+	}
 	if _, ok := s.requireAssetAccess(w, r, assetID); !ok {
 		return
 	}
@@ -184,7 +187,10 @@ func (s *Server) handleAPIReaderState(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAPIReaderStateSave(w http.ResponseWriter, r *http.Request) {
-	assetID := r.PathValue("id")
+	assetID, validID := pathID(w, r, "id")
+	if !validID {
+		return
+	}
 	if _, ok := s.requireAssetAccess(w, r, assetID); !ok {
 		return
 	}
@@ -216,7 +222,10 @@ func (s *Server) handleAPIReaderStateSave(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleAPIReaderStateReset(w http.ResponseWriter, r *http.Request) {
-	assetID := r.PathValue("id")
+	assetID, validID := pathID(w, r, "id")
+	if !validID {
+		return
+	}
 	if _, ok := s.requireAssetAccess(w, r, assetID); !ok {
 		return
 	}
@@ -227,7 +236,10 @@ func (s *Server) handleAPIReaderStateReset(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleAPIReaderStateTouch(w http.ResponseWriter, r *http.Request) {
-	assetID := r.PathValue("id")
+	assetID, validID := pathID(w, r, "id")
+	if !validID {
+		return
+	}
 	if _, ok := s.requireAssetAccess(w, r, assetID); !ok {
 		return
 	}
@@ -244,7 +256,10 @@ func (s *Server) handleAPIReaderStateTouch(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleAPIAnnotations(w http.ResponseWriter, r *http.Request) {
-	assetID := r.PathValue("id")
+	assetID, validID := pathID(w, r, "id")
+	if !validID {
+		return
+	}
 	if _, ok := s.requireAssetAccess(w, r, assetID); !ok {
 		return
 	}
@@ -256,7 +271,10 @@ func (s *Server) handleAPIAnnotations(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAPIAnnotationCreate(w http.ResponseWriter, r *http.Request) {
-	assetID := r.PathValue("id")
+	assetID, validID := pathID(w, r, "id")
+	if !validID {
+		return
+	}
 	if _, ok := s.requireAssetAccess(w, r, assetID); !ok {
 		return
 	}
@@ -280,7 +298,14 @@ func (s *Server) handleAPIAnnotationCreate(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleAPIAnnotationUpdate(w http.ResponseWriter, r *http.Request) {
-	assetID := r.PathValue("id")
+	annotationID, validID := pathID(w, r, "annotationID")
+	if !validID {
+		return
+	}
+	assetID, validID := pathID(w, r, "id")
+	if !validID {
+		return
+	}
 	if _, ok := s.requireAssetAccess(w, r, assetID); !ok {
 		return
 	}
@@ -288,7 +313,7 @@ func (s *Server) handleAPIAnnotationUpdate(w http.ResponseWriter, r *http.Reques
 	if !readJSON(w, r, &req) {
 		return
 	}
-	ann, err := s.db.UpdateAnnotationNote(r.Context(), UserID(r.Context()), assetID, r.PathValue("annotationID"), db.AnnotationNoteUpdate{
+	ann, err := s.db.UpdateAnnotationNote(r.Context(), UserID(r.Context()), assetID, annotationID, db.AnnotationNoteUpdate{
 		Note: req.Note,
 	})
 	if writeReaderStateError(w, r, err) {
@@ -298,11 +323,18 @@ func (s *Server) handleAPIAnnotationUpdate(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleAPIAnnotationDelete(w http.ResponseWriter, r *http.Request) {
-	assetID := r.PathValue("id")
+	annotationID, validID := pathID(w, r, "annotationID")
+	if !validID {
+		return
+	}
+	assetID, validID := pathID(w, r, "id")
+	if !validID {
+		return
+	}
 	if _, ok := s.requireAssetAccess(w, r, assetID); !ok {
 		return
 	}
-	err := s.db.DeleteAnnotation(r.Context(), UserID(r.Context()), assetID, r.PathValue("annotationID"))
+	err := s.db.DeleteAnnotation(r.Context(), UserID(r.Context()), assetID, annotationID)
 	if writeReaderStateError(w, r, err) {
 		return
 	}

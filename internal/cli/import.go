@@ -58,7 +58,7 @@ type importOutcome struct {
 	BookID   int64           `json:"book_id,omitempty"`
 	InTrash  bool            `json:"in_trash,omitzero"`
 	Restored bool            `json:"restored,omitzero"`
-	AssetID  string          `json:"asset_id,omitempty"`
+	AssetID  int64           `json:"asset_id,omitzero"`
 	Format   string          `json:"format,omitempty"`
 	Title    string          `json:"title,omitempty"`
 	Authors  []string        `json:"authors,omitempty"`

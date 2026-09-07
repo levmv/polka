@@ -126,7 +126,7 @@ func TestAPISendOptionsPlansKindleEPUB(t *testing.T) {
 	defer database.Close()
 
 	admin := mustUser(t, database, "admin", db.RoleAdmin)
-	mustExec(t, database, "UPDATE assets SET format = 'epub', current_size = 1024, is_primary = 1 WHERE id = 'asset_1'")
+	mustExec(t, database, "UPDATE assets SET format = 'epub', current_size = 1024, is_primary = 1 WHERE id = 1")
 
 	enableSending(t, database)
 	s := newTestServer(database, dir)
@@ -165,10 +165,10 @@ func TestAPISendOptionsPlansKindleEPUB(t *testing.T) {
 	if !options.Configured || len(options.Devices) != 1 || options.Devices[0].Plan == nil {
 		t.Fatalf("options = %+v, want one sendable plan", options)
 	}
-	if options.Devices[0].Plan.AssetID != "asset_1" || options.Devices[0].Plan.Format != "epub" {
+	if options.Devices[0].Plan.AssetID != 1 || options.Devices[0].Plan.Format != "epub" {
 		t.Fatalf("plan = %+v, want asset_1 epub", options.Devices[0].Plan)
 	}
-	if len(options.Devices[0].Choices) != 1 || options.Devices[0].Choices[0].AssetID != "asset_1" {
+	if len(options.Devices[0].Choices) != 1 || options.Devices[0].Choices[0].AssetID != 1 {
 		t.Fatalf("choices = %+v, want server-provided asset_1 choice", options.Devices[0].Choices)
 	}
 }
@@ -180,8 +180,8 @@ func TestAPISendOptionsChoicesUsePersistedFormat(t *testing.T) {
 	admin := mustUser(t, database, "admin", db.RoleAdmin)
 	mustExec(t, database, `
 		INSERT INTO books (id, title, sort_title) VALUES (132, 'FB2 Zip', 'FB2 Zip');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, current_size, is_primary)
-			VALUES ('asset_fb2_zip', 132, 'Books/fb2.zip', 'fb2.zip', '.fb2.zip', 'fb2', 1024, 1);
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, current_size, is_primary, original_sha256, current_sha256)
+			VALUES (2, 132, 'Books/fb2.zip', 'fb2.zip', '.fb2.zip', 'fb2', 1024, 1, randomblob(32), randomblob(32));
 	`)
 
 	enableSending(t, database)
@@ -229,7 +229,7 @@ func TestAPISendOptionsChoicesUsePersistedFormat(t *testing.T) {
 		t.Fatalf("choices = %+v, want FB2 choice", options.Devices[0].Choices)
 	}
 	choice := options.Devices[0].Choices[0]
-	if choice.AssetID != "asset_fb2_zip" || choice.Format != "fb2" || choice.Target != "" {
+	if choice.AssetID != 2 || choice.Format != "fb2" || choice.Target != "" {
 		t.Fatalf("choice = %+v, want native FB2 from persisted format", choice)
 	}
 }
@@ -240,8 +240,8 @@ func TestPrepareDeliveryCopyCopiesNativeAssetToTemp(t *testing.T) {
 
 	s := &Server{db: database, dataDir: dir}
 	job := db.DeliveryJob{
-		ID:       "dj_native_copy",
-		AssetID:  sql.NullString{String: "asset_1", Valid: true},
+
+		AssetID:  sql.NullInt64{Int64: 1, Valid: true},
 		Filename: "The Hobbit.epub",
 	}
 
@@ -287,8 +287,8 @@ func TestPrepareDeliveryCopyWaitsForStorageMutationBeforeReportingMissing(t *tes
 	queue := workslot.New()
 	s := &Server{db: database, dataDir: dir, storageQueue: queue}
 	job := db.DeliveryJob{
-		ID:       "dj_missing_copy",
-		AssetID:  sql.NullString{String: "asset_1", Valid: true},
+
+		AssetID:  sql.NullInt64{Int64: 1, Valid: true},
 		Filename: "The Hobbit.epub",
 	}
 	if err := os.Remove(filepath.Join(dir, "Tolkien", "The_Hobbit", "a_1.epub")); err != nil {
@@ -677,7 +677,7 @@ func createQueuedDeliveryJob(t *testing.T, database *db.DB, userID int64, target
 		DeviceEmail: "reader@kindle.com",
 		Preset:      db.DeliveryPresetKindle,
 		BookID:      1,
-		AssetID:     sql.NullString{String: "asset_1", Valid: true},
+		AssetID:     sql.NullInt64{Int64: 1, Valid: true},
 		Title:       "The Hobbit",
 		Target:      target,
 		Filename:    "The Hobbit.epub",

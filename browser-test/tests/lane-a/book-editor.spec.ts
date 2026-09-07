@@ -113,8 +113,8 @@ test.describe('Book editor', () => {
     try {
       await page.locator('#btn-edit-book').click();
       const modal = page.locator('.edit-modal');
-      const seriesInput = modal.locator('input[name="series"]');
-      await expect(seriesInput).toHaveValue('Test Series');
+      const authorsInput = modal.locator('input[name="authors"]');
+      await expect(authorsInput).not.toHaveValue('');
 
       // Change a field behind the already-open form, then save a different field
       // from that stale draft. The form must not echo its old publisher value.
@@ -134,29 +134,36 @@ test.describe('Book editor', () => {
         const url = new URL(request.url());
         return request.method() === 'PATCH' && url.pathname === `/api/books/${bookID}`;
       });
-      await seriesInput.fill('');
+      await authorsInput.fill('');
       await modal.locator('.edit-save-btn').click();
-      expect((await patchRequest).postDataJSON()).toEqual({ series: null });
+      expect((await patchRequest).postDataJSON()).toEqual({ authors: null });
       await expect(modal.locator('.save-indicator')).toContainText('Saved');
 
       await expect
         .poll(async () => {
           const response = await page.request.get(`/api/books/${bookID}`);
           const book = await response.json();
-          return { publisher: book.publisher, series: book.series };
+          return { publisher: book.publisher, authors: book.authors_list };
         })
-        .toEqual({ publisher: concurrentPublisher, series: null });
+        .toEqual({ publisher: concurrentPublisher, authors: [] });
+      await page.keyboard.press('Escape');
+      await expect(modal).not.toBeVisible();
+      await page.screenshot({ path: 'screenshots/book-without-author.png', fullPage: true });
     } finally {
       await page.evaluate(
-        async ({ id, publisher, series }) => {
+        async ({ id, publisher, authors }) => {
           const res = await fetch(`/api/books/${id}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ publisher, series }),
+            body: JSON.stringify({ publisher, authors }),
           });
           if (!res.ok) throw new Error(await res.text());
         },
-        { id: bookID, publisher: baseline.publisher ?? null, series: baseline.series ?? null },
+        {
+          id: bookID,
+          publisher: baseline.publisher ?? null,
+          authors: baseline.authors_list.map((author: { name: string }) => author.name).join('; '),
+        },
       );
     }
   });

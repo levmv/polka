@@ -106,7 +106,7 @@ export interface TrashedBook extends BookSummary {
 export interface BookImportResult {
     status: 'imported' | 'duplicate' | 'restored';
     book: Book;
-    asset_id?: string;
+    asset_id?: number;
     warnings?: string[];
 }
 
@@ -141,7 +141,7 @@ export interface DownloadAsOption {
 }
 
 export interface Asset {
-    id: string;
+    id: number;
     extension: string;
     size?: number;
     is_primary: boolean;
@@ -159,7 +159,7 @@ export interface ReaderLocator {
 }
 
 export interface ReaderState {
-    asset_id: string;
+    asset_id: number;
     book_id: number;
     progress: number;
     locator: ReaderLocator;
@@ -167,15 +167,15 @@ export interface ReaderState {
     updated_at?: number;
     reading_status: ReadingStatusState;
     status_changed?: boolean;
-    status_transition_id?: string;
+    status_transition_id?: number;
 }
 
 export type AnnotationKind = 'highlight';
 export type AnnotationColor = 'yellow';
 
 export interface Annotation {
-    id: string;
-    asset_id: string;
+    id: number;
+    asset_id: number;
     kind: AnnotationKind;
     cfi: string;
     quote: string;
@@ -188,7 +188,7 @@ export interface Annotation {
 }
 
 export interface ContinueReadingItem extends BookSummary {
-    asset_id: string;
+    asset_id: number;
     progress: number;
     last_read_at: number;
 }
@@ -234,7 +234,7 @@ export interface UserAccount {
     username: string;
     role: AccountRole;
     content_scope: ContentScope;
-    scope_shelf_ids?: string[];
+    scope_shelf_ids?: number[];
     // Shared shelves this user owns; deleting the user removes them for everyone,
     // so the delete dialog warns with them.
     shared_shelf_names?: string[];
@@ -243,7 +243,7 @@ export interface UserAccount {
 }
 
 export interface AppToken {
-    id: string;
+    id: number;
     name: string;
     token: string;
     created_at: number;
@@ -251,8 +251,8 @@ export interface AppToken {
 }
 
 export interface KoboConnection {
-    id: string;
-    shelf_id: string;
+    id: number;
+    shelf_id: number;
     shelf_name: string;
     setup_url: string;
     created_at: number;
@@ -350,7 +350,7 @@ export interface EmailDeliverySettings {
 }
 
 export interface DeliveryDevice {
-    id: string;
+    id: number;
     name: string;
     email: string;
     preset: DeliveryPreset;
@@ -360,7 +360,7 @@ export interface DeliveryDevice {
 }
 
 export interface DeliveryPlan {
-    asset_id?: string;
+    asset_id?: number;
     format?: string;
     target?: string;
     filename?: string;
@@ -390,13 +390,13 @@ export interface SendOptions {
 export type DeliveryJobStatus = 'queued' | 'converting' | 'sending' | 'sent' | 'failed';
 
 export interface DeliveryJob {
-    id: string;
-    device_id?: string;
+    id: number;
+    device_id?: number;
     device_name: string;
     device_email: string;
     preset: DeliveryPreset;
     book_id: number;
-    asset_id?: string;
+    asset_id?: number;
     title: string;
     target?: string;
     filename: string;
@@ -412,7 +412,7 @@ export type ShelfKind = 'manual' | 'query';
 export type ShelfVisibility = 'personal' | 'shared';
 
 export interface Shelf {
-    id: string;
+    id: number;
     name: string;
     kind: ShelfKind;
     query?: string;
@@ -530,7 +530,7 @@ export interface PossibleDuplicatesCategory {
 
 export interface Cleanup {
     missing_cover: CleanupCategory;
-    unknown_author: CleanupCategory;
+    missing_author: CleanupCategory;
     no_tags: CleanupCategory;
     no_description: CleanupCategory;
     possible_duplicates: PossibleDuplicatesCategory;

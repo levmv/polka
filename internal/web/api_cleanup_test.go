@@ -27,8 +27,8 @@ func TestCleanupDuplicateMergeUsesMutationSequencerAndStagesCover(t *testing.T) 
 	const (
 		survivorID = 173
 		loserID    = 147
-		survivorA  = "asset_survivor"
-		loserA     = "asset_loser"
+		survivorA  = 1
+		loserA     = 2
 		title      = "Duplicate Book"
 		author     = "Jane Doe"
 	)
@@ -39,16 +39,16 @@ func TestCleanupDuplicateMergeUsesMutationSequencerAndStagesCover(t *testing.T) 
 		INSERT INTO books (id, title, sort_title, cover_version)
 		VALUES (?, ?, ?, 0), (?, ?, ?, 1)
 	`, survivorID, title, title, loserID, title, title)
-	mustExec(t, database, "INSERT INTO authors (id, name, sort_name) VALUES ('au_dup', ?, ?)", author, authorSort)
+	mustExec(t, database, "INSERT INTO authors (id, name, sort_name) VALUES (1, ?, ?)", author, authorSort)
 	mustExec(t, database, `
 		INSERT INTO book_authors (book_id, author_id, author_order)
-		VALUES (?, 'au_dup', 0), (?, 'au_dup', 0)
+		VALUES (?, 1, 0), (?, 1, 0)
 	`, survivorID, loserID)
 	mustExec(t, database, `
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, writeback_rev)
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, writeback_rev, original_sha256, current_sha256)
 		VALUES
-			(?, ?, ?, ?, '.epub', 'epub', 1, 0),
-			(?, ?, ?, ?, '.epub', 'epub', 1, 0)
+			(?, ?, ?, ?, '.epub', 'epub', 1, 0, randomblob(32), randomblob(32)),
+			(?, ?, ?, ?, '.epub', 'epub', 1, 0, randomblob(32), randomblob(32))
 	`, survivorA, survivorID, survivorPath, filepath.Base(survivorPath), loserA, loserID, loserPath, filepath.Base(loserPath))
 
 	for rel, body := range map[string][]byte{

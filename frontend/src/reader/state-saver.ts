@@ -15,7 +15,7 @@ export interface ReaderStateSaver {
 
 export function createReaderStateSaver(
     page: HTMLElement,
-    assetId: string,
+    assetId: number,
     options: { onStateSaved?: (state: ReaderState) => void } = {},
 ): ReaderStateSaver {
     let pending: ReaderPosition | null = null;

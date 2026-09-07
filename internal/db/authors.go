@@ -6,24 +6,16 @@ import (
 	"fmt"
 
 	"github.com/levmv/polka/internal/bookmeta"
-	"github.com/levmv/polka/internal/id"
 )
 
 var ErrAuthorNotFound = errors.New("no author named")
 
-// RenameOrMergeAuthor changes every book credited to oldName so it is credited
-// to newName instead, and returns the ids of the affected books. The caller owns
-// the catalog bookkeeping (metadata_rev, search index, and relayout) after this
-// pure DB mutation.
-//
-// If no author named newName exists yet it is a pure rename (the oldName row's
-// name/sort_name are updated in place). If an author named newName already
-// exists it is a merge: oldName's book links are repointed onto the existing row
-// (dropping any link that would duplicate one the book already has) and the
-// now-orphaned oldName row is deleted. This matches polka's model where an
-// author's identity is its exact name string.
+// RenameOrMergeAuthor renames an author or merges its links into an existing
+// author with the exact newName, preserving the target's sort_name and avoiding
+// duplicate book links. It returns the affected book IDs; the caller handles
+// metadata revisions, search indexing, and relayout.
 func RenameOrMergeAuthor(tx *Tx, oldName, newName, newSortName string) ([]int64, error) {
-	var oldID string
+	var oldID int64
 	err := tx.QueryRow("SELECT id FROM authors WHERE name = ?", oldName).Scan(&oldID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("%w %q", ErrAuthorNotFound, oldName)
@@ -40,7 +32,7 @@ func RenameOrMergeAuthor(tx *Tx, oldName, newName, newSortName string) ([]int64,
 		return nil, err
 	}
 
-	var targetID string
+	var targetID int64
 	err = tx.QueryRow("SELECT id FROM authors WHERE name = ?", newName).Scan(&targetID)
 	if errors.Is(err, sql.ErrNoRows) {
 		// Pure rename in place.
@@ -53,10 +45,6 @@ func RenameOrMergeAuthor(tx *Tx, oldName, newName, newSortName string) ([]int64,
 		return affected, nil
 	} else if err != nil {
 		return nil, fmt.Errorf("find target author: %w", err)
-	}
-
-	if targetID == oldID {
-		return nil, nil
 	}
 
 	// Merge: drop old links on books that already credit the target, repoint the
@@ -86,7 +74,8 @@ func RenameOrMergeAuthor(tx *Tx, oldName, newName, newSortName string) ([]int64,
 // sort_name selects both the bucket and the author folder, so a change moves
 // files for books where the author is primary.
 func SetAuthorSortName(tx *Tx, name, sortName string) ([]int64, error) {
-	var id, existingSortName string
+	var id int64
+	var existingSortName string
 	err := tx.QueryRow("SELECT id, sort_name FROM authors WHERE name = ?", name).Scan(&id, &existingSortName)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("%w %q", ErrAuthorNotFound, name)
@@ -109,7 +98,7 @@ func SetAuthorSortName(tx *Tx, name, sortName string) ([]int64, error) {
 	return affected, nil
 }
 
-func bookIDsForAuthor(tx *Tx, authorID string) ([]int64, error) {
+func bookIDsForAuthor(tx *Tx, authorID int64) ([]int64, error) {
 	rows, err := tx.Query("SELECT book_id FROM book_authors WHERE author_id = ?", authorID)
 	if err != nil {
 		return nil, fmt.Errorf("books for author: %w", err)
@@ -126,31 +115,13 @@ func bookIDsForAuthor(tx *Tx, authorID string) ([]int64, error) {
 	return ids, rows.Err()
 }
 
-// UpsertBookAuthors sets the ordered author list for a book. It clears any
-// existing book_authors links (a no-op for a freshly inserted book), then for
-// each author resolves the row by exact name — reusing an existing author and
-// adopting its persisted sort_name, or inserting a new row with the supplied
-// sort_name — and links it via book_authors in slice order (author_order = i,
-// role from the AuthorMeta). It returns the primary (author_order 0) author's
-// resolved name and sort_name.
+// UpsertBookAuthors replaces a book's ordered author links, keeping the first
+// occurrence of each exact name. It returns the primary author's name and sort
+// name, or empty strings when the list is empty.
 //
-// Adopting the existing row's sort_name is load-bearing: the canonical storage
-// path buckets on the primary author's sort_name, so the returned value must
-// match the persisted author row or `polka check` reports a divergence. This is
-// the single place import and edit share the "find-or-insert author, link book"
-// logic, keeping either path from independently recomputing AuthorSort and
-// disagreeing with an overridden sort_name.
-//
-// authors must be non-empty and pre-normalized (SortName filled). It does not
-// garbage-collect orphaned authors; a caller re-linking an existing book should
-// follow with DeleteOrphanAuthors.
-//
-// Authors repeating an exact name are collapsed to their first occurrence:
-// author identity is the exact name string, so a duplicate would resolve to the
-// same author row and collide on the book_authors (book_id, author_id) primary
-// key. Real inputs hit this — an EPUB listing one creator twice, or an editor
-// typing "Ivanov; Ivanov" — so every caller (edit, bulk, import) relies on this
-// silent dedup rather than surfacing a constraint error.
+// Input authors must have SortName filled. Existing authors retain their stored
+// sort_name so import and edit honor the same storage path overrides.
+// Callers replacing existing links should follow with DeleteOrphanAuthors.
 func UpsertBookAuthors(tx *Tx, bookID int64, authors []bookmeta.AuthorMeta) (primaryName, primarySortName string, err error) {
 	authors = dedupAuthorsByName(authors)
 
@@ -159,17 +130,16 @@ func UpsertBookAuthors(tx *Tx, bookID int64, authors []bookmeta.AuthorMeta) (pri
 	}
 
 	for i, a := range authors {
-		authorID := id.New(id.Author)
-		var existingID, existingSort string
-		err := tx.QueryRow("SELECT id, sort_name FROM authors WHERE name = ?", a.Name).Scan(&existingID, &existingSort)
+		var authorID int64
+		var existingSort string
+		err := tx.QueryRow("SELECT id, sort_name FROM authors WHERE name = ?", a.Name).Scan(&authorID, &existingSort)
 		if errors.Is(err, sql.ErrNoRows) {
-			if _, err := tx.Exec("INSERT INTO authors (id, name, sort_name) VALUES (?, ?, ?)", authorID, a.Name, a.SortName); err != nil {
+			if err := tx.QueryRow("INSERT INTO authors (name, sort_name) VALUES (?, ?) RETURNING id", a.Name, a.SortName).Scan(&authorID); err != nil {
 				return "", "", fmt.Errorf("insert author: %w", err)
 			}
 		} else if err != nil {
 			return "", "", fmt.Errorf("query author: %w", err)
 		} else {
-			authorID = existingID
 			a.SortName = existingSort
 		}
 
@@ -253,10 +223,7 @@ type AuthorRow struct {
 	Order    int
 }
 
-// AuthorsByBookIDs returns each book's authors in display order, keyed by book
-// id. This is the structured counterpart to the comma-joined `authors` string
-// in the list/detail projections — callers build both the authors array and the
-// `&`-joined display string from it.
+// AuthorsByBookIDs returns each book's authors in display order, keyed by book ID.
 func AuthorsByBookIDs(queryer Queryer, bookIDs []int64) (map[int64][]AuthorRow, error) {
 	if len(bookIDs) == 0 {
 		return map[int64][]AuthorRow{}, nil
@@ -292,11 +259,16 @@ func AuthorsByBookIDs(queryer Queryer, bookIDs []int64) (map[int64][]AuthorRow, 
 	return byBook, nil
 }
 
+type AuthorNameRow struct {
+	Name     string
+	SortName string
+}
+
 // ListAuthorNames returns distinct authors that are referenced by at least one
 // book (i.e. not orphans), optionally filtered by a case-insensitive substring,
 // ordered by sort_name. Used for edit autocomplete so a re-spelling can reuse an
 // existing author instead of spawning a duplicate.
-func ListAuthorNames(queryer Queryer, scope VisibilityScope, q string, limit int) ([]AuthorRow, error) {
+func ListAuthorNames(queryer Queryer, scope VisibilityScope, q string, limit int) ([]AuthorNameRow, error) {
 	query := `
 		SELECT a.name, a.sort_name FROM authors a
 		WHERE EXISTS (
@@ -325,9 +297,9 @@ func ListAuthorNames(queryer Queryer, scope VisibilityScope, q string, limit int
 	}
 	defer rows.Close()
 
-	var authors []AuthorRow
+	var authors []AuthorNameRow
 	for rows.Next() {
-		var a AuthorRow
+		var a AuthorNameRow
 		if err := rows.Scan(&a.Name, &a.SortName); err != nil {
 			return nil, fmt.Errorf("list author names scan: %w", err)
 		}
@@ -339,39 +311,35 @@ func ListAuthorNames(queryer Queryer, scope VisibilityScope, q string, limit int
 // AuthorCount is an author plus how many books reference it. Used by the
 // manage-authors screen.
 type AuthorCount struct {
-	ID        string
 	Name      string
 	SortName  string
 	BookCount int
 }
 
-// ListAuthorCountsPage returns one stable keyset page ordered by the
-// persisted sort_name and author id. The id is internal cursor state; API rows
-// continue exposing only the human-facing name/sort/count fields. limit is the
-// positive page size.
-func ListAuthorCountsPage(queryer Queryer, scope VisibilityScope, afterSortName, afterID string, limit int) ([]AuthorCount, error) {
+// ListAuthorCountsPage returns a keyset page ordered by sort_name and exact name.
+func ListAuthorCountsPage(queryer Queryer, scope VisibilityScope, afterSortName, afterName string, limit int) ([]AuthorCount, error) {
 	scopeWhere, scopeArgs := scope.BookWhere("b.id")
 	where := "b.deleted_at IS NULL"
 	args := scopeArgs
 	if scopeWhere != "1 = 1" {
 		where += " AND " + scopeWhere
 	}
-	if afterID != "" {
+	if afterName != "" {
 		where += ` AND (
 			a.sort_name COLLATE NOCASE > ? COLLATE NOCASE OR
-			(a.sort_name COLLATE NOCASE = ? COLLATE NOCASE AND a.id > ?)
+			(a.sort_name COLLATE NOCASE = ? COLLATE NOCASE AND a.name > ?)
 		)`
-		args = append(args, afterSortName, afterSortName, afterID)
+		args = append(args, afterSortName, afterSortName, afterName)
 	}
 	args = append(args, limit)
 	rows, err := queryer.Query(`
-		SELECT a.id, a.name, a.sort_name, COUNT(ba.book_id) AS book_count
+		SELECT a.name, a.sort_name, COUNT(ba.book_id) AS book_count
 		FROM authors a
 		JOIN book_authors ba ON ba.author_id = a.id
 		JOIN books b ON b.id = ba.book_id
 		WHERE `+where+`
 		GROUP BY a.id
-		ORDER BY a.sort_name COLLATE NOCASE ASC, a.id ASC
+		ORDER BY a.sort_name COLLATE NOCASE ASC, a.name ASC
 		LIMIT ?
 	`, args...)
 	if err != nil {
@@ -382,7 +350,7 @@ func ListAuthorCountsPage(queryer Queryer, scope VisibilityScope, afterSortName,
 	var authors []AuthorCount
 	for rows.Next() {
 		var a AuthorCount
-		if err := rows.Scan(&a.ID, &a.Name, &a.SortName, &a.BookCount); err != nil {
+		if err := rows.Scan(&a.Name, &a.SortName, &a.BookCount); err != nil {
 			return nil, fmt.Errorf("list authors with counts scan: %w", err)
 		}
 		authors = append(authors, a)
@@ -399,13 +367,13 @@ func GetAuthorInfo(queryer Queryer, scope VisibilityScope, name string) (AuthorC
 	where, args := scope.AppendBookWhere("a.name = ? AND b.deleted_at IS NULL", "b.id", name)
 	var a AuthorCount
 	err := queryer.QueryRow(`
-		SELECT a.id, a.name, a.sort_name, COUNT(ba.book_id)
+		SELECT a.name, a.sort_name, COUNT(ba.book_id)
 		FROM authors a
 		JOIN book_authors ba ON ba.author_id = a.id
 		JOIN books b ON b.id = ba.book_id
 		WHERE `+where+`
 		GROUP BY a.id
-	`, args...).Scan(&a.ID, &a.Name, &a.SortName, &a.BookCount)
+	`, args...).Scan(&a.Name, &a.SortName, &a.BookCount)
 	if errors.Is(err, sql.ErrNoRows) {
 		return AuthorCount{}, false, nil
 	}
@@ -415,6 +383,7 @@ func GetAuthorInfo(queryer Queryer, scope VisibilityScope, name string) (AuthorC
 	return a, true, nil
 }
 
+// PrimaryAuthor returns empty names when a book has no authors.
 func PrimaryAuthor(queryer Queryer, bookID int64) (string, string, error) {
 	var name, sortName string
 	err := queryer.QueryRow(`
@@ -425,5 +394,8 @@ func PrimaryAuthor(queryer Queryer, bookID int64) (string, string, error) {
 		ORDER BY ba.author_order ASC, ba.rowid ASC
 		LIMIT 1
 	`, bookID).Scan(&name, &sortName)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", "", nil
+	}
 	return name, sortName, err
 }

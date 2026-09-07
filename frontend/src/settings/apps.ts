@@ -236,11 +236,11 @@ function openKoboSetupModal(state: KoboState, rerender: () => void): void {
     shelf.setAttribute('aria-label', 'Shelf');
     for (const item of state.shelves) {
         const option = document.createElement('option');
-        option.value = item.id;
+        option.value = String(item.id);
         option.textContent = item.kind === 'query' ? `${item.name} · smart shelf` : item.name;
         shelf.append(option);
     }
-    if (state.koboConnection) shelf.value = state.koboConnection.shelf_id;
+    if (state.koboConnection) shelf.value = String(state.koboConnection.shelf_id);
     fields.append(
         textEl(
             'div',
@@ -259,7 +259,7 @@ function openKoboSetupModal(state: KoboState, rerender: () => void): void {
         focus: shelf,
         onSubmit: async () => {
             try {
-                const created = await createKoboConnection(shelf.value);
+                const created = await createKoboConnection(Number(shelf.value));
                 state.koboConnection = created;
                 rerender();
                 openKoboConnectionDetails(created.setup_url);

@@ -11,8 +11,8 @@ import {
 // reader records per-user last-read state, so these tests use a temporary
 // reader account instead of the shared admin session.
 test.describe('Reader selection toolbar', () => {
-  let openedAssets: string[] = [];
-  let createdAnnotations: Array<{ assetId: string; annotationId: string }> = [];
+  let openedAssets: number[] = [];
+  let createdAnnotations: Array<{ assetId: number; annotationId: number }> = [];
   let readerUser: TestUser | null = null;
 
   test.beforeEach(async ({ page }) => {
@@ -25,11 +25,11 @@ test.describe('Reader selection toolbar', () => {
   test.afterEach(async ({ page }) => {
     for (const annotation of createdAnnotations) {
       await page.request.delete(
-        `/api/reader/assets/${encodeURIComponent(annotation.assetId)}/annotations/${encodeURIComponent(annotation.annotationId)}`,
+        `/api/reader/assets/${annotation.assetId}/annotations/${annotation.annotationId}`,
       );
     }
     for (const assetId of openedAssets) {
-      await page.request.put(`/api/reader/assets/${encodeURIComponent(assetId)}/state`, {
+      await page.request.put(`/api/reader/assets/${assetId}/state`, {
         data: { progress: 1, locator: { engine: 'browser-test', id: 'selection-cleanup' } },
       });
     }
@@ -89,9 +89,9 @@ test.describe('Reader selection toolbar', () => {
     await expect
       .poll(async () => {
         const res = await page.request.get(
-          `/api/reader/assets/${encodeURIComponent(assetId)}/annotations`,
+          `/api/reader/assets/${assetId}/annotations`,
         );
-        const rows = (await res.json()) as Array<{ id: string; quote: string }>;
+        const rows = (await res.json()) as Array<{ id: number; quote: string }>;
         return rows.length;
       })
       .toBe(1);
@@ -213,7 +213,7 @@ test.describe('Reader selection toolbar', () => {
       releaseResponse = resolve;
     });
     let noteRequestHeld = false;
-    const noteURL = `**/api/reader/assets/${encodeURIComponent(assetId)}/annotations/${encodeURIComponent(annotation.id)}`;
+    const noteURL = `**/api/reader/assets/${assetId}/annotations/${annotation.id}`;
     await page.route(noteURL, async (route) => {
       if (route.request().method() !== 'PATCH') {
         await route.continue();
@@ -310,7 +310,7 @@ test.describe('Reader selection toolbar', () => {
     const responseDelivered = new Promise<void>((resolve) => {
       noteResponseDelivered = resolve;
     });
-    const noteURL = `**/api/reader/assets/${encodeURIComponent(assetId)}/annotations/${encodeURIComponent(first.id)}`;
+    const noteURL = `**/api/reader/assets/${assetId}/annotations/${first.id}`;
     await page.route(noteURL, async (route) => {
       if (route.request().method() !== 'PATCH') {
         await route.continue();
@@ -364,7 +364,7 @@ test.describe('Reader selection toolbar', () => {
   });
 });
 
-async function openReader(page: Page, title: string, openedAssets: string[]): Promise<string> {
+async function openReader(page: Page, title: string, openedAssets: number[]): Promise<number> {
   await page.goto('/');
   const card = page.locator('.book-card', { hasText: title });
   await expect(card).toBeVisible();
@@ -378,10 +378,10 @@ async function openReader(page: Page, title: string, openedAssets: string[]): Pr
     .poll(async () => page.locator('.reader-epub-stage').getAttribute('data-reader-ready'))
     .toBe('true');
 
-  const assetId = await page.locator('.reader-page').getAttribute('data-reader-asset-id');
+  const assetId = Number(await page.locator('.reader-page').getAttribute('data-reader-asset-id'));
   if (!assetId) throw new Error(`missing asset id for ${title}`);
   openedAssets.push(assetId);
-  await page.request.put(`/api/reader/assets/${encodeURIComponent(assetId)}/state`, {
+  await page.request.put(`/api/reader/assets/${assetId}/state`, {
     data: { progress: 1, locator: { engine: 'browser-test', id: 'selection-open-cleanup' } },
   });
   return assetId;
@@ -460,13 +460,13 @@ async function selectFirstText(page: Page, targetIndex = 0): Promise<string> {
 
 async function fetchAnnotations(
   page: Page,
-  assetId: string,
-): Promise<Array<{ id: string; cfi: string; quote: string; note?: string }>> {
+  assetId: number,
+): Promise<Array<{ id: number; cfi: string; quote: string; note?: string }>> {
   const res = await page.request.get(
-    `/api/reader/assets/${encodeURIComponent(assetId)}/annotations`,
+    `/api/reader/assets/${assetId}/annotations`,
   );
   if (!res.ok()) throw new Error(`annotations status ${res.status()}`);
-  return (await res.json()) as Array<{ id: string; cfi: string; quote: string; note?: string }>;
+  return (await res.json()) as Array<{ id: number; cfi: string; quote: string; note?: string }>;
 }
 
 async function showAnnotationActions(page: Page, cfi: string): Promise<void> {

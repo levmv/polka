@@ -50,7 +50,7 @@ func TestAPIImportUploadImportsAndDuplicates(t *testing.T) {
 	if got.Status != "imported" || got.Book.Title != "Uploaded Book" || got.Book.AuthorsDisplay != "Upload Author" {
 		t.Fatalf("upload response = %+v, want imported Uploaded Book by Upload Author", got)
 	}
-	if got.AssetID == "" || len(got.Book.Assets) != 1 {
+	if got.AssetID == 0 || len(got.Book.Assets) != 1 {
 		t.Fatalf("upload asset response = %+v", got)
 	}
 	if !got.Book.Assets[0].IsPrimary {
@@ -77,7 +77,7 @@ func TestAPIImportUploadImportsAndDuplicates(t *testing.T) {
 	if err := json.UnmarshalRead(w.Body, &got); err != nil {
 		t.Fatalf("decode duplicate response: %v", err)
 	}
-	if got.Status != "duplicate" || got.Book.Title != "Uploaded Book" || got.AssetID == "" {
+	if got.Status != "duplicate" || got.Book.Title != "Uploaded Book" || got.AssetID == 0 {
 		t.Fatalf("duplicate response = %+v", got)
 	}
 
@@ -120,7 +120,7 @@ func TestAPIImportUploadRestoresTrashedDuplicate(t *testing.T) {
 	if err := json.UnmarshalRead(w.Body, &imported); err != nil {
 		t.Fatalf("decode initial response: %v", err)
 	}
-	if imported.Book.ID == 0 || imported.AssetID == "" {
+	if imported.Book.ID == 0 || imported.AssetID == 0 {
 		t.Fatalf("initial response missing ids: %+v", imported)
 	}
 
@@ -266,8 +266,8 @@ func TestAPIImportRequiresLayoutBeforeWrite(t *testing.T) {
 					t.Fatalf("EnsureLayout: %v", err)
 				}
 				mustExec(t, database, `INSERT INTO books (id, title, sort_title) VALUES (169, 'Seed', 'Seed');
-					 INSERT INTO assets (id, book_id, storage_path, filename, extension)
-					   VALUES ('a_seed', 169, 'Seed/a_seed.epub', 'a_seed.epub', '.epub');`)
+					 INSERT INTO assets (id, book_id, storage_path, filename, extension, original_sha256, current_sha256)
+					   VALUES (1, 169, 'Seed/a_seed.epub', 'a_seed.epub', '.epub', randomblob(32), randomblob(32));`)
 
 				return root
 			},

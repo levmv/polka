@@ -34,7 +34,7 @@ test('PDF reader behavior', async ({
   if (!bookId) throw new Error('missing PDF book id');
   const reader = page.locator('.reader-page');
   const stage = page.locator('.reader-pdf-stage');
-  let assetId = '';
+  let assetId = 0;
 
   try {
     await test.step('opens and saves the current page', async () => {
@@ -51,12 +51,12 @@ test('PDF reader behavior', async ({
       await expect(page.locator('[data-pdf-text-layer]')).toContainText('Second PDF page');
       await expect.poll(() => activityCheckpoints).toBeGreaterThan(0);
 
-      assetId = (await reader.getAttribute('data-reader-asset-id')) || '';
+      assetId = Number(await reader.getAttribute('data-reader-asset-id'));
       if (!assetId) throw new Error('missing PDF asset id');
       await expect
         .poll(async () =>
           page.evaluate(async (id) => {
-            const response = await fetch(`/api/reader/assets/${encodeURIComponent(id)}/state`);
+            const response = await fetch(`/api/reader/assets/${id}/state`);
             if (!response.ok) return 0;
             const state = await response.json();
             return state.locator?.engine === 'pdfjs' ? state.locator.page : 0;
@@ -77,7 +77,7 @@ test('PDF reader behavior', async ({
       await expect
         .poll(async () =>
           page.evaluate(async (id) => {
-            const response = await fetch(`/api/reader/assets/${encodeURIComponent(id)}/state`);
+            const response = await fetch(`/api/reader/assets/${id}/state`);
             if (!response.ok) return 0;
             const state = await response.json();
             return state.locator?.engine === 'pdfjs' ? state.locator.zoom : 0;

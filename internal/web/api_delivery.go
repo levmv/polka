@@ -69,7 +69,7 @@ type emailTestRequest struct {
 }
 
 type DeliveryDeviceDTO struct {
-	ID        string `json:"id"`
+	ID        int64  `json:"id"`
 	Name      string `json:"name"`
 	Email     string `json:"email"`
 	Preset    string `json:"preset"`
@@ -86,7 +86,7 @@ type deliveryDeviceRequest struct {
 }
 
 type DeliveryPlanDTO struct {
-	AssetID      string `json:"asset_id,omitempty"`
+	AssetID      int64  `json:"asset_id,omitzero"`
 	Format       string `json:"format,omitempty"`
 	Target       string `json:"target,omitempty"`
 	Filename     string `json:"filename,omitempty"`
@@ -115,19 +115,19 @@ type SendOptionsDTO struct {
 
 type createDeliveryRequest struct {
 	BookID   int64  `json:"book_id"`
-	DeviceID string `json:"device_id"`
-	AssetID  string `json:"asset_id"`
+	DeviceID int64  `json:"device_id"`
+	AssetID  int64  `json:"asset_id"`
 	Target   string `json:"target"`
 }
 
 type DeliveryJobDTO struct {
-	ID          string `json:"id"`
-	DeviceID    string `json:"device_id,omitempty"`
+	ID          int64  `json:"id"`
+	DeviceID    int64  `json:"device_id,omitzero"`
 	DeviceName  string `json:"device_name"`
 	DeviceEmail string `json:"device_email"`
 	Preset      string `json:"preset"`
 	BookID      int64  `json:"book_id"`
-	AssetID     string `json:"asset_id,omitempty"`
+	AssetID     int64  `json:"asset_id,omitzero"`
 	Title       string `json:"title"`
 	Target      string `json:"target,omitempty"`
 	Filename    string `json:"filename"`
@@ -282,7 +282,10 @@ func (s *Server) handleAPIDeliveryDeviceCreate(w http.ResponseWriter, r *http.Re
 }
 
 func (s *Server) handleAPIDeliveryDeviceUpdate(w http.ResponseWriter, r *http.Request) {
-	deviceID := r.PathValue("id")
+	deviceID, validID := pathID(w, r, "id")
+	if !validID {
+		return
+	}
 	current, err := db.GetDeliveryDevice(s.db.Read(r.Context()), UserID(r.Context()), deviceID)
 	if writeDeliveryError(w, r, err) {
 		return
@@ -316,7 +319,11 @@ func (s *Server) handleAPIDeliveryDeviceUpdate(w http.ResponseWriter, r *http.Re
 }
 
 func (s *Server) handleAPIDeliveryDeviceDelete(w http.ResponseWriter, r *http.Request) {
-	err := s.db.DeleteDeliveryDevice(r.Context(), UserID(r.Context()), r.PathValue("id"))
+	deviceID, validID := pathID(w, r, "id")
+	if !validID {
+		return
+	}
+	err := s.db.DeleteDeliveryDevice(r.Context(), UserID(r.Context()), deviceID)
 	if writeDeliveryError(w, r, err) {
 		return
 	}
@@ -324,8 +331,11 @@ func (s *Server) handleAPIDeliveryDeviceDelete(w http.ResponseWriter, r *http.Re
 }
 
 func (s *Server) handleAPISendOptions(w http.ResponseWriter, r *http.Request) {
-	bookID, parseErr := strconv.ParseInt(r.URL.Query().Get("book"), 10, 64)
-	if parseErr != nil || bookID <= 0 {
+	bookID, validID := queryID(w, r, "book")
+	if !validID {
+		return
+	}
+	if bookID == 0 {
 		http.Error(w, "Missing book id", http.StatusBadRequest)
 		return
 	}
@@ -401,7 +411,7 @@ func (s *Server) handleAPIDeliveryCreate(w http.ResponseWriter, r *http.Request)
 	}
 
 	var device *db.DeliveryDevice
-	if strings.TrimSpace(req.DeviceID) != "" {
+	if req.DeviceID != 0 {
 		device, err = db.GetDeliveryDevice(s.db.Read(r.Context()), UserID(r.Context()), req.DeviceID)
 	} else {
 		device, err = db.DefaultDeliveryDevice(s.db.Read(r.Context()), UserID(r.Context()))
@@ -416,7 +426,7 @@ func (s *Server) handleAPIDeliveryCreate(w http.ResponseWriter, r *http.Request)
 	plan := delivery.PlanDelivery(deliveryBook(book, assets), delivery.PlanOptions{
 		Preset:            delivery.Preset(device.Preset),
 		AttachmentLimitMB: cfg.AttachmentLimitMB,
-		RequestedAssetID:  strings.TrimSpace(req.AssetID),
+		RequestedAssetID:  req.AssetID,
 		RequestedTarget:   converter.Target(req.Target),
 	})
 	if !plan.Sendable() {
@@ -425,12 +435,12 @@ func (s *Server) handleAPIDeliveryCreate(w http.ResponseWriter, r *http.Request)
 	}
 	job, err := s.db.CreateDeliveryJob(r.Context(), db.DeliveryJob{
 		UserID:      UserID(r.Context()),
-		DeviceID:    sql.NullString{String: device.ID, Valid: true},
+		DeviceID:    sql.NullInt64{Int64: device.ID, Valid: true},
 		DeviceName:  device.Name,
 		DeviceEmail: device.Email,
 		Preset:      device.Preset,
 		BookID:      book.ID,
-		AssetID:     sql.NullString{String: plan.AssetID, Valid: true},
+		AssetID:     sql.NullInt64{Int64: plan.AssetID, Valid: true},
 		Title:       book.Title,
 		Target:      sql.NullString{String: string(plan.Target), Valid: plan.Target != ""},
 		Filename:    plan.Filename,
@@ -463,7 +473,11 @@ func (s *Server) handleAPIDeliveries(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAPIDelivery(w http.ResponseWriter, r *http.Request) {
-	job, err := db.GetDeliveryJob(s.db.Read(r.Context()), UserID(r.Context()), r.PathValue("id"))
+	jobID, validID := pathID(w, r, "id")
+	if !validID {
+		return
+	}
+	job, err := db.GetDeliveryJob(s.db.Read(r.Context()), UserID(r.Context()), jobID)
 	if writeDeliveryError(w, r, err) {
 		return
 	}
@@ -554,10 +568,10 @@ func deliveryJobDTO(job db.DeliveryJob) DeliveryJobDTO {
 		UpdatedAt:   job.UpdatedAt,
 	}
 	if job.DeviceID.Valid {
-		dto.DeviceID = job.DeviceID.String
+		dto.DeviceID = job.DeviceID.Int64
 	}
 	if job.AssetID.Valid {
-		dto.AssetID = job.AssetID.String
+		dto.AssetID = job.AssetID.Int64
 	}
 	if job.Target.Valid {
 		dto.Target = job.Target.String

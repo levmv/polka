@@ -114,10 +114,6 @@ func AuthorSort(name string) string {
 	if author == "" {
 		return ""
 	}
-	if author == "Unknown" || author == "Unknown Author" {
-		return "Unknown Author"
-	}
-
 	sortSource := strings.TrimSpace(removeBracketedAuthorText(author))
 	if strings.Contains(sortSource, ",") {
 		return author

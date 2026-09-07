@@ -63,7 +63,7 @@ func (s *Server) runDeliveryWorker(ctx context.Context) {
 			if ctx.Err() != nil {
 				return
 			}
-			log.Printf("delivery job %s: %v", job.ID, err)
+			log.Printf("delivery job %d: %v", job.ID, err)
 			// A DB/configuration error can leave the row queued. Avoid a hot
 			// retry loop while still reacting immediately to newly queued work.
 			if !s.waitForDeliveryWork(ctx, time.Second) {
@@ -94,7 +94,7 @@ func (s *Server) waitForDeliveryWork(ctx context.Context, retryAfter time.Durati
 	}
 }
 
-func (s *Server) runDeliveryJob(ctx context.Context, jobID string) error {
+func (s *Server) runDeliveryJob(ctx context.Context, jobID int64) error {
 	transport := s.deliveryTransport
 	if transport == nil {
 		return fmt.Errorf("delivery transport is not configured")
@@ -104,7 +104,7 @@ func (s *Server) runDeliveryJob(ctx context.Context, jobID string) error {
 	if err != nil {
 		return err
 	}
-	if job.AssetID.String == "" {
+	if !job.AssetID.Valid {
 		return s.failDeliveryJob(ctx, job.ID, deliveryMessageFileMissing)
 	}
 	cfg, _, err := s.deliveryEmailConfig(ctx)
@@ -121,7 +121,7 @@ func (s *Server) runDeliveryJob(ctx context.Context, jobID string) error {
 	if err != nil {
 		return s.failDeliveryJobWithCause(ctx, job.ID, deliveryMessageFailed, "load visibility scope", err)
 	}
-	allowed, err := db.CanAccessAsset(s.db.Read(ctx), scope, job.AssetID.String)
+	allowed, err := db.CanAccessAsset(s.db.Read(ctx), scope, job.AssetID.Int64)
 	if err != nil {
 		return s.failDeliveryJobWithCause(ctx, job.ID, deliveryMessageFailed, "check asset visibility", err)
 	}
@@ -165,7 +165,7 @@ func (s *Server) runDeliveryJob(ctx context.Context, jobID string) error {
 	return s.db.SetDeliveryJobStatus(resultCtx, job.ID, db.DeliveryStatusSent, "")
 }
 
-func (s *Server) requeueInterruptedDelivery(ctx context.Context, jobID string, cause error) error {
+func (s *Server) requeueInterruptedDelivery(ctx context.Context, jobID int64, cause error) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), deliveryStatusTimeout)
 	defer cancel()
 	if err := s.db.SetDeliveryJobStatus(ctx, jobID, db.DeliveryStatusQueued, ""); err != nil {
@@ -175,7 +175,7 @@ func (s *Server) requeueInterruptedDelivery(ctx context.Context, jobID string, c
 }
 
 func (s *Server) prepareDeliveryCopy(ctx context.Context, job db.DeliveryJob) (delivery.DeliveryCopy, func(), error) {
-	asset, src, err := s.openDeliverySource(ctx, job.AssetID.String)
+	asset, src, err := s.openDeliverySource(ctx, job.AssetID.Int64)
 	if err != nil {
 		return delivery.DeliveryCopy{}, func() {}, err
 	}
@@ -241,7 +241,7 @@ func (s *Server) prepareDeliveryCopy(ctx context.Context, job db.DeliveryJob) (d
 // mutation, resolve the asset from SQLite again, and retry once while the path
 // is stable. The slot is released as soon as the descriptor is open; copying or
 // conversion can then proceed without blocking unrelated storage work.
-func (s *Server) openDeliverySource(ctx context.Context, assetID string) (assetFileRow, *os.File, error) {
+func (s *Server) openDeliverySource(ctx context.Context, assetID int64) (assetFileRow, *os.File, error) {
 	asset, src, err := s.openDeliverySourceOnce(ctx, assetID)
 	if !errors.Is(err, os.ErrNotExist) {
 		return asset, src, err
@@ -255,17 +255,17 @@ func (s *Server) openDeliverySource(ctx context.Context, assetID string) (assetF
 	return s.openDeliverySourceOnce(ctx, assetID)
 }
 
-func (s *Server) openDeliverySourceOnce(ctx context.Context, assetID string) (assetFileRow, *os.File, error) {
+func (s *Server) openDeliverySourceOnce(ctx context.Context, assetID int64) (assetFileRow, *os.File, error) {
 	asset, err := s.assetFile(ctx, assetID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return assetFileRow{}, nil, newDeliveryPrepError(deliveryMessageFileMissing, nil)
 	}
 	if err != nil {
-		return assetFileRow{}, nil, newDeliveryPrepError(deliveryMessagePrepareFailed, fmt.Errorf("resolve asset %s: %w", assetID, err))
+		return assetFileRow{}, nil, newDeliveryPrepError(deliveryMessagePrepareFailed, fmt.Errorf("resolve asset %d: %w", assetID, err))
 	}
 	fullPath, err := s.managedRoot().Resolve(asset.StoragePath)
 	if err != nil {
-		return assetFileRow{}, nil, newDeliveryPrepError(deliveryMessageFileMissing, fmt.Errorf("resolve storage path for asset %s: %w", assetID, err))
+		return assetFileRow{}, nil, newDeliveryPrepError(deliveryMessageFileMissing, fmt.Errorf("resolve storage path for asset %d: %w", assetID, err))
 	}
 	src, err := os.Open(fullPath)
 	if os.IsNotExist(err) {
@@ -325,22 +325,22 @@ func (s *Server) createDeliveryTempFile(ext string) (*os.File, string, func(), e
 	return tmp, tmpPath, cleanup, nil
 }
 
-func (s *Server) failDeliveryJob(ctx context.Context, jobID, message string) error {
+func (s *Server) failDeliveryJob(ctx context.Context, jobID int64, message string) error {
 	if message == "" {
 		message = deliveryMessageFailed
 	}
 	return s.db.SetDeliveryJobStatus(ctx, jobID, db.DeliveryStatusFailed, message)
 }
 
-func (s *Server) failDeliveryJobWithCause(ctx context.Context, jobID, message, action string, err error) error {
-	log.Printf("delivery job %s: %s: %v", jobID, action, err)
+func (s *Server) failDeliveryJobWithCause(ctx context.Context, jobID int64, message, action string, err error) error {
+	log.Printf("delivery job %d: %s: %v", jobID, action, err)
 	if setErr := s.failDeliveryJob(ctx, jobID, message); setErr != nil {
 		return fmt.Errorf("%s: %w; mark delivery failed: %v", action, err, setErr)
 	}
 	return nil
 }
 
-func (s *Server) failDeliveryJobFromError(ctx context.Context, jobID, action string, err error) error {
+func (s *Server) failDeliveryJobFromError(ctx context.Context, jobID int64, action string, err error) error {
 	if userErr, ok := errors.AsType[deliveryUserError](err); ok {
 		return s.failDeliveryJobWithCause(ctx, jobID, userErr.UserMessage(), action, err)
 	}

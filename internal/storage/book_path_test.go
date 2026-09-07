@@ -10,7 +10,7 @@ func TestDefaultBookPath(t *testing.T) {
 		title      string
 		author     string
 		authorSort string
-		assetID    string
+		assetID    int64
 		ext        string
 		want       string
 	}{
@@ -19,126 +19,126 @@ func TestDefaultBookPath(t *testing.T) {
 			title:      "Foundation",
 			author:     "Isaac Asimov",
 			authorSort: "Asimov, Isaac",
-			assetID:    "a_01HX9K9Q",
+			assetID:    1,
 			ext:        "epub",
-			want:       "A/Asimov, Isaac/Foundation [a_01HX9K9Q].epub",
+			want:       "A/Asimov, Isaac/Foundation [a1].epub",
 		},
 		{
 			name:       "Cyrillic basic",
 			title:      "Мастер и Маргарита",
 			author:     "Михаил Булгаков",
 			authorSort: "Булгаков, Михаил",
-			assetID:    "a_01HX9M3D",
+			assetID:    2,
 			ext:        ".epub", // with dot
-			want:       "Б/Булгаков, Михаил/Мастер и Маргарита [a_01HX9M3D].epub",
+			want:       "Б/Булгаков, Михаил/Мастер и Маргарита [a2].epub",
 		},
 		{
 			name:       "Cyrillic Yo bucket",
 			title:      "Тест",
 			author:     "Пётр Ёлкин",
 			authorSort: "Ёлкин, Пётр",
-			assetID:    "a_yo",
+			assetID:    3,
 			ext:        "epub",
-			want:       "Ё/Ёлкин, Пётр/Тест [a_yo].epub",
+			want:       "Ё/Ёлкин, Пётр/Тест [a3].epub",
 		},
 		{
 			name:       "Digits bucket",
 			title:      "1984",
 			author:     "100 Authors",
 			authorSort: "100 Authors",
-			assetID:    "a_111",
+			assetID:    111,
 			ext:        "pdf",
-			want:       "0-9/100 Authors/1984 [a_111].pdf",
+			want:       "0-9/100 Authors/1984 [a111].pdf",
 		},
 		{
 			name:       "Other bucket",
 			title:      "Test",
 			author:     "Ümlaut",
 			authorSort: "Ümlaut",
-			assetID:    "a_222",
+			assetID:    222,
 			ext:        "txt",
-			want:       "_Other/Ümlaut/Test [a_222].txt",
+			want:       "_Other/Ümlaut/Test [a222].txt",
 		},
 		{
 			name:       "Unknown bucket (empty author)",
 			title:      "Some Book",
 			author:     "",
 			authorSort: "",
-			assetID:    "a_01HX9ZZY",
+			assetID:    4,
 			ext:        "epub",
-			want:       "_Unknown/Unknown Author/Some Book [a_01HX9ZZY].epub",
+			want:       "_Unknown/Unknown Author/Some Book [a4].epub",
 		},
 		{
 			name:       "Empty title uses canonical fallback",
 			title:      "",
 			author:     "Ada Writer",
 			authorSort: "Writer, Ada",
-			assetID:    "a_untitled",
+			assetID:    5,
 			ext:        "epub",
-			want:       "W/Writer, Ada/Untitled [a_untitled].epub",
+			want:       "W/Writer, Ada/Untitled [a5].epub",
 		},
 		{
-			name:       "Unknown bucket (explicit Unknown)",
+			name:       "Literal Unknown Author keeps its sort key",
 			title:      "Some Book",
 			author:     "Unknown Author",
 			authorSort: "Unknown Author",
-			assetID:    "a_01HX9ZZY",
+			assetID:    4,
 			ext:        "epub",
-			want:       "_Unknown/Unknown Author/Some Book [a_01HX9ZZY].epub",
+			want:       "U/Unknown Author/Some Book [a4].epub",
 		},
 		{
-			name:       "Unknown bucket (literal alias)",
+			name:       "Literal Unknown is an author name",
 			title:      "Some Book",
 			author:     "Unknown",
 			authorSort: "Unknown",
-			assetID:    "a_unknown",
+			assetID:    6,
 			ext:        "epub",
-			want:       "_Unknown/Unknown/Some Book [a_unknown].epub",
+			want:       "U/Unknown/Some Book [a6].epub",
 		},
 		{
 			name:       "Sanitization unsafe characters",
 			title:      "Title <with> :bad/chars\\|?",
 			author:     "Author *Name\"",
 			authorSort: "Name, Author*",
-			assetID:    "a_333",
+			assetID:    333,
 			ext:        "mobi",
-			want:       "N/Name, Author/Title with badchars [a_333].mobi",
+			want:       "N/Name, Author/Title with badchars [a333].mobi",
 		},
 		{
 			name:       "Sanitization collapse spaces",
 			title:      "Title   With \t Spaces",
 			author:     "Author \n Name",
 			authorSort: "Name,   Author",
-			assetID:    "a_444",
+			assetID:    444,
 			ext:        "epub",
-			want:       "N/Name, Author/Title With Spaces [a_444].epub",
+			want:       "N/Name, Author/Title With Spaces [a444].epub",
 		},
 		{
 			name:       "Empty extension",
 			title:      "Plain Text",
 			author:     "Ada Writer",
 			authorSort: "Writer, Ada",
-			assetID:    "a_noext",
+			assetID:    7,
 			ext:        "",
-			want:       "W/Writer, Ada/Plain Text [a_noext]",
+			want:       "W/Writer, Ada/Plain Text [a7]",
 		},
 		{
 			name:       "Missing author sort derives from author",
 			title:      "Plain Text",
 			author:     "Ada Writer",
 			authorSort: "",
-			assetID:    "a_sort",
+			assetID:    8,
 			ext:        "epub",
-			want:       "W/Writer, Ada/Plain Text [a_sort].epub",
+			want:       "W/Writer, Ada/Plain Text [a8].epub",
 		},
 		{
 			name:       "Leading dot in title is stripped",
 			title:      ".NET Core in Action",
 			author:     "Dustin Metzgar",
 			authorSort: "Metzgar, Dustin",
-			assetID:    "a_net",
+			assetID:    9,
 			ext:        "epub",
-			want:       "M/Metzgar, Dustin/NET Core in Action [a_net].epub",
+			want:       "M/Metzgar, Dustin/NET Core in Action [a9].epub",
 		},
 	}
 
@@ -169,18 +169,18 @@ func TestRenderBookPathTemplate(t *testing.T) {
 		AuthorSort:  "Herbert, Frank",
 		Series:      "Dune",
 		SeriesIndex: "02",
-		AssetID:     "a_123",
+		AssetID:     123,
 		BookID:      123,
 		Ext:         ".EPUB",
 	}
 	got, err := RenderBookPathTemplate(
-		"books/{author_bucket}/{author_sort}/{series}/{series_index} - {title} [{asset_id}]{dot_ext}",
+		"books/{author_bucket}/{author_sort}/{series}/{series_index} - {title} [a{asset_id}]{dot_ext}",
 		data,
 	)
 	if err != nil {
 		t.Fatalf("RenderBookPathTemplate: %v", err)
 	}
-	want := "books/H/Herbert, Frank/Dune/02 - Dune Messiah [a_123].epub"
+	want := "books/H/Herbert, Frank/Dune/02 - Dune Messiah [a123].epub"
 	if got != want {
 		t.Fatalf("path = %q; want %q", got, want)
 	}
@@ -296,7 +296,7 @@ func TestRenderBookPathTemplateRejectsInvalidTemplates(t *testing.T) {
 // relative to the books root itself: the root *is* the books tree, so the
 // template is not prefixed with books/ and literal segments render verbatim.
 func TestRenderBookPathTemplateRelativeToRoot(t *testing.T) {
-	data := BookPathData{Title: "Book", AuthorSort: "Author, A", AssetID: "a_1", Ext: "epub"}
+	data := BookPathData{Title: "Book", AuthorSort: "Author, A", AssetID: 1, Ext: "epub"}
 	tests := []struct {
 		name     string
 		template string
@@ -304,13 +304,13 @@ func TestRenderBookPathTemplateRelativeToRoot(t *testing.T) {
 	}{
 		{
 			name:     "sub-path template",
-			template: "{author_sort}/{title} [{asset_id}]{dot_ext}",
-			want:     "Author, A/Book [a_1].epub",
+			template: "{author_sort}/{title} [a{asset_id}]{dot_ext}",
+			want:     "Author, A/Book [a1].epub",
 		},
 		{
 			name:     "a literal books segment is no longer special",
-			template: "books/{author_sort}/{title} [{asset_id}]{dot_ext}",
-			want:     "books/Author, A/Book [a_1].epub",
+			template: "books/{author_sort}/{title} [a{asset_id}]{dot_ext}",
+			want:     "books/Author, A/Book [a1].epub",
 		},
 		{
 			name:     "a literal leading segment renders verbatim",
@@ -333,19 +333,19 @@ func TestRenderBookPathTemplateRelativeToRoot(t *testing.T) {
 
 func TestDetectBookPathCollisions(t *testing.T) {
 	got := DetectBookPathCollisions([]BookPathCandidate{
-		{AssetID: "a_2", Path: "books/A/Same.epub"},
-		{AssetID: "a_1", Path: "books/A/Same.epub"},
-		{AssetID: "a_3", Path: "books/B/Other.epub"},
-		{AssetID: "a_4", Path: "books/C/Again.epub"},
-		{AssetID: "a_5", Path: "books/C/Again.epub"},
+		{AssetID: 2, Path: "books/A/Same.epub"},
+		{AssetID: 1, Path: "books/A/Same.epub"},
+		{AssetID: 3, Path: "books/B/Other.epub"},
+		{AssetID: 4, Path: "books/C/Again.epub"},
+		{AssetID: 5, Path: "books/C/Again.epub"},
 	})
 	if len(got) != 2 {
 		t.Fatalf("collisions = %+v; want 2", got)
 	}
-	if got[0].Path != "books/A/Same.epub" || got[0].AssetIDs[0] != "a_1" || got[0].AssetIDs[1] != "a_2" {
+	if got[0].Path != "books/A/Same.epub" || got[0].AssetIDs[0] != 1 || got[0].AssetIDs[1] != 2 {
 		t.Fatalf("first collision = %+v", got[0])
 	}
-	if got[1].Path != "books/C/Again.epub" || got[1].AssetIDs[0] != "a_4" || got[1].AssetIDs[1] != "a_5" {
+	if got[1].Path != "books/C/Again.epub" || got[1].AssetIDs[0] != 4 || got[1].AssetIDs[1] != 5 {
 		t.Fatalf("second collision = %+v", got[1])
 	}
 }

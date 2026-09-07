@@ -63,7 +63,7 @@ CREATE INDEX idx_books_live_series_order ON books(
 -- current path by asset ID, so relayout preserves links. is_primary selects
 -- the default file for workflows that need one asset per book.
 CREATE TABLE assets (
-    id TEXT PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
     book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
     storage_path TEXT NOT NULL,
     filename TEXT NOT NULL, -- Basename of the current storage_path.
@@ -79,8 +79,8 @@ CREATE TABLE assets (
     -- original_sha256 is the hash of the bytes first imported. It never changes,
     -- even if polka later rewrites metadata into the managed file. current_sha256
     -- tracks the bytes currently on disk and changes after such rewrites.
-    original_sha256 TEXT,
-    current_sha256 TEXT,
+    original_sha256 BLOB NOT NULL CHECK (typeof(original_sha256) = 'blob' AND length(original_sha256) = 32),
+    current_sha256 BLOB NOT NULL CHECK (typeof(current_sha256) = 'blob' AND length(current_sha256) = 32),
     -- Byte sizes for the same original/current identities; avoid stat on lists.
     original_size INTEGER,
     current_size INTEGER,
@@ -111,11 +111,11 @@ CREATE UNIQUE INDEX idx_assets_one_primary_per_book ON assets(book_id) WHERE is_
 -- Both paths are relative to the storage root; hashes and byte size describe
 -- the staged replacement, not the previous file at storage_path.
 CREATE TABLE metadata_writeback_attempts (
-    asset_id TEXT PRIMARY KEY REFERENCES assets(id) ON DELETE CASCADE,
+    asset_id INTEGER PRIMARY KEY REFERENCES assets(id) ON DELETE CASCADE,
     metadata_rev INTEGER NOT NULL,
     storage_path TEXT NOT NULL,
     temp_path TEXT NOT NULL,
-    sha256 TEXT NOT NULL,
+    sha256 BLOB NOT NULL CHECK (typeof(sha256) = 'blob' AND length(sha256) = 32),
     size INTEGER NOT NULL,
     koreader_hash TEXT,
     created_at INTEGER NOT NULL DEFAULT (unixepoch())
@@ -124,20 +124,19 @@ CREATE TABLE metadata_writeback_attempts (
 -- Authors are matched by exact display name. sort_name also controls the
 -- storage bucket/folder, so changing it relayouts primary-author files.
 CREATE TABLE authors (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
     sort_name TEXT NOT NULL
 );
 
-CREATE INDEX idx_authors_name ON authors(name);
-
 -- author_order defines the display order and primary author. The first author
--- is also the author used by canonical path construction.
+-- is also the author used by canonical path construction. Books without known
+-- authors have no entries here.
 CREATE TABLE book_authors (
     book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
-    author_id TEXT NOT NULL REFERENCES authors(id) ON DELETE CASCADE,
+    author_id INTEGER NOT NULL REFERENCES authors(id) ON DELETE CASCADE,
     role TEXT,
-    author_order INTEGER DEFAULT 0,
+    author_order INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (book_id, author_id)
 );
 
@@ -148,15 +147,13 @@ CREATE INDEX idx_book_authors_author_id ON book_authors(author_id);
 -- these rows for the same detector reason/key; metadata edits and newly imported
 -- copies naturally surface it again.
 CREATE TABLE duplicate_dismissals (
-    id           TEXT PRIMARY KEY,
     reason       TEXT NOT NULL,
     detector_key TEXT NOT NULL,
-    book_ids     TEXT NOT NULL, -- JSON array of dismissed book IDs.
+    book_ids     TEXT NOT NULL, -- JSON array of sorted, distinct book IDs.
     created_at   INTEGER NOT NULL DEFAULT (unixepoch()),
-    created_by   INTEGER REFERENCES users(id) ON DELETE SET NULL
+    created_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    UNIQUE (reason, detector_key, book_ids)
 );
-
-CREATE INDEX idx_duplicate_dismissals_key ON duplicate_dismissals(reason, detector_key);
 
 -- Accounts share catalog data; shelves, reading state, and preferences belong
 -- to individual users. Usernames are normalized to lowercase before storage;
@@ -179,7 +176,7 @@ CREATE UNIQUE INDEX idx_users_username ON users(username);
 -- Browser login sessions. The cookie contains a random token; SQLite retains
 -- only its SHA-256 hash. Each session has an explicit expiry.
 CREATE TABLE sessions (
-    token_hash   TEXT PRIMARY KEY,
+    token_hash   BLOB NOT NULL PRIMARY KEY CHECK (typeof(token_hash) = 'blob' AND length(token_hash) = 32),
     user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     created_at   INTEGER NOT NULL,
     last_seen_at INTEGER NOT NULL,
@@ -191,7 +188,7 @@ CREATE INDEX idx_sessions_user_id ON sessions(user_id);
 -- Device credentials remain retrievable for setup and have no automatic expiry.
 -- Auth middleware restricts their accepted routes.
 CREATE TABLE app_tokens (
-    id           TEXT PRIMARY KEY,
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     name         TEXT NOT NULL,
     token        TEXT NOT NULL UNIQUE,
@@ -209,7 +206,7 @@ CREATE TABLE app_tokens (
 -- owner_id is the account that owns the shelf. visibility controls whether the
 -- shelf is personal to that owner or shared with the household.
 CREATE TABLE shelves (
-    id         TEXT PRIMARY KEY,
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
     name       TEXT NOT NULL,
     kind       TEXT NOT NULL CHECK (kind IN ('manual', 'query')),
     query      TEXT,
@@ -230,7 +227,7 @@ CREATE INDEX idx_shelves_visibility_position ON shelves(visibility, position);
 CREATE INDEX idx_shelves_owner_visibility_position ON shelves(owner_id, visibility, position);
 
 CREATE TABLE shelf_books (
-    shelf_id TEXT NOT NULL REFERENCES shelves(id) ON DELETE CASCADE,
+    shelf_id INTEGER NOT NULL REFERENCES shelves(id) ON DELETE CASCADE,
     book_id  INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
     position INTEGER NOT NULL DEFAULT 0,
     added_at INTEGER NOT NULL DEFAULT (unixepoch()),
@@ -243,7 +240,7 @@ CREATE INDEX idx_shelf_books_book_id ON shelf_books(book_id);
 -- a reader's own personal shelves cannot widen their access.
 CREATE TABLE user_scope_shelves (
     user_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    shelf_id TEXT NOT NULL REFERENCES shelves(id) ON DELETE CASCADE,
+    shelf_id INTEGER NOT NULL REFERENCES shelves(id) ON DELETE CASCADE,
     PRIMARY KEY (user_id, shelf_id)
 );
 
@@ -272,7 +269,7 @@ CREATE TABLE user_settings (
 -- engine); progress is a coarse normalized 0..1 value for browse/UI summaries.
 CREATE TABLE user_asset_state (
     user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    asset_id     TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+    asset_id     INTEGER NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
     progress     REAL NOT NULL DEFAULT 0 CHECK (progress >= 0 AND progress <= 1),
     locator      TEXT NOT NULL DEFAULT '{}',
     last_read_at INTEGER NOT NULL DEFAULT (unixepoch()),
@@ -289,7 +286,7 @@ CREATE INDEX idx_user_asset_state_last_read ON user_asset_state(user_id, last_re
 CREATE TABLE reading_sessions (
     id                 INTEGER PRIMARY KEY,
     user_id            INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    asset_id           TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+    asset_id           INTEGER NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
     source             TEXT NOT NULL,
     source_id          BLOB NOT NULL, -- Stable source identity; web uses 16 random bytes.
     -- Captured once; preference changes do not affect past calendar days.
@@ -333,7 +330,7 @@ CREATE TABLE user_book_reading_state (
     user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     book_id      INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
     status       TEXT NOT NULL CHECK (status IN ('unread', 'reading', 'finished', 'dropped')),
-    last_event_id TEXT,
+    last_event_id INTEGER,
     updated_at   INTEGER NOT NULL DEFAULT (unixepoch()),
     PRIMARY KEY (user_id, book_id)
 );
@@ -341,14 +338,13 @@ CREATE TABLE user_book_reading_state (
 CREATE INDEX idx_user_book_reading_state_status ON user_book_reading_state(user_id, status, updated_at DESC);
 
 CREATE TABLE user_book_reading_events (
-    seq          INTEGER PRIMARY KEY AUTOINCREMENT,
-    id           TEXT NOT NULL UNIQUE,
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     book_id      INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
     -- Explicitly link one status history rather than deriving it from global
     -- insertion order. Duplicate merge can retain independent histories for
     -- the same resulting book without making Undo cross between them.
-    previous_event_id TEXT REFERENCES user_book_reading_events(id) ON DELETE SET NULL,
+    previous_event_id INTEGER REFERENCES user_book_reading_events(id) ON DELETE SET NULL,
     from_status  TEXT NOT NULL CHECK (from_status IN ('unread', 'reading', 'finished', 'dropped')),
     to_status    TEXT NOT NULL CHECK (to_status IN ('unread', 'reading', 'finished', 'dropped')),
     source       TEXT NOT NULL CHECK (source IN ('manual', 'web_reader', 'kosync')),
@@ -357,7 +353,7 @@ CREATE TABLE user_book_reading_events (
     CHECK (from_status <> to_status)
 );
 
-CREATE INDEX idx_user_book_reading_events_history ON user_book_reading_events(user_id, book_id, seq DESC);
+CREATE INDEX idx_user_book_reading_events_history ON user_book_reading_events(user_id, book_id, id DESC);
 CREATE INDEX idx_user_book_reading_events_finished ON user_book_reading_events(user_id, to_status, occurred_at DESC)
     WHERE reverted_at IS NULL;
 CREATE INDEX idx_user_book_reading_events_previous ON user_book_reading_events(previous_event_id);
@@ -366,9 +362,9 @@ CREATE INDEX idx_user_book_reading_events_previous ON user_book_reading_events(p
 -- with Foliate CFI because alternate formats have different document locators.
 -- EPUB/FB2 files are never rewritten for web highlights; the DB is authoritative.
 CREATE TABLE user_annotations (
-    id             TEXT PRIMARY KEY,
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    asset_id       TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+    asset_id       INTEGER NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
     kind           TEXT NOT NULL DEFAULT 'highlight' CHECK (kind IN ('highlight')),
     cfi            TEXT NOT NULL,
     quote          TEXT NOT NULL DEFAULT '',
@@ -386,9 +382,9 @@ CREATE INDEX idx_user_annotations_asset ON user_annotations(user_id, asset_id, c
 -- One native Kobo connection per account, projecting one shelf. Its setup URL
 -- remains retrievable; replacing the connection revokes the previous URL.
 CREATE TABLE kobo_connections (
-    id           TEXT PRIMARY KEY,
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id      INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
-    shelf_id     TEXT NOT NULL REFERENCES shelves(id) ON DELETE CASCADE,
+    shelf_id     INTEGER NOT NULL REFERENCES shelves(id) ON DELETE CASCADE,
     token        TEXT NOT NULL UNIQUE,
     revision     INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0),
     created_at   INTEGER NOT NULL DEFAULT (unixepoch()),
@@ -403,10 +399,10 @@ CREATE INDEX idx_kobo_connections_shelf_id ON kobo_connections(shelf_id);
 -- tombstone until an offline device asks for revisions it missed. A present row
 -- is always revalidated against live assets before metadata or bytes are served.
 CREATE TABLE kobo_items (
-    connection_id TEXT NOT NULL REFERENCES kobo_connections(id) ON DELETE CASCADE,
-    asset_id       TEXT NOT NULL,
+    connection_id INTEGER NOT NULL REFERENCES kobo_connections(id) ON DELETE CASCADE,
+    asset_id       INTEGER NOT NULL,
     book_id        INTEGER NOT NULL,
-    fingerprint    TEXT NOT NULL,
+    fingerprint    BLOB NOT NULL CHECK (typeof(fingerprint) = 'blob' AND length(fingerprint) = 16),
     present        INTEGER NOT NULL CHECK (present IN (0, 1)),
     revision       INTEGER NOT NULL CHECK (revision > 0),
     first_revision INTEGER NOT NULL CHECK (first_revision > 0),
@@ -437,7 +433,7 @@ CREATE INDEX idx_koreader_progress_updated ON koreader_progress(user_id, updated
 -- personal state even though library content is shared.
 
 CREATE TABLE delivery_devices (
-    id         TEXT PRIMARY KEY,
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     name       TEXT NOT NULL,
     email      TEXT NOT NULL,
@@ -456,14 +452,14 @@ CREATE UNIQUE INDEX idx_delivery_devices_one_default
 -- Queue and delivery history. Device details and title are snapshots taken
 -- when queued; later edits do not change the planned recipient or history.
 CREATE TABLE delivery_jobs (
-    id           TEXT PRIMARY KEY,
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    device_id    TEXT REFERENCES delivery_devices(id) ON DELETE SET NULL,
+    device_id    INTEGER REFERENCES delivery_devices(id) ON DELETE SET NULL,
     device_name  TEXT NOT NULL,
     device_email TEXT NOT NULL,
     preset       TEXT NOT NULL,
     book_id      INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
-    asset_id     TEXT REFERENCES assets(id) ON DELETE SET NULL,
+    asset_id     INTEGER REFERENCES assets(id) ON DELETE SET NULL,
     title        TEXT NOT NULL,
     target       TEXT, -- Conversion target format; NULL sends the original file.
     filename     TEXT NOT NULL DEFAULT '',
@@ -488,7 +484,7 @@ CREATE TABLE app_settings (
 );
 
 -- One cross-process writer lease for storage-mutating maintenance. It is a
--- heartbeat row rather than a filesystem lock so it still books on network
+-- heartbeat row rather than a filesystem lock so it works on network
 -- filesystems where flock semantics are unreliable.
 -- owner identifies a process/lease instance, not a user account.
 CREATE TABLE writer_leases (
@@ -497,9 +493,8 @@ CREATE TABLE writer_leases (
     updated_at INTEGER NOT NULL
 );
 
--- Contentless FTS5 projection rebuilt when searchable metadata changes. The
--- rowid is books.id and survives rebuilds and VACUUM. The relational tables
--- remain authoritative; catalog joins use the same integer identity.
+-- Contentless FTS5 projection updated with searchable metadata. Each rowid
+-- matches books.id; the relational tables remain authoritative.
 -- tag_keys contains encoded whole-tag tokens produced by TagSearchKeys.
 CREATE VIRTUAL TABLE search USING fts5(
     title,

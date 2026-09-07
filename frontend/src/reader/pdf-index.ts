@@ -5,7 +5,7 @@ import { handleReadingStatusChange } from './reading-status';
 
 bootReader(() => {
     const page = document.querySelector<HTMLElement>('.reader-page');
-    const assetId = page?.dataset.readerAssetId;
+    const assetId = Number(page?.dataset.readerAssetId);
     if (!page || !assetId) return;
 
     initPDFReader(page, assetId, { onStateSaved: handleReadingStatusChange }).catch((error) => {

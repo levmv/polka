@@ -9,7 +9,7 @@ import (
 func TestBuildSyncItemPinsNewEntitlementShape(t *testing.T) {
 	seriesIndex := 2.5
 	item := BuildSyncItem(Change{
-		AssetID:       "a_book",
+		AssetID:       1,
 		BookID:        1,
 		Size:          123,
 		Title:         "A Book",
@@ -32,14 +32,14 @@ func TestBuildSyncItemPinsNewEntitlementShape(t *testing.T) {
 		t.Fatalf("item = %+v", item)
 	}
 	payload := item.NewEntitlement
-	if payload.BookEntitlement.ID != "a_book" || payload.BookEntitlement.IsRemoved {
+	if payload.BookEntitlement.ID != "1" || payload.BookEntitlement.IsRemoved {
 		t.Fatalf("entitlement = %+v", payload.BookEntitlement)
 	}
 	metadata := payload.BookMetadata
-	if metadata == nil || metadata.Title != "A Book" || metadata.WorkID != "a_book" {
+	if metadata == nil || metadata.Title != "A Book" || metadata.WorkID != "1" {
 		t.Fatalf("metadata = %+v", metadata)
 	}
-	if len(metadata.DownloadURLs) != 1 || metadata.DownloadURLs[0].URL != "https://books.test/kobo/secret/download/a_book/kepub" {
+	if len(metadata.DownloadURLs) != 1 || metadata.DownloadURLs[0].URL != "https://books.test/kobo/secret/download/1/kepub" {
 		t.Fatalf("downloads = %+v", metadata.DownloadURLs)
 	}
 	if metadata.PublicationDate != "2024-03-02T00:00:00Z" || metadata.Series == nil || metadata.Series.Number != 2.5 {
@@ -53,7 +53,7 @@ func TestBuildSyncItemPinsNewEntitlementShape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(encoded), `"WorkId":"a_book"`) {
+	if !strings.Contains(string(encoded), `"WorkId":"1"`) {
 		t.Errorf("Kobo metadata must expose asset identity as WorkId: %s", encoded)
 	}
 	for _, key := range []string{"NewEntitlement", "BookEntitlement", "BookMetadata", "DownloadUrls", "CoverImageId"} {
@@ -65,7 +65,7 @@ func TestBuildSyncItemPinsNewEntitlementShape(t *testing.T) {
 
 func TestBuildSyncItemMakesRemovalAChangedEntitlementWithoutMetadata(t *testing.T) {
 	item := BuildSyncItem(Change{
-		AssetID: "a_book", AddedAt: 100,
+		AssetID: 1, AddedAt: 100,
 		Revision:      3,
 		FirstRevision: 1,
 		Present:       false,
@@ -85,7 +85,7 @@ func TestBuildSyncItemMakesRemovalAChangedEntitlementWithoutMetadata(t *testing.
 
 func TestBuildSyncItemClassifiesPresentEntitlementAgainstClientCursor(t *testing.T) {
 	change := Change{
-		AssetID:       "a_book",
+		AssetID:       1,
 		Revision:      4,
 		FirstRevision: 2,
 		Present:       true,
@@ -100,7 +100,7 @@ func TestBuildSyncItemClassifiesPresentEntitlementAgainstClientCursor(t *testing
 
 func TestBuildMetadataBoundsLongUTF8Description(t *testing.T) {
 	description := strings.Repeat("к", maxDescriptionBytes)
-	metadata := BuildMetadata(Publication{AssetID: "a", Description: description}, "https://books.test")
+	metadata := BuildMetadata(Publication{AssetID: 1, Description: description}, "https://books.test")
 	if len(metadata.Description) > maxDescriptionBytes || !strings.HasSuffix(metadata.Description, "…") {
 		t.Fatalf("bounded description is %d bytes and ends %q", len(metadata.Description), metadata.Description[len(metadata.Description)-3:])
 	}

@@ -21,7 +21,7 @@ const maxImportUploadBytes = 512 << 20 // 512 MiB
 type ImportUploadDTO struct {
 	Status   string        `json:"status"`
 	Book     BookDetailDTO `json:"book"`
-	AssetID  string        `json:"asset_id,omitempty"`
+	AssetID  int64         `json:"asset_id,omitzero"`
 	Warnings []string      `json:"warnings,omitempty"`
 }
 

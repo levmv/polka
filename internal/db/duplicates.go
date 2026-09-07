@@ -8,8 +8,6 @@ import (
 	"slices"
 	"strings"
 	"unicode"
-
-	"github.com/levmv/polka/internal/id"
 )
 
 const DuplicateReasonTitleAuthor = "title_author"
@@ -126,7 +124,7 @@ type duplicateReadingState struct {
 	userID      int64
 	bookID      int64
 	status      string
-	lastEventID sql.NullString
+	lastEventID sql.NullInt64
 	updatedAt   int64
 }
 
@@ -216,9 +214,10 @@ func DismissDuplicateGroup(tx *Tx, scope VisibilityScope, bookIDs []int64, userI
 		return fmt.Errorf("encode dismissed book IDs: %w", err)
 	}
 	_, err = tx.Exec(`
-		INSERT INTO duplicate_dismissals (id, reason, detector_key, book_ids, created_by)
-		VALUES (?, ?, ?, ?, ?)
-	`, id.New(id.DuplicateDismissal), set.reason, set.key, string(encodedIDs), sql.NullInt64{Int64: userID, Valid: userID > 0})
+		INSERT INTO duplicate_dismissals (reason, detector_key, book_ids, created_by)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(reason, detector_key, book_ids) DO NOTHING
+	`, set.reason, set.key, string(encodedIDs), sql.NullInt64{Int64: userID, Valid: userID > 0})
 	if err != nil {
 		return fmt.Errorf("insert duplicate dismissal: %w", err)
 	}
@@ -573,13 +572,6 @@ func duplicateGroupDismissed(dismissals map[string][]duplicateDismissal, reason,
 
 func duplicateDismissalMapKey(reason, key string) string {
 	return reason + "\x00" + key
-}
-
-func nullString(s string) sql.NullString {
-	if strings.TrimSpace(s) == "" {
-		return sql.NullString{}
-	}
-	return sql.NullString{String: s, Valid: true}
 }
 
 func bookSummariesByIDs(queryer Queryer, scope VisibilityScope, ids []int64) (map[int64]BookSummaryRow, error) {

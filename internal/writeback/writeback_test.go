@@ -6,7 +6,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"encoding/xml"
 	"image"
 	"image/color"
@@ -35,7 +34,7 @@ func TestRunWritesDirtyEPUBAndUpdatesAssetIdentity(t *testing.T) {
 		t.Fatalf("update book metadata: %v", err)
 	}
 	if _, err := database.Write(t.Context()).Exec(`
-		UPDATE authors SET name = 'Jane Writer', sort_name = 'Writer, Jane' WHERE id = 'au1'
+		UPDATE authors SET name = 'Jane Writer', sort_name = 'Writer, Jane' WHERE id = 1
 	`); err != nil {
 		t.Fatalf("update author: %v", err)
 	}
@@ -60,7 +59,8 @@ func TestRunWritesDirtyEPUBAndUpdatesAssetIdentity(t *testing.T) {
 		t.Fatalf("rewritten metadata = %+v", meta)
 	}
 
-	var currentHash, koHash string
+	var currentHash []byte
+	var koHash string
 	var currentSize, writebackRev int64
 	var writebackError sql.NullString
 	if err := database.Read(t.Context()).QueryRow(`
@@ -69,8 +69,8 @@ func TestRunWritesDirtyEPUBAndUpdatesAssetIdentity(t *testing.T) {
 	`, assetID).Scan(&currentHash, &currentSize, &koHash, &writebackRev, &writebackError); err != nil {
 		t.Fatalf("query asset identity: %v", err)
 	}
-	if currentHash != sha256HexForTest(rewritten) || currentSize != int64(len(rewritten)) || koHash == "" || writebackRev != 1 || writebackError.Valid {
-		t.Fatalf("asset identity = hash:%q size:%d ko:%q rev:%d err:%+v", currentHash, currentSize, koHash, writebackRev, writebackError)
+	if !bytes.Equal(currentHash, sha256ForTest(rewritten)) || currentSize != int64(len(rewritten)) || koHash == "" || writebackRev != 1 || writebackError.Valid {
+		t.Fatalf("asset identity = hash:%x size:%d ko:%q rev:%d err:%+v", currentHash, currentSize, koHash, writebackRev, writebackError)
 	}
 	assertNoPendingAttempts(t, database, assetID)
 
@@ -80,6 +80,46 @@ func TestRunWritesDirtyEPUBAndUpdatesAssetIdentity(t *testing.T) {
 	}
 	if rerun.Written != 0 || rerun.Unchanged != 1 || rerun.Failed != 0 {
 		t.Fatalf("second pass summary = %+v; want one unchanged", rerun)
+	}
+}
+
+func TestRunClearsEmbeddedAuthors(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		format format.Format
+		setup  func(*testing.T, string, string) (*db.DB, storage.Root, int64, string)
+	}{
+		{"epub", format.FormatEPUB, setupWritebackEPUB},
+		{"fb2", format.FormatFB2, setupWritebackFB2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			database, root, _, relPath := tc.setup(t, "Book", "Old Author")
+			defer database.Close()
+			if err := database.Transact(t.Context(), func(tx *db.Tx) error {
+				if _, _, err := db.UpsertBookAuthors(tx, 1, nil); err != nil {
+					return err
+				}
+				return db.BumpMetadataRev(tx, []int64{1})
+			}); err != nil {
+				t.Fatal(err)
+			}
+			summary, err := Run(t.Context(), database, root, Options{})
+			if err != nil || summary.Written != 1 || summary.Failed != 0 {
+				t.Fatalf("write-back = %+v, %v; want one written", summary, err)
+			}
+			data, err := os.ReadFile(root.Abs(relPath))
+			if err != nil {
+				t.Fatal(err)
+			}
+			meta, err := format.ExtractMetadata(bytes.NewReader(data), int64(len(data)), tc.format)
+			if err != nil || meta == nil || len(meta.Authors) != 0 {
+				t.Fatalf("rewritten metadata = %+v, %v; want no authors", meta, err)
+			}
+			rerun, err := Run(t.Context(), database, root, Options{All: true})
+			if err != nil || rerun.Unchanged != 1 || rerun.Failed != 0 {
+				t.Fatalf("second pass = %+v, %v; want one unchanged", rerun, err)
+			}
+		})
 	}
 }
 
@@ -97,7 +137,7 @@ func TestRunWritesDirtyEPUBCover(t *testing.T) {
 		UPDATE assets
 		SET current_sha256 = ?, current_size = ?, original_sha256 = ?, original_size = ?
 		WHERE id = ?
-	`, sha256HexForTest(src), len(src), sha256HexForTest(src), len(src), assetID); err != nil {
+	`, sha256ForTest(src), len(src), sha256ForTest(src), len(src), assetID); err != nil {
 		t.Fatalf("update asset identity: %v", err)
 	}
 	coverPath := dataRoot.Abs(covers.OriginalPath(1))
@@ -149,7 +189,7 @@ func TestRunWritesDirtyKEPUBContainer(t *testing.T) {
 	database, root, _, relPath := setupWritebackEPUB(t, "Old Title", "Old Author")
 	defer database.Close()
 
-	if _, err := database.Write(t.Context()).Exec("UPDATE assets SET format = 'kepub', extension = '.kepub.epub' WHERE id = 'as_writeback'"); err != nil {
+	if _, err := database.Write(t.Context()).Exec("UPDATE assets SET format = 'kepub', extension = '.kepub.epub' WHERE id = 1"); err != nil {
 		t.Fatalf("mark asset as kepub: %v", err)
 	}
 	if _, err := database.Write(t.Context()).Exec(`
@@ -179,7 +219,7 @@ func TestRunWritesDirtyKEPUBContainer(t *testing.T) {
 	if meta == nil || meta.Title != "New KEPUB Title" {
 		t.Fatalf("rewritten kepub metadata = %+v", meta)
 	}
-	assertNoPendingAttempts(t, database, "as_writeback")
+	assertNoPendingAttempts(t, database, 1)
 }
 
 func TestRunWritesDirtyFB2(t *testing.T) {
@@ -194,7 +234,7 @@ func TestRunWritesDirtyFB2(t *testing.T) {
 		t.Fatalf("update book metadata: %v", err)
 	}
 	if _, err := database.Write(t.Context()).Exec(`
-		UPDATE authors SET name = 'Jane FB2 Writer', sort_name = 'Writer, Jane FB2' WHERE id = 'au1'
+		UPDATE authors SET name = 'Jane FB2 Writer', sort_name = 'Writer, Jane FB2' WHERE id = 1
 	`); err != nil {
 		t.Fatalf("update author: %v", err)
 	}
@@ -237,10 +277,10 @@ func TestRunFailedOnlyPlansFailedDirtyAssets(t *testing.T) {
 	defer database.Close()
 	if _, err := database.Write(t.Context()).Exec(`
 		INSERT INTO books (id, title, sort_title, metadata_rev) VALUES (1, 'Book', 'Book', 2);
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, writeback_rev, writeback_error)
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, writeback_rev, writeback_error, original_sha256, current_sha256)
 		VALUES
-			('clean_dirty', 1, 'Book/clean.epub', 'clean.epub', '.epub', 'epub', 1, NULL),
-			('failed_dirty', 1, 'Book/failed.epub', 'failed.epub', '.epub', 'epub', 1, 'bad opf');
+			(1, 1, 'Book/clean.epub', 'clean.epub', '.epub', 'epub', 1, NULL, randomblob(32), randomblob(32)),
+			(2, 1, 'Book/failed.epub', 'failed.epub', '.epub', 'epub', 1, 'bad opf', randomblob(32), randomblob(32));
 	`); err != nil {
 		t.Fatalf("seed failed-only rows: %v", err)
 	}
@@ -249,7 +289,7 @@ func TestRunFailedOnlyPlansFailedDirtyAssets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run failed-only dry-run: %v", err)
 	}
-	if summary.WouldWrite != 1 || len(summary.Results) != 1 || summary.Results[0].AssetID != "failed_dirty" {
+	if summary.WouldWrite != 1 || len(summary.Results) != 1 || summary.Results[0].AssetID != 2 {
 		t.Fatalf("failed-only summary = %+v; want only failed_dirty", summary)
 	}
 }
@@ -450,7 +490,7 @@ func TestRunRefusesOversizedInputBeforeRendering(t *testing.T) {
 	}
 	if _, err := database.Write(t.Context()).Exec(`
 		UPDATE assets
-		SET current_sha256 = '', current_size = ?
+		SET current_size = ?
 		WHERE id = ?
 	`, oversized, assetID); err != nil {
 		t.Fatalf("update asset identity: %v", err)
@@ -512,7 +552,7 @@ func TestRunDryRunDoesNotTouchFiles(t *testing.T) {
 	}
 }
 
-func setupWritebackEPUB(t *testing.T, title, author string) (*db.DB, storage.Root, string, string) {
+func setupWritebackEPUB(t *testing.T, title, author string) (*db.DB, storage.Root, int64, string) {
 	t.Helper()
 	dataDir := t.TempDir()
 	database, err := db.InitPath(filepath.Join(dataDir, "library.db"))
@@ -524,8 +564,8 @@ func setupWritebackEPUB(t *testing.T, title, author string) (*db.DB, storage.Roo
 		t.Fatalf("EnsureLayout: %v", err)
 	}
 
-	assetID := "as_writeback"
-	relPath := "A/Author/Book [as_writeback].epub"
+	assetID := int64(1)
+	relPath := "A/Author/Book [a1].epub"
 	src := testWritebackEPUBBytes(t, title, author)
 	if err := os.MkdirAll(filepath.Dir(root.Abs(relPath)), 0o755); err != nil {
 		t.Fatalf("mkdir book dir: %v", err)
@@ -537,10 +577,10 @@ func setupWritebackEPUB(t *testing.T, title, author string) (*db.DB, storage.Roo
 	if _, err := database.Write(t.Context()).Exec("INSERT INTO books (id, title, sort_title) VALUES (1, ?, ?)", title, title); err != nil {
 		t.Fatalf("insert book: %v", err)
 	}
-	if _, err := database.Write(t.Context()).Exec("INSERT INTO authors (id, name, sort_name) VALUES ('au1', ?, ?)", author, author); err != nil {
+	if _, err := database.Write(t.Context()).Exec("INSERT INTO authors (id, name, sort_name) VALUES (1, ?, ?)", author, author); err != nil {
 		t.Fatalf("insert author: %v", err)
 	}
-	if _, err := database.Write(t.Context()).Exec("INSERT INTO book_authors (book_id, author_id, role, author_order) VALUES (1, 'au1', 'aut', 0)"); err != nil {
+	if _, err := database.Write(t.Context()).Exec("INSERT INTO book_authors (book_id, author_id, role, author_order) VALUES (1, 1, 'aut', 0)"); err != nil {
 		t.Fatalf("insert book author: %v", err)
 	}
 	if _, err := database.Write(t.Context()).Exec(`
@@ -548,13 +588,13 @@ func setupWritebackEPUB(t *testing.T, title, author string) (*db.DB, storage.Roo
 			(id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_sha256, current_sha256, original_size, current_size)
 		VALUES
 			(?, 1, ?, 'Book.epub', '.epub', 'epub', 1, 1, ?, ?, ?, ?)
-	`, assetID, relPath, sha256HexForTest(src), sha256HexForTest(src), len(src), len(src)); err != nil {
+	`, assetID, relPath, sha256ForTest(src), sha256ForTest(src), len(src), len(src)); err != nil {
 		t.Fatalf("insert asset: %v", err)
 	}
 	return database, root, assetID, relPath
 }
 
-func setupWritebackFB2(t *testing.T, title, author string) (*db.DB, storage.Root, string, string) {
+func setupWritebackFB2(t *testing.T, title, author string) (*db.DB, storage.Root, int64, string) {
 	t.Helper()
 	dataDir := t.TempDir()
 	database, err := db.InitPath(filepath.Join(dataDir, "library.db"))
@@ -566,8 +606,8 @@ func setupWritebackFB2(t *testing.T, title, author string) (*db.DB, storage.Root
 		t.Fatalf("EnsureLayout: %v", err)
 	}
 
-	assetID := "as_writeback_fb2"
-	relPath := "A/Author/Book [as_writeback_fb2].fb2"
+	assetID := int64(1)
+	relPath := "A/Author/Book [a1].fb2"
 	src := testWritebackFB2Bytes(t, title, author)
 	if err := os.MkdirAll(filepath.Dir(root.Abs(relPath)), 0o755); err != nil {
 		t.Fatalf("mkdir book dir: %v", err)
@@ -579,10 +619,10 @@ func setupWritebackFB2(t *testing.T, title, author string) (*db.DB, storage.Root
 	if _, err := database.Write(t.Context()).Exec("INSERT INTO books (id, title, sort_title) VALUES (1, ?, ?)", title, title); err != nil {
 		t.Fatalf("insert book: %v", err)
 	}
-	if _, err := database.Write(t.Context()).Exec("INSERT INTO authors (id, name, sort_name) VALUES ('au1', ?, ?)", author, author); err != nil {
+	if _, err := database.Write(t.Context()).Exec("INSERT INTO authors (id, name, sort_name) VALUES (1, ?, ?)", author, author); err != nil {
 		t.Fatalf("insert author: %v", err)
 	}
-	if _, err := database.Write(t.Context()).Exec("INSERT INTO book_authors (book_id, author_id, role, author_order) VALUES (1, 'au1', 'aut', 0)"); err != nil {
+	if _, err := database.Write(t.Context()).Exec("INSERT INTO book_authors (book_id, author_id, role, author_order) VALUES (1, 1, 'aut', 0)"); err != nil {
 		t.Fatalf("insert book author: %v", err)
 	}
 	if _, err := database.Write(t.Context()).Exec(`
@@ -590,7 +630,7 @@ func setupWritebackFB2(t *testing.T, title, author string) (*db.DB, storage.Root
 			(id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_sha256, current_sha256, original_size, current_size)
 		VALUES
 			(?, 1, ?, 'Book.fb2', '.fb2', 'fb2', 1, 1, ?, ?, ?, ?)
-	`, assetID, relPath, sha256HexForTest(src), sha256HexForTest(src), len(src), len(src)); err != nil {
+	`, assetID, relPath, sha256ForTest(src), sha256ForTest(src), len(src), len(src)); err != nil {
 		t.Fatalf("insert asset: %v", err)
 	}
 	return database, root, assetID, relPath
@@ -706,7 +746,7 @@ func testWritebackPNG(t *testing.T, c color.Color) []byte {
 	return buf.Bytes()
 }
 
-func assertNoPendingAttempts(t *testing.T, database *db.DB, assetID string) {
+func assertNoPendingAttempts(t *testing.T, database *db.DB, assetID int64) {
 	t.Helper()
 	var pending int
 	if err := database.Read(t.Context()).QueryRow("SELECT COUNT(*) FROM metadata_writeback_attempts WHERE asset_id = ?", assetID).Scan(&pending); err != nil {
@@ -717,7 +757,7 @@ func assertNoPendingAttempts(t *testing.T, database *db.DB, assetID string) {
 	}
 }
 
-func sha256HexForTest(data []byte) string {
+func sha256ForTest(data []byte) []byte {
 	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
+	return sum[:]
 }

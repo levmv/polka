@@ -19,7 +19,7 @@ export interface ReadingActivity {
     observeScrolling(target: EventTarget): void;
 }
 
-export function createReadingActivity(assetId: string): ReadingActivity {
+export function createReadingActivity(assetId: number): ReadingActivity {
     let current: ActivitySegment | null = null;
     let paused: {
         segment: ActivitySegment;

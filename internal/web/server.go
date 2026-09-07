@@ -97,12 +97,12 @@ func contextUser(ctx context.Context) *db.User {
 	return user
 }
 
-func withKoboConnectionID(ctx context.Context, connectionID string) context.Context {
+func withKoboConnectionID(ctx context.Context, connectionID int64) context.Context {
 	return context.WithValue(ctx, koboConnectionIDKey, connectionID)
 }
 
-func koboConnectionID(ctx context.Context) string {
-	connectionID, _ := ctx.Value(koboConnectionIDKey).(string)
+func koboConnectionID(ctx context.Context) int64 {
+	connectionID, _ := ctx.Value(koboConnectionIDKey).(int64)
 	return connectionID
 }
 

@@ -23,8 +23,8 @@ func TestLibraryWritebackDryRun(t *testing.T) {
 		t.Fatalf("insert book: %v", err)
 	}
 	if _, err := database.Write(t.Context()).Exec(`
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, writeback_rev)
-		VALUES ('as1', 1, 'A/Book/as1.epub', 'as1.epub', '.epub', 'epub', 0)
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, writeback_rev, original_sha256, current_sha256)
+		VALUES (1, 1, 'A/Book/as1.epub', 'as1.epub', '.epub', 'epub', 0, randomblob(32), randomblob(32))
 	`); err != nil {
 		t.Fatalf("insert asset: %v", err)
 	}

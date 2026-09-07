@@ -1,13 +1,12 @@
 package writeback
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"hash"
 	"io"
 	"os"
 	"time"
@@ -48,7 +47,7 @@ const (
 )
 
 type Result struct {
-	AssetID     string
+	AssetID     int64
 	BookID      int64
 	StoragePath string
 	Status      Status
@@ -111,13 +110,13 @@ func Run(ctx context.Context, database *db.DB, root storage.Root, opts Options) 
 			appendResult(&summary, result)
 		}
 		if err != nil {
-			return summary, fmt.Errorf("write back asset %s: %w", row.AssetID, err)
+			return summary, fmt.Errorf("write back asset %d: %w", row.AssetID, err)
 		}
 	}
 	return summary, nil
 }
 
-func writeAssetQueued(ctx context.Context, database *db.DB, root storage.Root, assetID string, opts Options) (Result, error) {
+func writeAssetQueued(ctx context.Context, database *db.DB, root storage.Root, assetID int64, opts Options) (Result, error) {
 	releaseWork := func() {}
 	if opts.WorkQueue != nil {
 		release, err := opts.WorkQueue.Acquire(ctx)
@@ -157,7 +156,7 @@ func planAssets(queryer db.Queryer, opts Options) ([]db.MetadataWritebackAssetRo
 	return db.ListDirtyMetadataWritebackAssets(queryer, opts.Scope, opts.Limit)
 }
 
-func writeAsset(ctx context.Context, database *db.DB, root storage.Root, assetID string, opts Options) (Result, error) {
+func writeAsset(ctx context.Context, database *db.DB, root storage.Root, assetID int64, opts Options) (Result, error) {
 	if err := context.Cause(ctx); err != nil {
 		return Result{}, err
 	}
@@ -198,7 +197,7 @@ func writeAsset(ctx context.Context, database *db.DB, root storage.Root, assetID
 	}
 	currentSize := info.Size()
 	if currentSize > maxMetadataWritebackInputBytes {
-		return fail(ctx, database, result, fmt.Errorf("%s exceeds metadata write-back input limit (%d bytes): %w", row.AssetID, maxMetadataWritebackInputBytes, ErrInputTooLarge))
+		return fail(ctx, database, result, fmt.Errorf("%d exceeds metadata write-back input limit (%d bytes): %w", row.AssetID, maxMetadataWritebackInputBytes, ErrInputTooLarge))
 	}
 	currentHash, err := fileSHA256(ctx, src)
 	if err != nil {
@@ -227,7 +226,7 @@ func writeAsset(ctx context.Context, database *db.DB, root storage.Root, assetID
 
 	renderedHash := sha256.New()
 	renderedSize := &countingWriter{}
-	tempRel, err := storage.WriteAdjacentTempWith(root, row.StoragePath, fmt.Sprintf("%s-rev%d", row.AssetID, snapshot.MetadataRev), func(w io.Writer) error {
+	tempRel, err := storage.WriteAdjacentTempWith(root, row.StoragePath, fmt.Sprintf("%d-rev%d", row.AssetID, snapshot.MetadataRev), func(w io.Writer) error {
 		return renderWritebackAsset(io.MultiWriter(w, renderedHash, renderedSize), row.Format, src, currentSize, snapshot.Metadata, modified, coverBytes)
 	})
 	if err != nil {
@@ -242,7 +241,7 @@ func writeAsset(ctx context.Context, database *db.DB, root storage.Root, assetID
 	if err := validateRenderedWritebackAsset(root, tempRel, row.Format); err != nil {
 		return fail(ctx, database, result, fmt.Errorf("validate rendered metadata: %w", err))
 	}
-	renderedHashHex := hashHex(renderedHash)
+	renderedSHA256 := renderedHash.Sum(nil)
 	renderedKOReaderHash, err := koreader.PartialMD5File(root.Abs(tempRel))
 	if err != nil {
 		return fail(ctx, database, result, fmt.Errorf("compute KOReader hash: %w", err))
@@ -251,7 +250,7 @@ func writeAsset(ctx context.Context, database *db.DB, root storage.Root, assetID
 		return result, err
 	}
 
-	if renderedHashHex == currentHash && renderedSize.N == currentSize {
+	if bytes.Equal(renderedSHA256, currentHash) && renderedSize.N == currentSize {
 		if err := markSuccess(ctx, database, row, currentHash, currentSize, renderedKOReaderHash, snapshot.MetadataRev); err != nil {
 			return fail(ctx, database, result, err)
 		}
@@ -268,7 +267,7 @@ func writeAsset(ctx context.Context, database *db.DB, root storage.Root, assetID
 		MetadataRev:  snapshot.MetadataRev,
 		StoragePath:  row.StoragePath,
 		TempPath:     tempRel,
-		SHA256:       renderedHashHex,
+		SHA256:       renderedSHA256,
 		Size:         renderedSize.N,
 		KOReaderHash: renderedKOReaderHash,
 	}
@@ -293,7 +292,7 @@ func writeAsset(ctx context.Context, database *db.DB, root storage.Root, assetID
 	if err := storage.ReplaceWithStaged(root, tempRel, row.StoragePath); err != nil {
 		return fail(ctx, database, result, err)
 	}
-	if err := markSuccess(ctx, database, row, renderedHashHex, renderedSize.N, renderedKOReaderHash, snapshot.MetadataRev); err != nil {
+	if err := markSuccess(ctx, database, row, renderedSHA256, renderedSize.N, renderedKOReaderHash, snapshot.MetadataRev); err != nil {
 		return fail(ctx, database, result, err)
 	}
 	result.Status = StatusWritten
@@ -375,12 +374,12 @@ func (w *countingWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func fileSHA256(ctx context.Context, r io.Reader) (string, error) {
+func fileSHA256(ctx context.Context, r io.Reader) ([]byte, error) {
 	h := sha256.New()
 	buf := make([]byte, 128<<10)
 	for {
 		if err := context.Cause(ctx); err != nil {
-			return "", err
+			return nil, err
 		}
 		n, readErr := r.Read(buf)
 		if n > 0 {
@@ -390,23 +389,23 @@ func fileSHA256(ctx context.Context, r io.Reader) (string, error) {
 			break
 		}
 		if readErr != nil {
-			return "", readErr
+			return nil, readErr
 		}
 	}
-	return hashHex(h), nil
+	return h.Sum(nil), nil
 }
 
-func validateCurrentBytes(row db.MetadataWritebackAssetRow, currentHash string, currentSize int64) error {
-	if row.CurrentSHA256 != "" && row.CurrentSHA256 != currentHash {
-		return fmt.Errorf("current file drift for %s: db sha256=%s disk sha256=%s", row.AssetID, row.CurrentSHA256, currentHash)
+func validateCurrentBytes(row db.MetadataWritebackAssetRow, currentHash []byte, currentSize int64) error {
+	if !bytes.Equal(row.CurrentSHA256, currentHash) {
+		return fmt.Errorf("current file drift for %d: db sha256=%x disk sha256=%x", row.AssetID, row.CurrentSHA256, currentHash)
 	}
 	if row.CurrentSize.Valid && row.CurrentSize.Int64 != currentSize {
-		return fmt.Errorf("current file drift for %s: db size=%d disk size=%d", row.AssetID, row.CurrentSize.Int64, currentSize)
+		return fmt.Errorf("current file drift for %d: db size=%d disk size=%d", row.AssetID, row.CurrentSize.Int64, currentSize)
 	}
 	return nil
 }
 
-func markSuccess(ctx context.Context, database *db.DB, row db.MetadataWritebackAssetRow, hash string, size int64, koReaderHash string, metadataRev int64) error {
+func markSuccess(ctx context.Context, database *db.DB, row db.MetadataWritebackAssetRow, hash []byte, size int64, koReaderHash string, metadataRev int64) error {
 	return database.Transact(ctx, func(tx *db.Tx) error {
 		return db.MarkMetadataWritebackSuccess(tx, row.AssetID, row.StoragePath, hash, size, koReaderHash, metadataRev)
 	})
@@ -423,11 +422,11 @@ func fail(ctx context.Context, database *db.DB, result Result, err error) (Resul
 	return result, nil
 }
 
-func recordWritebackError(ctx context.Context, database *db.DB, assetID string, err error) error {
+func recordWritebackError(ctx context.Context, database *db.DB, assetID int64, err error) error {
 	if recordErr := database.Transact(ctx, func(tx *db.Tx) error {
 		return db.MarkMetadataWritebackError(tx, assetID, err)
 	}); recordErr != nil {
-		return fmt.Errorf("record metadata write-back failure for %s: %w", assetID, recordErr)
+		return fmt.Errorf("record metadata write-back failure for %d: %w", assetID, recordErr)
 	}
 	return nil
 }
@@ -441,8 +440,4 @@ func removeWritebackTemp(root storage.Root, relPath string) error {
 		return fmt.Errorf("remove previous write-back temp: %w", err)
 	}
 	return nil
-}
-
-func hashHex(h hash.Hash) string {
-	return hex.EncodeToString(h.Sum(nil))
 }

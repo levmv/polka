@@ -90,7 +90,7 @@ type fetchedPublicImage struct {
 }
 
 func (s *Server) handleAPICoverSearch(w http.ResponseWriter, r *http.Request) {
-	bookID, validID := pathBookID(w, r, "id")
+	bookID, validID := pathID(w, r, "id")
 	if !validID {
 		return
 	}
@@ -137,7 +137,7 @@ func (s *Server) handleAPICoverSearch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAPICoverSearchPreview(w http.ResponseWriter, r *http.Request) {
-	bookID, validID := pathBookID(w, r, "id")
+	bookID, validID := pathID(w, r, "id")
 	if !validID {
 		return
 	}
@@ -167,7 +167,7 @@ func (s *Server) handleAPICoverSearchPreview(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *Server) handleAPICoverSearchApply(w http.ResponseWriter, r *http.Request) {
-	bookID, validID := pathBookID(w, r, "id")
+	bookID, validID := pathID(w, r, "id")
 	if !validID {
 		return
 	}
