@@ -7,7 +7,7 @@ function seriesItem(name: string, bookCount: number) {
     author: 'Stub Author',
     book_count: bookCount,
     finished_count: 0,
-    cover_book_id: 'w_1',
+    cover_book_id: 1,
     cover_version: 0,
   };
 }

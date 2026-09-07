@@ -26,7 +26,10 @@ func readingStatusDTO(state db.ReadingStatusState) ReadingStatusDTO {
 }
 
 func (s *Server) handleAPIReadingStatusSave(w http.ResponseWriter, r *http.Request) {
-	bookID := r.PathValue("id")
+	bookID, validID := pathBookID(w, r, "id")
+	if !validID {
+		return
+	}
 	if _, ok := s.requireBookAccess(w, r, bookID); !ok {
 		return
 	}
@@ -35,14 +38,17 @@ func (s *Server) handleAPIReadingStatusSave(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	change, err := s.db.SetReadingStatus(r.Context(), UserID(r.Context()), bookID, req.Status, db.ReadingStatusSourceManual)
-	if writeReadingStatusError(w, err) {
+	if writeReadingStatusError(w, r, err) {
 		return
 	}
 	writeJSON(w, http.StatusOK, readingStatusDTO(change.State))
 }
 
 func (s *Server) handleAPIReadingStatusUndo(w http.ResponseWriter, r *http.Request) {
-	bookID := r.PathValue("id")
+	bookID, validID := pathBookID(w, r, "id")
+	if !validID {
+		return
+	}
 	if _, ok := s.requireBookAccess(w, r, bookID); !ok {
 		return
 	}
@@ -55,13 +61,13 @@ func (s *Server) handleAPIReadingStatusUndo(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	change, err := s.db.UndoAutomaticReadingStatus(r.Context(), UserID(r.Context()), bookID, req.EventID)
-	if writeReadingStatusError(w, err) {
+	if writeReadingStatusError(w, r, err) {
 		return
 	}
 	writeJSON(w, http.StatusOK, readingStatusDTO(change.State))
 }
 
-func writeReadingStatusError(w http.ResponseWriter, err error) bool {
+func writeReadingStatusError(w http.ResponseWriter, r *http.Request, err error) bool {
 	if err == nil {
 		return false
 	}
@@ -73,7 +79,7 @@ func writeReadingStatusError(w http.ResponseWriter, err error) bool {
 	case errors.Is(err, db.ErrReadingStatusUndoUnavailable):
 		http.Error(w, err.Error(), http.StatusConflict)
 	default:
-		serverError(w, err)
+		serverError(w, r, err)
 	}
 	return true
 }

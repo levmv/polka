@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json/v2"
 	"errors"
@@ -66,12 +67,12 @@ type bookEditState struct {
 	Identifiers  sql.NullString
 }
 
-func loadBookEditState(queryer db.Queryer, bookID string) (bookEditState, error) {
+func loadBookEditState(queryer db.Queryer, bookID int64) (bookEditState, error) {
 	b, err := db.GetBook(queryer, db.FullVisibilityScope(), bookID)
 	if err != nil {
 		return bookEditState{}, err
 	}
-	authorsByBook, err := db.AuthorsByBookIDs(queryer, []string{bookID})
+	authorsByBook, err := db.AuthorsByBookIDs(queryer, []int64{bookID})
 	if err != nil {
 		return bookEditState{}, err
 	}
@@ -128,7 +129,7 @@ func normalizedAuthors(value string) string {
 	return bookmeta.FormatAuthorList(names)
 }
 
-func replaceBookAuthors(tx *sql.Tx, bookID string, authorsStr string) error {
+func replaceBookAuthors(ctx context.Context, tx *db.Tx, bookID int64, authorsStr string) error {
 	var parsedAuthors []bookmeta.AuthorMeta
 	for _, n := range bookmeta.ParseAuthorList(authorsStr) {
 		n = strings.TrimSpace(n)
@@ -163,7 +164,7 @@ func replaceBookAuthors(tx *sql.Tx, bookID string, authorsStr string) error {
 	return nil
 }
 
-func (s *Server) handleAPIEditBook(w http.ResponseWriter, r *http.Request, bookID string) {
+func (s *Server) handleAPIEditBook(w http.ResponseWriter, r *http.Request, bookID int64) {
 	var req BookPatch
 	if !readJSON(w, r, &req) {
 		return
@@ -179,12 +180,12 @@ func (s *Server) handleAPIEditBook(w http.ResponseWriter, r *http.Request, bookI
 
 	releaseStorageSlot, err := s.acquireStorageWorkSlot(r.Context())
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	defer releaseStorageSlot()
 
-	mutation, err := relayout.MutateBooks(r.Context(), s.db, s.managedRoot(), func(tx *sql.Tx) (relayout.Changed, error) {
+	mutation, err := relayout.MutateBooks(r.Context(), s.db, s.managedRoot(), func(tx *db.Tx) (relayout.Changed, error) {
 		existing, err := loadBookEditState(tx, bookID)
 		if err != nil {
 			return relayout.Changed{}, err
@@ -321,17 +322,17 @@ func (s *Server) handleAPIEditBook(w http.ResponseWriter, r *http.Request, bookI
 		}
 
 		if authorsChanged {
-			if err := replaceBookAuthors(tx, bookID, nextAuthors); err != nil {
+			if err := replaceBookAuthors(r.Context(), tx, bookID, nextAuthors); err != nil {
 				return relayout.Changed{}, fmt.Errorf("replace book authors: %w", err)
 			}
 		}
 
 		changed := relayout.Changed{}
 		if metadataChanged {
-			changed.BumpMetadataRev = []string{bookID}
+			changed.BumpMetadataRev = []int64{bookID}
 		}
 		if pathInputsChanged {
-			changed.Relayout = []string{bookID}
+			changed.Relayout = []int64{bookID}
 		}
 		return changed, nil
 	})
@@ -340,45 +341,46 @@ func (s *Server) handleAPIEditBook(w http.ResponseWriter, r *http.Request, bookI
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	for _, warning := range mutation.Warnings {
-		log.Printf("relayout after edit of %s: %v", bookID, warning)
+		log.Printf("relayout after edit of %d: %v", bookID, warning)
 	}
 
 	s.handleAPIBookDetailReturn(w, r, bookID)
 }
 
-func (s *Server) handleAPIBookDetailReturn(w http.ResponseWriter, r *http.Request, bookID string) {
+func (s *Server) handleAPIBookDetailReturn(w http.ResponseWriter, r *http.Request, bookID int64) {
 	scope, err := s.visibilityScope(r)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	// Apply visibility in the root book query so missing and out-of-scope books
 	// share the same 404 without fetching a forbidden row first.
-	b, err := s.bookDetailDTO(scope, UserID(r.Context()), bookID, s.viewerIsAdmin(r))
+	b, err := s.bookDetailDTO(r.Context(), scope, UserID(r.Context()), bookID, s.viewerIsAdmin(r))
 	if errors.Is(err, sql.ErrNoRows) {
 		http.Error(w, "Book not found", http.StatusNotFound)
 		return
 	} else if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 
 	writeJSON(w, http.StatusOK, b)
 }
 
-func (s *Server) bookDetailDTO(scope db.VisibilityScope, viewerID int64, bookID string, viewerIsAdmin bool) (BookDetailDTO, error) {
-	bRow, err := db.GetBook(s.db, scope, bookID)
+func (s *Server) bookDetailDTO(ctx context.Context, scope db.VisibilityScope, viewerID int64, bookID int64, viewerIsAdmin bool) (BookDetailDTO, error) {
+	queryer := s.db.Read(ctx)
+	bRow, err := db.GetBook(queryer, scope, bookID)
 	if err != nil {
 		return BookDetailDTO{}, err
 	}
 
 	b := detailRowDTO(bRow)
 
-	assetRows, err := db.AssetsByBookIDs(s.db, []string{b.ID})
+	assetRows, err := db.AssetsByBookIDs(queryer, []int64{b.ID})
 	if err != nil {
 		return BookDetailDTO{}, err
 	}
@@ -386,7 +388,7 @@ func (s *Server) bookDetailDTO(scope db.VisibilityScope, viewerID int64, bookID 
 		b.Assets = append(b.Assets, assetDTO(aRow))
 	}
 
-	authorsByBook, err := db.AuthorsByBookIDs(s.db, []string{b.ID})
+	authorsByBook, err := db.AuthorsByBookIDs(queryer, []int64{b.ID})
 	if err != nil {
 		return BookDetailDTO{}, err
 	}
@@ -394,14 +396,14 @@ func (s *Server) bookDetailDTO(scope db.VisibilityScope, viewerID int64, bookID 
 
 	readingStatus := db.ReadingStatusState{BookID: b.ID, Status: db.ReadingStatusUnread}
 	if viewerID > 0 {
-		readingStatus, err = db.GetReadingStatus(s.db, viewerID, b.ID)
+		readingStatus, err = db.GetReadingStatus(queryer, viewerID, b.ID)
 		if err != nil {
 			return BookDetailDTO{}, err
 		}
 	}
 	b.ReadingStatus = readingStatusDTO(readingStatus)
 
-	wb, err := s.bookWritebackDTO(b.ID, viewerIsAdmin)
+	wb, err := s.bookWritebackDTO(ctx, b.ID, viewerIsAdmin)
 	if err != nil {
 		return BookDetailDTO{}, err
 	}
@@ -416,17 +418,17 @@ func (s *Server) bookDetailDTO(scope db.VisibilityScope, viewerID int64, bookID 
 // save, cover, import) honest without the frontend re-deriving the role. For an
 // admin the action is available in manual mode with at least one writable asset,
 // and dirty when some writable asset is behind the catalog.
-func (s *Server) bookWritebackDTO(bookID string, viewerIsAdmin bool) (*BookWritebackDTO, error) {
+func (s *Server) bookWritebackDTO(ctx context.Context, bookID int64, viewerIsAdmin bool) (*BookWritebackDTO, error) {
 	if !viewerIsAdmin {
 		return nil, nil
 	}
-	state, err := db.GetBookWritebackState(s.db, bookID)
+	state, err := db.GetBookWritebackState(s.db.Read(ctx), bookID)
 	if err != nil {
 		return nil, err
 	}
 	available := false
 	if state.Writable > 0 {
-		mode, err := writeback.OpenMode(s.db.DB)
+		mode, err := writeback.OpenMode(s.db.Read(ctx))
 		if err != nil {
 			return nil, err
 		}

@@ -12,7 +12,7 @@ export const CATALOG_CHANGED = 'polka:catalog-changed';
 // system: there is no fourth case to reach for.
 export type CatalogChange =
     | { kind: 'books-updated'; books: BookSummary[] }
-    | { kind: 'books-removed'; ids: string[] }
+    | { kind: 'books-removed'; ids: number[] }
     | { kind: 'coarse' };
 
 export function notifyCatalogChanged(change: CatalogChange = { kind: 'coarse' }): void {

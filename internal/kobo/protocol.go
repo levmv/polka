@@ -21,7 +21,7 @@ var seriesUUIDNamespace = uuid.MustParse("e528a6d9-824d-4d47-a7e4-cbf4c58b2159")
 
 type Publication struct {
 	AssetID       string
-	BookID        string
+	BookID        int64
 	Size          int64
 	Title         string
 	Description   string

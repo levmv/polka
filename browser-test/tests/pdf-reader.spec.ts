@@ -30,7 +30,7 @@ test('PDF reader behavior', async ({
   const card = page.locator('.book-card', { hasText: title });
   await expect(card).toBeVisible();
   const href = await card.locator('.book-title-link').getAttribute('href');
-  const bookId = href?.split('/').pop()?.split('?')[0];
+  const bookId = Number(href?.split('/').pop()?.split('?')[0]);
   if (!bookId) throw new Error('missing PDF book id');
   const reader = page.locator('.reader-page');
   const stage = page.locator('.reader-pdf-stage');
@@ -197,7 +197,7 @@ test('PDF reader behavior', async ({
       data: { ids: [bookId] },
     });
     expect(trash.ok()).toBeTruthy();
-    const purge = await page.request.delete(`/api/books/${encodeURIComponent(bookId)}/purge`);
+    const purge = await page.request.delete(`/api/books/${bookId}/purge`);
     expect(purge.status()).toBe(204);
   }
 });

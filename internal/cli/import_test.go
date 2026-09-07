@@ -131,7 +131,7 @@ func TestImportJSONSingleFile(t *testing.T) {
 		t.Fatalf("items = %d, want 1", len(report.Items))
 	}
 	item := report.Items[0]
-	if item.Status != "imported" || item.AssetID == "" || item.BookID == "" {
+	if item.Status != "imported" || item.AssetID == "" || item.BookID == 0 {
 		t.Fatalf("item status/ids = %+v", item)
 	}
 	if item.Title != "JSON Import" || item.Format != "epub" {
@@ -145,7 +145,7 @@ func TestImportJSONSingleFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reopen library: %v", err)
 	}
-	if _, err := database.Exec("UPDATE books SET deleted_at = unixepoch()"); err != nil {
+	if _, err := database.Write(t.Context()).Exec("UPDATE books SET deleted_at = unixepoch()"); err != nil {
 		database.Close()
 		t.Fatalf("trash imported book: %v", err)
 	}
@@ -297,7 +297,7 @@ func TestImportFolderIdempotency(t *testing.T) {
 	}
 	defer db2.Close()
 	var count int
-	if err := db2.QueryRow("SELECT COUNT(*) FROM assets").Scan(&count); err != nil {
+	if err := db2.Read(t.Context()).QueryRow("SELECT COUNT(*) FROM assets").Scan(&count); err != nil {
 		t.Fatalf("count assets: %v", err)
 	}
 	if count != 1 {
@@ -310,7 +310,7 @@ func TestImportFolderIdempotency(t *testing.T) {
 	}
 
 	var countAfter int
-	if err := db2.QueryRow("SELECT COUNT(*) FROM assets").Scan(&countAfter); err != nil {
+	if err := db2.Read(t.Context()).QueryRow("SELECT COUNT(*) FROM assets").Scan(&countAfter); err != nil {
 		t.Fatalf("count assets after repeat: %v", err)
 	}
 	if countAfter != 1 {
@@ -341,7 +341,7 @@ func TestImportFolderFollowsRootSymlink(t *testing.T) {
 	}
 	defer database.Close()
 	var assets int
-	if err := database.QueryRow("SELECT COUNT(*) FROM assets").Scan(&assets); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT COUNT(*) FROM assets").Scan(&assets); err != nil {
 		t.Fatalf("count assets: %v", err)
 	}
 	if assets != 1 {
@@ -385,7 +385,7 @@ func TestImportFolderDryRunDoesNotPersist(t *testing.T) {
 	}
 	defer db2.Close()
 	var assets int
-	if err := db2.QueryRow("SELECT COUNT(*) FROM assets").Scan(&assets); err != nil {
+	if err := db2.Read(t.Context()).QueryRow("SELECT COUNT(*) FROM assets").Scan(&assets); err != nil {
 		t.Fatalf("count assets: %v", err)
 	}
 	if assets != 0 {
@@ -423,7 +423,7 @@ func TestImportFolderDryRunAfterImportDoesNotAddRows(t *testing.T) {
 	}
 	defer db2.Close()
 	var assets int
-	if err := db2.QueryRow("SELECT COUNT(*) FROM assets").Scan(&assets); err != nil {
+	if err := db2.Read(t.Context()).QueryRow("SELECT COUNT(*) FROM assets").Scan(&assets); err != nil {
 		t.Fatalf("count assets: %v", err)
 	}
 	if assets != 1 {
@@ -465,7 +465,7 @@ func TestImportFolderDeleteSources(t *testing.T) {
 	}
 	defer db2.Close()
 	var assets int
-	if err := db2.QueryRow("SELECT COUNT(*) FROM assets").Scan(&assets); err != nil {
+	if err := db2.Read(t.Context()).QueryRow("SELECT COUNT(*) FROM assets").Scan(&assets); err != nil {
 		t.Fatalf("count assets: %v", err)
 	}
 	if assets != 1 {
@@ -486,13 +486,13 @@ func TestImportRefusesSourcesOverlappingManagedRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open database: %v", err)
 	}
-	root, err := storage.OpenRoot(database.DB, dataDir)
+	root, err := storage.OpenRoot(database.Read(t.Context()), dataDir)
 	if err != nil {
 		database.Close()
 		t.Fatalf("open books root: %v", err)
 	}
 	var storagePath string
-	if err := database.QueryRow("SELECT storage_path FROM assets LIMIT 1").Scan(&storagePath); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT storage_path FROM assets LIMIT 1").Scan(&storagePath); err != nil {
 		database.Close()
 		t.Fatalf("query storage path: %v", err)
 	}
@@ -572,27 +572,27 @@ trailer
 	defer db2.Close()
 
 	var books, assets, distinctBooks int
-	if err := db2.QueryRow("SELECT COUNT(*) FROM books").Scan(&books); err != nil {
+	if err := db2.Read(t.Context()).QueryRow("SELECT COUNT(*) FROM books").Scan(&books); err != nil {
 		t.Fatalf("count books: %v", err)
 	}
-	if err := db2.QueryRow("SELECT COUNT(*) FROM assets").Scan(&assets); err != nil {
+	if err := db2.Read(t.Context()).QueryRow("SELECT COUNT(*) FROM assets").Scan(&assets); err != nil {
 		t.Fatalf("count assets: %v", err)
 	}
-	if err := db2.QueryRow("SELECT COUNT(DISTINCT book_id) FROM assets").Scan(&distinctBooks); err != nil {
+	if err := db2.Read(t.Context()).QueryRow("SELECT COUNT(DISTINCT book_id) FROM assets").Scan(&distinctBooks); err != nil {
 		t.Fatalf("count asset books: %v", err)
 	}
 	if books != 1 || assets != 2 || distinctBooks != 1 {
 		t.Fatalf("counts books/assets/distinct asset books = %d/%d/%d; want 1/2/1", books, assets, distinctBooks)
 	}
 	var primaryAssets int
-	if err := db2.QueryRow("SELECT COUNT(*) FROM assets WHERE is_primary = 1").Scan(&primaryAssets); err != nil {
+	if err := db2.Read(t.Context()).QueryRow("SELECT COUNT(*) FROM assets WHERE is_primary = 1").Scan(&primaryAssets); err != nil {
 		t.Fatalf("count primary assets: %v", err)
 	}
 	if primaryAssets != 1 {
 		t.Fatalf("primary assets = %d; want 1", primaryAssets)
 	}
 	var primaryExt string
-	if err := db2.QueryRow("SELECT extension FROM assets WHERE is_primary = 1").Scan(&primaryExt); err != nil {
+	if err := db2.Read(t.Context()).QueryRow("SELECT extension FROM assets WHERE is_primary = 1").Scan(&primaryExt); err != nil {
 		t.Fatalf("query primary asset: %v", err)
 	}
 	if primaryExt != ".epub" {
@@ -600,7 +600,7 @@ trailer
 	}
 
 	var title, publisher, author string
-	if err := db2.QueryRow(`
+	if err := db2.Read(t.Context()).QueryRow(`
 		SELECT b.title, b.publisher, a.name
 		FROM books b
 		JOIN book_authors ba ON ba.book_id = b.id
@@ -616,10 +616,10 @@ trailer
 	if err := runImport(context.Background(), dataDir, []string{filepath.Join(tempDir, "calibre")}); err != nil {
 		t.Fatalf("second import folder: %v", err)
 	}
-	if err := db2.QueryRow("SELECT COUNT(*) FROM books").Scan(&books); err != nil {
+	if err := db2.Read(t.Context()).QueryRow("SELECT COUNT(*) FROM books").Scan(&books); err != nil {
 		t.Fatalf("count books after second import: %v", err)
 	}
-	if err := db2.QueryRow("SELECT COUNT(*) FROM assets").Scan(&assets); err != nil {
+	if err := db2.Read(t.Context()).QueryRow("SELECT COUNT(*) FROM assets").Scan(&assets); err != nil {
 		t.Fatalf("count assets after second import: %v", err)
 	}
 	if books != 1 || assets != 2 {
@@ -672,7 +672,7 @@ func TestImportFolderDeleteSourcesRemovesCalibreDirectory(t *testing.T) {
 	}
 	defer db2.Close()
 	var assets int
-	if err := db2.QueryRow("SELECT COUNT(*) FROM assets").Scan(&assets); err != nil {
+	if err := db2.Read(t.Context()).QueryRow("SELECT COUNT(*) FROM assets").Scan(&assets); err != nil {
 		t.Fatalf("count assets: %v", err)
 	}
 	if assets != 1 {

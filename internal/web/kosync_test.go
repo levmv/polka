@@ -16,11 +16,11 @@ func TestKOReaderSyncRoutes(t *testing.T) {
 
 	alice := mustUser(t, database, "alice", db.RoleMember)
 	bob := mustUser(t, database, "bob", db.RoleMember)
-	aliceCredential, err := database.CreateAppToken(alice.ID, "koreader-a")
+	aliceCredential, err := database.CreateAppToken(t.Context(), alice.ID, "koreader-a")
 	if err != nil {
 		t.Fatalf("create alice token: %v", err)
 	}
-	bobCredential, err := database.CreateAppToken(bob.ID, "koreader-b")
+	bobCredential, err := database.CreateAppToken(t.Context(), bob.ID, "koreader-b")
 	if err != nil {
 		t.Fatalf("create bob token: %v", err)
 	}
@@ -90,7 +90,7 @@ func TestKOReaderSyncRoutes(t *testing.T) {
 		t.Fatalf("bob progress = %+v, want empty object", missing)
 	}
 
-	if err := db.SetAssetKOReaderHash(database, "asset_1", "mapped-doc"); err != nil {
+	if err := db.SetAssetKOReaderHash(database.Write(t.Context()), "asset_1", "mapped-doc"); err != nil {
 		t.Fatalf("set mapped hash: %v", err)
 	}
 	for _, tc := range []struct {
@@ -110,12 +110,12 @@ func TestKOReaderSyncRoutes(t *testing.T) {
 		if w.Code != http.StatusOK {
 			t.Fatalf("mapped save %.2f status = %d: %s", tc.percentage, w.Code, w.Body.String())
 		}
-		status, err := db.GetReadingStatus(database, alice.ID, "w_1")
+		status, err := db.GetReadingStatus(database.Read(t.Context()), alice.ID, 1)
 		if err != nil || status.Status != tc.want {
 			t.Fatalf("mapped status %.2f = %+v, err %v; want %s", tc.percentage, status, err, tc.want)
 		}
 	}
-	bobStatus, err := db.GetReadingStatus(database, bob.ID, "w_1")
+	bobStatus, err := db.GetReadingStatus(database.Read(t.Context()), bob.ID, 1)
 	if err != nil || bobStatus.Status != db.ReadingStatusUnread {
 		t.Fatalf("mapped KOSync leaked to bob: %+v, err %v", bobStatus, err)
 	}
@@ -134,7 +134,7 @@ func TestKOReaderOfflineReplaySequence(t *testing.T) {
 	defer database.Close()
 
 	user := mustUser(t, database, "reader", db.RoleMember)
-	created, err := database.CreateAppToken(user.ID, "koreader")
+	created, err := database.CreateAppToken(t.Context(), user.ID, "koreader")
 	if err != nil {
 		t.Fatalf("create app token: %v", err)
 	}

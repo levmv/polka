@@ -2,7 +2,6 @@ package web
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"net/http"
 	"strings"
@@ -88,9 +87,9 @@ type writebackUpdateRequest struct {
 }
 
 func (s *Server) handleAPIAdminStorage(w http.ResponseWriter, r *http.Request) {
-	status, err := s.adminStorageStatus()
+	status, err := s.adminStorageStatus(r.Context())
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, status)
@@ -110,29 +109,29 @@ func (s *Server) handleAPIAdminStorageSave(w http.ResponseWriter, r *http.Reques
 	// side effects, so it saves on its own rather than sharing the ingest tx.
 	if req.Writeback != nil && req.Writeback.Mode != nil {
 		mode := writeback.Mode(strings.TrimSpace(*req.Writeback.Mode))
-		if err := writeback.SaveMode(s.db.DB, mode); err != nil {
+		if err := writeback.SaveMode(s.db.Write(r.Context()), mode); err != nil {
 			if errors.Is(err, writeback.ErrInvalidMode) {
 				http.Error(w, "Write-back mode must be off, manual, or auto", http.StatusBadRequest)
 			} else {
-				serverError(w, err)
+				serverError(w, r, err)
 			}
 			return
 		}
 	}
 
 	if req.Ingest == nil {
-		status, err := s.adminStorageStatus()
+		status, err := s.adminStorageStatus(r.Context())
 		if err != nil {
-			serverError(w, err)
+			serverError(w, r, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, status)
 		return
 	}
 
-	cfg, err := ingest.OpenConfig(s.db.DB, s.dataDir)
+	cfg, err := ingest.OpenConfig(s.db.Read(r.Context()), s.dataDir)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	pathChanged := false
@@ -155,37 +154,37 @@ func (s *Server) handleAPIAdminStorageSave(w http.ResponseWriter, r *http.Reques
 	if cfg.Enabled || pathChanged {
 		path, err := ingest.ResolvePath(s.dataDir, cfg.Path)
 		if err != nil {
-			serverError(w, err)
+			serverError(w, r, err)
 			return
 		}
 		if err := ingest.EnsureLayout(path); err != nil {
-			serverError(w, err)
+			serverError(w, r, err)
 			return
 		}
 	}
-	if err := s.db.Transact(r.Context(), func(tx *sql.Tx) error {
+	if err := s.db.Transact(r.Context(), func(tx *db.Tx) error {
 		var err error
 		cfg, err = ingest.SaveConfig(tx, s.dataDir, cfg)
 		return err
 	}); err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	if err := s.configureIngest(cfg); err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 
-	status, err := s.adminStorageStatus()
+	status, err := s.adminStorageStatus(r.Context())
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, status)
 }
 
-func (s *Server) adminStorageStatus() (AdminStorageDTO, error) {
-	ingestConfig, err := ingest.OpenConfig(s.db.DB, s.dataDir)
+func (s *Server) adminStorageStatus(ctx context.Context) (AdminStorageDTO, error) {
+	ingestConfig, err := ingest.OpenConfig(s.db.Read(ctx), s.dataDir)
 	if err != nil {
 		return AdminStorageDTO{}, err
 	}
@@ -193,15 +192,15 @@ func (s *Server) adminStorageStatus() (AdminStorageDTO, error) {
 	if err != nil {
 		return AdminStorageDTO{}, err
 	}
-	books, err := s.booksStorageStatus()
+	books, err := s.booksStorageStatus(ctx)
 	if err != nil {
 		return AdminStorageDTO{}, err
 	}
-	wb, err := s.writebackStatus()
+	wb, err := s.writebackStatus(ctx)
 	if err != nil {
 		return AdminStorageDTO{}, err
 	}
-	layout, err := s.fileLayoutStatus()
+	layout, err := s.fileLayoutStatus(ctx)
 	if err != nil {
 		return AdminStorageDTO{}, err
 	}
@@ -213,20 +212,20 @@ func (s *Server) adminStorageStatus() (AdminStorageDTO, error) {
 	}, nil
 }
 
-func (s *Server) fileLayoutStatus() (FileLayoutDTO, error) {
-	template, err := storage.OpenBookPathTemplate(s.db.DB)
+func (s *Server) fileLayoutStatus(ctx context.Context) (FileLayoutDTO, error) {
+	template, err := storage.OpenBookPathTemplate(s.db.Read(ctx))
 	if err != nil {
 		return FileLayoutDTO{}, err
 	}
 	return FileLayoutDTO{Template: template}, nil
 }
 
-func (s *Server) writebackStatus() (WritebackStatusDTO, error) {
-	mode, err := writeback.OpenMode(s.db.DB)
+func (s *Server) writebackStatus(ctx context.Context) (WritebackStatusDTO, error) {
+	mode, err := writeback.OpenMode(s.db.Read(ctx))
 	if err != nil {
 		return WritebackStatusDTO{}, err
 	}
-	counts, err := db.CountDirtyMetadataWritebackAssets(s.db.DB, db.FullVisibilityScope())
+	counts, err := db.CountDirtyMetadataWritebackAssets(s.db.Read(ctx), db.FullVisibilityScope())
 	if err != nil {
 		return WritebackStatusDTO{}, err
 	}
@@ -237,12 +236,12 @@ func (s *Server) writebackStatus() (WritebackStatusDTO, error) {
 	}, nil
 }
 
-func (s *Server) booksStorageStatus() (BooksStorageDTO, error) {
-	bookCount, sizeBytes, err := db.LibraryStorageStats(s.db.DB)
+func (s *Server) booksStorageStatus(ctx context.Context) (BooksStorageDTO, error) {
+	bookCount, sizeBytes, err := db.LibraryStorageStats(s.db.Read(ctx))
 	if err != nil {
 		return BooksStorageDTO{}, err
 	}
-	catalogHasBooks, err := db.HasAnyAsset(s.db.DB)
+	catalogHasBooks, err := db.HasAnyAsset(s.db.Read(ctx))
 	if err != nil {
 		return BooksStorageDTO{}, err
 	}
@@ -275,12 +274,12 @@ func (s *Server) booksStorageStatus() (BooksStorageDTO, error) {
 func (s *Server) handleAPIAdminStorageScan(w http.ResponseWriter, r *http.Request) {
 	summary, err := s.scanIncomingNow(r.Context())
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
-	status, err := s.adminStorageStatus()
+	status, err := s.adminStorageStatus(r.Context())
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, StorageScanResultDTO{
@@ -301,7 +300,7 @@ func (s *Server) scanIncomingNow(ctx context.Context) (ingest.Summary, error) {
 	if ingester := s.currentIngester(); ingester != nil {
 		return ingester.ScanOnce(ctx, true)
 	}
-	svc, err := ingest.NewServiceFromSettings(s.db, s.dataDir, s.managedRoot(), ingest.Options{
+	svc, err := ingest.NewServiceFromSettings(ctx, s.db, s.dataDir, s.managedRoot(), ingest.Options{
 		StableScans: 1,
 		ImportQueue: s.storageQueue,
 	})

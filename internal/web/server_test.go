@@ -52,7 +52,7 @@ func TestOpenServeBooksRootCreatesDefaultWhenUnconfigured(t *testing.T) {
 		t.Fatalf("precondition stat default books root = %v; want not exist", err)
 	}
 
-	root, err := openServeBooksRoot(database, dataDir)
+	root, err := openServeBooksRoot(t.Context(), database, dataDir)
 	if err != nil {
 		t.Fatalf("openServeBooksRoot: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestOpenServeBooksRootCreatesDefaultWhenUnconfigured(t *testing.T) {
 	if info, err := os.Stat(want); err != nil || !info.IsDir() {
 		t.Fatalf("default books root stat = %v/%v; want directory", info, err)
 	}
-	configured, err := storage.RootConfigured(database.DB)
+	configured, err := storage.RootConfigured(database.Read(t.Context()))
 	if err != nil {
 		t.Fatalf("RootConfigured: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestOpenServeBooksRootDoesNotCreateConfiguredMissingRoot(t *testing.T) {
 	}
 	defer database.Close()
 
-	configuredRoot, err := storage.SaveRoot(database.DB, dataDir, "configured-books")
+	configuredRoot, err := storage.SaveRoot(database.Write(t.Context()), dataDir, "configured-books")
 	if err != nil {
 		t.Fatalf("SaveRoot: %v", err)
 	}
@@ -87,7 +87,7 @@ func TestOpenServeBooksRootDoesNotCreateConfiguredMissingRoot(t *testing.T) {
 		t.Fatalf("precondition stat configured books root = %v; want not exist", err)
 	}
 
-	root, err := openServeBooksRoot(database, dataDir)
+	root, err := openServeBooksRoot(t.Context(), database, dataDir)
 	if err != nil {
 		t.Fatalf("openServeBooksRoot: %v", err)
 	}

@@ -1,17 +1,6 @@
+import type { Cleanup, DuplicateGroup } from '../../frontend/src/types';
 import { epub, fb2, type UploadFile } from './book-fixtures';
 import { expect, type Page, test } from './fixtures';
-
-type CleanupResponse = {
-  possible_duplicates: {
-    groups: {
-      books: {
-        id: string;
-        title: string;
-        assets: { extension: string }[];
-      }[];
-    }[];
-  };
-};
 
 async function uploadDuplicatePair(page: Page, files: UploadFile[], title: string): Promise<void> {
   await page.goto('/');
@@ -22,20 +11,20 @@ async function uploadDuplicatePair(page: Page, files: UploadFile[], title: strin
 async function cleanupGroupForTitle(
   page: Page,
   title: string,
-): Promise<CleanupResponse['possible_duplicates']['groups'][number]> {
+): Promise<DuplicateGroup> {
   const res = await page.request.get('/api/cleanup');
   expect(res.ok()).toBeTruthy();
-  const cleanup = (await res.json()) as CleanupResponse;
+  const cleanup = (await res.json()) as Cleanup;
   const group = cleanup.possible_duplicates.groups.find((g) => g.books.some((b) => b.title === title));
   expect(group).toBeTruthy();
   return group!;
 }
 
-async function purgeBooks(page: Page, ids: string[]): Promise<void> {
+async function purgeBooks(page: Page, ids: number[]): Promise<void> {
   const trash = await page.request.post('/api/books/bulk/trash', { data: { ids } });
   expect(trash.ok()).toBeTruthy();
   for (const id of ids) {
-    const purge = await page.request.delete(`/api/books/${encodeURIComponent(id)}/purge`);
+    const purge = await page.request.delete(`/api/books/${id}/purge`);
     expect(purge.status()).toBe(204);
   }
 }

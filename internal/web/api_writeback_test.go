@@ -15,13 +15,13 @@ import (
 func TestBulkWritebackAdmissionStatus(t *testing.T) {
 	tests := []struct {
 		name       string
-		bookID     string
+		bookID     int64
 		seal       bool
 		wantStatus int
 	}{
-		{name: "nothing to submit", bookID: "w_2", seal: true, wantStatus: http.StatusOK},
-		{name: "accepted", bookID: "w_1", wantStatus: http.StatusAccepted},
-		{name: "server stopping", bookID: "w_1", seal: true, wantStatus: http.StatusServiceUnavailable},
+		{name: "nothing to submit", bookID: 2, seal: true, wantStatus: http.StatusOK},
+		{name: "accepted", bookID: 1, wantStatus: http.StatusAccepted},
+		{name: "server stopping", bookID: 1, seal: true, wantStatus: http.StatusServiceUnavailable},
 	}
 
 	for _, tt := range tests {
@@ -37,7 +37,7 @@ func TestBulkWritebackAdmissionStatus(t *testing.T) {
 			}
 			s := &Server{db: database, dataDir: dataDir, background: background}
 
-			body, err := json.Marshal(bulkWritebackRequest{IDs: []string{tt.bookID}})
+			body, err := json.Marshal(bulkWritebackRequest{IDs: []int64{tt.bookID}})
 			if err != nil {
 				t.Fatalf("encode request: %v", err)
 			}
@@ -64,62 +64,64 @@ func TestBookWritebackDTOGating(t *testing.T) {
 	defer database.Close()
 	s := &Server{db: database, dataDir: dataDir}
 
-	mustExec(t, database, "INSERT INTO books (id, title, sort_title) VALUES ('w1','Book','Book')")
+	mustExec(t, database, "INSERT INTO books (id, title, sort_title) VALUES (3,'Book','Book')")
 	mustExec(t, database, "INSERT INTO assets (id, book_id, storage_path, filename, extension, format) "+
-		"VALUES ('a1','w1','B/Book [a1].epub','Book.epub','.epub','epub')")
+		"VALUES ('a1','3','B/Book [a1].epub','Book.epub','.epub','epub')")
 
-	writebackDTO := func(bookID string) BookWritebackDTO {
+	writebackDTO := func(bookID int64) BookWritebackDTO {
 		t.Helper()
-		wb, err := s.bookWritebackDTO(bookID, true)
+		wb, err := s.bookWritebackDTO(t.Context(), bookID, true)
 		if err != nil {
-			t.Fatalf("bookWritebackDTO(%s): %v", bookID, err)
+			t.Fatalf("bookWritebackDTO(%d): %v", bookID, err)
 		}
 		if wb == nil {
-			t.Fatalf("bookWritebackDTO(%s) admin = nil; want an object", bookID)
+			t.Fatalf("bookWritebackDTO(%d) admin = nil; want an object", bookID)
 		}
 		return *wb
 	}
 
 	// Born clean (both revs 0): available to an admin in manual mode, not dirty.
-	if wb := writebackDTO("w1"); !wb.Available || wb.Dirty {
+	if wb := writebackDTO(3); !wb.Available || wb.Dirty {
 		t.Fatalf("clean admin = %+v; want available and not dirty", wb)
 	}
 	// A non-admin gets no write-back object at all (the field is omitted).
-	if wb, err := s.bookWritebackDTO("w1", false); err != nil || wb != nil {
+	if wb, err := s.bookWritebackDTO(t.Context(), 3, false); err != nil || wb != nil {
 		t.Fatalf("member writeback = %+v, %v; want nil object", wb, err)
 	}
 
 	// A metadata edit bumps the rev, making the file dirty.
-	if err := db.BumpMetadataRev(database.DB, []string{"w1"}); err != nil {
+	if err := database.Transact(t.Context(), func(tx *db.Tx) error {
+		return db.BumpMetadataRev(tx, []int64{3})
+	}); err != nil {
 		t.Fatalf("BumpMetadataRev: %v", err)
 	}
-	if wb := writebackDTO("w1"); !wb.Available || !wb.Dirty {
+	if wb := writebackDTO(3); !wb.Available || !wb.Dirty {
 		t.Fatalf("dirty admin = %+v; want available and dirty", wb)
 	}
 
 	// Off mode hides the action even for an admin; the dirty fact is still true.
-	if err := writeback.SaveMode(database.DB, writeback.ModeOff); err != nil {
+	if err := writeback.SaveMode(database.Write(t.Context()), writeback.ModeOff); err != nil {
 		t.Fatalf("SaveMode off: %v", err)
 	}
-	if wb := writebackDTO("w1"); wb.Available || !wb.Dirty {
+	if wb := writebackDTO(3); wb.Available || !wb.Dirty {
 		t.Fatalf("off-mode admin = %+v; want unavailable but still dirty", wb)
 	}
 
 	// A PDF-only book has no writable asset, so the action never appears.
-	if err := writeback.SaveMode(database.DB, writeback.ModeManual); err != nil {
+	if err := writeback.SaveMode(database.Write(t.Context()), writeback.ModeManual); err != nil {
 		t.Fatalf("SaveMode manual: %v", err)
 	}
-	mustExec(t, database, "INSERT INTO books (id, title, sort_title) VALUES ('w2','Paper','Paper')")
+	mustExec(t, database, "INSERT INTO books (id, title, sort_title) VALUES (4,'Paper','Paper')")
 	mustExec(t, database, "INSERT INTO assets (id, book_id, storage_path, filename, extension, format) "+
-		"VALUES ('a2','w2','P/Paper [a2].pdf','Paper.pdf','.pdf','pdf')")
-	if wb := writebackDTO("w2"); wb.Available || wb.Dirty {
+		"VALUES ('a2','4','P/Paper [a2].pdf','Paper.pdf','.pdf','pdf')")
+	if wb := writebackDTO(4); wb.Available || wb.Dirty {
 		t.Fatalf("pdf-only admin = %+v; want neither available nor dirty", wb)
 	}
 }
 
 func mustExec(t *testing.T, database *db.DB, query string, args ...any) {
 	t.Helper()
-	if _, err := database.Exec(query, args...); err != nil {
+	if _, err := database.Write(t.Context()).Exec(query, args...); err != nil {
 		t.Fatalf("exec %q: %v", query, err)
 	}
 }

@@ -31,10 +31,10 @@ func TestStorageTemplatePreviewDetectsCollisions(t *testing.T) {
 		t.Fatalf("import folder: %v", err)
 	}
 
-	if err := runStorageTemplatePreview(dataDir, "books/{author_bucket}/{author_sort}/{title} [{asset_id}]{dot_ext}"); err != nil {
+	if err := runStorageTemplatePreview(t.Context(), dataDir, "books/{author_bucket}/{author_sort}/{title} [{asset_id}]{dot_ext}"); err != nil {
 		t.Fatalf("default-like preview: %v", err)
 	}
-	if err := runStorageTemplatePreview(dataDir, "books/collide{dot_ext}"); !errors.Is(err, ErrIssuesFound) {
+	if err := runStorageTemplatePreview(t.Context(), dataDir, "books/collide{dot_ext}"); !errors.Is(err, ErrIssuesFound) {
 		t.Fatalf("collision preview error = %v; want ErrIssuesFound", err)
 	}
 }
@@ -59,12 +59,12 @@ func TestStorageTemplateApplyPersistsRelayoutsAndAffectsNewImports(t *testing.T)
 	if err != nil {
 		t.Fatalf("reopen db: %v", err)
 	}
-	root, err := storage.OpenRoot(database.DB, dataDir)
+	root, err := storage.OpenRoot(database.Read(t.Context()), dataDir)
 	if err != nil {
 		t.Fatalf("open root: %v", err)
 	}
 	var oldPath string
-	if err := database.QueryRow("SELECT storage_path FROM assets ORDER BY id LIMIT 1").Scan(&oldPath); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT storage_path FROM assets ORDER BY id LIMIT 1").Scan(&oldPath); err != nil {
 		t.Fatalf("query old path: %v", err)
 	}
 	database.Close()
@@ -79,7 +79,7 @@ func TestStorageTemplateApplyPersistsRelayoutsAndAffectsNewImports(t *testing.T)
 		t.Fatalf("reopen after apply: %v", err)
 	}
 	defer database.Close()
-	gotTemplate, err := storage.OpenBookPathTemplate(database.DB)
+	gotTemplate, err := storage.OpenBookPathTemplate(database.Read(t.Context()))
 	if err != nil {
 		t.Fatalf("open template: %v", err)
 	}
@@ -87,7 +87,7 @@ func TestStorageTemplateApplyPersistsRelayoutsAndAffectsNewImports(t *testing.T)
 		t.Fatalf("template = %q; want %q", gotTemplate, template)
 	}
 	var newPath string
-	if err := database.QueryRow("SELECT storage_path FROM assets ORDER BY id LIMIT 1").Scan(&newPath); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT storage_path FROM assets ORDER BY id LIMIT 1").Scan(&newPath); err != nil {
 		t.Fatalf("query new path: %v", err)
 	}
 	if !strings.HasPrefix(newPath, "books/flat/") || newPath == oldPath {
@@ -106,7 +106,7 @@ func TestStorageTemplateApplyPersistsRelayoutsAndAffectsNewImports(t *testing.T)
 	if err := runImport(context.Background(), dataDir, []string{filepath.Join(srcDir, "two.epub")}); err != nil {
 		t.Fatalf("import after template apply: %v", err)
 	}
-	rows, err := database.Query("SELECT storage_path FROM assets")
+	rows, err := database.Read(t.Context()).Query("SELECT storage_path FROM assets")
 	if err != nil {
 		t.Fatalf("query paths: %v", err)
 	}

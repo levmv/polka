@@ -1,7 +1,7 @@
 import { escapeHtml } from './dom';
 
 export function coverUrl(
-    bookId: string,
+    bookId: number,
     coverVersion: number,
     variant: 'display' | 'thumb' = 'display',
 ): string {
@@ -22,7 +22,7 @@ export function coverUrl(
 // in a page module so the edit dialog can reuse it without importing the book
 // detail page it is opened from.
 export function coverImgHtml(
-    bookId: string,
+    bookId: number,
     coverVersion: number,
     idAttr?: string,
     imgClass = 'detail-cover-image',

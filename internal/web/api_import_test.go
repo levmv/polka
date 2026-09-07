@@ -28,7 +28,7 @@ func TestAPIImportUploadImportsAndDuplicates(t *testing.T) {
 
 	u := mustUser(t, database, "Alice", db.RoleMember)
 	s := &Server{db: database, dataDir: dataDir, sessions: newSessionStore(database)}
-	sid, err := s.sessions.issue(u.ID)
+	sid, err := s.sessions.issue(t.Context(), u.ID)
 	if err != nil {
 		t.Fatalf("issue session: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestAPIImportUploadImportsAndDuplicates(t *testing.T) {
 	}
 
 	var storagePath string
-	if err := database.QueryRow("SELECT storage_path FROM assets WHERE id = ?", got.AssetID).Scan(&storagePath); err != nil {
+	if err := database.Read(req.Context()).QueryRow("SELECT storage_path FROM assets WHERE id = ?", got.AssetID).Scan(&storagePath); err != nil {
 		t.Fatalf("query asset path: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dataDir, storagePath)); err != nil {
@@ -82,7 +82,7 @@ func TestAPIImportUploadImportsAndDuplicates(t *testing.T) {
 	}
 
 	var assets int
-	if err := database.QueryRow("SELECT COUNT(*) FROM assets").Scan(&assets); err != nil {
+	if err := database.Read(req.Context()).QueryRow("SELECT COUNT(*) FROM assets").Scan(&assets); err != nil {
 		t.Fatalf("count assets: %v", err)
 	}
 	if assets != 1 {
@@ -101,7 +101,7 @@ func TestAPIImportUploadRestoresTrashedDuplicate(t *testing.T) {
 
 	u := mustUser(t, database, "Alice", db.RoleMember)
 	s := &Server{db: database, dataDir: dataDir, sessions: newSessionStore(database)}
-	sid, err := s.sessions.issue(u.ID)
+	sid, err := s.sessions.issue(t.Context(), u.ID)
 	if err != nil {
 		t.Fatalf("issue session: %v", err)
 	}
@@ -120,11 +120,11 @@ func TestAPIImportUploadRestoresTrashedDuplicate(t *testing.T) {
 	if err := json.UnmarshalRead(w.Body, &imported); err != nil {
 		t.Fatalf("decode initial response: %v", err)
 	}
-	if imported.Book.ID == "" || imported.AssetID == "" {
+	if imported.Book.ID == 0 || imported.AssetID == "" {
 		t.Fatalf("initial response missing ids: %+v", imported)
 	}
 
-	if err := db.SoftDeleteBook(database, imported.Book.ID, u.ID); err != nil {
+	if err := db.SoftDeleteBook(database.Write(t.Context()), imported.Book.ID, u.ID); err != nil {
 		t.Fatalf("soft delete imported book: %v", err)
 	}
 
@@ -145,7 +145,7 @@ func TestAPIImportUploadRestoresTrashedDuplicate(t *testing.T) {
 	}
 
 	var deletedAt sql.NullInt64
-	if err := database.QueryRow("SELECT deleted_at FROM books WHERE id = ?", imported.Book.ID).Scan(&deletedAt); err != nil {
+	if err := database.Read(req.Context()).QueryRow("SELECT deleted_at FROM books WHERE id = ?", imported.Book.ID).Scan(&deletedAt); err != nil {
 		t.Fatalf("query restored book: %v", err)
 	}
 	if deletedAt.Valid {
@@ -153,7 +153,7 @@ func TestAPIImportUploadRestoresTrashedDuplicate(t *testing.T) {
 	}
 
 	var assets int
-	if err := database.QueryRow("SELECT COUNT(*) FROM assets").Scan(&assets); err != nil {
+	if err := database.Read(req.Context()).QueryRow("SELECT COUNT(*) FROM assets").Scan(&assets); err != nil {
 		t.Fatalf("count assets: %v", err)
 	}
 	if assets != 1 {
@@ -172,7 +172,7 @@ func TestAPIImportUploadAcceptsZippedFB2(t *testing.T) {
 
 	u := mustUser(t, database, "Alice", db.RoleMember)
 	s := &Server{db: database, dataDir: dataDir, sessions: newSessionStore(database)}
-	sid, err := s.sessions.issue(u.ID)
+	sid, err := s.sessions.issue(t.Context(), u.ID)
 	if err != nil {
 		t.Fatalf("issue session: %v", err)
 	}
@@ -197,7 +197,7 @@ func TestAPIImportUploadAcceptsZippedFB2(t *testing.T) {
 	}
 
 	var storagePath string
-	if err := database.QueryRow("SELECT storage_path FROM assets WHERE id = ?", got.AssetID).Scan(&storagePath); err != nil {
+	if err := database.Read(req.Context()).QueryRow("SELECT storage_path FROM assets WHERE id = ?", got.AssetID).Scan(&storagePath); err != nil {
 		t.Fatalf("query asset path: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dataDir, storagePath)); err != nil {
@@ -216,7 +216,7 @@ func TestAPIImportUploadRejectsUnsupportedFilename(t *testing.T) {
 
 	u := mustUser(t, database, "Alice", db.RoleMember)
 	s := &Server{db: database, dataDir: dataDir, sessions: newSessionStore(database)}
-	sid, err := s.sessions.issue(u.ID)
+	sid, err := s.sessions.issue(t.Context(), u.ID)
 	if err != nil {
 		t.Fatalf("issue session: %v", err)
 	}
@@ -230,7 +230,7 @@ func TestAPIImportUploadRejectsUnsupportedFilename(t *testing.T) {
 		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusBadRequest, w.Body.String())
 	}
 	var books int
-	if err := database.QueryRow("SELECT COUNT(*) FROM books").Scan(&books); err != nil {
+	if err := database.Read(req.Context()).QueryRow("SELECT COUNT(*) FROM books").Scan(&books); err != nil {
 		t.Fatalf("count books: %v", err)
 	}
 	if books != 0 {
@@ -265,13 +265,10 @@ func TestAPIImportRequiresLayoutBeforeWrite(t *testing.T) {
 				if err := storage.EnsureLayout(root); err != nil {
 					t.Fatalf("EnsureLayout: %v", err)
 				}
-				if _, err := database.Exec(
-					`INSERT INTO books (id, title, sort_title) VALUES ('w_seed', 'Seed', 'Seed');
+				mustExec(t, database, `INSERT INTO books (id, title, sort_title) VALUES (169, 'Seed', 'Seed');
 					 INSERT INTO assets (id, book_id, storage_path, filename, extension)
-					   VALUES ('a_seed', 'w_seed', 'Seed/a_seed.epub', 'a_seed.epub', '.epub');`,
-				); err != nil {
-					t.Fatalf("seed catalog asset: %v", err)
-				}
+					   VALUES ('a_seed', 169, 'Seed/a_seed.epub', 'a_seed.epub', '.epub');`)
+
 				return root
 			},
 			verify: func(t *testing.T, root storage.Root) {
@@ -299,7 +296,7 @@ func TestAPIImportRequiresLayoutBeforeWrite(t *testing.T) {
 			root := tc.setup(t, dataDir, database)
 
 			s := &Server{db: database, dataDir: dataDir, storageRoot: root, sessions: newSessionStore(database)}
-			sid, err := s.sessions.issue(u.ID)
+			sid, err := s.sessions.issue(t.Context(), u.ID)
 			if err != nil {
 				t.Fatalf("issue session: %v", err)
 			}

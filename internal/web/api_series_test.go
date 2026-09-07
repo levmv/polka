@@ -11,16 +11,13 @@ import (
 func TestAPISeriesRoutes(t *testing.T) {
 	database, dir := setupTestDB(t)
 	defer database.Close()
-
-	if _, err := database.Exec(`
-		UPDATE books SET series = 'Middle-earth', series_index = 1 WHERE id = 'w_1';
-		UPDATE books SET series = 'Dune', series_index = 1, cover_version = 0 WHERE id = 'w_2';
-		INSERT INTO books (id, title, sort_title, series, series_index, cover_version) VALUES ('w_3', 'Dune Messiah', 'Dune Messiah', 'Dune', 2, 5);
-		INSERT INTO book_authors (book_id, author_id, author_order) VALUES ('w_3', 'a_2', 0);
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, is_primary) VALUES ('asset_3', 'w_3', 'Herbert/Dune_Messiah/asset_3.epub', 'asset_3.epub', '.epub', 1);
-	`); err != nil {
-		t.Fatalf("seed series: %v", err)
-	}
+	mustExec(t, database, `
+		UPDATE books SET series = 'Middle-earth', series_index = 1 WHERE id = 1;
+		UPDATE books SET series = 'Dune', series_index = 1, cover_version = 0 WHERE id = 2;
+		INSERT INTO books (id, title, sort_title, series, series_index, cover_version) VALUES (3, 'Dune Messiah', 'Dune Messiah', 'Dune', 2, 5);
+		INSERT INTO book_authors (book_id, author_id, author_order) VALUES (3, 'a_2', 0);
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, is_primary) VALUES ('asset_3', 3, 'Herbert/Dune_Messiah/asset_3.epub', 'asset_3.epub', '.epub', 1);
+	`)
 
 	s := &Server{db: database, dataDir: dir}
 
@@ -33,8 +30,8 @@ func TestAPISeriesRoutes(t *testing.T) {
 	if err := json.UnmarshalRead(w.Body, &firstPage); err != nil {
 		t.Fatalf("decode series: %v", err)
 	}
-	// Dune's first volume has no cover, so the tile falls through to w_3.
-	wantDune := SeriesDTO{Name: "Dune", Author: "Frank Herbert", BookCount: 2, CoverBookID: "w_3", CoverVersion: 5}
+	// Dune's first volume has no cover, so the tile falls through to book 3.
+	wantDune := SeriesDTO{Name: "Dune", Author: "Frank Herbert", BookCount: 2, CoverBookID: 3, CoverVersion: 5}
 	if len(firstPage.Items) != 1 || firstPage.Items[0] != wantDune || firstPage.NextCursor == "" {
 		t.Fatalf("first series page = %+v, want %+v plus cursor", firstPage, wantDune)
 	}

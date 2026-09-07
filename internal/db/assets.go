@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/levmv/polka/internal/format"
 )
@@ -15,7 +14,7 @@ type AssetRow struct {
 	Format           format.Format
 	StoragePath      string
 	OriginalFilename string
-	BookID           string
+	BookID           int64
 	IsPrimary        bool
 	CanRead          bool
 	// Size is COALESCE(current_size, original_size, 0) from the row, so UI/list
@@ -32,7 +31,7 @@ type PrimaryAssetRow struct {
 
 type AssetWithAuthorRow struct {
 	ID               string
-	BookID           string
+	BookID           int64
 	StoragePath      string
 	OriginalFilename string
 	Extension        string
@@ -68,7 +67,7 @@ func RecordAssetRestore(database Execer, assetID, sha256 string, size int64) err
 // primary is stable; an unreadable primary is replaced only when a readable
 // candidate exists. If every asset is unreadable, the existing primary remains
 // the least surprising download/default-format choice.
-func EnsureReadablePrimaryAsset(tx *sql.Tx, bookID string) error {
+func EnsureReadablePrimaryAsset(tx *Tx, bookID int64) error {
 	var selectedID string
 	err := tx.QueryRow(`
 		SELECT id
@@ -101,18 +100,12 @@ func EnsureReadablePrimaryAsset(tx *sql.Tx, bookID string) error {
 	return nil
 }
 
-func AssetsByBookIDs(queryer Queryer, bookIDs []string) ([]AssetRow, error) {
+func AssetsByBookIDs(queryer Queryer, bookIDs []int64) ([]AssetRow, error) {
 	if len(bookIDs) == 0 {
 		return nil, nil
 	}
 
-	placeholders := strings.Repeat("?,", len(bookIDs))
-	placeholders = placeholders[:len(placeholders)-1]
-
-	args := make([]any, len(bookIDs))
-	for i, id := range bookIDs {
-		args[i] = id
-	}
+	placeholders, args := idPlaceholders(bookIDs)
 
 	query := `
 				SELECT a.book_id, a.id, a.extension, a.format, a.storage_path, COALESCE(a.original_filename, ''), a.is_primary, a.can_read,
@@ -168,7 +161,7 @@ func scanAssetRows(rows *sql.Rows, operation string) ([]AssetRow, error) {
 	return assets, nil
 }
 
-func PrimaryAssetForBook(queryer Queryer, scope VisibilityScope, bookID string) (PrimaryAssetRow, error) {
+func PrimaryAssetForBook(queryer Queryer, scope VisibilityScope, bookID int64) (PrimaryAssetRow, error) {
 	var a PrimaryAssetRow
 	var formatKey string
 	var isPrimary, canRead int

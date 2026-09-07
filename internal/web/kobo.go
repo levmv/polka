@@ -113,7 +113,7 @@ func (s *Server) handleKoboLibrarySync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 
@@ -121,7 +121,7 @@ func (s *Server) handleKoboLibrarySync(w http.ResponseWriter, r *http.Request) {
 		changes, after, koboBaseURL(r), currentRevision, databaseMore,
 	)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -226,7 +226,7 @@ func (s *Server) handleKoboCover(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	r.SetPathValue("id", publication.BookID)
+	r.SetPathValue("id", strconv.FormatInt(publication.BookID, 10))
 	height, _ := strconv.Atoi(r.PathValue("height"))
 	query := r.URL.Query()
 	if height > 0 && height <= 500 {
@@ -267,13 +267,13 @@ func (s *Server) requireKoboPublication(w http.ResponseWriter, r *http.Request) 
 		http.NotFound(w, r)
 		return nil, false
 	}
-	publication, err := s.db.KoboPublicationForAsset(connectionID, assetID)
+	publication, err := db.KoboPublicationForAsset(s.db.Read(r.Context()), connectionID, assetID)
 	if errors.Is(err, db.ErrKoboConnectionNotFound) || errors.Is(err, sql.ErrNoRows) {
 		http.NotFound(w, r)
 		return nil, false
 	}
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return nil, false
 	}
 	return publication, true

@@ -215,21 +215,21 @@ func (s *Server) handleAPIAnnotationExport(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	asset, err := s.assetFile(assetID)
+	asset, err := s.assetFile(r.Context(), assetID)
 	if errors.Is(err, sql.ErrNoRows) {
 		http.Error(w, "Asset not found", http.StatusNotFound)
 		return
 	} else if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
-	rows, err := s.db.ListAnnotations(UserID(r.Context()), assetID)
-	if writeReaderStateError(w, err) {
+	rows, err := db.ListAnnotations(s.db.Read(r.Context()), UserID(r.Context()), assetID)
+	if writeReaderStateError(w, r, err) {
 		return
 	}
-	authorsByBook, err := db.AuthorsByBookIDs(s.db, []string{asset.BookID})
+	authorsByBook, err := db.AuthorsByBookIDs(s.db.Read(r.Context()), []int64{asset.BookID})
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	_, authors := authorsToDTO(authorsByBook[asset.BookID])

@@ -123,19 +123,15 @@ func TestMemberIgnoresStaleShelfScope(t *testing.T) {
 	defer database.Close()
 
 	member := mustUser(t, database, "member", db.RoleMember)
-	scopeShelf, err := database.CreateShelf(member.ID, db.ShelfShared, "Kids", db.ShelfManual, "")
+	scopeShelf, err := database.CreateShelf(t.Context(), member.ID, db.ShelfShared, "Kids", db.ShelfManual, "")
 	if err != nil {
 		t.Fatalf("create scope shelf: %v", err)
 	}
-	if err := database.AddBookToShelf(scopeShelf.ID, 0, "w_1"); err != nil {
+	if err := database.AddBookToShelf(t.Context(), scopeShelf.ID, 0, 1); err != nil {
 		t.Fatalf("seed scope shelf: %v", err)
 	}
-	if _, err := database.Exec(`UPDATE users SET content_scope = 'shelves' WHERE id = ?`, member.ID); err != nil {
-		t.Fatalf("force stale member scope: %v", err)
-	}
-	if _, err := database.Exec(`INSERT INTO user_scope_shelves (user_id, shelf_id) VALUES (?, ?)`, member.ID, scopeShelf.ID); err != nil {
-		t.Fatalf("force stale member scope shelf: %v", err)
-	}
+	mustExec(t, database, `UPDATE users SET content_scope = 'shelves' WHERE id = ?`, member.ID)
+	mustExec(t, database, `INSERT INTO user_scope_shelves (user_id, shelf_id) VALUES (?, ?)`, member.ID, scopeShelf.ID)
 
 	s := newTestServer(database, dir)
 	handler := testRoutes(t, s)

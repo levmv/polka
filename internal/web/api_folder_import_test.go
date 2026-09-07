@@ -34,9 +34,7 @@ func TestAPIAdminStorageImportFolderPreview(t *testing.T) {
 	if _, err := importer.ImportFile(context.Background(), database, root, seedPath, nil, importer.Options{CoverRoot: root}); err != nil {
 		t.Fatalf("seed import: %v", err)
 	}
-	if _, err := database.Exec("UPDATE books SET deleted_at = unixepoch()"); err != nil {
-		t.Fatalf("trash seed book: %v", err)
-	}
+	mustExec(t, database, "UPDATE books SET deleted_at = unixepoch()")
 
 	sourceDir := t.TempDir()
 	writeFile(t, filepath.Join(sourceDir, "duplicate.epub"), duplicateBytes)
@@ -149,7 +147,7 @@ func TestAPIAdminStorageImportFolderRun(t *testing.T) {
 		t.Fatalf("source second was removed: %v", err)
 	}
 	var assets int
-	if err := database.QueryRow("SELECT COUNT(*) FROM assets").Scan(&assets); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT COUNT(*) FROM assets").Scan(&assets); err != nil {
 		t.Fatalf("count assets: %v", err)
 	}
 	if assets != 2 {

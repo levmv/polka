@@ -7,7 +7,7 @@ test('an EPUB cannot execute an uploaded text file as a same-origin script', asy
   browserErrors,
 }) => {
   const stamp = Date.now().toString(36);
-  const books: string[] = [];
+  const books: number[] = [];
   browserErrors.allow((message) =>
     message.includes('Executing inline script violates the following Content Security Policy') ||
     (message.includes('Refused to execute script from') && message.includes('MIME type')),

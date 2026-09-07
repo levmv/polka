@@ -29,6 +29,7 @@ var (
 	ErrQueryShelf         = errors.New("query shelves do not have explicit membership")
 	ErrEmptyShelfName     = errors.New("shelf name must not be empty")
 	ErrShelfOwnerRequired = errors.New("shelf owner is required")
+	ErrInvalidShelfInput  = errors.New("invalid shelf input")
 )
 
 // ErrScopeShelfNotEligible classifies a smart shelf whose complete query
@@ -87,21 +88,21 @@ func normalizeShelfInput(name string, kind ShelfKind, query string) (string, She
 		return name, kind, "", "", nil
 	case ShelfQuery:
 		if query == "" {
-			return "", "", "", "", errors.New("query shelf requires a query")
+			return "", "", "", "", errorWithDetail(ErrInvalidShelfInput, "query shelf requires a query")
 		}
 		validation := ValidateSearchQuery(query)
 		if !validation.Valid {
 			if validation.Error != "" {
-				return "", "", "", "", errors.New(validation.Error)
+				return "", "", "", "", errorWithDetail(ErrInvalidShelfInput, validation.Error)
 			}
-			return "", "", "", "", errors.New("query shelf requires a searchable query")
+			return "", "", "", "", errorWithDetail(ErrInvalidShelfInput, "query shelf requires a searchable query")
 		}
 		// query_match is the authorization-safe FTS cache, not a partial
 		// serialization of every query. A smart shelf with relational filters
 		// still works from query, but cannot define reader access.
 		return name, kind, query, validation.scopeMatch, nil
 	default:
-		return "", "", "", "", fmt.Errorf("invalid shelf kind %q", kind)
+		return "", "", "", "", errorWithDetail(ErrInvalidShelfInput, fmt.Sprintf("invalid shelf kind %q", kind))
 	}
 }
 
@@ -113,17 +114,17 @@ func normalizeShelfVisibility(visibility ShelfVisibility) (ShelfVisibility, erro
 	case ShelfPersonal, ShelfShared:
 		return visibility, nil
 	default:
-		return "", fmt.Errorf("invalid shelf visibility %q", visibility)
+		return "", errorWithDetail(ErrInvalidShelfInput, fmt.Sprintf("invalid shelf visibility %q", visibility))
 	}
 }
 
-func nextShelfPosition(database *DB, ownerID int64, visibility ShelfVisibility) (int, error) {
+func nextShelfPosition(queryer Queryer, ownerID int64, visibility ShelfVisibility) (int, error) {
 	var pos int
 	var err error
 	if visibility == ShelfShared {
-		err = database.QueryRow("SELECT COALESCE(MAX(position) + 1, 0) FROM shelves WHERE visibility = ?", string(ShelfShared)).Scan(&pos)
+		err = queryer.QueryRow("SELECT COALESCE(MAX(position) + 1, 0) FROM shelves WHERE visibility = ?", string(ShelfShared)).Scan(&pos)
 	} else {
-		err = database.QueryRow("SELECT COALESCE(MAX(position) + 1, 0) FROM shelves WHERE visibility = ? AND owner_id = ?", string(ShelfPersonal), ownerID).Scan(&pos)
+		err = queryer.QueryRow("SELECT COALESCE(MAX(position) + 1, 0) FROM shelves WHERE visibility = ? AND owner_id = ?", string(ShelfPersonal), ownerID).Scan(&pos)
 	}
 	if err != nil {
 		return 0, fmt.Errorf("next shelf position: %w", err)
@@ -133,7 +134,7 @@ func nextShelfPosition(database *DB, ownerID int64, visibility ShelfVisibility) 
 
 // CreateShelf inserts either a manual shelf or a query-backed shelf. ownerID is
 // always the shelf owner; visibility controls whether other users can see it.
-func (db *DB) CreateShelf(ownerID int64, visibility ShelfVisibility, name string, kind ShelfKind, query string) (*Shelf, error) {
+func (db *DB) CreateShelf(ctx context.Context, ownerID int64, visibility ShelfVisibility, name string, kind ShelfKind, query string) (*Shelf, error) {
 	if ownerID <= 0 {
 		return nil, ErrShelfOwnerRequired
 	}
@@ -146,7 +147,7 @@ func (db *DB) CreateShelf(ownerID int64, visibility ShelfVisibility, name string
 		return nil, err
 	}
 
-	position, err := nextShelfPosition(db, ownerID, visibility)
+	position, err := nextShelfPosition(db.Read(ctx), ownerID, visibility)
 	if err != nil {
 		return nil, err
 	}
@@ -171,18 +172,17 @@ func (db *DB) CreateShelf(ownerID int64, visibility ShelfVisibility, name string
 		qm = sql.NullString{String: queryMatch, Valid: true}
 	}
 
-	if _, err := db.Exec(
-		`INSERT INTO shelves (id, name, kind, query, query_match, owner_id, visibility, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+	if _, err := db.Write(ctx).Exec(`INSERT INTO shelves (id, name, kind, query, query_match, owner_id, visibility, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		shelf.ID, shelf.Name, string(shelf.Kind), q, qm, shelf.OwnerID, string(shelf.Visibility), shelf.Position,
 	); err != nil {
 		return nil, fmt.Errorf("insert shelf: %w", err)
 	}
-	return db.GetShelf(shelf.ID, ownerID)
+	return GetShelf(db.Read(ctx), shelf.ID, ownerID)
 }
 
 // ListShelves returns shared shelves plus the viewer's personal shelves. With a
 // zero viewerID it returns only shared shelves.
-func (db *DB) ListShelves(viewerID int64) ([]Shelf, error) {
+func ListShelves(queryer Queryer, viewerID int64) ([]Shelf, error) {
 	query := `
 			SELECT id, name, kind, query, query_match, owner_id, visibility, position, created_at, updated_at
 			FROM shelves
@@ -194,7 +194,7 @@ func (db *DB) ListShelves(viewerID int64) ([]Shelf, error) {
 	}
 	query += ` ORDER BY visibility <> 'shared', position ASC, name COLLATE NOCASE ASC`
 
-	rows, err := db.Query(query, args...)
+	rows, err := queryer.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list shelves: %w", err)
 	}
@@ -242,11 +242,11 @@ func SharedShelfNamesOwnedBy(queryer Queryer, ownerID int64) ([]string, error) {
 // Shelf-scoped accounts see assigned shared scope shelves plus their personal
 // shelves, so scope-defining shelves are navigable without exposing unrelated
 // shared shelf names.
-func (db *DB) ListShelvesForUser(userID int64) ([]Shelf, error) {
+func ListShelvesForUser(queryer Queryer, userID int64) ([]Shelf, error) {
 	if userID <= 0 {
-		return db.ListShelves(0)
+		return ListShelves(queryer, 0)
 	}
-	u, err := db.GetUserByID(userID)
+	u, err := GetUserByID(queryer, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -254,10 +254,10 @@ func (db *DB) ListShelvesForUser(userID int64) ([]Shelf, error) {
 		return nil, sql.ErrNoRows
 	}
 	if u.Role != RoleReader || u.ContentScope != ContentScopeShelves {
-		return db.ListShelves(userID)
+		return ListShelves(queryer, userID)
 	}
 
-	rows, err := db.Query(`
+	rows, err := queryer.Query(`
 			SELECT s.id, s.name, s.kind, s.query, s.query_match, s.owner_id, s.visibility, s.position, s.created_at, s.updated_at
 			FROM shelves s
 			WHERE (s.owner_id = ? AND s.visibility = 'personal')
@@ -286,7 +286,7 @@ func (db *DB) ListShelvesForUser(userID int64) ([]Shelf, error) {
 
 // GetShelf returns a shelf visible to viewerID. Zero viewerID can only see
 // shared shelves.
-func (db *DB) GetShelf(shelfID string, viewerID int64) (*Shelf, error) {
+func GetShelf(queryer Queryer, shelfID string, viewerID int64) (*Shelf, error) {
 	query := `
 			SELECT id, name, kind, query, query_match, owner_id, visibility, position, created_at, updated_at
 			FROM shelves
@@ -298,7 +298,7 @@ func (db *DB) GetShelf(shelfID string, viewerID int64) (*Shelf, error) {
 	}
 	query += `)`
 
-	s, err := scanShelf(db.QueryRow(query, args...))
+	s, err := scanShelf(queryer.QueryRow(query, args...))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrShelfNotFound
 	}
@@ -311,11 +311,11 @@ func (db *DB) GetShelf(shelfID string, viewerID int64) (*Shelf, error) {
 // GetShelfForUser returns a shelf only if it is visible in the user's current
 // library scope. Use GetShelf for low-level owner/shared checks that should not
 // apply content-scope narrowing.
-func (db *DB) GetShelfForUser(shelfID string, userID int64) (*Shelf, error) {
+func GetShelfForUser(queryer Queryer, shelfID string, userID int64) (*Shelf, error) {
 	if userID <= 0 {
-		return db.GetShelf(shelfID, 0)
+		return GetShelf(queryer, shelfID, 0)
 	}
-	u, err := db.GetUserByID(userID)
+	u, err := GetUserByID(queryer, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -323,10 +323,10 @@ func (db *DB) GetShelfForUser(shelfID string, userID int64) (*Shelf, error) {
 		return nil, sql.ErrNoRows
 	}
 	if u.Role != RoleReader || u.ContentScope != ContentScopeShelves {
-		return db.GetShelf(shelfID, userID)
+		return GetShelf(queryer, shelfID, userID)
 	}
 
-	row := db.QueryRow(`
+	row := queryer.QueryRow(`
 			SELECT s.id, s.name, s.kind, s.query, s.query_match, s.owner_id, s.visibility, s.position, s.created_at, s.updated_at
 			FROM shelves s
 			WHERE s.id = ?
@@ -367,8 +367,8 @@ func scanShelf(row rowScanner) (Shelf, error) {
 // new search string; manual shelves ignore query and keep explicit membership.
 // visibility changes whether the shelf is personal or shared without changing
 // ownership.
-func (db *DB) UpdateShelf(shelfID string, viewerID int64, name, query string, visibility ShelfVisibility) (*Shelf, error) {
-	shelf, err := db.GetShelf(shelfID, viewerID)
+func (db *DB) UpdateShelf(ctx context.Context, shelfID string, viewerID int64, name, query string, visibility ShelfVisibility) (*Shelf, error) {
+	shelf, err := GetShelf(db.Read(ctx), shelfID, viewerID)
 	if err != nil {
 		return nil, err
 	}
@@ -385,7 +385,7 @@ func (db *DB) UpdateShelf(shelfID string, viewerID int64, name, query string, vi
 	}
 	position := shelf.Position
 	if visibility != shelf.Visibility {
-		position, err = nextShelfPosition(db, shelf.OwnerID, visibility)
+		position, err = nextShelfPosition(db.Read(ctx), shelf.OwnerID, visibility)
 		if err != nil {
 			return nil, err
 		}
@@ -397,8 +397,7 @@ func (db *DB) UpdateShelf(shelfID string, viewerID int64, name, query string, vi
 		qm = sql.NullString{String: queryMatch, Valid: true}
 	}
 
-	res, err := db.Exec(
-		`UPDATE shelves
+	res, err := db.Write(ctx).Exec(`UPDATE shelves
 		SET name = ?, query = ?, query_match = ?, visibility = ?, position = ?, updated_at = unixepoch()
 		WHERE id = ?`,
 		name, q, qm, string(visibility), position, shelfID,
@@ -409,14 +408,14 @@ func (db *DB) UpdateShelf(shelfID string, viewerID int64, name, query string, vi
 	if n, _ := res.RowsAffected(); n == 0 {
 		return nil, ErrShelfNotFound
 	}
-	return db.GetShelf(shelfID, viewerID)
+	return GetShelf(db.Read(ctx), shelfID, viewerID)
 }
 
-func (db *DB) DeleteShelf(shelfID string, viewerID int64) error {
-	if _, err := db.GetShelf(shelfID, viewerID); err != nil {
+func (db *DB) DeleteShelf(ctx context.Context, shelfID string, viewerID int64) error {
+	if _, err := GetShelf(db.Read(ctx), shelfID, viewerID); err != nil {
 		return err
 	}
-	res, err := db.Exec("DELETE FROM shelves WHERE id = ?", shelfID)
+	res, err := db.Write(ctx).Exec("DELETE FROM shelves WHERE id = ?", shelfID)
 	if err != nil {
 		return fmt.Errorf("delete shelf: %w", err)
 	}
@@ -426,15 +425,15 @@ func (db *DB) DeleteShelf(shelfID string, viewerID int64) error {
 	return nil
 }
 
-func (db *DB) AddBookToShelf(shelfID string, viewerID int64, bookID string) error {
-	shelf, err := db.GetShelf(shelfID, viewerID)
+func (db *DB) AddBookToShelf(ctx context.Context, shelfID string, viewerID int64, bookID int64) error {
+	shelf, err := GetShelf(db.Read(ctx), shelfID, viewerID)
 	if err != nil {
 		return err
 	}
 	if shelf.Kind != ShelfManual {
 		return ErrQueryShelf
 	}
-	_, err = db.Exec(`
+	_, err = db.Write(ctx).Exec(`
 		INSERT INTO shelf_books (shelf_id, book_id, position)
 		VALUES (?, ?, COALESCE((SELECT MAX(position) + 1 FROM shelf_books WHERE shelf_id = ?), 0))
 		ON CONFLICT(shelf_id, book_id) DO NOTHING
@@ -449,8 +448,8 @@ func (db *DB) AddBookToShelf(shelfID string, viewerID int64, bookID string) erro
 // skipping any already present, and returns how many rows were newly inserted.
 // Each insert recomputes the next position, so the selection is appended in the
 // given order after whatever the shelf already held.
-func (db *DB) AddBooksToShelf(ctx context.Context, shelfID string, viewerID int64, bookIDs []string) (int, error) {
-	shelf, err := db.GetShelf(shelfID, viewerID)
+func (db *DB) AddBooksToShelf(ctx context.Context, shelfID string, viewerID int64, bookIDs []int64) (int, error) {
+	shelf, err := GetShelf(db.Read(ctx), shelfID, viewerID)
 	if err != nil {
 		return 0, err
 	}
@@ -461,8 +460,8 @@ func (db *DB) AddBooksToShelf(ctx context.Context, shelfID string, viewerID int6
 		return 0, nil
 	}
 	changed := 0
-	err = db.Transact(ctx, func(tx *sql.Tx) error {
-		stmt, err := tx.PrepareContext(ctx, `
+	err = db.Transact(ctx, func(tx *Tx) error {
+		stmt, err := tx.Prepare(`
 			INSERT INTO shelf_books (shelf_id, book_id, position)
 			VALUES (?, ?, COALESCE((SELECT MAX(position) + 1 FROM shelf_books WHERE shelf_id = ?), 0))
 			ON CONFLICT(shelf_id, book_id) DO NOTHING
@@ -490,8 +489,8 @@ func (db *DB) AddBooksToShelf(ctx context.Context, shelfID string, viewerID int6
 
 // RemoveBooksFromShelf drops every bookID from the manual shelf in one statement
 // and returns how many rows were actually removed.
-func (db *DB) RemoveBooksFromShelf(shelfID string, viewerID int64, bookIDs []string) (int, error) {
-	shelf, err := db.GetShelf(shelfID, viewerID)
+func (db *DB) RemoveBooksFromShelf(ctx context.Context, shelfID string, viewerID int64, bookIDs []int64) (int, error) {
+	shelf, err := GetShelf(db.Read(ctx), shelfID, viewerID)
 	if err != nil {
 		return 0, err
 	}
@@ -503,8 +502,7 @@ func (db *DB) RemoveBooksFromShelf(shelfID string, viewerID int64, bookIDs []str
 	}
 	placeholders, args := idPlaceholders(bookIDs)
 	args = append([]any{shelfID}, args...)
-	res, err := db.Exec(
-		"DELETE FROM shelf_books WHERE shelf_id = ? AND book_id IN ("+placeholders+")", args...,
+	res, err := db.Write(ctx).Exec("DELETE FROM shelf_books WHERE shelf_id = ? AND book_id IN ("+placeholders+")", args...,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("remove books from shelf: %w", err)
@@ -513,15 +511,15 @@ func (db *DB) RemoveBooksFromShelf(shelfID string, viewerID int64, bookIDs []str
 	return int(n), nil
 }
 
-func (db *DB) RemoveBookFromShelf(shelfID string, viewerID int64, bookID string) error {
-	shelf, err := db.GetShelf(shelfID, viewerID)
+func (db *DB) RemoveBookFromShelf(ctx context.Context, shelfID string, viewerID int64, bookID int64) error {
+	shelf, err := GetShelf(db.Read(ctx), shelfID, viewerID)
 	if err != nil {
 		return err
 	}
 	if shelf.Kind != ShelfManual {
 		return ErrQueryShelf
 	}
-	if _, err := db.Exec("DELETE FROM shelf_books WHERE shelf_id = ? AND book_id = ?", shelfID, bookID); err != nil {
+	if _, err := db.Write(ctx).Exec("DELETE FROM shelf_books WHERE shelf_id = ? AND book_id = ?", shelfID, bookID); err != nil {
 		return fmt.Errorf("remove book from shelf: %w", err)
 	}
 	return nil
@@ -530,7 +528,7 @@ func (db *DB) RemoveBookFromShelf(shelfID string, viewerID int64, bookID string)
 // ListBookShelfMemberships returns visible manual shelves and whether the book
 // is currently assigned to each. Query shelves are omitted because they cannot
 // be hand-edited.
-func (db *DB) ListBookShelfMemberships(viewerID int64, bookID string) ([]ShelfMembership, error) {
+func ListBookShelfMemberships(queryer Queryer, viewerID int64, bookID int64) ([]ShelfMembership, error) {
 	query := `
 			SELECT s.id, s.name, s.kind, s.query, s.query_match, s.owner_id, s.visibility, s.position, s.created_at, s.updated_at,
 			       CASE WHEN sb.book_id IS NULL THEN 0 ELSE 1 END AS in_shelf
@@ -545,7 +543,7 @@ func (db *DB) ListBookShelfMemberships(viewerID int64, bookID string) ([]ShelfMe
 	query += `)
 			ORDER BY s.visibility <> 'shared', s.position ASC, s.name COLLATE NOCASE ASC`
 
-	rows, err := db.Query(query, args...)
+	rows, err := queryer.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list book shelf memberships: %w", err)
 	}

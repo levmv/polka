@@ -9,7 +9,7 @@ import (
 
 func TestShelfCLISharedManualShelf(t *testing.T) {
 	dataDir := t.TempDir()
-	initialized, err := ensureLibraryInitialized(dataDir)
+	initialized, err := ensureLibraryInitialized(t.Context(), dataDir)
 	if err != nil {
 		t.Fatalf("ensureLibraryInitialized: %v", err)
 	}
@@ -19,15 +19,15 @@ func TestShelfCLISharedManualShelf(t *testing.T) {
 	if err != nil {
 		t.Fatalf("db.Init: %v", err)
 	}
-	if _, err := database.CreateUser("admin", "pw", db.RoleAdmin); err != nil {
+	if _, err := database.CreateUser(t.Context(), "admin", "pw", db.RoleAdmin); err != nil {
 		t.Fatalf("create admin: %v", err)
 	}
-	database.Exec("INSERT INTO books (id, title, sort_title) VALUES ('w_1', 'Title', 'Title')")
-	database.Exec("INSERT INTO authors (id, name, sort_name) VALUES ('a_1', 'Author', 'Author')")
-	database.Exec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES ('w_1', 'a_1', 0)")
+	database.Write(t.Context()).Exec("INSERT INTO books (id, title, sort_title) VALUES (1, 'Title', 'Title')")
+	database.Write(t.Context()).Exec("INSERT INTO authors (id, name, sort_name) VALUES ('a_1', 'Author', 'Author')")
+	database.Write(t.Context()).Exec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES (1, 'a_1', 0)")
 	database.Close()
 
-	if err := runLibraryShelves(dataDir, []string{"create", "Favorites"}); err != nil {
+	if err := runLibraryShelves(t.Context(), dataDir, []string{"create", "Favorites"}); err != nil {
 		t.Fatalf("shelf create: %v", err)
 	}
 
@@ -37,15 +37,15 @@ func TestShelfCLISharedManualShelf(t *testing.T) {
 	}
 
 	var shelfID string
-	if err := database.QueryRow("SELECT id FROM shelves WHERE name = 'Favorites' AND visibility = 'shared'").Scan(&shelfID); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT id FROM shelves WHERE name = 'Favorites' AND visibility = 'shared'").Scan(&shelfID); err != nil {
 		t.Fatalf("query shelf: %v", err)
 	}
 	database.Close()
 
-	if err := runLibraryShelves(dataDir, []string{"add-book", shelfID, "w_1"}); err != nil {
+	if err := runLibraryShelves(t.Context(), dataDir, []string{"add-book", shelfID, "1"}); err != nil {
 		t.Fatalf("shelf add-book: %v", err)
 	}
-	if err := runLibraryShelves(dataDir, []string{"books", shelfID}); err != nil {
+	if err := runLibraryShelves(t.Context(), dataDir, []string{"books", shelfID}); err != nil {
 		t.Fatalf("shelf books: %v", err)
 	}
 
@@ -56,7 +56,7 @@ func TestShelfCLISharedManualShelf(t *testing.T) {
 	defer database.Close()
 
 	var n int
-	if err := database.QueryRow("SELECT COUNT(*) FROM shelf_books WHERE shelf_id = ? AND book_id = 'w_1'", shelfID).Scan(&n); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT COUNT(*) FROM shelf_books WHERE shelf_id = ? AND book_id = 1", shelfID).Scan(&n); err != nil {
 		t.Fatalf("count shelf books: %v", err)
 	}
 	if n != 1 {

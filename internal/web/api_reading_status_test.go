@@ -18,7 +18,7 @@ func TestAPIReadingStatusManualLifecycleAndBookDetail(t *testing.T) {
 	handler := testRoutes(t, s)
 
 	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodGet, "/api/books/w_1", nil))
+	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodGet, "/api/books/1", nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("detail status = %d: %s", w.Code, w.Body.String())
 	}
@@ -31,7 +31,7 @@ func TestAPIReadingStatusManualLifecycleAndBookDetail(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodPut, "/api/books/w_1/reading-status", readingStatusRequest{Status: db.ReadingStatusDropped}))
+	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodPut, "/api/books/1/reading-status", readingStatusRequest{Status: db.ReadingStatusDropped}))
 	if w.Code != http.StatusOK {
 		t.Fatalf("set dropped status = %d: %s", w.Code, w.Body.String())
 	}
@@ -44,7 +44,7 @@ func TestAPIReadingStatusManualLifecycleAndBookDetail(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, bob.ID, http.MethodGet, "/api/books/w_1", nil))
+	handler.ServeHTTP(w, jsonRequest(t, s, bob.ID, http.MethodGet, "/api/books/1", nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("bob detail status = %d: %s", w.Code, w.Body.String())
 	}
@@ -57,7 +57,7 @@ func TestAPIReadingStatusManualLifecycleAndBookDetail(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodPut, "/api/books/w_1/reading-status", readingStatusRequest{Status: "paused"}))
+	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodPut, "/api/books/1/reading-status", readingStatusRequest{Status: "paused"}))
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("invalid status = %d; want 400: %s", w.Code, w.Body.String())
 	}

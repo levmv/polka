@@ -61,7 +61,7 @@ const routes: Route<unknown>[] = [
             return pathParts[pathParts.length - 1] || null;
         },
         render: () => renderBookPage(),
-        mount: (bookId, root, context) => initBookDetail(String(bookId), root, context),
+        mount: (bookId, root, context) => initBookDetail(Number(bookId), root, context),
     },
     {
         navId: 'nav-library',

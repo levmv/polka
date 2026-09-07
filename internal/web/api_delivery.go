@@ -114,7 +114,7 @@ type SendOptionsDTO struct {
 }
 
 type createDeliveryRequest struct {
-	BookID   string `json:"book_id"`
+	BookID   int64  `json:"book_id"`
 	DeviceID string `json:"device_id"`
 	AssetID  string `json:"asset_id"`
 	Target   string `json:"target"`
@@ -126,7 +126,7 @@ type DeliveryJobDTO struct {
 	DeviceName  string `json:"device_name"`
 	DeviceEmail string `json:"device_email"`
 	Preset      string `json:"preset"`
-	BookID      string `json:"book_id"`
+	BookID      int64  `json:"book_id"`
 	AssetID     string `json:"asset_id,omitempty"`
 	Title       string `json:"title"`
 	Target      string `json:"target,omitempty"`
@@ -148,17 +148,17 @@ func (s *Server) handleAPIAdminDeliverySave(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "Missing enabled value", http.StatusBadRequest)
 		return
 	}
-	if err := delivery.SaveEnabled(s.db, *req.Enabled); err != nil {
-		serverError(w, err)
+	if err := delivery.SaveEnabled(s.db.Write(r.Context()), *req.Enabled); err != nil {
+		serverError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, DeliverySettingsDTO{Enabled: *req.Enabled})
 }
 
 func (s *Server) handleAPIAdminEmail(w http.ResponseWriter, r *http.Request) {
-	cfg, passwordSet, err := s.deliveryEmailConfig()
+	cfg, passwordSet, err := s.deliveryEmailConfig(r.Context())
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, emailSettingsDTO(cfg, passwordSet))
@@ -169,9 +169,9 @@ func (s *Server) handleAPIAdminEmailSave(w http.ResponseWriter, r *http.Request)
 	if !readJSON(w, r, &req) {
 		return
 	}
-	cfg, _, err := s.deliveryEmailConfig()
+	cfg, _, err := s.deliveryEmailConfig(r.Context())
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	passwordChanged := req.Password != nil
@@ -205,14 +205,14 @@ func (s *Server) handleAPIAdminEmailSave(w http.ResponseWriter, r *http.Request)
 	}
 	cfg = cfg.Normalized()
 
-	err = s.db.Transact(r.Context(), func(tx *sql.Tx) error {
+	err = s.db.Transact(r.Context(), func(tx *db.Tx) error {
 		if passwordChanged {
 			return delivery.SaveSMTPConfig(tx, cfg)
 		}
 		return delivery.SaveSMTPConfigKeepingPassword(tx, cfg)
 	})
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, emailSettingsDTO(cfg, cfg.Password != ""))
@@ -228,9 +228,9 @@ func (s *Server) handleAPIAdminEmailTest(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "Test recipient email is invalid", http.StatusBadRequest)
 		return
 	}
-	cfg, _, err := s.deliveryEmailConfig()
+	cfg, _, err := s.deliveryEmailConfig(r.Context())
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	if !cfg.Configured() {
@@ -247,8 +247,8 @@ func (s *Server) handleAPIAdminEmailTest(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleAPIDeliveryDevices(w http.ResponseWriter, r *http.Request) {
-	devices, err := s.db.ListDeliveryDevices(UserID(r.Context()))
-	if writeDeliveryError(w, err) {
+	devices, err := db.ListDeliveryDevices(s.db.Read(r.Context()), UserID(r.Context()))
+	if writeDeliveryError(w, r, err) {
 		return
 	}
 	out := make([]DeliveryDeviceDTO, 0, len(devices))
@@ -275,7 +275,7 @@ func (s *Server) handleAPIDeliveryDeviceCreate(w http.ResponseWriter, r *http.Re
 	}
 	isDefault := boolValue(req.IsDefault)
 	device, err := s.db.CreateDeliveryDevice(r.Context(), UserID(r.Context()), name, email, preset, isDefault)
-	if writeDeliveryError(w, err) {
+	if writeDeliveryError(w, r, err) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, deliveryDeviceDTO(*device))
@@ -283,8 +283,8 @@ func (s *Server) handleAPIDeliveryDeviceCreate(w http.ResponseWriter, r *http.Re
 
 func (s *Server) handleAPIDeliveryDeviceUpdate(w http.ResponseWriter, r *http.Request) {
 	deviceID := r.PathValue("id")
-	current, err := s.db.GetDeliveryDevice(UserID(r.Context()), deviceID)
-	if writeDeliveryError(w, err) {
+	current, err := db.GetDeliveryDevice(s.db.Read(r.Context()), UserID(r.Context()), deviceID)
+	if writeDeliveryError(w, r, err) {
 		return
 	}
 	var req deliveryDeviceRequest
@@ -309,7 +309,7 @@ func (s *Server) handleAPIDeliveryDeviceUpdate(w http.ResponseWriter, r *http.Re
 		current.IsDefault = *req.IsDefault
 	}
 	updated, err := s.db.UpdateDeliveryDevice(r.Context(), UserID(r.Context()), *current)
-	if writeDeliveryError(w, err) {
+	if writeDeliveryError(w, r, err) {
 		return
 	}
 	writeJSON(w, http.StatusOK, deliveryDeviceDTO(*updated))
@@ -317,34 +317,34 @@ func (s *Server) handleAPIDeliveryDeviceUpdate(w http.ResponseWriter, r *http.Re
 
 func (s *Server) handleAPIDeliveryDeviceDelete(w http.ResponseWriter, r *http.Request) {
 	err := s.db.DeleteDeliveryDevice(r.Context(), UserID(r.Context()), r.PathValue("id"))
-	if writeDeliveryError(w, err) {
+	if writeDeliveryError(w, r, err) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleAPISendOptions(w http.ResponseWriter, r *http.Request) {
-	bookID := strings.TrimSpace(r.URL.Query().Get("book"))
-	if bookID == "" {
+	bookID, parseErr := strconv.ParseInt(r.URL.Query().Get("book"), 10, 64)
+	if parseErr != nil || bookID <= 0 {
 		http.Error(w, "Missing book id", http.StatusBadRequest)
 		return
 	}
-	enabled, err := delivery.Enabled(s.db)
+	enabled, err := delivery.Enabled(s.db.Read(r.Context()))
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	if !enabled {
 		writeJSON(w, http.StatusOK, SendOptionsDTO{Devices: []SendOptionDTO{}, Reason: deliveryMessageDisabled})
 		return
 	}
-	cfg, _, err := s.deliveryEmailConfig()
+	cfg, _, err := s.deliveryEmailConfig(r.Context())
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
-	devices, err := s.db.ListDeliveryDevices(UserID(r.Context()))
-	if writeDeliveryError(w, err) {
+	devices, err := db.ListDeliveryDevices(s.db.Read(r.Context()), UserID(r.Context()))
+	if writeDeliveryError(w, r, err) {
 		return
 	}
 	if !cfg.Configured() {
@@ -374,25 +374,25 @@ func (s *Server) handleAPIDeliveryCreate(w http.ResponseWriter, r *http.Request)
 	if !readJSON(w, r, &req) {
 		return
 	}
-	if strings.TrimSpace(req.BookID) == "" {
+	if req.BookID <= 0 {
 		http.Error(w, "Missing book id", http.StatusBadRequest)
 		return
 	}
 	// Turning sending off must actually stop sends, not merely hide the button:
 	// an administrator switches it off exactly when a transport should no longer
 	// be used.
-	enabled, err := delivery.Enabled(s.db)
+	enabled, err := delivery.Enabled(s.db.Read(r.Context()))
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	if !enabled {
 		http.Error(w, deliveryMessageDisabled, http.StatusForbidden)
 		return
 	}
-	cfg, _, err := s.deliveryEmailConfig()
+	cfg, _, err := s.deliveryEmailConfig(r.Context())
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	if !cfg.Configured() {
@@ -402,11 +402,11 @@ func (s *Server) handleAPIDeliveryCreate(w http.ResponseWriter, r *http.Request)
 
 	var device *db.DeliveryDevice
 	if strings.TrimSpace(req.DeviceID) != "" {
-		device, err = s.db.GetDeliveryDevice(UserID(r.Context()), req.DeviceID)
+		device, err = db.GetDeliveryDevice(s.db.Read(r.Context()), UserID(r.Context()), req.DeviceID)
 	} else {
-		device, err = s.db.DefaultDeliveryDevice(UserID(r.Context()))
+		device, err = db.DefaultDeliveryDevice(s.db.Read(r.Context()), UserID(r.Context()))
 	}
-	if writeDeliveryError(w, err) {
+	if writeDeliveryError(w, r, err) {
 		return
 	}
 	book, assets, ok := s.deliveryBookForRequest(w, r, req.BookID)
@@ -423,7 +423,7 @@ func (s *Server) handleAPIDeliveryCreate(w http.ResponseWriter, r *http.Request)
 		http.Error(w, plan.Reason.Message, http.StatusUnprocessableEntity)
 		return
 	}
-	job, err := s.db.CreateDeliveryJob(db.DeliveryJob{
+	job, err := s.db.CreateDeliveryJob(r.Context(), db.DeliveryJob{
 		UserID:      UserID(r.Context()),
 		DeviceID:    sql.NullString{String: device.ID, Valid: true},
 		DeviceName:  device.Name,
@@ -437,7 +437,7 @@ func (s *Server) handleAPIDeliveryCreate(w http.ResponseWriter, r *http.Request)
 		SizeBytes:   sql.NullInt64{Int64: plan.SizeBytes, Valid: plan.SizeBytes > 0},
 	})
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	s.wakeDeliveryWorker()
@@ -451,8 +451,8 @@ func (s *Server) handleAPIDeliveries(w http.ResponseWriter, r *http.Request) {
 			limit = min(n, deliveryJobMaxLimit)
 		}
 	}
-	jobs, err := s.db.ListDeliveryJobs(UserID(r.Context()), limit)
-	if writeDeliveryError(w, err) {
+	jobs, err := db.ListDeliveryJobs(s.db.Read(r.Context()), UserID(r.Context()), limit)
+	if writeDeliveryError(w, r, err) {
 		return
 	}
 	out := make([]DeliveryJobDTO, 0, len(jobs))
@@ -463,15 +463,15 @@ func (s *Server) handleAPIDeliveries(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAPIDelivery(w http.ResponseWriter, r *http.Request) {
-	job, err := s.db.GetDeliveryJob(UserID(r.Context()), r.PathValue("id"))
-	if writeDeliveryError(w, err) {
+	job, err := db.GetDeliveryJob(s.db.Read(r.Context()), UserID(r.Context()), r.PathValue("id"))
+	if writeDeliveryError(w, r, err) {
 		return
 	}
 	writeJSON(w, http.StatusOK, deliveryJobDTO(*job))
 }
 
-func (s *Server) deliveryEmailConfig() (delivery.SMTPConfig, bool, error) {
-	cfg, err := delivery.OpenSMTPConfig(s.db)
+func (s *Server) deliveryEmailConfig(ctx context.Context) (delivery.SMTPConfig, bool, error) {
+	cfg, err := delivery.OpenSMTPConfig(s.db.Read(ctx))
 	if err != nil {
 		return delivery.SMTPConfig{}, false, err
 	}
@@ -579,19 +579,19 @@ func deviceOptionsWithoutPlans(devices []db.DeliveryDevice) []SendOptionDTO {
 	return options
 }
 
-func (s *Server) deliveryBookForRequest(w http.ResponseWriter, r *http.Request, bookID string) (db.DeliveryBookRow, []db.DeliveryAssetRow, bool) {
+func (s *Server) deliveryBookForRequest(w http.ResponseWriter, r *http.Request, bookID int64) (db.DeliveryBookRow, []db.DeliveryAssetRow, bool) {
 	scope, err := s.visibilityScope(r)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return db.DeliveryBookRow{}, nil, false
 	}
-	book, assets, err := s.db.DeliveryBookForPlan(scope, bookID)
+	book, assets, err := db.DeliveryBookForPlan(s.db.Read(r.Context()), scope, bookID)
 	if errors.Is(err, sql.ErrNoRows) {
 		http.Error(w, "Book not found", http.StatusNotFound)
 		return db.DeliveryBookRow{}, nil, false
 	}
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return db.DeliveryBookRow{}, nil, false
 	}
 	return book, assets, true
@@ -636,7 +636,7 @@ func boolValue(value *bool) bool {
 	return value != nil && *value
 }
 
-func writeDeliveryError(w http.ResponseWriter, err error) bool {
+func writeDeliveryError(w http.ResponseWriter, r *http.Request, err error) bool {
 	if err == nil {
 		return false
 	}
@@ -652,7 +652,7 @@ func writeDeliveryError(w http.ResponseWriter, err error) bool {
 		errors.Is(err, db.ErrInvalidDeliveryPreset):
 		http.Error(w, err.Error(), http.StatusBadRequest)
 	default:
-		serverError(w, err)
+		serverError(w, r, err)
 	}
 	return true
 }

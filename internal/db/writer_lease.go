@@ -13,8 +13,9 @@ import (
 )
 
 const (
-	storageWriterLeaseName = "storage_writer"
-	DefaultWriterLeaseTTL  = 30 * time.Second
+	storageWriterLeaseName    = "storage_writer"
+	DefaultWriterLeaseTTL     = 30 * time.Second
+	writerLeaseReleaseTimeout = 5 * time.Second
 )
 
 var ErrWriterLeaseHeld = errors.New("writer lease held by another process")
@@ -57,27 +58,27 @@ func AcquireWriterLease(ctx context.Context, database *DB, owner string, force b
 	if owner == "" {
 		owner = NewWriterLeaseOwner("polka")
 	}
-	now := time.Now().Unix()
-	cutoff := now - int64(DefaultWriterLeaseTTL.Seconds())
-
-	tx, err := database.BeginTx(ctx, nil)
+	tx, err := database.BeginWrite(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin writer lease: %w", err)
 	}
 	defer tx.Rollback()
+	// Waiting for the writer must not age a newly acquired lease.
+	now := time.Now().Unix()
+	cutoff := now - int64(DefaultWriterLeaseTTL.Seconds())
 
 	var currentOwner string
 	var updatedAt int64
-	err = tx.QueryRowContext(ctx, "SELECT owner, updated_at FROM writer_leases WHERE name = ?", storageWriterLeaseName).Scan(&currentOwner, &updatedAt)
+	err = tx.QueryRow("SELECT owner, updated_at FROM writer_leases WHERE name = ?", storageWriterLeaseName).Scan(&currentOwner, &updatedAt)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
-		if _, err := tx.ExecContext(ctx, "INSERT INTO writer_leases (name, owner, updated_at) VALUES (?, ?, ?)", storageWriterLeaseName, owner, now); err != nil {
+		if _, err := tx.Exec("INSERT INTO writer_leases (name, owner, updated_at) VALUES (?, ?, ?)", storageWriterLeaseName, owner, now); err != nil {
 			return nil, fmt.Errorf("create writer lease: %w", err)
 		}
 	case err != nil:
 		return nil, fmt.Errorf("read writer lease: %w", err)
 	case currentOwner == owner || updatedAt <= cutoff || force:
-		if _, err := tx.ExecContext(ctx, "UPDATE writer_leases SET owner = ?, updated_at = ? WHERE name = ?", owner, now, storageWriterLeaseName); err != nil {
+		if _, err := tx.Exec("UPDATE writer_leases SET owner = ?, updated_at = ? WHERE name = ?", owner, now, storageWriterLeaseName); err != nil {
 			return nil, fmt.Errorf("claim writer lease: %w", err)
 		}
 	default:
@@ -101,7 +102,7 @@ func (l *WriterLease) Renew(ctx context.Context) error {
 	if l == nil {
 		return nil
 	}
-	res, err := l.db.ExecContext(ctx, "UPDATE writer_leases SET updated_at = unixepoch() WHERE name = ? AND owner = ?", storageWriterLeaseName, l.owner)
+	res, err := l.db.Write(ctx).Exec("UPDATE writer_leases SET updated_at = unixepoch() WHERE name = ? AND owner = ?", storageWriterLeaseName, l.owner)
 	if err != nil {
 		return fmt.Errorf("renew writer lease: %w", err)
 	}
@@ -115,7 +116,10 @@ func (l *WriterLease) Release(ctx context.Context) error {
 	if l == nil {
 		return nil
 	}
-	if _, err := l.db.ExecContext(ctx, "DELETE FROM writer_leases WHERE name = ? AND owner = ?", storageWriterLeaseName, l.owner); err != nil {
+	// Release is also used during shutdown with cancellation detached.
+	ctx, cancel := context.WithTimeout(ctx, writerLeaseReleaseTimeout)
+	defer cancel()
+	if _, err := l.db.Write(ctx).Exec("DELETE FROM writer_leases WHERE name = ? AND owner = ?", storageWriterLeaseName, l.owner); err != nil {
 		return fmt.Errorf("release writer lease: %w", err)
 	}
 	return nil

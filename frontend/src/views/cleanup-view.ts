@@ -134,7 +134,7 @@ function createDuplicateGroup(
 
     merge.addEventListener('click', async () => {
         const defaultSurvivor = group.books[group.books.length - 1];
-        const selected = selectedDuplicateSurvivor(groupDiv) || defaultSurvivor?.id || '';
+        const selected = Number(selectedDuplicateSurvivor(groupDiv) || defaultSurvivor?.id || '');
         if (!selected) return;
         const survivor = group.books.find((book) => book.id === selected) || defaultSurvivor;
         if (!survivor) return;
@@ -192,7 +192,7 @@ function createDuplicateBookRow(
     const input = document.createElement('input');
     input.type = 'radio';
     input.name = inputName;
-    input.value = book.id;
+    input.value = String(book.id);
     input.checked = checked;
     input.setAttribute('aria-label', `Keep ${book.title}`);
     choice.appendChild(input);

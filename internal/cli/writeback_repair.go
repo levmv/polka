@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"os"
 
@@ -39,7 +38,7 @@ func writebackTempPaths(root storage.Root, attempts []db.MetadataWritebackAttemp
 
 func repairMetadataWritebackAttempts(ctx context.Context, database *db.DB, root storage.Root) (writebackRepairSummary, error) {
 	var summary writebackRepairSummary
-	attempts, err := db.ListMetadataWritebackAttempts(database)
+	attempts, err := db.ListMetadataWritebackAttempts(database.Read(ctx))
 	if err != nil {
 		return summary, err
 	}
@@ -73,7 +72,7 @@ func repairMetadataWritebackAttempts(ctx context.Context, database *db.DB, root 
 	if err := context.Cause(ctx); err != nil {
 		return summary, err
 	}
-	attempts, err = db.ListMetadataWritebackAttempts(database)
+	attempts, err = db.ListMetadataWritebackAttempts(database.Read(ctx))
 	if err != nil {
 		return summary, err
 	}
@@ -91,7 +90,7 @@ func repairMetadataWritebackAttempt(ctx context.Context, database *db.DB, root s
 		if err := removeWritebackAttemptTemp(root, attempt.TempPath); err != nil {
 			return "", err
 		}
-		if err := db.ClearMetadataWritebackAttempt(database, attempt.AssetID); err != nil {
+		if err := db.ClearMetadataWritebackAttempt(database.Write(ctx), attempt.AssetID); err != nil {
 			return "", err
 		}
 		return "cleared", nil
@@ -124,7 +123,7 @@ func repairMetadataWritebackAttempt(ctx context.Context, database *db.DB, root s
 	}
 
 	_ = removeWritebackAttemptTemp(root, attempt.TempPath)
-	err = database.Transact(ctx, func(tx *sql.Tx) error {
+	err = database.Transact(ctx, func(tx *db.Tx) error {
 		if err := db.MarkMetadataWritebackError(tx, attempt.AssetID, fmt.Errorf("pending write-back attempt cannot be recovered: final and temp do not match recorded hash")); err != nil {
 			return err
 		}
@@ -137,7 +136,7 @@ func repairMetadataWritebackAttempt(ctx context.Context, database *db.DB, root s
 }
 
 func markWritebackAttemptSuccess(ctx context.Context, database *db.DB, attempt db.MetadataWritebackAttemptRow) error {
-	return database.Transact(ctx, func(tx *sql.Tx) error {
+	return database.Transact(ctx, func(tx *db.Tx) error {
 		return db.MarkMetadataWritebackSuccess(tx, attempt.AssetID, attempt.StoragePath, attempt.SHA256, attempt.Size, attempt.KOReaderHash, attempt.MetadataRev)
 	})
 }

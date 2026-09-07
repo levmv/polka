@@ -24,13 +24,10 @@ func newBulkTestServer(t *testing.T) *db.DB {
 	return database
 }
 
-func insertBook(t *testing.T, database *db.DB, id, title string) {
+func insertBook(t *testing.T, database *db.DB, id int64, title string) {
 	t.Helper()
-	if _, err := database.Exec(
-		"INSERT INTO books (id, title, sort_title) VALUES (?, ?, ?)", id, title, title,
-	); err != nil {
-		t.Fatalf("insert book %s: %v", id, err)
-	}
+	mustExec(t, database, "INSERT INTO books (id, title, sort_title) VALUES (?, ?, ?)", id, title, title)
+
 }
 
 func callBulkEdit(t *testing.T, database *db.DB, dataDir string, body map[string]any) *httptest.ResponseRecorder {
@@ -43,38 +40,38 @@ func callBulkEdit(t *testing.T, database *db.DB, dataDir string, body map[string
 	return rr
 }
 
-func bookTags(t *testing.T, database *db.DB, id string) string {
+func bookTags(t *testing.T, database *db.DB, id int64) string {
 	t.Helper()
 	var tags sql.NullString
-	if err := database.QueryRow("SELECT tags FROM books WHERE id = ?", id).Scan(&tags); err != nil {
-		t.Fatalf("query tags %s: %v", id, err)
+	if err := database.Read(t.Context()).QueryRow("SELECT tags FROM books WHERE id = ?", id).Scan(&tags); err != nil {
+		t.Fatalf("query tags %d: %v", id, err)
 	}
 	return tags.String
 }
 
-func setBookAuthors(t *testing.T, database *db.DB, id, authors string) {
+func setBookAuthors(t *testing.T, database *db.DB, id int64, authors string) {
 	t.Helper()
-	if err := database.Transact(context.Background(), func(tx *sql.Tx) error {
-		return replaceBookAuthors(tx, id, authors)
+	if err := database.Transact(context.Background(), func(tx *db.Tx) error {
+		return replaceBookAuthors(t.Context(), tx, id, authors)
 	}); err != nil {
-		t.Fatalf("set authors %s: %v", id, err)
+		t.Fatalf("set authors %d: %v", id, err)
 	}
 }
 
-func bookAuthors(t *testing.T, database *db.DB, id string) string {
+func bookAuthors(t *testing.T, database *db.DB, id int64) string {
 	t.Helper()
-	byBook, err := db.AuthorsByBookIDs(database, []string{id})
+	byBook, err := db.AuthorsByBookIDs(database.Read(t.Context()), []int64{id})
 	if err != nil {
-		t.Fatalf("authors %s: %v", id, err)
+		t.Fatalf("authors %d: %v", id, err)
 	}
 	return formatAuthorRows(byBook[id])
 }
 
-func bookOverrides(t *testing.T, database *db.DB, id string) map[string]bool {
+func bookOverrides(t *testing.T, database *db.DB, id int64) map[string]bool {
 	t.Helper()
 	var raw sql.NullString
-	if err := database.QueryRow("SELECT manual_overrides FROM books WHERE id = ?", id).Scan(&raw); err != nil {
-		t.Fatalf("query overrides %s: %v", id, err)
+	if err := database.Read(t.Context()).QueryRow("SELECT manual_overrides FROM books WHERE id = ?", id).Scan(&raw); err != nil {
+		t.Fatalf("query overrides %d: %v", id, err)
 	}
 	m := make(map[string]bool)
 	if raw.String != "" {
@@ -83,11 +80,11 @@ func bookOverrides(t *testing.T, database *db.DB, id string) map[string]bool {
 	return m
 }
 
-func bookMetadataRev(t *testing.T, database *db.DB, id string) int {
+func bookMetadataRev(t *testing.T, database *db.DB, id int64) int {
 	t.Helper()
 	var rev int
-	if err := database.QueryRow("SELECT metadata_rev FROM books WHERE id = ?", id).Scan(&rev); err != nil {
-		t.Fatalf("query metadata_rev %s: %v", id, err)
+	if err := database.Read(t.Context()).QueryRow("SELECT metadata_rev FROM books WHERE id = ?", id).Scan(&rev); err != nil {
+		t.Fatalf("query metadata_rev %d: %v", id, err)
 	}
 	return rev
 }
@@ -96,12 +93,12 @@ func TestBulkEditTagsAdd(t *testing.T) {
 	database := newBulkTestServer(t)
 	dataDir := t.TempDir()
 
-	insertBook(t, database, "w1", "One")
-	insertBook(t, database, "w2", "Two")
-	database.Exec("UPDATE books SET tags = ? WHERE id = ?", "sci-fi", "w1")
+	insertBook(t, database, 1, "One")
+	insertBook(t, database, 2, "Two")
+	mustExec(t, database, "UPDATE books SET tags = ? WHERE id = ?", "sci-fi", 1)
 
 	rr := callBulkEdit(t, database, dataDir, map[string]any{
-		"ids": []string{"w1", "w2"},
+		"ids": []int64{1, 2},
 		"operations": []map[string]any{
 			{"type": "tags", "mode": "add", "values": []string{"sci-fi", "classic"}},
 		},
@@ -118,20 +115,20 @@ func TestBulkEditTagsAdd(t *testing.T) {
 		t.Errorf("counts: selected=%d changed=%d, want 2/2", resp.Selected, resp.Changed)
 	}
 	// w1 already had "sci-fi" (only "classic" is new); w2 gets both.
-	if got := bookTags(t, database, "w1"); got != "sci-fi, classic" {
-		t.Errorf("w1 tags = %q, want %q", got, "sci-fi, classic")
+	if got := bookTags(t, database, 1); got != "sci-fi, classic" {
+		t.Errorf("1 tags = %q, want %q", got, "sci-fi, classic")
 	}
-	if got := bookTags(t, database, "w2"); got != "sci-fi, classic" {
-		t.Errorf("w2 tags = %q, want %q", got, "sci-fi, classic")
+	if got := bookTags(t, database, 2); got != "sci-fi, classic" {
+		t.Errorf("2 tags = %q, want %q", got, "sci-fi, classic")
 	}
-	if !bookOverrides(t, database, "w1")["tags"] {
-		t.Errorf("w1 missing tags override")
+	if !bookOverrides(t, database, 1)["tags"] {
+		t.Errorf("1 missing tags override")
 	}
-	if got := bookMetadataRev(t, database, "w1"); got != 1 {
-		t.Errorf("w1 metadata_rev = %d, want 1", got)
+	if got := bookMetadataRev(t, database, 1); got != 1 {
+		t.Errorf("1 metadata_rev = %d, want 1", got)
 	}
-	if got := bookMetadataRev(t, database, "w2"); got != 1 {
-		t.Errorf("w2 metadata_rev = %d, want 1", got)
+	if got := bookMetadataRev(t, database, 2); got != 1 {
+		t.Errorf("2 metadata_rev = %d, want 1", got)
 	}
 }
 
@@ -139,11 +136,11 @@ func TestBulkEditTagsAddNoOpIsUnchanged(t *testing.T) {
 	database := newBulkTestServer(t)
 	dataDir := t.TempDir()
 
-	insertBook(t, database, "w1", "One")
-	database.Exec("UPDATE books SET tags = ? WHERE id = ?", "sci-fi, classic", "w1")
+	insertBook(t, database, 1, "One")
+	mustExec(t, database, "UPDATE books SET tags = ? WHERE id = ?", "sci-fi, classic", 1)
 
 	rr := callBulkEdit(t, database, dataDir, map[string]any{
-		"ids": []string{"w1"},
+		"ids": []int64{1},
 		"operations": []map[string]any{
 			{"type": "tags", "mode": "add", "values": []string{"Sci-Fi"}},
 		},
@@ -157,10 +154,10 @@ func TestBulkEditTagsAddNoOpIsUnchanged(t *testing.T) {
 		t.Errorf("counts: changed=%d unchanged=%d, want 0/1", resp.Changed, resp.Unchanged)
 	}
 	// Adding a tag that is already present (case-insensitively) must not churn.
-	if bookOverrides(t, database, "w1")["tags"] {
+	if bookOverrides(t, database, 1)["tags"] {
 		t.Errorf("no-op add should not set tags override")
 	}
-	if got := bookMetadataRev(t, database, "w1"); got != 0 {
+	if got := bookMetadataRev(t, database, 1); got != 0 {
 		t.Errorf("no-op metadata_rev = %d, want 0", got)
 	}
 }
@@ -168,41 +165,41 @@ func TestBulkEditTagsAddNoOpIsUnchanged(t *testing.T) {
 func TestBulkEditTagsRemoveAndClear(t *testing.T) {
 	database := newBulkTestServer(t)
 	dataDir := t.TempDir()
-	insertBook(t, database, "w1", "One")
-	insertBook(t, database, "w2", "Two")
-	database.Exec("UPDATE books SET tags = ? WHERE id = ?", "sci-fi, classic, pulp", "w1")
-	database.Exec("UPDATE books SET tags = ? WHERE id = ?", "sci-fi, classic", "w2")
+	insertBook(t, database, 1, "One")
+	insertBook(t, database, 2, "Two")
+	mustExec(t, database, "UPDATE books SET tags = ? WHERE id = ?", "sci-fi, classic, pulp", 1)
+	mustExec(t, database, "UPDATE books SET tags = ? WHERE id = ?", "sci-fi, classic", 2)
 
 	callBulkEdit(t, database, dataDir, map[string]any{
-		"ids": []string{"w1"},
+		"ids": []int64{1},
 		"operations": []map[string]any{
 			{"type": "tags", "mode": "remove", "values": []string{"pulp"}},
 		},
 	})
-	if got := bookTags(t, database, "w1"); got != "sci-fi, classic" {
-		t.Errorf("after remove w1 tags = %q, want %q", got, "sci-fi, classic")
+	if got := bookTags(t, database, 1); got != "sci-fi, classic" {
+		t.Errorf("after remove 1 tags = %q, want %q", got, "sci-fi, classic")
 	}
 
 	callBulkEdit(t, database, dataDir, map[string]any{
-		"ids": []string{"w2"},
+		"ids": []int64{2},
 		"operations": []map[string]any{
 			{"type": "tags", "mode": "clear"},
 		},
 	})
-	if got := bookTags(t, database, "w2"); got != "" {
-		t.Errorf("after clear w2 tags = %q, want empty", got)
+	if got := bookTags(t, database, 2); got != "" {
+		t.Errorf("after clear 2 tags = %q, want empty", got)
 	}
 }
 
 func TestBulkEditSeriesAssignByOrder(t *testing.T) {
 	database := newBulkTestServer(t)
 	dataDir := t.TempDir()
-	insertBook(t, database, "w1", "One")
-	insertBook(t, database, "w2", "Two")
-	insertBook(t, database, "w3", "Three")
+	insertBook(t, database, 1, "One")
+	insertBook(t, database, 2, "Two")
+	insertBook(t, database, 3, "Three")
 
 	rr := callBulkEdit(t, database, dataDir, map[string]any{
-		"ids": []string{"w1", "w2", "w3"},
+		"ids": []int64{1, 2, 3},
 		"operations": []map[string]any{
 			{
 				"type": "series", "mode": "set", "name": "Dune",
@@ -214,19 +211,19 @@ func TestBulkEditSeriesAssignByOrder(t *testing.T) {
 		t.Fatalf("status %d: %s", rr.Code, rr.Body.String())
 	}
 
-	for i, id := range []string{"w1", "w2", "w3"} {
+	for i, id := range []int64{1, 2, 3} {
 		var series sql.NullString
 		var idx sql.NullFloat64
-		database.QueryRow("SELECT series, series_index FROM books WHERE id = ?", id).Scan(&series, &idx)
+		database.Read(t.Context()).QueryRow("SELECT series, series_index FROM books WHERE id = ?", id).Scan(&series, &idx)
 		if series.String != "Dune" {
-			t.Errorf("%s series = %q, want Dune", id, series.String)
+			t.Errorf("%d series = %q, want Dune", id, series.String)
 		}
 		if !idx.Valid || idx.Float64 != float64(i+1) {
-			t.Errorf("%s index = %v, want %d", id, idx, i+1)
+			t.Errorf("%d index = %v, want %d", id, idx, i+1)
 		}
 		ov := bookOverrides(t, database, id)
 		if !ov["series"] || !ov["series_index"] {
-			t.Errorf("%s overrides = %v, want series+series_index", id, ov)
+			t.Errorf("%d overrides = %v, want series+series_index", id, ov)
 		}
 	}
 }
@@ -234,13 +231,13 @@ func TestBulkEditSeriesAssignByOrder(t *testing.T) {
 func TestBulkEditAuthorsSet(t *testing.T) {
 	database := newBulkTestServer(t)
 	dataDir := t.TempDir()
-	insertBook(t, database, "w1", "One")
-	insertBook(t, database, "w2", "Two")
-	setBookAuthors(t, database, "w1", "Ursula K. Le Guin")
-	setBookAuthors(t, database, "w2", "U. Le Guin")
+	insertBook(t, database, 1, "One")
+	insertBook(t, database, 2, "Two")
+	setBookAuthors(t, database, 1, "Ursula K. Le Guin")
+	setBookAuthors(t, database, 2, "U. Le Guin")
 
 	rr := callBulkEdit(t, database, dataDir, map[string]any{
-		"ids": []string{"w1", "w2"},
+		"ids": []int64{1, 2},
 		"operations": []map[string]any{
 			{"type": "authors", "mode": "set", "authors": "Ursula K. Le Guin"},
 		},
@@ -254,23 +251,23 @@ func TestBulkEditAuthorsSet(t *testing.T) {
 	if resp.Changed != 1 || resp.Unchanged != 1 {
 		t.Errorf("counts: changed=%d unchanged=%d, want 1/1", resp.Changed, resp.Unchanged)
 	}
-	if got := bookAuthors(t, database, "w2"); got != "Ursula K. Le Guin" {
-		t.Errorf("w2 authors = %q, want %q", got, "Ursula K. Le Guin")
+	if got := bookAuthors(t, database, 2); got != "Ursula K. Le Guin" {
+		t.Errorf("2 authors = %q, want %q", got, "Ursula K. Le Guin")
 	}
-	if !bookOverrides(t, database, "w2")["authors"] {
-		t.Errorf("w2 missing authors override")
+	if !bookOverrides(t, database, 2)["authors"] {
+		t.Errorf("2 missing authors override")
 	}
 	// The no-op book must not churn its override.
-	if bookOverrides(t, database, "w1")["authors"] {
-		t.Errorf("no-op author set should not set override on w1")
+	if bookOverrides(t, database, 1)["authors"] {
+		t.Errorf("no-op author set should not set override on 1")
 	}
 }
 
-func bookTrashed(t *testing.T, database *db.DB, id string) bool {
+func bookTrashed(t *testing.T, database *db.DB, id int64) bool {
 	t.Helper()
 	var deletedAt sql.NullInt64
-	if err := database.QueryRow("SELECT deleted_at FROM books WHERE id = ?", id).Scan(&deletedAt); err != nil {
-		t.Fatalf("query deleted_at %s: %v", id, err)
+	if err := database.Read(t.Context()).QueryRow("SELECT deleted_at FROM books WHERE id = ?", id).Scan(&deletedAt); err != nil {
+		t.Fatalf("query deleted_at %d: %v", id, err)
 	}
 	return deletedAt.Valid
 }
@@ -285,7 +282,7 @@ func TestBulkTrashMovesSelectedToTrash(t *testing.T) {
 	s := newTestServer(database, dir)
 	handler := testRoutes(t, s)
 
-	trash := func(userID int64, ids ...string) *httptest.ResponseRecorder {
+	trash := func(userID int64, ids ...int64) *httptest.ResponseRecorder {
 		req := jsonRequest(t, s, userID, http.MethodPost, "/api/books/bulk/trash", map[string]any{"ids": ids})
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, req)
@@ -293,29 +290,29 @@ func TestBulkTrashMovesSelectedToTrash(t *testing.T) {
 	}
 
 	// A reader cannot trash — catalog mutation is member/admin only.
-	if w := trash(reader.ID, "w_1"); w.Code != http.StatusForbidden {
+	if w := trash(reader.ID, 1); w.Code != http.StatusForbidden {
 		t.Fatalf("reader bulk trash = %d, want 403", w.Code)
 	}
-	if bookTrashed(t, database, "w_1") {
-		t.Fatalf("reader request must not have trashed w_1")
+	if bookTrashed(t, database, 1) {
+		t.Fatalf("reader request must not have trashed 1")
 	}
 
 	// Member trashes both live books; an unknown id is skipped, not an error.
-	w := trash(member.ID, "w_1", "w_2", "ghost")
+	w := trash(member.ID, 1, 2, 999)
 	if w.Code != http.StatusOK {
 		t.Fatalf("member bulk trash = %d, want 200; body: %s", w.Code, w.Body)
 	}
 	var resp bulkTrashResponse
 	decodeJSON(t, w, &resp)
 	if resp.Trashed != 2 || len(resp.IDs) != 2 {
-		t.Fatalf("response = %+v, want 2 trashed (w_1, w_2)", resp)
+		t.Fatalf("response = %+v, want 2 trashed (1, 2)", resp)
 	}
-	if !bookTrashed(t, database, "w_1") || !bookTrashed(t, database, "w_2") {
+	if !bookTrashed(t, database, 1) || !bookTrashed(t, database, 2) {
 		t.Fatalf("both books should be trashed")
 	}
 
 	// Re-trashing an already-trashed selection is a no-op, not an error.
-	w = trash(member.ID, "w_1")
+	w = trash(member.ID, 1)
 	if w.Code != http.StatusOK {
 		t.Fatalf("re-trash = %d, want 200", w.Code)
 	}
@@ -330,16 +327,16 @@ func TestBulkTrashMovesSelectedToTrash(t *testing.T) {
 	}
 }
 
-func shelfBookIDs(t *testing.T, database *db.DB, shelfID string) []string {
+func shelfBookIDs(t *testing.T, database *db.DB, shelfID string) []int64 {
 	t.Helper()
-	rows, err := database.Query("SELECT book_id FROM shelf_books WHERE shelf_id = ? ORDER BY position", shelfID)
+	rows, err := database.Read(t.Context()).Query("SELECT book_id FROM shelf_books WHERE shelf_id = ? ORDER BY position", shelfID)
 	if err != nil {
 		t.Fatalf("query shelf books: %v", err)
 	}
 	defer rows.Close()
-	var ids []string
+	var ids []int64
 	for rows.Next() {
-		var id string
+		var id int64
 		if err := rows.Scan(&id); err != nil {
 			t.Fatalf("scan shelf book: %v", err)
 		}
@@ -353,7 +350,7 @@ func TestBulkShelfAddAndRemove(t *testing.T) {
 	defer database.Close()
 
 	member := mustUser(t, database, "member", db.RoleMember)
-	shelf, err := database.CreateShelf(member.ID, db.ShelfPersonal, "To Read", db.ShelfManual, "")
+	shelf, err := database.CreateShelf(t.Context(), member.ID, db.ShelfPersonal, "To Read", db.ShelfManual, "")
 	if err != nil {
 		t.Fatalf("create shelf: %v", err)
 	}
@@ -361,7 +358,7 @@ func TestBulkShelfAddAndRemove(t *testing.T) {
 	s := newTestServer(database, dir)
 	handler := testRoutes(t, s)
 
-	call := func(userID int64, op string, ids ...string) *httptest.ResponseRecorder {
+	call := func(userID int64, op string, ids ...int64) *httptest.ResponseRecorder {
 		req := jsonRequest(t, s, userID, http.MethodPost,
 			"/api/shelves/"+shelf.ID+"/books/bulk", map[string]any{"ids": ids, "op": op})
 		w := httptest.NewRecorder()
@@ -370,7 +367,7 @@ func TestBulkShelfAddAndRemove(t *testing.T) {
 	}
 
 	// Add both, then re-add (already present → no-op).
-	w := call(member.ID, "add", "w_1", "w_2")
+	w := call(member.ID, "add", 1, 2)
 	if w.Code != http.StatusOK {
 		t.Fatalf("add = %d: %s", w.Code, w.Body)
 	}
@@ -379,22 +376,22 @@ func TestBulkShelfAddAndRemove(t *testing.T) {
 	if resp.Changed != 2 {
 		t.Fatalf("add changed = %d, want 2", resp.Changed)
 	}
-	decodeJSON(t, call(member.ID, "add", "w_1", "w_2"), &resp)
+	decodeJSON(t, call(member.ID, "add", 1, 2), &resp)
 	if resp.Changed != 0 {
 		t.Fatalf("re-add changed = %d, want 0", resp.Changed)
 	}
 
 	// Remove one; the other stays.
-	decodeJSON(t, call(member.ID, "remove", "w_1"), &resp)
+	decodeJSON(t, call(member.ID, "remove", 1), &resp)
 	if resp.Changed != 1 {
 		t.Fatalf("remove changed = %d, want 1", resp.Changed)
 	}
-	if ids := shelfBookIDs(t, database, shelf.ID); len(ids) != 1 || ids[0] != "w_2" {
-		t.Fatalf("shelf books = %v, want [w_2]", ids)
+	if ids := shelfBookIDs(t, database, shelf.ID); len(ids) != 1 || ids[0] != 2 {
+		t.Fatalf("shelf books = %v, want [2]", ids)
 	}
 
 	// An unknown op is rejected.
-	if w := call(member.ID, "toggle", "w_1"); w.Code != http.StatusBadRequest {
+	if w := call(member.ID, "toggle", 1); w.Code != http.StatusBadRequest {
 		t.Fatalf("bad op = %d, want 400", w.Code)
 	}
 }
@@ -402,15 +399,15 @@ func TestBulkShelfAddAndRemove(t *testing.T) {
 func TestBulkEditRejectsBadRequests(t *testing.T) {
 	database := newBulkTestServer(t)
 	dataDir := t.TempDir()
-	insertBook(t, database, "w1", "One")
+	insertBook(t, database, 1, "One")
 
 	cases := []map[string]any{
 		{"ids": []string{}, "operations": []map[string]any{{"type": "tags", "mode": "clear"}}},
-		{"ids": []string{"w1"}, "operations": []map[string]any{}},
-		{"ids": []string{"w1"}, "operations": []map[string]any{{"type": "tags", "mode": "add", "values": []string{}}}},
-		{"ids": []string{"w1"}, "operations": []map[string]any{{"type": "series", "mode": "set", "name": "  "}}},
-		{"ids": []string{"w1"}, "operations": []map[string]any{{"type": "authors", "mode": "set", "authors": "  "}}},
-		{"ids": []string{"w1"}, "operations": []map[string]any{{"type": "bogus"}}},
+		{"ids": []int64{1}, "operations": []map[string]any{}},
+		{"ids": []int64{1}, "operations": []map[string]any{{"type": "tags", "mode": "add", "values": []string{}}}},
+		{"ids": []int64{1}, "operations": []map[string]any{{"type": "series", "mode": "set", "name": "  "}}},
+		{"ids": []int64{1}, "operations": []map[string]any{{"type": "authors", "mode": "set", "authors": "  "}}},
+		{"ids": []int64{1}, "operations": []map[string]any{{"type": "bogus"}}},
 	}
 	for i, body := range cases {
 		rr := callBulkEdit(t, database, dataDir, body)

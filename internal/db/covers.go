@@ -3,7 +3,7 @@ package db
 import "fmt"
 
 type BookCoverRow struct {
-	ID              string
+	ID              int64
 	CoverVersion    int
 	ManualOverrides string
 }

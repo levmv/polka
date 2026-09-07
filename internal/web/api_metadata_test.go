@@ -55,7 +55,7 @@ func TestAPIMetadataCandidates(t *testing.T) {
 		metadata: metalookup.Registry{"fake": provider},
 	}
 
-	req := httptest.NewRequest("GET", "/api/books/w_1/metadata-candidates?provider=fake", nil)
+	req := httptest.NewRequest("GET", "/api/books/1/metadata-candidates?provider=fake", nil)
 	addSessionCookie(t, s, req, u.ID)
 	w := httptest.NewRecorder()
 	testRoutes(t, s).ServeHTTP(w, req)
@@ -99,7 +99,7 @@ func TestAPIMetadataProviderFailuresAreIsolated(t *testing.T) {
 	}
 	handler := testRoutes(t, s)
 
-	req := httptest.NewRequest("GET", "/api/books/w_1/metadata-candidates?provider=bad", nil)
+	req := httptest.NewRequest("GET", "/api/books/1/metadata-candidates?provider=bad", nil)
 	addSessionCookie(t, s, req, u.ID)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -107,7 +107,7 @@ func TestAPIMetadataProviderFailuresAreIsolated(t *testing.T) {
 		t.Fatalf("bad provider status = %d, want 502", w.Code)
 	}
 
-	req = httptest.NewRequest("GET", "/api/books/w_1/metadata-candidates?provider=fake", nil)
+	req = httptest.NewRequest("GET", "/api/books/1/metadata-candidates?provider=fake", nil)
 	addSessionCookie(t, s, req, u.ID)
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -202,7 +202,7 @@ func TestAPIMetadataCandidatesRejectsUnknownProvider(t *testing.T) {
 		metadata: metalookup.Registry{},
 	}
 
-	req := httptest.NewRequest("GET", "/api/books/w_1/metadata-candidates?provider=missing", nil)
+	req := httptest.NewRequest("GET", "/api/books/1/metadata-candidates?provider=missing", nil)
 	addSessionCookie(t, s, req, u.ID)
 	w := httptest.NewRecorder()
 	testRoutes(t, s).ServeHTTP(w, req)

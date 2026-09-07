@@ -20,13 +20,13 @@ func runIngest(ctx context.Context, dataDir string, args []string) error {
 		return reportedErrorf("usage: polka ingest")
 	}
 
-	database, err := ensureLibraryInitialized(dataDir)
+	database, err := ensureLibraryInitialized(ctx, dataDir)
 	if err != nil {
 		return err
 	}
 	defer database.Close()
 
-	root, err := storage.OpenRoot(database.DB, dataDir)
+	root, err := storage.OpenRoot(database.Read(ctx), dataDir)
 	if err != nil {
 		return err
 	}
@@ -35,7 +35,7 @@ func runIngest(ctx context.Context, dataDir string, args []string) error {
 		return err
 	}
 
-	service, err := ingest.NewServiceFromSettings(database, dataDir, root, ingest.Options{
+	service, err := ingest.NewServiceFromSettings(ctx, database, dataDir, root, ingest.Options{
 		StableScans: 1,
 	})
 	if err != nil {

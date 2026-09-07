@@ -16,7 +16,7 @@ func TestSMTPSettingsRoundTripKeepsPasswordSeparate(t *testing.T) {
 	}
 	defer database.Close()
 
-	defaults, err := delivery.OpenSMTPConfig(database)
+	defaults, err := delivery.OpenSMTPConfig(database.Read(t.Context()))
 	if err != nil {
 		t.Fatalf("open defaults: %v", err)
 	}
@@ -24,7 +24,7 @@ func TestSMTPSettingsRoundTripKeepsPasswordSeparate(t *testing.T) {
 		t.Fatalf("defaults = %+v", defaults)
 	}
 
-	if err := delivery.SaveSMTPConfig(database, delivery.SMTPConfig{
+	if err := delivery.SaveSMTPConfig(database.Write(t.Context()), delivery.SMTPConfig{
 		Host:              " smtp.example.org ",
 		Port:              465,
 		Security:          delivery.SMTPSecuritySSL,
@@ -36,7 +36,7 @@ func TestSMTPSettingsRoundTripKeepsPasswordSeparate(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("save config: %v", err)
 	}
-	if err := delivery.SaveSMTPConfigKeepingPassword(database, delivery.SMTPConfig{
+	if err := delivery.SaveSMTPConfigKeepingPassword(database.Write(t.Context()), delivery.SMTPConfig{
 		Host:              " smtp.example.org ",
 		Port:              465,
 		Security:          delivery.SMTPSecuritySSL,
@@ -49,7 +49,7 @@ func TestSMTPSettingsRoundTripKeepsPasswordSeparate(t *testing.T) {
 		t.Fatalf("save config keeping password: %v", err)
 	}
 
-	got, err := delivery.OpenSMTPConfig(database)
+	got, err := delivery.OpenSMTPConfig(database.Read(t.Context()))
 	if err != nil {
 		t.Fatalf("open saved config: %v", err)
 	}

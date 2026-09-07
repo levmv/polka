@@ -37,9 +37,9 @@ func shelfDTO(s db.Shelf) ShelfDTO {
 }
 
 func (s *Server) handleAPIShelves(w http.ResponseWriter, r *http.Request) {
-	shelves, err := s.db.ListShelvesForUser(UserID(r.Context()))
+	shelves, err := db.ListShelvesForUser(s.db.Read(r.Context()), UserID(r.Context()))
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	out := make([]ShelfDTO, 0, len(shelves))
@@ -69,9 +69,8 @@ func (s *Server) handleAPIShelfCreate(w http.ResponseWriter, r *http.Request) {
 		visibility = db.ShelfShared
 	}
 
-	shelf, err := s.db.CreateShelf(ownerID, visibility, req.Name, db.ShelfKind(req.Kind), req.Query)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	shelf, err := s.db.CreateShelf(r.Context(), ownerID, visibility, req.Name, db.ShelfKind(req.Kind), req.Query)
+	if writeShelfError(w, r, err) {
 		return
 	}
 
@@ -122,8 +121,8 @@ func (s *Server) handleAPIShelfUpdate(w http.ResponseWriter, r *http.Request) {
 		visibility = nextVisibility
 	}
 
-	updated, err := s.db.UpdateShelf(r.PathValue("id"), u.ID, name, query, visibility)
-	if writeShelfError(w, err) {
+	updated, err := s.db.UpdateShelf(r.Context(), r.PathValue("id"), u.ID, name, query, visibility)
+	if writeShelfError(w, r, err) {
 		return
 	}
 	writeJSON(w, http.StatusOK, shelfDTO(*updated))
@@ -133,37 +132,43 @@ func (s *Server) handleAPIShelfDelete(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireDeletableShelf(w, r, r.PathValue("id")); !ok {
 		return
 	}
-	if writeShelfError(w, s.db.DeleteShelf(r.PathValue("id"), UserID(r.Context()))) {
+	if writeShelfError(w, r, s.db.DeleteShelf(r.Context(), r.PathValue("id"), UserID(r.Context()))) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleAPIShelfAddBook(w http.ResponseWriter, r *http.Request) {
-	bookID := r.PathValue("bookID")
+	bookID, validID := pathBookID(w, r, "bookID")
+	if !validID {
+		return
+	}
 	if _, ok := s.requireBookAccess(w, r, bookID); !ok {
 		return
 	}
 	if _, ok := s.requireMutableShelf(w, r, r.PathValue("id")); !ok {
 		return
 	}
-	err := s.db.AddBookToShelf(r.PathValue("id"), UserID(r.Context()), bookID)
-	if writeShelfError(w, err) {
+	err := s.db.AddBookToShelf(r.Context(), r.PathValue("id"), UserID(r.Context()), bookID)
+	if writeShelfError(w, r, err) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleAPIShelfRemoveBook(w http.ResponseWriter, r *http.Request) {
-	bookID := r.PathValue("bookID")
+	bookID, validID := pathBookID(w, r, "bookID")
+	if !validID {
+		return
+	}
 	if _, ok := s.requireBookAccess(w, r, bookID); !ok {
 		return
 	}
 	if _, ok := s.requireMutableShelf(w, r, r.PathValue("id")); !ok {
 		return
 	}
-	err := s.db.RemoveBookFromShelf(r.PathValue("id"), UserID(r.Context()), bookID)
-	if writeShelfError(w, err) {
+	err := s.db.RemoveBookFromShelf(r.Context(), r.PathValue("id"), UserID(r.Context()), bookID)
+	if writeShelfError(w, r, err) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -171,8 +176,8 @@ func (s *Server) handleAPIShelfRemoveBook(w http.ResponseWriter, r *http.Request
 
 // bulkShelfRequest is the body of POST /api/shelves/{id}/books/bulk.
 type bulkShelfRequest struct {
-	IDs []string `json:"ids"`
-	Op  string   `json:"op"` // "add" | "remove"
+	IDs []int64 `json:"ids"`
+	Op  string  `json:"op"` // "add" | "remove"
 }
 
 type bulkShelfResponse struct {
@@ -196,7 +201,7 @@ func (s *Server) handleAPIShelfBulkBooks(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "op must be add or remove", http.StatusBadRequest)
 		return
 	}
-	ids := dedupStrings(req.IDs)
+	ids := db.DedupBookIDs(req.IDs)
 	if len(ids) == 0 {
 		http.Error(w, "no book ids provided", http.StatusBadRequest)
 		return
@@ -208,15 +213,15 @@ func (s *Server) handleAPIShelfBulkBooks(w http.ResponseWriter, r *http.Request)
 
 	scope, err := s.visibilityScope(r)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
-	rows, err := db.BooksForBulkEdit(s.db, scope, ids)
+	rows, err := db.BooksForBulkEdit(s.db.Read(r.Context()), scope, ids)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
-	visible := make([]string, 0, len(rows))
+	visible := make([]int64, 0, len(rows))
 	for _, row := range rows {
 		visible = append(visible, row.ID)
 	}
@@ -226,24 +231,27 @@ func (s *Server) handleAPIShelfBulkBooks(w http.ResponseWriter, r *http.Request)
 	if req.Op == "add" {
 		changed, err = s.db.AddBooksToShelf(r.Context(), shelfID, viewerID, visible)
 	} else {
-		changed, err = s.db.RemoveBooksFromShelf(shelfID, viewerID, visible)
+		changed, err = s.db.RemoveBooksFromShelf(r.Context(), shelfID, viewerID, visible)
 	}
-	if writeShelfError(w, err) {
+	if writeShelfError(w, r, err) {
 		return
 	}
 	writeJSON(w, http.StatusOK, bulkShelfResponse{Changed: changed})
 }
 
 func (s *Server) handleAPIBookShelves(w http.ResponseWriter, r *http.Request) {
-	bookID := r.PathValue("id")
+	bookID, validID := pathBookID(w, r, "id")
+	if !validID {
+		return
+	}
 	u := contextUser(r.Context())
 	if _, ok := s.requireBookAccess(w, r, bookID); !ok {
 		return
 	}
 
-	rows, err := s.db.ListBookShelfMemberships(UserID(r.Context()), bookID)
+	rows, err := db.ListBookShelfMemberships(s.db.Read(r.Context()), UserID(r.Context()), bookID)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	out := make([]BookShelfDTO, 0, len(rows))
@@ -263,8 +271,8 @@ func (s *Server) handleAPIBookShelves(w http.ResponseWriter, r *http.Request) {
 // accepted household-trust compromise; revisit only if it proves too loose.
 func (s *Server) requireMutableShelf(w http.ResponseWriter, r *http.Request, shelfID string) (*db.Shelf, bool) {
 	u := contextUser(r.Context())
-	shelf, err := s.db.GetShelf(shelfID, u.ID)
-	if writeShelfError(w, err) {
+	shelf, err := db.GetShelf(s.db.Read(r.Context()), shelfID, u.ID)
+	if writeShelfError(w, r, err) {
 		return nil, false
 	}
 	if db.RoleAtLeast(u.Role, db.RoleMember) || (shelf.Visibility == db.ShelfPersonal && shelf.OwnerID == u.ID) {
@@ -276,8 +284,8 @@ func (s *Server) requireMutableShelf(w http.ResponseWriter, r *http.Request, she
 
 func (s *Server) requireDeletableShelf(w http.ResponseWriter, r *http.Request, shelfID string) (*db.Shelf, bool) {
 	u := contextUser(r.Context())
-	shelf, err := s.db.GetShelf(shelfID, u.ID)
-	if writeShelfError(w, err) {
+	shelf, err := db.GetShelf(s.db.Read(r.Context()), shelfID, u.ID)
+	if writeShelfError(w, r, err) {
 		return nil, false
 	}
 	if shelf.OwnerID != u.ID {
@@ -291,17 +299,17 @@ func (s *Server) requireDeletableShelf(w http.ResponseWriter, r *http.Request, s
 	return shelf, true
 }
 
-func writeShelfError(w http.ResponseWriter, err error) bool {
+func writeShelfError(w http.ResponseWriter, r *http.Request, err error) bool {
 	if err == nil {
 		return false
 	}
 	switch {
 	case errors.Is(err, db.ErrShelfNotFound):
 		http.Error(w, "Shelf not found", http.StatusNotFound)
-	case errors.Is(err, db.ErrQueryShelf), errors.Is(err, db.ErrEmptyShelfName), errors.Is(err, db.ErrShelfOwnerRequired):
+	case errors.Is(err, db.ErrQueryShelf), errors.Is(err, db.ErrEmptyShelfName), errors.Is(err, db.ErrShelfOwnerRequired), errors.Is(err, db.ErrInvalidShelfInput):
 		http.Error(w, err.Error(), http.StatusBadRequest)
 	default:
-		serverError(w, err)
+		serverError(w, r, err)
 	}
 	return true
 }

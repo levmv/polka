@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
@@ -36,16 +37,16 @@ func newSessionStore(database *db.DB) *sessionStore {
 // issue creates and records a new random session id (256 bits, hex-encoded)
 // bound to userID. The returned id is the only value that can authenticate; only
 // its hash is persisted.
-func (s *sessionStore) issue(userID int64) (string, error) {
+func (s *sessionStore) issue(ctx context.Context, userID int64) (string, error) {
 	now := s.now().Unix()
-	if err := s.cleanupExpired(now); err != nil {
+	if err := s.cleanupExpired(ctx, now); err != nil {
 		return "", err
 	}
 
 	buf := make([]byte, 32)
 	rand.Read(buf)
 	sid := hex.EncodeToString(buf)
-	if _, err := s.db.Exec(`
+	if _, err := s.db.Write(ctx).Exec(`
 		INSERT INTO sessions (token_hash, user_id, created_at, last_seen_at, expires_at)
 		VALUES (?, ?, ?, ?, ?)
 	`, sessionTokenHash(sid), userID, now, now, now+int64(sessionAbsoluteTTL.Seconds())); err != nil {
@@ -58,7 +59,7 @@ func (s *sessionStore) issue(userID int64) (string, error) {
 // live. Expired rows are removed opportunistically. last_seen_at is bumped at
 // most once per sessionBumpEvery so ordinary page loads and asset requests do
 // not turn every authenticated request into a write.
-func (s *sessionStore) lookup(sid string) (int64, bool, error) {
+func (s *sessionStore) lookup(ctx context.Context, sid string) (int64, bool, error) {
 	if sid == "" {
 		return 0, false, nil
 	}
@@ -68,7 +69,7 @@ func (s *sessionStore) lookup(sid string) (int64, bool, error) {
 
 	var uid int64
 	var lastSeen, expiresAt int64
-	err := s.db.QueryRow(`
+	err := s.db.Read(ctx).QueryRow(`
 		SELECT user_id, last_seen_at, expires_at
 		FROM sessions
 		WHERE token_hash = ?
@@ -81,14 +82,14 @@ func (s *sessionStore) lookup(sid string) (int64, bool, error) {
 	}
 
 	if sessionExpired(now, lastSeen, expiresAt) {
-		if err := s.deleteByHash(tokenHash); err != nil {
-			return 0, false, err
+		if _, err := s.db.ExecBestEffort(ctx, "DELETE FROM sessions WHERE token_hash = ?", tokenHash); err != nil {
+			return 0, false, fmt.Errorf("delete expired session: %w", err)
 		}
 		return 0, false, nil
 	}
 
 	if now-lastSeen >= int64(sessionBumpEvery.Seconds()) {
-		if _, err := s.db.Exec("UPDATE sessions SET last_seen_at = ? WHERE token_hash = ?", now, tokenHash); err != nil {
+		if _, err := s.db.ExecBestEffort(ctx, "UPDATE sessions SET last_seen_at = ? WHERE token_hash = ?", now, tokenHash); err != nil {
 			return 0, false, fmt.Errorf("bump session: %w", err)
 		}
 	}
@@ -97,17 +98,17 @@ func (s *sessionStore) lookup(sid string) (int64, bool, error) {
 }
 
 // revoke drops a session id (logout). A no-op for an unknown id.
-func (s *sessionStore) revoke(sid string) error {
+func (s *sessionStore) revoke(ctx context.Context, sid string) error {
 	if sid == "" {
 		return nil
 	}
-	return s.deleteByHash(sessionTokenHash(sid))
+	return s.deleteByHash(ctx, sessionTokenHash(sid))
 }
 
 // revokeUser drops every live browser session for userID. Admin password resets
 // use this to force the target user to log in again on every device.
-func (s *sessionStore) revokeUser(userID int64) error {
-	if _, err := s.db.Exec("DELETE FROM sessions WHERE user_id = ?", userID); err != nil {
+func (s *sessionStore) revokeUser(ctx context.Context, userID int64) error {
+	if _, err := s.db.Write(ctx).Exec("DELETE FROM sessions WHERE user_id = ?", userID); err != nil {
 		return fmt.Errorf("revoke user sessions: %w", err)
 	}
 	return nil
@@ -116,12 +117,11 @@ func (s *sessionStore) revokeUser(userID int64) error {
 // revokeUserExcept drops every session for userID except keepSID. Password
 // self-change uses this to preserve the browser that initiated the change while
 // invalidating other devices.
-func (s *sessionStore) revokeUserExcept(userID int64, keepSID string) error {
+func (s *sessionStore) revokeUserExcept(ctx context.Context, userID int64, keepSID string) error {
 	if keepSID == "" {
-		return s.revokeUser(userID)
+		return s.revokeUser(ctx, userID)
 	}
-	if _, err := s.db.Exec(
-		"DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?",
+	if _, err := s.db.Write(ctx).Exec("DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?",
 		userID,
 		sessionTokenHash(keepSID),
 	); err != nil {
@@ -130,8 +130,8 @@ func (s *sessionStore) revokeUserExcept(userID int64, keepSID string) error {
 	return nil
 }
 
-func (s *sessionStore) cleanupExpired(now int64) error {
-	if _, err := s.db.Exec(`
+func (s *sessionStore) cleanupExpired(ctx context.Context, now int64) error {
+	if _, err := s.db.Write(ctx).Exec(`
 		DELETE FROM sessions
 		WHERE expires_at <= ? OR last_seen_at <= ?
 	`, now, now-int64(sessionIdleTTL.Seconds())); err != nil {
@@ -140,8 +140,8 @@ func (s *sessionStore) cleanupExpired(now int64) error {
 	return nil
 }
 
-func (s *sessionStore) deleteByHash(tokenHash string) error {
-	if _, err := s.db.Exec("DELETE FROM sessions WHERE token_hash = ?", tokenHash); err != nil {
+func (s *sessionStore) deleteByHash(ctx context.Context, tokenHash string) error {
+	if _, err := s.db.Write(ctx).Exec("DELETE FROM sessions WHERE token_hash = ?", tokenHash); err != nil {
 		return fmt.Errorf("delete session: %w", err)
 	}
 	return nil

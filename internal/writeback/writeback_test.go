@@ -27,14 +27,14 @@ func TestRunWritesDirtyEPUBAndUpdatesAssetIdentity(t *testing.T) {
 	database, root, assetID, relPath := setupWritebackEPUB(t, "Old Title", "Old Author")
 	defer database.Close()
 
-	if _, err := database.Exec(`
+	if _, err := database.Write(t.Context()).Exec(`
 		UPDATE books
 		SET title = 'New Title', sort_title = 'Title, New', metadata_rev = 1, updated_at = 1800000000
-		WHERE id = 'w1'
+		WHERE id = 1
 	`); err != nil {
 		t.Fatalf("update book metadata: %v", err)
 	}
-	if _, err := database.Exec(`
+	if _, err := database.Write(t.Context()).Exec(`
 		UPDATE authors SET name = 'Jane Writer', sort_name = 'Writer, Jane' WHERE id = 'au1'
 	`); err != nil {
 		t.Fatalf("update author: %v", err)
@@ -63,7 +63,7 @@ func TestRunWritesDirtyEPUBAndUpdatesAssetIdentity(t *testing.T) {
 	var currentHash, koHash string
 	var currentSize, writebackRev int64
 	var writebackError sql.NullString
-	if err := database.QueryRow(`
+	if err := database.Read(t.Context()).QueryRow(`
 		SELECT current_sha256, current_size, koreader_hash, writeback_rev, writeback_error
 		FROM assets WHERE id = ?
 	`, assetID).Scan(&currentHash, &currentSize, &koHash, &writebackRev, &writebackError); err != nil {
@@ -93,24 +93,24 @@ func TestRunWritesDirtyEPUBCover(t *testing.T) {
 	if err := os.WriteFile(root.Abs(relPath), src, 0o644); err != nil {
 		t.Fatalf("replace source epub: %v", err)
 	}
-	if _, err := database.Exec(`
+	if _, err := database.Write(t.Context()).Exec(`
 		UPDATE assets
 		SET current_sha256 = ?, current_size = ?, original_sha256 = ?, original_size = ?
 		WHERE id = ?
 	`, sha256HexForTest(src), len(src), sha256HexForTest(src), len(src), assetID); err != nil {
 		t.Fatalf("update asset identity: %v", err)
 	}
-	coverPath := dataRoot.Abs(covers.OriginalPath("w1"))
+	coverPath := dataRoot.Abs(covers.OriginalPath(1))
 	if err := os.MkdirAll(filepath.Dir(coverPath), 0o755); err != nil {
 		t.Fatalf("mkdir cover dir: %v", err)
 	}
 	if err := os.WriteFile(coverPath, storedCover, 0o644); err != nil {
 		t.Fatalf("write stored cover: %v", err)
 	}
-	if _, err := database.Exec(`
+	if _, err := database.Write(t.Context()).Exec(`
 		UPDATE books
 		SET cover_version = 1, metadata_rev = 1, updated_at = 1800000000
-		WHERE id = 'w1'
+		WHERE id = 1
 	`); err != nil {
 		t.Fatalf("mark cover dirty: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestRunWritesDirtyEPUBCover(t *testing.T) {
 	}
 
 	var writebackRev int64
-	if err := database.QueryRow("SELECT writeback_rev FROM assets WHERE id = ?", assetID).Scan(&writebackRev); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT writeback_rev FROM assets WHERE id = ?", assetID).Scan(&writebackRev); err != nil {
 		t.Fatalf("query writeback rev: %v", err)
 	}
 	if writebackRev != 1 {
@@ -149,13 +149,13 @@ func TestRunWritesDirtyKEPUBContainer(t *testing.T) {
 	database, root, _, relPath := setupWritebackEPUB(t, "Old Title", "Old Author")
 	defer database.Close()
 
-	if _, err := database.Exec("UPDATE assets SET format = 'kepub', extension = '.kepub.epub' WHERE id = 'as_writeback'"); err != nil {
+	if _, err := database.Write(t.Context()).Exec("UPDATE assets SET format = 'kepub', extension = '.kepub.epub' WHERE id = 'as_writeback'"); err != nil {
 		t.Fatalf("mark asset as kepub: %v", err)
 	}
-	if _, err := database.Exec(`
+	if _, err := database.Write(t.Context()).Exec(`
 		UPDATE books
 		SET title = 'New KEPUB Title', metadata_rev = 1
-		WHERE id = 'w1'
+		WHERE id = 1
 	`); err != nil {
 		t.Fatalf("update book metadata: %v", err)
 	}
@@ -186,14 +186,14 @@ func TestRunWritesDirtyFB2(t *testing.T) {
 	database, root, assetID, relPath := setupWritebackFB2(t, "Old FB2 Title", "Old FB2 Author")
 	defer database.Close()
 
-	if _, err := database.Exec(`
+	if _, err := database.Write(t.Context()).Exec(`
 		UPDATE books
 		SET title = 'New FB2 Title', cover_version = 1, metadata_rev = 1, updated_at = 1800000000
-		WHERE id = 'w1'
+		WHERE id = 1
 	`); err != nil {
 		t.Fatalf("update book metadata: %v", err)
 	}
-	if _, err := database.Exec(`
+	if _, err := database.Write(t.Context()).Exec(`
 		UPDATE authors SET name = 'Jane FB2 Writer', sort_name = 'Writer, Jane FB2' WHERE id = 'au1'
 	`); err != nil {
 		t.Fatalf("update author: %v", err)
@@ -220,7 +220,7 @@ func TestRunWritesDirtyFB2(t *testing.T) {
 	}
 
 	var writebackRev int64
-	if err := database.QueryRow("SELECT writeback_rev FROM assets WHERE id = ?", assetID).Scan(&writebackRev); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT writeback_rev FROM assets WHERE id = ?", assetID).Scan(&writebackRev); err != nil {
 		t.Fatalf("query writeback rev: %v", err)
 	}
 	if writebackRev != 1 {
@@ -235,12 +235,12 @@ func TestRunFailedOnlyPlansFailedDirtyAssets(t *testing.T) {
 		t.Fatalf("InitPath: %v", err)
 	}
 	defer database.Close()
-	if _, err := database.Exec(`
-		INSERT INTO books (id, title, sort_title, metadata_rev) VALUES ('w1', 'Book', 'Book', 2);
+	if _, err := database.Write(t.Context()).Exec(`
+		INSERT INTO books (id, title, sort_title, metadata_rev) VALUES (1, 'Book', 'Book', 2);
 		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, writeback_rev, writeback_error)
 		VALUES
-			('clean_dirty', 'w1', 'Book/clean.epub', 'clean.epub', '.epub', 'epub', 1, NULL),
-			('failed_dirty', 'w1', 'Book/failed.epub', 'failed.epub', '.epub', 'epub', 1, 'bad opf');
+			('clean_dirty', 1, 'Book/clean.epub', 'clean.epub', '.epub', 'epub', 1, NULL),
+			('failed_dirty', 1, 'Book/failed.epub', 'failed.epub', '.epub', 'epub', 1, 'bad opf');
 	`); err != nil {
 		t.Fatalf("seed failed-only rows: %v", err)
 	}
@@ -258,7 +258,7 @@ func TestServiceRunOnceWritesOnlyInAutoMode(t *testing.T) {
 	database, root, assetID, relPath := setupWritebackEPUB(t, "Old Title", "Old Author")
 	defer database.Close()
 
-	if _, err := database.Exec("UPDATE books SET title = 'Auto Title', metadata_rev = 1 WHERE id = 'w1'"); err != nil {
+	if _, err := database.Write(t.Context()).Exec("UPDATE books SET title = 'Auto Title', metadata_rev = 1 WHERE id = 1"); err != nil {
 		t.Fatalf("mark book dirty: %v", err)
 	}
 	svc := NewService(database, root, ServiceOptions{BatchLimit: 1})
@@ -272,14 +272,14 @@ func TestServiceRunOnceWritesOnlyInAutoMode(t *testing.T) {
 		t.Fatalf("manual summary = %+v; want no work", manual)
 	}
 	var writebackRev int64
-	if err := database.QueryRow("SELECT writeback_rev FROM assets WHERE id = ?", assetID).Scan(&writebackRev); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT writeback_rev FROM assets WHERE id = ?", assetID).Scan(&writebackRev); err != nil {
 		t.Fatalf("query manual writeback rev: %v", err)
 	}
 	if writebackRev != 0 {
 		t.Fatalf("manual writeback_rev = %d; want 0", writebackRev)
 	}
 
-	if err := SaveMode(database.DB, ModeAuto); err != nil {
+	if err := SaveMode(database.Write(t.Context()), ModeAuto); err != nil {
 		t.Fatalf("SaveMode auto: %v", err)
 	}
 	auto, err := svc.RunOnce(context.Background())
@@ -305,14 +305,14 @@ func TestServiceRunOnceWritesOnlyInAutoMode(t *testing.T) {
 func TestServiceFailureRetryUsesDurableTimestamp(t *testing.T) {
 	database, root, _, relPath := setupWritebackEPUB(t, "Old Title", "Old Author")
 	defer database.Close()
-	if _, err := database.Exec("UPDATE books SET title = 'New Title', metadata_rev = 1 WHERE id = 'w1'"); err != nil {
+	if _, err := database.Write(t.Context()).Exec("UPDATE books SET title = 'New Title', metadata_rev = 1 WHERE id = 1"); err != nil {
 		t.Fatalf("mark book dirty: %v", err)
 	}
 	driftBytes := testWritebackEPUBBytes(t, "Drift Title", "Drift Author")
 	if err := os.WriteFile(root.Abs(relPath), driftBytes, 0o644); err != nil {
 		t.Fatalf("write drift file: %v", err)
 	}
-	if err := SaveMode(database.DB, ModeAuto); err != nil {
+	if err := SaveMode(database.Write(t.Context()), ModeAuto); err != nil {
 		t.Fatalf("SaveMode auto: %v", err)
 	}
 
@@ -349,7 +349,7 @@ func TestRunRefusesCurrentFileDrift(t *testing.T) {
 	database, root, assetID, relPath := setupWritebackEPUB(t, "Old Title", "Old Author")
 	defer database.Close()
 
-	if _, err := database.Exec("UPDATE books SET title = 'New Title', metadata_rev = 1 WHERE id = 'w1'"); err != nil {
+	if _, err := database.Write(t.Context()).Exec("UPDATE books SET title = 'New Title', metadata_rev = 1 WHERE id = 1"); err != nil {
 		t.Fatalf("update book metadata: %v", err)
 	}
 	driftBytes := testWritebackEPUBBytes(t, "Drift Title", "Drift Author")
@@ -374,7 +374,7 @@ func TestRunRefusesCurrentFileDrift(t *testing.T) {
 	}
 	var writebackRev int64
 	var writebackError string
-	if err := database.QueryRow("SELECT writeback_rev, COALESCE(writeback_error, '') FROM assets WHERE id = ?", assetID).Scan(&writebackRev, &writebackError); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT writeback_rev, COALESCE(writeback_error, '') FROM assets WHERE id = ?", assetID).Scan(&writebackRev, &writebackError); err != nil {
 		t.Fatalf("query writeback error: %v", err)
 	}
 	if writebackRev != 0 || !strings.Contains(writebackError, "current file drift") {
@@ -387,14 +387,14 @@ func TestRunReturnsSecondaryWritebackStateFailure(t *testing.T) {
 	database, root, assetID, relPath := setupWritebackEPUB(t, "Old Title", "Old Author")
 	defer database.Close()
 
-	if _, err := database.Exec("UPDATE books SET title = 'New Title', metadata_rev = 1 WHERE id = 'w1'"); err != nil {
+	if _, err := database.Write(t.Context()).Exec("UPDATE books SET title = 'New Title', metadata_rev = 1 WHERE id = 1"); err != nil {
 		t.Fatalf("update book metadata: %v", err)
 	}
 	driftBytes := testWritebackEPUBBytes(t, "Drift Title", "Drift Author")
 	if err := os.WriteFile(root.Abs(relPath), driftBytes, 0o644); err != nil {
 		t.Fatalf("write drift file: %v", err)
 	}
-	if _, err := database.Exec(`
+	if _, err := database.Write(t.Context()).Exec(`
 		CREATE TRIGGER reject_writeback_error
 		BEFORE UPDATE OF writeback_error ON assets
 		WHEN NEW.writeback_error IS NOT NULL
@@ -424,7 +424,7 @@ func TestRunReturnsSecondaryWritebackStateFailure(t *testing.T) {
 	}
 
 	var writebackError string
-	if err := database.QueryRow("SELECT COALESCE(writeback_error, '') FROM assets WHERE id = ?", assetID).Scan(&writebackError); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT COALESCE(writeback_error, '') FROM assets WHERE id = ?", assetID).Scan(&writebackError); err != nil {
 		t.Fatalf("query writeback error: %v", err)
 	}
 	if writebackError != "" {
@@ -448,14 +448,14 @@ func TestRunRefusesOversizedInputBeforeRendering(t *testing.T) {
 	if err := f.Close(); err != nil {
 		t.Fatalf("close sparse source: %v", err)
 	}
-	if _, err := database.Exec(`
+	if _, err := database.Write(t.Context()).Exec(`
 		UPDATE assets
 		SET current_sha256 = '', current_size = ?
 		WHERE id = ?
 	`, oversized, assetID); err != nil {
 		t.Fatalf("update asset identity: %v", err)
 	}
-	if _, err := database.Exec("UPDATE books SET title = 'New Title', metadata_rev = 1 WHERE id = 'w1'"); err != nil {
+	if _, err := database.Write(t.Context()).Exec("UPDATE books SET title = 'New Title', metadata_rev = 1 WHERE id = 1"); err != nil {
 		t.Fatalf("update book metadata: %v", err)
 	}
 
@@ -469,7 +469,7 @@ func TestRunRefusesOversizedInputBeforeRendering(t *testing.T) {
 
 	var writebackRev int64
 	var writebackError string
-	if err := database.QueryRow("SELECT writeback_rev, COALESCE(writeback_error, '') FROM assets WHERE id = ?", assetID).Scan(&writebackRev, &writebackError); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT writeback_rev, COALESCE(writeback_error, '') FROM assets WHERE id = ?", assetID).Scan(&writebackRev, &writebackError); err != nil {
 		t.Fatalf("query writeback error: %v", err)
 	}
 	if writebackRev != 0 || !strings.Contains(writebackError, ErrInputTooLarge.Error()) {
@@ -485,7 +485,7 @@ func TestRunDryRunDoesNotTouchFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read before: %v", err)
 	}
-	if _, err := database.Exec("UPDATE books SET title = 'New Title', metadata_rev = 1 WHERE id = 'w1'"); err != nil {
+	if _, err := database.Write(t.Context()).Exec("UPDATE books SET title = 'New Title', metadata_rev = 1 WHERE id = 1"); err != nil {
 		t.Fatalf("update book metadata: %v", err)
 	}
 
@@ -504,7 +504,7 @@ func TestRunDryRunDoesNotTouchFiles(t *testing.T) {
 		t.Fatalf("dry-run changed file")
 	}
 	var writebackRev int64
-	if err := database.QueryRow("SELECT writeback_rev FROM assets WHERE id = ?", assetID).Scan(&writebackRev); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT writeback_rev FROM assets WHERE id = ?", assetID).Scan(&writebackRev); err != nil {
 		t.Fatalf("query rev: %v", err)
 	}
 	if writebackRev != 0 {
@@ -534,20 +534,20 @@ func setupWritebackEPUB(t *testing.T, title, author string) (*db.DB, storage.Roo
 		t.Fatalf("write source epub: %v", err)
 	}
 
-	if _, err := database.Exec("INSERT INTO books (id, title, sort_title) VALUES ('w1', ?, ?)", title, title); err != nil {
+	if _, err := database.Write(t.Context()).Exec("INSERT INTO books (id, title, sort_title) VALUES (1, ?, ?)", title, title); err != nil {
 		t.Fatalf("insert book: %v", err)
 	}
-	if _, err := database.Exec("INSERT INTO authors (id, name, sort_name) VALUES ('au1', ?, ?)", author, author); err != nil {
+	if _, err := database.Write(t.Context()).Exec("INSERT INTO authors (id, name, sort_name) VALUES ('au1', ?, ?)", author, author); err != nil {
 		t.Fatalf("insert author: %v", err)
 	}
-	if _, err := database.Exec("INSERT INTO book_authors (book_id, author_id, role, author_order) VALUES ('w1', 'au1', 'aut', 0)"); err != nil {
+	if _, err := database.Write(t.Context()).Exec("INSERT INTO book_authors (book_id, author_id, role, author_order) VALUES (1, 'au1', 'aut', 0)"); err != nil {
 		t.Fatalf("insert book author: %v", err)
 	}
-	if _, err := database.Exec(`
+	if _, err := database.Write(t.Context()).Exec(`
 		INSERT INTO assets
 			(id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_sha256, current_sha256, original_size, current_size)
 		VALUES
-			(?, 'w1', ?, 'Book.epub', '.epub', 'epub', 1, 1, ?, ?, ?, ?)
+			(?, 1, ?, 'Book.epub', '.epub', 'epub', 1, 1, ?, ?, ?, ?)
 	`, assetID, relPath, sha256HexForTest(src), sha256HexForTest(src), len(src), len(src)); err != nil {
 		t.Fatalf("insert asset: %v", err)
 	}
@@ -576,20 +576,20 @@ func setupWritebackFB2(t *testing.T, title, author string) (*db.DB, storage.Root
 		t.Fatalf("write source fb2: %v", err)
 	}
 
-	if _, err := database.Exec("INSERT INTO books (id, title, sort_title) VALUES ('w1', ?, ?)", title, title); err != nil {
+	if _, err := database.Write(t.Context()).Exec("INSERT INTO books (id, title, sort_title) VALUES (1, ?, ?)", title, title); err != nil {
 		t.Fatalf("insert book: %v", err)
 	}
-	if _, err := database.Exec("INSERT INTO authors (id, name, sort_name) VALUES ('au1', ?, ?)", author, author); err != nil {
+	if _, err := database.Write(t.Context()).Exec("INSERT INTO authors (id, name, sort_name) VALUES ('au1', ?, ?)", author, author); err != nil {
 		t.Fatalf("insert author: %v", err)
 	}
-	if _, err := database.Exec("INSERT INTO book_authors (book_id, author_id, role, author_order) VALUES ('w1', 'au1', 'aut', 0)"); err != nil {
+	if _, err := database.Write(t.Context()).Exec("INSERT INTO book_authors (book_id, author_id, role, author_order) VALUES (1, 'au1', 'aut', 0)"); err != nil {
 		t.Fatalf("insert book author: %v", err)
 	}
-	if _, err := database.Exec(`
+	if _, err := database.Write(t.Context()).Exec(`
 		INSERT INTO assets
 			(id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_sha256, current_sha256, original_size, current_size)
 		VALUES
-			(?, 'w1', ?, 'Book.fb2', '.fb2', 'fb2', 1, 1, ?, ?, ?, ?)
+			(?, 1, ?, 'Book.fb2', '.fb2', 'fb2', 1, 1, ?, ?, ?, ?)
 	`, assetID, relPath, sha256HexForTest(src), sha256HexForTest(src), len(src), len(src)); err != nil {
 		t.Fatalf("insert asset: %v", err)
 	}
@@ -709,7 +709,7 @@ func testWritebackPNG(t *testing.T, c color.Color) []byte {
 func assertNoPendingAttempts(t *testing.T, database *db.DB, assetID string) {
 	t.Helper()
 	var pending int
-	if err := database.QueryRow("SELECT COUNT(*) FROM metadata_writeback_attempts WHERE asset_id = ?", assetID).Scan(&pending); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT COUNT(*) FROM metadata_writeback_attempts WHERE asset_id = ?", assetID).Scan(&pending); err != nil {
 		t.Fatalf("count pending attempts: %v", err)
 	}
 	if pending != 0 {

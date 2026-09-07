@@ -82,6 +82,8 @@ test.describe('Library pagination', () => {
   });
 
   test('Changing search cancels an automatic page still in flight', async ({ page }) => {
+    let requestStarted!: () => void;
+    const inFlight = new Promise<void>((resolve) => { requestStarted = resolve; });
     let release!: () => void;
     const pending = new Promise<void>((resolve) => {
       release = resolve;
@@ -89,6 +91,7 @@ test.describe('Library pagination', () => {
     await page.route('**/api/books?*', async (route) => {
       if (new URL(route.request().url()).searchParams.get('offset') === '50') {
         const response = await route.fetch();
+        requestStarted();
         await pending;
         await route.fulfill({ response });
       } else {
@@ -103,12 +106,15 @@ test.describe('Library pagination', () => {
     try {
       await page.locator('.book-card').last().scrollIntoViewIfNeeded();
       await expect(page.locator('#load-more-status')).toHaveText('Loading more books…');
+      // The loading control appears before the browser dispatches fetch.
+      // Wait for the intercepted request before testing its cancellation.
+      await inFlight;
       await page.locator('#search-input').fill('Filler 001');
       await expect(page.locator('.book-card')).toHaveCount(1);
+      await cancelled;
     } finally {
       release();
     }
-    await cancelled;
     await expect(page.locator('#load-more-container')).toBeHidden();
     await expect(page.locator('.book-card')).toHaveCount(1);
     await expect(page.locator('.book-title')).toHaveText('Filler Book 001');

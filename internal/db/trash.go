@@ -3,7 +3,6 @@ package db
 import (
 	"database/sql"
 	"fmt"
-	"strings"
 )
 
 // SoftDeleteBook marks a live book as trashed: it drops out of every normal
@@ -12,7 +11,7 @@ import (
 // deletedBy records who trashed it, for a legible "Deleted by X — Restore?"
 // trash view. Returns sql.ErrNoRows when no *live* book has this id (unknown id
 // or already trashed), so the handler can answer 404 / no-op uniformly.
-func SoftDeleteBook(execer Execer, bookID string, deletedBy int64) error {
+func SoftDeleteBook(execer Execer, bookID int64, deletedBy int64) error {
 	res, err := execer.Exec(`
 		UPDATE books SET deleted_at = unixepoch(), deleted_by = ?
 		WHERE id = ? AND deleted_at IS NULL
@@ -28,7 +27,7 @@ func SoftDeleteBook(execer Execer, bookID string, deletedBy int64) error {
 
 // RestoreBook clears the trash flags, returning the book to the live catalog.
 // Returns sql.ErrNoRows when no *trashed* book has this id.
-func RestoreBook(execer Execer, bookID string) error {
+func RestoreBook(execer Execer, bookID int64) error {
 	res, err := execer.Exec(`
 		UPDATE books SET deleted_at = NULL, deleted_by = NULL
 		WHERE id = ? AND deleted_at IS NOT NULL
@@ -87,15 +86,13 @@ func ListTrashedBooks(queryer Queryer, scope VisibilityScope) ([]TrashedBookRow,
 // explicit selection. Purge uses this inside its deletion transaction so a
 // concurrent restore cannot change the selected set between inspection and
 // commit.
-func ListTrashedBookIDs(queryer Queryer, bookIDs ...string) ([]string, error) {
+func ListTrashedBookIDs(queryer Queryer, bookIDs ...int64) ([]int64, error) {
 	query := `SELECT id FROM books WHERE deleted_at IS NOT NULL`
-	args := make([]any, len(bookIDs))
+	var args []any
 	if len(bookIDs) > 0 {
-		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(bookIDs)), ",")
+		var placeholders string
+		placeholders, args = idPlaceholders(bookIDs)
 		query += ` AND id IN (` + placeholders + `)`
-		for i, id := range bookIDs {
-			args[i] = id
-		}
 	}
 	query += ` ORDER BY id`
 	rows, err := queryer.Query(query, args...)
@@ -104,9 +101,9 @@ func ListTrashedBookIDs(queryer Queryer, bookIDs ...string) ([]string, error) {
 	}
 	defer rows.Close()
 
-	var ids []string
+	var ids []int64
 	for rows.Next() {
-		var id string
+		var id int64
 		if err := rows.Scan(&id); err != nil {
 			return nil, fmt.Errorf("list trashed book ids scan: %w", err)
 		}
@@ -119,7 +116,7 @@ func ListTrashedBookIDs(queryer Queryer, bookIDs ...string) ([]string, error) {
 // Search rows are explicit because FTS is not covered by foreign-key cascades;
 // orphan authors are swept once after the whole set, not once per book. The
 // caller captures file paths before this call and unlinks only after commit.
-func PurgeBooks(tx *sql.Tx, bookIDs []string) (int, error) {
+func PurgeBooks(tx *Tx, bookIDs []int64) (int, error) {
 	if len(bookIDs) == 0 {
 		return 0, nil
 	}
@@ -131,16 +128,12 @@ func PurgeBooks(tx *sql.Tx, bookIDs []string) (int, error) {
 		return 0, nil
 	}
 
-	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(trashedIDs)), ",")
-	args := make([]any, len(trashedIDs))
-	for i, id := range trashedIDs {
-		args[i] = id
+	placeholders, args := idPlaceholders(trashedIDs)
+	if _, err := tx.Exec(`DELETE FROM search WHERE rowid IN (`+placeholders+`)`, args...); err != nil {
+		return 0, fmt.Errorf("purge search rows: %w", err)
 	}
 	if _, err := tx.Exec(`DELETE FROM books WHERE deleted_at IS NOT NULL AND id IN (`+placeholders+`)`, args...); err != nil {
 		return 0, fmt.Errorf("purge books: %w", err)
-	}
-	if _, err := tx.Exec(`DELETE FROM search WHERE book_id IN (`+placeholders+`)`, args...); err != nil {
-		return 0, fmt.Errorf("purge search rows: %w", err)
 	}
 	if _, err := DeleteOrphanAuthors(tx); err != nil {
 		return 0, fmt.Errorf("purge orphan authors: %w", err)
@@ -152,10 +145,10 @@ func PurgeBooks(tx *sql.Tx, bookIDs []string) (int, error) {
 // expanding their ids into SQL host parameters. Search is deleted first because
 // its FTS5 rows are not covered by foreign-key cascades and the book subquery is
 // no longer available after the authoritative rows are removed.
-func PurgeAllTrashedBooks(tx *sql.Tx) (int, error) {
+func PurgeAllTrashedBooks(tx *Tx) (int, error) {
 	if _, err := tx.Exec(`
 		DELETE FROM search
-		WHERE book_id IN (SELECT id FROM books WHERE deleted_at IS NOT NULL)
+		WHERE rowid IN (SELECT id FROM books WHERE deleted_at IS NOT NULL)
 	`); err != nil {
 		return 0, fmt.Errorf("purge all search rows: %w", err)
 	}
@@ -183,8 +176,8 @@ func PurgeAllTrashedBooks(tx *sql.Tx) (int, error) {
 // no trashed book has this id. The caller captures the asset/cover file paths
 // *before* calling this (the rows are gone afterward) and unlinks them after the
 // transaction commits, preserving "DB first, then storage".
-func PurgeBook(tx *sql.Tx, bookID string) error {
-	n, err := PurgeBooks(tx, []string{bookID})
+func PurgeBook(tx *Tx, bookID int64) error {
+	n, err := PurgeBooks(tx, []int64{bookID})
 	if err != nil {
 		return err
 	}

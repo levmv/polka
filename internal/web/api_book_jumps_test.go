@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json/v2"
 	"fmt"
 	"net/http"
@@ -31,7 +32,7 @@ func TestAPIBookJumpsThresholdAndValidation(t *testing.T) {
 		t.Fatalf("small jumps = %+v; want total 2 and hidden items", small)
 	}
 
-	tx, err := database.Begin()
+	tx, err := database.BeginWrite(context.Background())
 	if err != nil {
 		t.Fatalf("begin: %v", err)
 	}
@@ -39,7 +40,7 @@ func TestAPIBookJumpsThresholdAndValidation(t *testing.T) {
 		title := fmt.Sprintf("Book %03d", i)
 		if _, err := tx.Exec(
 			`INSERT INTO books (id, title, sort_title, primary_author_sort) VALUES (?, ?, ?, 'Author')`,
-			fmt.Sprintf("jump_%03d", i),
+			i+1,
 			title,
 			title,
 		); err != nil {

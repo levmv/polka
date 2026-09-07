@@ -29,7 +29,7 @@ func TestImportCreatesLibraryOnFirstRun(t *testing.T) {
 	}
 	defer database.Close()
 
-	root, err := storage.OpenRoot(database.DB, dataDir)
+	root, err := storage.OpenRoot(database.Read(t.Context()), dataDir)
 	if err != nil {
 		t.Fatalf("OpenRoot: %v", err)
 	}
@@ -41,7 +41,7 @@ func TestImportCreatesLibraryOnFirstRun(t *testing.T) {
 	}
 
 	var storagePath string
-	if err := database.QueryRow("SELECT storage_path FROM assets LIMIT 1").Scan(&storagePath); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT storage_path FROM assets LIMIT 1").Scan(&storagePath); err != nil {
 		t.Fatalf("query storage_path: %v", err)
 	}
 	if _, err := os.Stat(root.Abs(storagePath)); err != nil {
@@ -64,7 +64,7 @@ func TestStorageRootSetCreatesLibraryOnFirstRun(t *testing.T) {
 	}
 	defer database.Close()
 
-	root, err := storage.OpenRoot(database.DB, dataDir)
+	root, err := storage.OpenRoot(database.Read(t.Context()), dataDir)
 	if err != nil {
 		t.Fatalf("OpenRoot: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestImportUsesConfiguredLibraryRoot(t *testing.T) {
 	defer database.Close()
 
 	var storagePath string
-	if err := database.QueryRow("SELECT storage_path FROM assets LIMIT 1").Scan(&storagePath); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT storage_path FROM assets LIMIT 1").Scan(&storagePath); err != nil {
 		t.Fatalf("query storage_path: %v", err)
 	}
 
@@ -164,7 +164,7 @@ func TestImportRefusesEmptyRootWithExistingCatalog(t *testing.T) {
 func TestUserAddCreatesLibraryOnFirstRun(t *testing.T) {
 	dataDir := filepath.Join(t.TempDir(), "app-data")
 	withPasswordStdin(t, "devpass\n", func() {
-		if err := runUser(dataDir, []string{"add", "--admin", "admin"}); err != nil {
+		if err := runUser(t.Context(), dataDir, []string{"add", "--admin", "admin"}); err != nil {
 			t.Fatalf("runUser add: %v", err)
 		}
 	})
@@ -174,7 +174,7 @@ func TestUserAddCreatesLibraryOnFirstRun(t *testing.T) {
 		t.Fatalf("db.InitPath: %v", err)
 	}
 	defer database.Close()
-	users, err := database.ListUsers()
+	users, err := db.ListUsers(database.Read(t.Context()))
 	if err != nil {
 		t.Fatalf("ListUsers: %v", err)
 	}
@@ -186,7 +186,7 @@ func TestUserAddCreatesLibraryOnFirstRun(t *testing.T) {
 func TestUserAddInvalidArgsDoesNotCreateLibrary(t *testing.T) {
 	dataDir := filepath.Join(t.TempDir(), "app-data")
 
-	err := runUser(dataDir, []string{"add"})
+	err := runUser(t.Context(), dataDir, []string{"add"})
 	if err == nil {
 		t.Fatal("runUser add without username returned nil error")
 	}
@@ -201,17 +201,17 @@ func TestIngestProcessesConfiguredDropFolder(t *testing.T) {
 	libraryDir := filepath.Join(base, "managed-books")
 	ingestDir := filepath.Join(base, "drop")
 
-	database, err := ensureLibraryWithoutBooksRoot(dataDir)
+	database, err := ensureLibraryWithoutBooksRoot(t.Context(), dataDir)
 	if err != nil {
 		t.Fatalf("ensureLibraryWithoutBooksRoot: %v", err)
 	}
-	if _, err := storage.SaveRoot(database.DB, dataDir, libraryDir); err != nil {
+	if _, err := storage.SaveRoot(database.Write(t.Context()), dataDir, libraryDir); err != nil {
 		t.Fatalf("SaveRoot: %v", err)
 	}
 	if err := storage.EnsureLayout(storage.NewRoot(libraryDir)); err != nil {
 		t.Fatalf("EnsureLayout: %v", err)
 	}
-	if _, err := ingest.SavePath(database.DB, dataDir, ingestDir); err != nil {
+	if _, err := ingest.SavePath(database.Write(t.Context()), dataDir, ingestDir); err != nil {
 		t.Fatalf("SavePath: %v", err)
 	}
 	database.Close()
@@ -232,7 +232,7 @@ func TestIngestProcessesConfiguredDropFolder(t *testing.T) {
 	defer database.Close()
 
 	var storagePath string
-	if err := database.QueryRow("SELECT storage_path FROM assets LIMIT 1").Scan(&storagePath); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT storage_path FROM assets LIMIT 1").Scan(&storagePath); err != nil {
 		t.Fatalf("query storage_path: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(libraryDir, storagePath)); err != nil {
@@ -248,7 +248,7 @@ func TestMaintenanceCommandsDoNotCreateLibrary(t *testing.T) {
 		name string
 		run  func(string) error
 	}{
-		{"check", func(dataDir string) error { return runCheck(dataDir, nil) }},
+		{"check", func(dataDir string) error { return runCheck(t.Context(), dataDir, nil) }},
 		{"repair", func(dataDir string) error { return runRepair(context.Background(), dataDir, nil) }},
 		{"writeback", func(dataDir string) error { return runLibraryWriteback(context.Background(), dataDir, nil) }},
 		{"storage_template_apply", func(dataDir string) error {

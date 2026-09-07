@@ -14,7 +14,7 @@ import (
 func TestEnsureLibraryCreatesDefaultLayout(t *testing.T) {
 	dataDir := filepath.Join(t.TempDir(), "library")
 
-	database, err := EnsureLibrary(dataDir)
+	database, err := EnsureLibrary(t.Context(), dataDir)
 	if err != nil {
 		t.Fatalf("EnsureLibrary: %v", err)
 	}
@@ -23,7 +23,7 @@ func TestEnsureLibraryCreatesDefaultLayout(t *testing.T) {
 	if _, err := os.Stat(DatabasePath(dataDir)); err != nil {
 		t.Fatalf("database file missing: %v", err)
 	}
-	root, err := storage.OpenRoot(database.DB, dataDir)
+	root, err := storage.OpenRoot(database.Read(t.Context()), dataDir)
 	if err != nil {
 		t.Fatalf("OpenRoot: %v", err)
 	}
@@ -34,7 +34,7 @@ func TestEnsureLibraryCreatesDefaultLayout(t *testing.T) {
 		t.Fatalf("books root stat = %v/%v; want directory", info, err)
 	}
 
-	ingestPath, err := ingest.OpenPath(database.DB, dataDir)
+	ingestPath, err := ingest.OpenPath(database.Read(t.Context()), dataDir)
 	if err != nil {
 		t.Fatalf("OpenPath: %v", err)
 	}
@@ -45,7 +45,7 @@ func TestEnsureLibraryCreatesDefaultLayout(t *testing.T) {
 		t.Fatalf("ingest stat = %v/%v; want directory", info, err)
 	}
 
-	if template, err := storage.OpenBookPathTemplate(database.DB); err != nil {
+	if template, err := storage.OpenBookPathTemplate(database.Read(t.Context())); err != nil {
 		t.Fatalf("OpenBookPathTemplate: %v", err)
 	} else if template != storage.DefaultBookPathTemplate {
 		t.Fatalf("template = %q; want default", template)
@@ -71,7 +71,7 @@ func TestEnsureLibraryUsesOwnerOnlyDefaultsWithoutChmoddingExistingDirectory(t *
 
 	t.Run("new data directory", func(t *testing.T) {
 		dataDir := filepath.Join(t.TempDir(), "library")
-		database, err := EnsureLibraryWithoutBooksRoot(dataDir)
+		database, err := EnsureLibraryWithoutBooksRoot(t.Context(), dataDir)
 		if err != nil {
 			t.Fatalf("EnsureLibrary: %v", err)
 		}
@@ -86,7 +86,7 @@ func TestEnsureLibraryUsesOwnerOnlyDefaultsWithoutChmoddingExistingDirectory(t *
 		if err := os.Mkdir(dataDir, 0o755); err != nil {
 			t.Fatalf("mkdir: %v", err)
 		}
-		database, err := EnsureLibraryWithoutBooksRoot(dataDir)
+		database, err := EnsureLibraryWithoutBooksRoot(t.Context(), dataDir)
 		if err != nil {
 			t.Fatalf("EnsureLibrary: %v", err)
 		}

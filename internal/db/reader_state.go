@@ -15,7 +15,7 @@ var (
 type ReaderState struct {
 	UserID     int64
 	AssetID    string
-	BookID     string
+	BookID     int64
 	Progress   float64
 	Locator    ReaderLocator
 	LastReadAt int64
@@ -29,11 +29,7 @@ type ContinueReadingRow struct {
 	LastReadAt int64
 }
 
-func (db *DB) GetReaderState(userID int64, assetID string) (*ReaderState, error) {
-	return getReaderState(db, userID, assetID)
-}
-
-func getReaderState(queryer Queryer, userID int64, assetID string) (*ReaderState, error) {
+func GetReaderState(queryer Queryer, userID int64, assetID string) (*ReaderState, error) {
 	if userID <= 0 {
 		return nil, ErrUserIDRequired
 	}
@@ -70,7 +66,7 @@ func (db *DB) TouchReaderStateAndAdvanceStatus(
 ) (*ReaderState, ReadingStatusChange, error) {
 	var state *ReaderState
 	var change ReadingStatusChange
-	err := db.Transact(ctx, func(tx *sql.Tx) error {
+	err := db.Transact(ctx, func(tx *Tx) error {
 		var err error
 		state, err = touchReaderState(tx, userID, assetID)
 		if err != nil {
@@ -88,8 +84,8 @@ func (db *DB) TouchReaderStateAndAdvanceStatus(
 	return state, change, nil
 }
 
-func touchReaderState(tx *sql.Tx, userID int64, assetID string) (*ReaderState, error) {
-	if _, err := getReaderState(tx, userID, assetID); err != nil {
+func touchReaderState(tx *Tx, userID int64, assetID string) (*ReaderState, error) {
+	if _, err := GetReaderState(tx, userID, assetID); err != nil {
 		return nil, err
 	}
 	if _, err := tx.Exec(`
@@ -101,7 +97,7 @@ func touchReaderState(tx *sql.Tx, userID int64, assetID string) (*ReaderState, e
 	`, userID, assetID); err != nil {
 		return nil, fmt.Errorf("touch reader state: %w", err)
 	}
-	return getReaderState(tx, userID, assetID)
+	return GetReaderState(tx, userID, assetID)
 }
 
 func (db *DB) SaveReaderStateAndAdvanceStatus(
@@ -117,7 +113,7 @@ func (db *DB) SaveReaderStateAndAdvanceStatus(
 	}
 	var state *ReaderState
 	var change ReadingStatusChange
-	err = db.Transact(ctx, func(tx *sql.Tx) error {
+	err = db.Transact(ctx, func(tx *Tx) error {
 		var err error
 		state, err = saveReaderState(tx, userID, assetID, progress, normalized)
 		if err != nil {
@@ -143,8 +139,8 @@ func validateReaderPosition(progress float64, locator ReaderLocator) (ReaderLoca
 	return normalized, nil
 }
 
-func saveReaderState(tx *sql.Tx, userID int64, assetID string, progress float64, locator ReaderLocator) (*ReaderState, error) {
-	if _, err := getReaderState(tx, userID, assetID); err != nil {
+func saveReaderState(tx *Tx, userID int64, assetID string, progress float64, locator ReaderLocator) (*ReaderState, error) {
+	if _, err := GetReaderState(tx, userID, assetID); err != nil {
 		return nil, err
 	}
 	if _, err := tx.Exec(`
@@ -158,14 +154,14 @@ func saveReaderState(tx *sql.Tx, userID int64, assetID string, progress float64,
 	`, userID, assetID, progress, locator.String()); err != nil {
 		return nil, fmt.Errorf("save reader state: %w", err)
 	}
-	return getReaderState(tx, userID, assetID)
+	return GetReaderState(tx, userID, assetID)
 }
 
-func (db *DB) ResetReaderState(userID int64, assetID string) error {
-	if _, err := db.GetReaderState(userID, assetID); err != nil {
+func (db *DB) ResetReaderState(ctx context.Context, userID int64, assetID string) error {
+	if _, err := GetReaderState(db.Read(ctx), userID, assetID); err != nil {
 		return err
 	}
-	if _, err := db.Exec(`
+	if _, err := db.Write(ctx).Exec(`
 		DELETE FROM user_asset_state
 		WHERE user_id = ? AND asset_id = ?
 	`, userID, assetID); err != nil {

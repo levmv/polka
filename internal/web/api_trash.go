@@ -25,16 +25,19 @@ type TrashedBookDTO struct {
 // so readers cannot do it; the physical files stay untouched until admin purge.
 func (s *Server) handleAPIBookDelete(w http.ResponseWriter, r *http.Request) {
 	u := contextUser(r.Context())
-	bookID := r.PathValue("id")
+	bookID, validID := pathBookID(w, r, "id")
+	if !validID {
+		return
+	}
 	if _, ok := s.requireBookAccess(w, r, bookID); !ok {
 		return
 	}
-	if err := db.SoftDeleteBook(s.db, bookID, u.ID); err != nil {
+	if err := db.SoftDeleteBook(s.db.Write(r.Context()), bookID, u.ID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			http.Error(w, "Book not found", http.StatusNotFound)
 			return
 		}
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -42,16 +45,19 @@ func (s *Server) handleAPIBookDelete(w http.ResponseWriter, r *http.Request) {
 
 // handleAPIBookRestore returns a trashed book to the live catalog.
 func (s *Server) handleAPIBookRestore(w http.ResponseWriter, r *http.Request) {
-	bookID := r.PathValue("id")
+	bookID, validID := pathBookID(w, r, "id")
+	if !validID {
+		return
+	}
 	if _, ok := s.requireTrashedBookAccess(w, r, bookID); !ok {
 		return
 	}
-	if err := db.RestoreBook(s.db, bookID); err != nil {
+	if err := db.RestoreBook(s.db.Write(r.Context()), bookID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			http.Error(w, "Book not in trash", http.StatusNotFound)
 			return
 		}
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -61,13 +67,16 @@ func (s *Server) handleAPIBookRestore(w http.ResponseWriter, r *http.Request) {
 // operation below owns storage admission, serialization, DB ordering, and file
 // cleanup; the handler only maps the domain outcome to HTTP.
 func (s *Server) handleAPIBookPurge(w http.ResponseWriter, r *http.Request) {
-	bookID := r.PathValue("id")
-	if _, err := s.purgeTrashedBooks(r.Context(), []string{bookID}); err != nil {
+	bookID, validID := pathBookID(w, r, "id")
+	if !validID {
+		return
+	}
+	if _, err := s.purgeTrashedBooks(r.Context(), []int64{bookID}); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			http.Error(w, "Book not in trash", http.StatusNotFound)
 			return
 		}
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -77,7 +86,7 @@ func (s *Server) handleAPIBookPurge(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAPITrashEmpty(w http.ResponseWriter, r *http.Request) {
 	n, err := s.purgeTrashedBooks(r.Context(), nil)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	writeTrashPurgedCount(w, n)
@@ -89,7 +98,7 @@ func (s *Server) handleAPITrashEmpty(w http.ResponseWriter, r *http.Request) {
 // storage slot from inspection through best-effort cleanup, checks the books
 // root before deleting authoritative rows, commits every DB deletion together,
 // and sweeps orphan authors once via the matching DB purge primitive.
-func (s *Server) purgeTrashedBooks(ctx context.Context, requested []string) (int, error) {
+func (s *Server) purgeTrashedBooks(ctx context.Context, requested []int64) (int, error) {
 	releaseStorageSlot, err := s.acquireStorageWorkSlot(ctx)
 	if err != nil {
 		return 0, err
@@ -97,15 +106,15 @@ func (s *Server) purgeTrashedBooks(ctx context.Context, requested []string) (int
 	defer releaseStorageSlot()
 
 	explicit := requested != nil
-	requested = dedupStrings(requested)
+	requested = db.DedupBookIDs(requested)
 	if explicit && len(requested) == 0 {
 		return 0, sql.ErrNoRows
 	}
 
-	var ids []string
+	var ids []int64
 	var assets []db.AssetRow
 	root := s.managedRoot()
-	err = s.db.Transact(ctx, func(tx *sql.Tx) error {
+	err = s.db.Transact(ctx, func(tx *db.Tx) error {
 		ids, err = db.ListTrashedBookIDs(tx, requested...)
 		if err != nil {
 			return err
@@ -163,7 +172,7 @@ func (s *Server) purgeTrashedBooks(ctx context.Context, requested []string) (int
 	for _, id := range ids {
 		covers.RemoveDerived(coverRoot, id)
 		if err := storage.Remove(coverRoot, covers.OriginalPath(id)); err != nil {
-			log.Printf("purge: remove cover %s: %v", id, err)
+			log.Printf("purge: remove cover %d: %v", id, err)
 		}
 	}
 	return len(ids), nil
@@ -177,12 +186,12 @@ func writeTrashPurgedCount(w http.ResponseWriter, n int) {
 func (s *Server) handleAPITrash(w http.ResponseWriter, r *http.Request) {
 	scope, err := s.visibilityScope(r)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
-	rows, err := db.ListTrashedBooks(s.db, scope)
+	rows, err := db.ListTrashedBooks(s.db.Read(r.Context()), scope)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 
@@ -190,9 +199,9 @@ func (s *Server) handleAPITrash(w http.ResponseWriter, r *http.Request) {
 	for i := range rows {
 		summaryRows[i] = rows[i].BookSummaryRow
 	}
-	dtos, err := s.bookSummaryDTOs(summaryRows)
+	dtos, err := s.bookSummaryDTOs(r.Context(), summaryRows)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 

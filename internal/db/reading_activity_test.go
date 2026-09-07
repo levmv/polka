@@ -11,20 +11,19 @@ import (
 func readingActivityFixture(t *testing.T, zone string) (*DB, int64) {
 	t.Helper()
 	database := newTestDB(t)
-	user, err := database.CreateUser("reader", "pw", RoleMember)
+	user, err := database.CreateUser(t.Context(), "reader", "pw", RoleMember)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.SaveUserSettings(user.ID, UserSettingsPatch{TimeZone: &zone}); err != nil {
+	if _, err := database.SaveUserSettings(t.Context(), user.ID, UserSettingsPatch{TimeZone: &zone}); err != nil {
 		t.Fatal(err)
 	}
 	for _, statement := range []string{
-		`INSERT INTO books (id, title, sort_title) VALUES ('w1', 'Book', 'Book')`,
-		`INSERT INTO assets (id, book_id, storage_path, filename, extension) VALUES ('a1', 'w1', 'one.epub', 'one.epub', '.epub'), ('a2', 'w1', 'two.pdf', 'two.pdf', '.pdf')`,
+		`INSERT INTO books (id, title, sort_title) VALUES (1, 'Book', 'Book')`,
+		`INSERT INTO assets (id, book_id, storage_path, filename, extension) VALUES ('a1', 1, 'one.epub', 'one.epub', '.epub'), ('a2', 1, 'two.pdf', 'two.pdf', '.pdf')`,
 	} {
-		if _, err := database.Exec(statement); err != nil {
-			t.Fatal(err)
-		}
+		mustExec(t, database, statement)
+
 	}
 	return database, user.ID
 }
@@ -53,7 +52,7 @@ func checkpointActivity(t *testing.T, database *DB, user int64, asset string, n 
 
 func readingTimeByDay(t *testing.T, database *DB, user int64) map[string]int64 {
 	t.Helper()
-	rows, err := database.Query(`SELECT d.day, SUM(d.active_ms) FROM reading_session_days d
+	rows, err := database.Read(t.Context()).Query(`SELECT d.day, SUM(d.active_ms) FROM reading_session_days d
 		JOIN reading_sessions s ON s.id = d.session_id WHERE s.user_id = ? GROUP BY d.day`, user)
 	if err != nil {
 		t.Fatal(err)
@@ -100,7 +99,7 @@ func TestReadingActivityRetriesAndTakeover(t *testing.T) {
 		t.Fatalf("overlapping readers = %v", days)
 	}
 	var positions, statuses int
-	if err := database.QueryRow(`SELECT (SELECT COUNT(*) FROM user_asset_state), (SELECT COUNT(*) FROM user_book_reading_events)`).Scan(&positions, &statuses); err != nil {
+	if err := database.Read(t.Context()).QueryRow(`SELECT (SELECT COUNT(*) FROM user_asset_state), (SELECT COUNT(*) FROM user_book_reading_events)`).Scan(&positions, &statuses); err != nil {
 		t.Fatal(err)
 	}
 	if positions != 0 || statuses != 0 {
@@ -175,7 +174,7 @@ func TestReadingActivityShortPauseAndLateCheckpoints(t *testing.T) {
 		t.Fatalf("resume retry reset or closed the session: %+v, %v", got, err)
 	}
 	var sessions int
-	if err := database.QueryRow("SELECT COUNT(*) FROM reading_sessions").Scan(&sessions); err != nil || sessions != 1 {
+	if err := database.Read(ctx).QueryRow("SELECT COUNT(*) FROM reading_sessions").Scan(&sessions); err != nil || sessions != 1 {
 		t.Fatalf("short pause created history rows: %d, %v", sessions, err)
 	}
 	got, err = database.StartWebReadingSession(ctx, user, "a1", activityID(1), 2, resume.Add(time.Hour))
@@ -193,7 +192,7 @@ func TestReadingActivityMidnightAndTimeZoneChange(t *testing.T) {
 	if days["2026-09-05"] != 30_000 || days["2026-09-06"] != 30_000 {
 		t.Fatalf("midnight split = %v", days)
 	}
-	if _, err := database.SaveUserSettings(user, UserSettingsPatch{TimeZone: new("UTC")}); err != nil {
+	if _, err := database.SaveUserSettings(t.Context(), user, UserSettingsPatch{TimeZone: new("UTC")}); err != nil {
 		t.Fatal(err)
 	}
 	second := start.Add(time.Minute)

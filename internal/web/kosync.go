@@ -33,9 +33,9 @@ type koReaderProgressDTO struct {
 }
 
 func (s *Server) handleKOReaderAuth(w http.ResponseWriter, r *http.Request) {
-	user, err := s.db.GetUserByID(UserID(r.Context()))
+	user, err := db.GetUserByID(s.db.Read(r.Context()), UserID(r.Context()))
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	if user == nil {
@@ -66,7 +66,7 @@ func (s *Server) handleKOReaderProgressSave(w http.ResponseWriter, r *http.Reque
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, koReaderProgressDTO{
@@ -80,7 +80,7 @@ func (s *Server) handleKOReaderProgress(w http.ResponseWriter, r *http.Request) 
 	if !s.allowKOReaderDocument(w, r, document) {
 		return
 	}
-	progress, err := s.db.GetKOReaderProgress(UserID(r.Context()), document)
+	progress, err := db.GetKOReaderProgress(s.db.Read(r.Context()), UserID(r.Context()), document)
 	if errors.Is(err, db.ErrKOReaderProgressNotFound) {
 		writeJSON(w, http.StatusOK, map[string]any{})
 		return
@@ -90,7 +90,7 @@ func (s *Server) handleKOReaderProgress(w http.ResponseWriter, r *http.Request) 
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, koReaderProgressDTO{
@@ -104,12 +104,12 @@ func (s *Server) handleKOReaderProgress(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) allowKOReaderDocument(w http.ResponseWriter, r *http.Request, documentHash string) bool {
-	target, err := db.ResolveKOReaderHash(s.db, documentHash)
+	target, err := db.ResolveKOReaderHash(s.db.Read(r.Context()), documentHash)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return false
 	}
-	if target.BookID == "" || target.Ambiguous {
+	if target.BookID == 0 || target.Ambiguous {
 		return true
 	}
 	_, accessOK := s.requireAssetAccess(w, r, target.AssetID)

@@ -32,7 +32,7 @@ func TestStorageRootSetCreatesTargetForEmptyCatalog(t *testing.T) {
 		t.Fatalf("reopen db: %v", err)
 	}
 	defer database.Close()
-	root, err := storage.OpenRoot(database.DB, dataDir)
+	root, err := storage.OpenRoot(database.Read(t.Context()), dataDir)
 	if err != nil {
 		t.Fatalf("OpenRoot: %v", err)
 	}
@@ -61,12 +61,12 @@ func TestStorageRootSetRequiresCopiedFilesForExistingCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reopen db: %v", err)
 	}
-	oldRoot, err := storage.OpenRoot(database.DB, dataDir)
+	oldRoot, err := storage.OpenRoot(database.Read(t.Context()), dataDir)
 	if err != nil {
 		t.Fatalf("OpenRoot old: %v", err)
 	}
 	var assetPath string
-	if err := database.QueryRow(`SELECT storage_path FROM assets LIMIT 1`).Scan(&assetPath); err != nil {
+	if err := database.Read(t.Context()).QueryRow(`SELECT storage_path FROM assets LIMIT 1`).Scan(&assetPath); err != nil {
 		t.Fatalf("query asset path: %v", err)
 	}
 	database.Close()
@@ -83,7 +83,7 @@ func TestStorageRootSetRequiresCopiedFilesForExistingCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reopen after failed set: %v", err)
 	}
-	root, err := storage.OpenRoot(database.DB, dataDir)
+	root, err := storage.OpenRoot(database.Read(t.Context()), dataDir)
 	if err != nil {
 		t.Fatalf("OpenRoot after failed set: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestStorageRootSetRequiresCopiedFilesForExistingCatalog(t *testing.T) {
 		t.Fatalf("reopen after set: %v", err)
 	}
 	defer database.Close()
-	root, err = storage.OpenRoot(database.DB, dataDir)
+	root, err = storage.OpenRoot(database.Read(t.Context()), dataDir)
 	if err != nil {
 		t.Fatalf("OpenRoot after set: %v", err)
 	}

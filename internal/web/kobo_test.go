@@ -13,28 +13,26 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/levmv/polka/internal/db"
 )
 
-func seedKoboWebBook(t *testing.T, database *db.DB, dir, bookID, assetID, title string) {
+func seedKoboWebBook(t *testing.T, database *db.DB, dir string, bookID int64, assetID string, title string) {
 	t.Helper()
-	storagePath := filepath.ToSlash(filepath.Join("Kobo", bookID, assetID+".epub"))
-	if _, err := database.Exec(`
+	storagePath := filepath.ToSlash(filepath.Join("Kobo", strconv.FormatInt(bookID, 10), assetID+".epub"))
+	mustExec(t, database, `
 		INSERT INTO books (id, title, sort_title, language, publisher)
 		VALUES (?, ?, ?, 'en', 'Polka Press')
-	`, bookID, title, title); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := database.Exec(`
+	`, bookID, title, title)
+	mustExec(t, database, `
 		INSERT INTO assets
 		    (id, book_id, storage_path, filename, extension, format, is_primary, current_size)
 		VALUES (?, ?, ?, ?, '.epub', 'epub', 1, 1024)
-	`, assetID, bookID, storagePath, assetID+".epub"); err != nil {
-		t.Fatal(err)
-	}
+	`, assetID, bookID, storagePath, assetID+".epub")
+
 	fullPath := filepath.Join(dir, filepath.FromSlash(storagePath))
 	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
 		t.Fatal(err)
@@ -48,13 +46,13 @@ func TestKoboNativeLibraryRoutesAndRevocation(t *testing.T) {
 	database, dir := setupTestDB(t)
 	defer database.Close()
 	user := mustUser(t, database, "native-kobo", db.RoleMember)
-	shelf, err := database.CreateShelf(user.ID, db.ShelfPersonal, "On Kobo", db.ShelfManual, "")
+	shelf, err := database.CreateShelf(t.Context(), user.ID, db.ShelfPersonal, "On Kobo", db.ShelfManual, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	seedKoboWebBook(t, database, dir, "w_kobo", "a_kobo", "Kobo Book")
-	seedKoboWebBook(t, database, dir, "w_outside", "a_outside", "Outside")
-	if err := database.AddBookToShelf(shelf.ID, user.ID, "w_kobo"); err != nil {
+	seedKoboWebBook(t, database, dir, 143, "a_kobo", "Kobo Book")
+	seedKoboWebBook(t, database, dir, 162, "a_outside", "Outside")
+	if err := database.AddBookToShelf(t.Context(), shelf.ID, user.ID, 143); err != nil {
 		t.Fatal(err)
 	}
 	connection, err := database.ReplaceKoboConnection(context.Background(), user.ID, shelf.ID)
@@ -176,7 +174,7 @@ func TestKoboNativeLibraryRoutesAndRevocation(t *testing.T) {
 		t.Fatalf("download lacks KEPUB spans: %s", convertedXHTML)
 	}
 
-	if err := database.DeleteKoboConnection(user.ID); err != nil {
+	if err := database.DeleteKoboConnection(t.Context(), user.ID); err != nil {
 		t.Fatal(err)
 	}
 	w = httptest.NewRecorder()
@@ -184,7 +182,7 @@ func TestKoboNativeLibraryRoutesAndRevocation(t *testing.T) {
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("revoked token status = %d", w.Code)
 	}
-	if _, err := database.KoboConnectionForUser(connection.UserID); !errors.Is(err, db.ErrKoboConnectionNotFound) {
+	if _, err := db.KoboConnectionForUser(database.Read(req.Context()), connection.UserID); !errors.Is(err, db.ErrKoboConnectionNotFound) {
 		t.Fatalf("connection remains after revoke: %v", err)
 	}
 }
@@ -274,15 +272,15 @@ func TestKoboMetadataRequiresCurrentUserScope(t *testing.T) {
 	defer database.Close()
 	curator := mustUser(t, database, "kobo-scope-curator", db.RoleMember)
 	reader := mustUser(t, database, "kobo-scoped-reader", db.RoleReader)
-	shelf, err := database.CreateShelf(curator.ID, db.ShelfShared, "Reader Kobo", db.ShelfManual, "")
+	shelf, err := database.CreateShelf(t.Context(), curator.ID, db.ShelfShared, "Reader Kobo", db.ShelfManual, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	seedKoboWebBook(t, database, dir, "w_scoped_kobo", "a_scoped_kobo", "Scoped Kobo")
-	if err := database.AddBookToShelf(shelf.ID, curator.ID, "w_scoped_kobo"); err != nil {
+	seedKoboWebBook(t, database, dir, 168, "a_scoped_kobo", "Scoped Kobo")
+	if err := database.AddBookToShelf(t.Context(), shelf.ID, curator.ID, 168); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.UpdateUserAccess(reader.ID, db.UserAccess{
+	if _, err := database.UpdateUserAccess(t.Context(), reader.ID, db.UserAccess{
 		Role:         db.RoleReader,
 		ContentScope: db.ContentScopeShelves,
 		ShelfIDs:     []string{shelf.ID},
@@ -306,7 +304,7 @@ func TestKoboMetadataRequiresCurrentUserScope(t *testing.T) {
 		t.Fatalf("metadata before scope removal = %d %s", w.Code, w.Body.String())
 	}
 
-	if _, err := database.UpdateUserAccess(reader.ID, db.UserAccess{Role: db.RoleReader, ContentScope: db.ContentScopeShelves}); err != nil {
+	if _, err := database.UpdateUserAccess(t.Context(), reader.ID, db.UserAccess{Role: db.RoleReader, ContentScope: db.ContentScopeShelves}); err != nil {
 		t.Fatal(err)
 	}
 	w = httptest.NewRecorder()

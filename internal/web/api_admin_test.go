@@ -22,7 +22,7 @@ func TestAPIAdminStorageStatus(t *testing.T) {
 	member := mustUser(t, database, "Member", db.RoleMember)
 
 	storageDir := filepath.Join(dataDir, "managed")
-	root, err := storage.SaveRoot(database.DB, dataDir, storageDir)
+	root, err := storage.SaveRoot(database.Write(t.Context()), dataDir, storageDir)
 	if err != nil {
 		t.Fatalf("SaveRoot: %v", err)
 	}
@@ -30,7 +30,7 @@ func TestAPIAdminStorageStatus(t *testing.T) {
 		t.Fatalf("EnsureLayout: %v", err)
 	}
 	template := "{author_bucket}/{series|Standalone}/{title} [{asset_id}]{dot_ext}"
-	if _, err := storage.SaveBookPathTemplate(database.DB, template); err != nil {
+	if _, err := storage.SaveBookPathTemplate(database.Write(t.Context()), template); err != nil {
 		t.Fatalf("SaveBookPathTemplate: %v", err)
 	}
 	// The books root is the books tree; drop the catalog's book into it so the
@@ -44,7 +44,7 @@ func TestAPIAdminStorageStatus(t *testing.T) {
 		t.Fatalf("write book: %v", err)
 	}
 	ingestDir := filepath.Join(dataDir, "drop")
-	if _, err := ingest.SavePath(database.DB, dataDir, ingestDir); err != nil {
+	if _, err := ingest.SavePath(database.Write(t.Context()), dataDir, ingestDir); err != nil {
 		t.Fatalf("SavePath: %v", err)
 	}
 	if err := os.MkdirAll(ingestDir, 0o755); err != nil {
@@ -72,7 +72,7 @@ func TestAPIAdminStorageStatus(t *testing.T) {
 	if !got.Books.Reachable {
 		t.Fatalf("books folder reachable = false; want true for an initialized root")
 	}
-	wantBooks, wantSize, err := db.LibraryStorageStats(database.DB)
+	wantBooks, wantSize, err := db.LibraryStorageStats(database.Read(t.Context()))
 	if err != nil {
 		t.Fatalf("LibraryStorageStats: %v", err)
 	}
@@ -111,7 +111,7 @@ func TestAPIAdminStorageUpdateIncomingFolder(t *testing.T) {
 	member := mustUser(t, database, "Member", db.RoleMember)
 
 	storageDir := filepath.Join(dataDir, "managed")
-	root, err := storage.SaveRoot(database.DB, dataDir, storageDir)
+	root, err := storage.SaveRoot(database.Write(t.Context()), dataDir, storageDir)
 	if err != nil {
 		t.Fatalf("SaveRoot: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestAPIAdminStorageUpdateIncomingFolder(t *testing.T) {
 		t.Fatalf("EnsureLayout: %v", err)
 	}
 	oldIngest := filepath.Join(dataDir, "drop")
-	if _, err := ingest.SavePath(database.DB, dataDir, oldIngest); err != nil {
+	if _, err := ingest.SavePath(database.Write(t.Context()), dataDir, oldIngest); err != nil {
 		t.Fatalf("SavePath: %v", err)
 	}
 
@@ -181,7 +181,7 @@ func TestAPIAdminStorageDoesNotSaveUnusableIncomingFolder(t *testing.T) {
 	defer database.Close()
 
 	admin := mustUser(t, database, "Admin", db.RoleAdmin)
-	before, err := ingest.OpenConfig(database.DB, dataDir)
+	before, err := ingest.OpenConfig(database.Read(t.Context()), dataDir)
 	if err != nil {
 		t.Fatalf("open ingest config: %v", err)
 	}
@@ -206,7 +206,7 @@ func TestAPIAdminStorageDoesNotSaveUnusableIncomingFolder(t *testing.T) {
 		t.Fatalf("unusable incoming folder status = %d, want %d; body: %s", w.Code, http.StatusInternalServerError, w.Body.String())
 	}
 
-	after, err := ingest.OpenConfig(database.DB, dataDir)
+	after, err := ingest.OpenConfig(database.Read(t.Context()), dataDir)
 	if err != nil {
 		t.Fatalf("reopen ingest config: %v", err)
 	}
@@ -220,7 +220,7 @@ func TestAPIAdminStorageUpdateWritebackAuto(t *testing.T) {
 	defer database.Close()
 
 	admin := mustUser(t, database, "Admin", db.RoleAdmin)
-	root, err := storage.SaveRoot(database.DB, dataDir, filepath.Join(dataDir, "managed"))
+	root, err := storage.SaveRoot(database.Write(t.Context()), dataDir, filepath.Join(dataDir, "managed"))
 	if err != nil {
 		t.Fatalf("SaveRoot: %v", err)
 	}
@@ -235,7 +235,7 @@ func TestAPIAdminStorageUpdateWritebackAuto(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("save writeback auto = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
 	}
-	got, err := writeback.OpenMode(database.DB)
+	got, err := writeback.OpenMode(database.Read(t.Context()))
 	if err != nil {
 		t.Fatalf("OpenMode: %v", err)
 	}
@@ -251,7 +251,7 @@ func TestAPIAdminStorageUpdateWritebackAuto(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("save invalid writeback mode = %d, want %d; body: %s", w.Code, http.StatusBadRequest, w.Body.String())
 	}
-	if got, err := writeback.OpenMode(database.DB); err != nil || got != writeback.ModeAuto {
+	if got, err := writeback.OpenMode(database.Read(t.Context())); err != nil || got != writeback.ModeAuto {
 		t.Fatalf("mode after rejected save = %q, %v; want auto", got, err)
 	}
 }

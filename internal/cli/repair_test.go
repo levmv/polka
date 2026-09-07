@@ -3,7 +3,6 @@ package cli
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -27,7 +26,7 @@ import (
 func TestRepairReconciliation(t *testing.T) {
 	dataDir := t.TempDir()
 
-	initialized, err := ensureLibraryInitialized(dataDir)
+	initialized, err := ensureLibraryInitialized(t.Context(), dataDir)
 	if err != nil {
 		t.Fatalf("ensureLibraryInitialized: %v", err)
 	}
@@ -49,10 +48,10 @@ func TestRepairReconciliation(t *testing.T) {
 	defer database.Close()
 
 	var assetID, currentPath string
-	if err := database.QueryRow("SELECT id, storage_path FROM assets LIMIT 1").Scan(&assetID, &currentPath); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT id, storage_path FROM assets LIMIT 1").Scan(&assetID, &currentPath); err != nil {
 		t.Fatalf("query asset: %v", err)
 	}
-	root, err := storage.OpenRoot(database.DB, dataDir)
+	root, err := storage.OpenRoot(database.Read(t.Context()), dataDir)
 	if err != nil {
 		t.Fatalf("OpenRoot: %v", err)
 	}
@@ -75,7 +74,7 @@ func TestRepairReconciliation(t *testing.T) {
 
 	// b) make DB storage_path stale (something else)
 	staleRelPath := "books/stale/path.epub"
-	if _, err := database.Exec("UPDATE assets SET storage_path = ? WHERE id = ?", staleRelPath, assetID); err != nil {
+	if _, err := database.Write(t.Context()).Exec("UPDATE assets SET storage_path = ? WHERE id = ?", staleRelPath, assetID); err != nil {
 		t.Fatalf("update storage_path: %v", err)
 	}
 
@@ -96,7 +95,7 @@ func TestRepairReconciliation(t *testing.T) {
 	loadAsset := func() assetSnapshot {
 		t.Helper()
 		var snapshot assetSnapshot
-		if err := database.QueryRow(`
+		if err := database.Read(t.Context()).QueryRow(`
 			SELECT storage_path, filename, original_filename,
 			       original_sha256, current_sha256, original_size, current_size,
 			       format, can_read
@@ -177,7 +176,7 @@ func TestRepairFinalizesCompletedWritebackAttempt(t *testing.T) {
 	tempRel := storage.WritebackTempRelPath(storagePath, assetID+"-rev2")
 	insertWritebackAttempt(t, database, assetID, storagePath, tempRel, newHash, newSize, "ko-new", 2)
 
-	if err := runCheck(dataDir, nil); !errors.Is(err, ErrIssuesFound) {
+	if err := runCheck(t.Context(), dataDir, nil); !errors.Is(err, ErrIssuesFound) {
 		t.Fatalf("runCheck before repair = %v; want ErrIssuesFound", err)
 	}
 	if err := runRepair(context.Background(), dataDir, nil); err != nil {
@@ -185,7 +184,7 @@ func TestRepairFinalizesCompletedWritebackAttempt(t *testing.T) {
 	}
 	assertWritebackAttemptCleared(t, database, assetID)
 	assertAssetWritebackState(t, database, assetID, newHash, newSize, "ko-new", 2)
-	if err := runCheck(dataDir, nil); err != nil {
+	if err := runCheck(t.Context(), dataDir, nil); err != nil {
 		t.Fatalf("runCheck after repair: %v", err)
 	}
 }
@@ -233,20 +232,20 @@ func TestRepairMergedWritebackAttemptLeavesSurvivorMetadataPending(t *testing.T)
 		t.Run(fmt.Sprintf("already_replaced_%t", replaced), func(t *testing.T) {
 			dataDir, database, root, assetID, storagePath := setupImportedRepairEPUB(t, "Story", "Writer One")
 			defer database.Close()
-			user, err := database.CreateUser("curator", "pw", db.RoleMember)
+			user, err := database.CreateUser(t.Context(), "curator", "pw", db.RoleMember)
 			if err != nil {
 				t.Fatal(err)
 			}
-			row, err := db.GetMetadataWritebackAsset(database, assetID)
+			row, err := db.GetMetadataWritebackAsset(database.Read(t.Context()), assetID)
 			if err != nil {
 				t.Fatal(err)
 			}
 			// The former revision must reach the survivor's revision after merge:
 			// otherwise repair would leave the file dirty even without invalidation.
-			if _, err := database.Exec(`UPDATE books SET publisher = ?, metadata_rev = metadata_rev + 1 WHERE id = ?`, "Former publisher", row.BookID); err != nil {
+			if _, err := database.Write(t.Context()).Exec(`UPDATE books SET publisher = ?, metadata_rev = metadata_rev + 1 WHERE id = ?`, "Former publisher", row.BookID); err != nil {
 				t.Fatal(err)
 			}
-			snapshot, err := db.LoadMetadataWritebackSnapshot(database, row.BookID)
+			snapshot, err := db.LoadMetadataWritebackSnapshot(database.Read(t.Context()), row.BookID)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -279,15 +278,15 @@ func TestRepairMergedWritebackAttemptLeavesSurvivorMetadataPending(t *testing.T)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := database.Transact(context.Background(), func(tx *sql.Tx) error {
+			if err := database.Transact(context.Background(), func(tx *db.Tx) error {
 				_, err := db.MergeDuplicateBooks(tx, db.FullVisibilityScope(), db.DuplicateMergeRequest{
-					SurvivorID: survivor.BookID, BookIDs: []string{survivor.BookID, row.BookID},
+					SurvivorID: survivor.BookID, BookIDs: []int64{survivor.BookID, row.BookID},
 					DeletedBy: user.ID,
 				})
 				if err != nil {
 					return err
 				}
-				return db.BumpMetadataRev(tx, []string{survivor.BookID})
+				return db.BumpMetadataRev(tx, []int64{survivor.BookID})
 			}); err != nil {
 				t.Fatal(err)
 			}
@@ -295,7 +294,7 @@ func TestRepairMergedWritebackAttemptLeavesSurvivorMetadataPending(t *testing.T)
 			if err != nil || repaired.Finalized+repaired.Replaced != 1 || repaired.Errors != 0 {
 				t.Fatalf("repair = %+v, %v; want one recovered write-back", repaired, err)
 			}
-			state, err := db.GetBookWritebackState(database, survivor.BookID)
+			state, err := db.GetBookWritebackState(database.Read(t.Context()), survivor.BookID)
 			if err != nil || state.Dirty != 2 {
 				t.Fatalf("writeback state after merge/repair = %+v, %v; want both assets dirty", state, err)
 			}
@@ -328,7 +327,7 @@ func TestRepairRemovesOrphanWritebackTemp(t *testing.T) {
 		t.Fatalf("write orphan temp: %v", err)
 	}
 
-	if err := runCheck(dataDir, nil); !errors.Is(err, ErrIssuesFound) {
+	if err := runCheck(t.Context(), dataDir, nil); !errors.Is(err, ErrIssuesFound) {
 		t.Fatalf("runCheck before repair = %v; want ErrIssuesFound", err)
 	}
 	if err := runRepair(context.Background(), dataDir, nil); err != nil {
@@ -337,7 +336,7 @@ func TestRepairRemovesOrphanWritebackTemp(t *testing.T) {
 	if _, err := os.Stat(orphanAbs); !os.IsNotExist(err) {
 		t.Fatalf("orphan temp after repair stat err = %v; want not exist", err)
 	}
-	if err := runCheck(dataDir, nil); err != nil {
+	if err := runCheck(t.Context(), dataDir, nil); err != nil {
 		t.Fatalf("runCheck after repair: %v", err)
 	}
 }
@@ -345,7 +344,7 @@ func TestRepairRemovesOrphanWritebackTemp(t *testing.T) {
 func setupImportedRepairEPUB(t *testing.T, title, author string) (string, *db.DB, storage.Root, string, string) {
 	t.Helper()
 	dataDir := t.TempDir()
-	initialized, err := ensureLibraryInitialized(dataDir)
+	initialized, err := ensureLibraryInitialized(t.Context(), dataDir)
 	if err != nil {
 		t.Fatalf("ensureLibraryInitialized: %v", err)
 	}
@@ -359,17 +358,18 @@ func setupImportedRepairEPUB(t *testing.T, title, author string) (string, *db.DB
 	if err != nil {
 		t.Fatalf("db init: %v", err)
 	}
-	root, err := storage.OpenRoot(database.DB, dataDir)
+	root, err := storage.OpenRoot(database.Read(t.Context()), dataDir)
 	if err != nil {
 		database.Close()
 		t.Fatalf("OpenRoot: %v", err)
 	}
-	var assetID, storagePath, bookID string
-	if err := database.QueryRow("SELECT id, storage_path, book_id FROM assets LIMIT 1").Scan(&assetID, &storagePath, &bookID); err != nil {
+	var assetID, storagePath string
+	var bookID int64
+	if err := database.Read(t.Context()).QueryRow("SELECT id, storage_path, book_id FROM assets LIMIT 1").Scan(&assetID, &storagePath, &bookID); err != nil {
 		database.Close()
 		t.Fatalf("query asset: %v", err)
 	}
-	if _, err := database.Exec("UPDATE books SET metadata_rev = 2 WHERE id = ?", bookID); err != nil {
+	if _, err := database.Write(t.Context()).Exec("UPDATE books SET metadata_rev = 2 WHERE id = ?", bookID); err != nil {
 		database.Close()
 		t.Fatalf("update metadata_rev: %v", err)
 	}
@@ -378,7 +378,7 @@ func setupImportedRepairEPUB(t *testing.T, title, author string) (string, *db.DB
 
 func insertWritebackAttempt(t *testing.T, database *db.DB, assetID, storagePath, tempRel, hash string, size int64, koHash string, rev int64) {
 	t.Helper()
-	if err := db.UpsertMetadataWritebackAttempt(database, db.MetadataWritebackAttempt{
+	if err := db.UpsertMetadataWritebackAttempt(database.Write(t.Context()), db.MetadataWritebackAttempt{
 		AssetID:      assetID,
 		MetadataRev:  rev,
 		StoragePath:  storagePath,
@@ -394,7 +394,7 @@ func insertWritebackAttempt(t *testing.T, database *db.DB, assetID, storagePath,
 func assertWritebackAttemptCleared(t *testing.T, database *db.DB, assetID string) {
 	t.Helper()
 	var count int
-	if err := database.QueryRow("SELECT COUNT(*) FROM metadata_writeback_attempts WHERE asset_id = ?", assetID).Scan(&count); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT COUNT(*) FROM metadata_writeback_attempts WHERE asset_id = ?", assetID).Scan(&count); err != nil {
 		t.Fatalf("query writeback attempt count: %v", err)
 	}
 	if count != 0 {
@@ -407,7 +407,7 @@ func assertAssetWritebackState(t *testing.T, database *db.DB, assetID, hash stri
 	var gotHash, gotKO string
 	var gotSize, gotRev int64
 	var writebackError string
-	if err := database.QueryRow(`
+	if err := database.Read(t.Context()).QueryRow(`
 		SELECT current_sha256, current_size, COALESCE(koreader_hash, ''), writeback_rev, COALESCE(writeback_error, '')
 		FROM assets
 		WHERE id = ?
@@ -421,7 +421,7 @@ func assertAssetWritebackState(t *testing.T, database *db.DB, assetID, hash stri
 
 func TestCheckReportsInvalidStoragePath(t *testing.T) {
 	dataDir := t.TempDir()
-	initialized, err := ensureLibraryInitialized(dataDir)
+	initialized, err := ensureLibraryInitialized(t.Context(), dataDir)
 	if err != nil {
 		t.Fatalf("ensureLibraryInitialized: %v", err)
 	}
@@ -441,18 +441,18 @@ func TestCheckReportsInvalidStoragePath(t *testing.T) {
 	}
 	defer database.Close()
 
-	if _, err := database.Exec("UPDATE assets SET storage_path = '../outside.epub'"); err != nil {
+	if _, err := database.Write(t.Context()).Exec("UPDATE assets SET storage_path = '../outside.epub'"); err != nil {
 		t.Fatalf("corrupt storage_path: %v", err)
 	}
 
-	if err := runCheck(dataDir, nil); !errors.Is(err, ErrIssuesFound) {
+	if err := runCheck(t.Context(), dataDir, nil); !errors.Is(err, ErrIssuesFound) {
 		t.Fatalf("runCheck with invalid storage_path = %v; want ErrIssuesFound", err)
 	}
 }
 
 func TestCheckReportsUnavailableStorage(t *testing.T) {
 	dataDir := t.TempDir()
-	initialized, err := ensureLibraryInitialized(dataDir)
+	initialized, err := ensureLibraryInitialized(t.Context(), dataDir)
 	if err != nil {
 		t.Fatalf("ensureLibraryInitialized: %v", err)
 	}
@@ -470,7 +470,7 @@ func TestCheckReportsUnavailableStorage(t *testing.T) {
 		t.Fatalf("db init: %v", err)
 	}
 	defer database.Close()
-	root, err := storage.OpenRoot(database.DB, dataDir)
+	root, err := storage.OpenRoot(database.Read(t.Context()), dataDir)
 	if err != nil {
 		t.Fatalf("OpenRoot: %v", err)
 	}
@@ -480,7 +480,7 @@ func TestCheckReportsUnavailableStorage(t *testing.T) {
 	}
 
 	out, err := captureStdout(t, func() error {
-		return runCheck(dataDir, nil)
+		return runCheck(t.Context(), dataDir, nil)
 	})
 	if !errors.Is(err, ErrIssuesFound) {
 		t.Fatalf("runCheck with unavailable storage = %v; want ErrIssuesFound", err)
@@ -498,7 +498,7 @@ func TestCheckReportsUnavailableStorage(t *testing.T) {
 
 func TestRepairRefusesUnavailableStorage(t *testing.T) {
 	dataDir := t.TempDir()
-	initialized, err := ensureLibraryInitialized(dataDir)
+	initialized, err := ensureLibraryInitialized(t.Context(), dataDir)
 	if err != nil {
 		t.Fatalf("ensureLibraryInitialized: %v", err)
 	}
@@ -516,7 +516,7 @@ func TestRepairRefusesUnavailableStorage(t *testing.T) {
 		t.Fatalf("db init: %v", err)
 	}
 	defer database.Close()
-	root, err := storage.OpenRoot(database.DB, dataDir)
+	root, err := storage.OpenRoot(database.Read(t.Context()), dataDir)
 	if err != nil {
 		t.Fatalf("OpenRoot: %v", err)
 	}
@@ -535,7 +535,7 @@ func TestRepairRefusesUnavailableStorage(t *testing.T) {
 
 func TestCheckReportsRootStagingFiles(t *testing.T) {
 	dataDir := t.TempDir()
-	initialized, err := ensureLibraryInitialized(dataDir)
+	initialized, err := ensureLibraryInitialized(t.Context(), dataDir)
 	if err != nil {
 		t.Fatalf("ensureLibraryInitialized: %v", err)
 	}
@@ -553,7 +553,7 @@ func TestCheckReportsRootStagingFiles(t *testing.T) {
 		t.Fatalf("db init: %v", err)
 	}
 	defer database.Close()
-	root, err := storage.OpenRoot(database.DB, dataDir)
+	root, err := storage.OpenRoot(database.Read(t.Context()), dataDir)
 	if err != nil {
 		t.Fatalf("OpenRoot: %v", err)
 	}
@@ -566,7 +566,7 @@ func TestCheckReportsRootStagingFiles(t *testing.T) {
 	}
 
 	out, err := captureStdout(t, func() error {
-		return runCheck(dataDir, nil)
+		return runCheck(t.Context(), dataDir, nil)
 	})
 	if !errors.Is(err, ErrIssuesFound) {
 		t.Fatalf("runCheck with staged file = %v; want ErrIssuesFound", err)
@@ -581,7 +581,7 @@ func TestCheckCollectsIOErrorsAndContinues(t *testing.T) {
 		t.Skip("chmod-based unreadable file test is Unix-specific")
 	}
 	dataDir := t.TempDir()
-	initialized, err := ensureLibraryInitialized(dataDir)
+	initialized, err := ensureLibraryInitialized(t.Context(), dataDir)
 	if err != nil {
 		t.Fatalf("ensureLibraryInitialized: %v", err)
 	}
@@ -602,12 +602,12 @@ func TestCheckCollectsIOErrorsAndContinues(t *testing.T) {
 		t.Fatalf("db init: %v", err)
 	}
 	defer database.Close()
-	root, err := storage.OpenRoot(database.DB, dataDir)
+	root, err := storage.OpenRoot(database.Read(t.Context()), dataDir)
 	if err != nil {
 		t.Fatalf("OpenRoot: %v", err)
 	}
 
-	rows, err := database.Query("SELECT storage_path FROM assets ORDER BY id")
+	rows, err := database.Read(t.Context()).Query("SELECT storage_path FROM assets ORDER BY id")
 	if err != nil {
 		t.Fatalf("query assets: %v", err)
 	}
@@ -636,7 +636,7 @@ func TestCheckCollectsIOErrorsAndContinues(t *testing.T) {
 	}
 
 	out, err := captureStdout(t, func() error {
-		return runCheck(dataDir, []string{"--deep"})
+		return runCheck(t.Context(), dataDir, []string{"--deep"})
 	})
 	if !errors.Is(err, ErrIssuesFound) {
 		t.Fatalf("runCheck = %v; want ErrIssuesFound", err)
@@ -651,7 +651,7 @@ func TestCheckCollectsIOErrorsAndContinues(t *testing.T) {
 
 func TestRepairRecoversCommittedStagedAsset(t *testing.T) {
 	dataDir := t.TempDir()
-	initialized, err := ensureLibraryInitialized(dataDir)
+	initialized, err := ensureLibraryInitialized(t.Context(), dataDir)
 	if err != nil {
 		t.Fatalf("ensureLibraryInitialized: %v", err)
 	}
@@ -673,10 +673,10 @@ func TestRepairRecoversCommittedStagedAsset(t *testing.T) {
 	defer database.Close()
 
 	var storagePath string
-	if err := database.QueryRow("SELECT storage_path FROM assets LIMIT 1").Scan(&storagePath); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT storage_path FROM assets LIMIT 1").Scan(&storagePath); err != nil {
 		t.Fatalf("query asset: %v", err)
 	}
-	root, err := storage.OpenRoot(database.DB, dataDir)
+	root, err := storage.OpenRoot(database.Read(t.Context()), dataDir)
 	if err != nil {
 		t.Fatalf("OpenRoot: %v", err)
 	}
@@ -702,14 +702,14 @@ func TestRepairRecoversCommittedStagedAsset(t *testing.T) {
 	if _, err := os.Stat(stagedAbs); !os.IsNotExist(err) {
 		t.Fatalf("staged file still exists after repair: %v", err)
 	}
-	if err := runCheck(dataDir, nil); err != nil {
+	if err := runCheck(t.Context(), dataDir, nil); err != nil {
 		t.Fatalf("runCheck after repair: %v", err)
 	}
 }
 
 func TestCheckAndRepairCoverOriginals(t *testing.T) {
 	dataDir := t.TempDir()
-	initialized, err := ensureLibraryInitialized(dataDir)
+	initialized, err := ensureLibraryInitialized(t.Context(), dataDir)
 	if err != nil {
 		t.Fatalf("ensureLibraryInitialized: %v", err)
 	}
@@ -726,21 +726,25 @@ func TestCheckAndRepairCoverOriginals(t *testing.T) {
 		t.Fatalf("db init: %v", err)
 	}
 	defer database.Close()
-	root, err := storage.OpenRoot(database.DB, dataDir)
+	root, err := storage.OpenRoot(database.Read(t.Context()), dataDir)
 	if err != nil {
 		t.Fatalf("OpenRoot: %v", err)
 	}
 	// Covers (and their staging) live in the app data dir, not the books root.
 	dataRoot := storage.NewRoot(dataDir)
 
-	var bookID string
-	if err := database.QueryRow("SELECT id FROM books LIMIT 1").Scan(&bookID); err != nil {
+	var bookID int64
+	if err := database.Read(t.Context()).QueryRow("SELECT id FROM books LIMIT 1").Scan(&bookID); err != nil {
 		t.Fatalf("query book: %v", err)
 	}
-	if _, err := database.Exec("UPDATE books SET cover_version = 1 WHERE id = ?", bookID); err != nil {
+	if _, err := database.Write(t.Context()).Exec("UPDATE books SET cover_version = 1 WHERE id = ?", bookID); err != nil {
 		t.Fatalf("set cover_version: %v", err)
 	}
-	stagedCover := filepath.Join(dataRoot.StagingDir(), ".tmp-deadbeef-"+bookID+"-cover")
+	var assetID string
+	if err := database.Read(t.Context()).QueryRow("SELECT id FROM assets WHERE book_id = ? LIMIT 1", bookID).Scan(&assetID); err != nil {
+		t.Fatal(err)
+	}
+	stagedCover := filepath.Join(dataRoot.StagingDir(), ".tmp-deadbeef-"+assetID+"-cover")
 	if err := os.MkdirAll(filepath.Dir(stagedCover), 0o755); err != nil {
 		t.Fatalf("mkdir staging: %v", err)
 	}
@@ -756,7 +760,7 @@ func TestCheckAndRepairCoverOriginals(t *testing.T) {
 	}
 
 	out, err := captureStdout(t, func() error {
-		return runCheck(dataDir, nil)
+		return runCheck(t.Context(), dataDir, nil)
 	})
 	if !errors.Is(err, ErrIssuesFound) {
 		t.Fatalf("runCheck missing staged cover = %v; want ErrIssuesFound", err)
@@ -782,7 +786,7 @@ func TestCheckAndRepairCoverOriginals(t *testing.T) {
 	if err := os.Remove(stagedBookWithCoverInName); err != nil {
 		t.Fatalf("remove staged book with cover in name: %v", err)
 	}
-	if err := runCheck(dataDir, nil); err != nil {
+	if err := runCheck(t.Context(), dataDir, nil); err != nil {
 		t.Fatalf("runCheck after cover restore: %v", err)
 	}
 
@@ -793,13 +797,13 @@ func TestCheckAndRepairCoverOriginals(t *testing.T) {
 		t.Fatalf("runRepair missing cover: %v", err)
 	}
 	var coverVersion int
-	if err := database.QueryRow("SELECT cover_version FROM books WHERE id = ?", bookID).Scan(&coverVersion); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT cover_version FROM books WHERE id = ?", bookID).Scan(&coverVersion); err != nil {
 		t.Fatalf("query cover_version: %v", err)
 	}
 	if coverVersion != 0 {
 		t.Fatalf("cover_version = %d; want cleared", coverVersion)
 	}
-	if err := runCheck(dataDir, nil); err != nil {
+	if err := runCheck(t.Context(), dataDir, nil); err != nil {
 		t.Fatalf("runCheck after cover clear: %v", err)
 	}
 
@@ -807,7 +811,7 @@ func TestCheckAndRepairCoverOriginals(t *testing.T) {
 		t.Fatalf("write orphan cover: %v", err)
 	}
 	out, err = captureStdout(t, func() error {
-		return runCheck(dataDir, nil)
+		return runCheck(t.Context(), dataDir, nil)
 	})
 	if !errors.Is(err, ErrIssuesFound) {
 		t.Fatalf("runCheck orphan cover = %v; want ErrIssuesFound", err)
@@ -821,14 +825,14 @@ func TestCheckAndRepairCoverOriginals(t *testing.T) {
 	if _, err := os.Stat(coverAbs); !os.IsNotExist(err) {
 		t.Fatalf("orphan cover still exists: %v", err)
 	}
-	if err := runCheck(dataDir, nil); err != nil {
+	if err := runCheck(t.Context(), dataDir, nil); err != nil {
 		t.Fatalf("runCheck after orphan cover repair: %v", err)
 	}
 }
 
 func TestRepairReextractsMissingCoverFromPrimaryAsset(t *testing.T) {
 	dataDir := t.TempDir()
-	initialized, err := ensureLibraryInitialized(dataDir)
+	initialized, err := ensureLibraryInitialized(t.Context(), dataDir)
 	if err != nil {
 		t.Fatalf("ensureLibraryInitialized: %v", err)
 	}
@@ -846,10 +850,10 @@ func TestRepairReextractsMissingCoverFromPrimaryAsset(t *testing.T) {
 	}
 	defer database.Close()
 
-	var bookID string
+	var bookID int64
 	var initialCoverVersion int
 	var initialMetadataRev int64
-	if err := database.QueryRow("SELECT id, cover_version, metadata_rev FROM books LIMIT 1").Scan(&bookID, &initialCoverVersion, &initialMetadataRev); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT id, cover_version, metadata_rev FROM books LIMIT 1").Scan(&bookID, &initialCoverVersion, &initialMetadataRev); err != nil {
 		t.Fatalf("query book cover: %v", err)
 	}
 	if initialCoverVersion <= 0 {
@@ -868,7 +872,7 @@ func TestRepairReextractsMissingCoverFromPrimaryAsset(t *testing.T) {
 	}
 
 	out, err := captureStdout(t, func() error {
-		return runCheck(dataDir, nil)
+		return runCheck(t.Context(), dataDir, nil)
 	})
 	if !errors.Is(err, ErrIssuesFound) {
 		t.Fatalf("runCheck missing cover = %v; want ErrIssuesFound", err)
@@ -893,7 +897,7 @@ func TestRepairReextractsMissingCoverFromPrimaryAsset(t *testing.T) {
 	}
 	var coverVersion int
 	var metadataRev int64
-	if err := database.QueryRow("SELECT cover_version, metadata_rev FROM books WHERE id = ?", bookID).Scan(&coverVersion, &metadataRev); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT cover_version, metadata_rev FROM books WHERE id = ?", bookID).Scan(&coverVersion, &metadataRev); err != nil {
 		t.Fatalf("query repaired cover_version: %v", err)
 	}
 	if coverVersion <= initialCoverVersion {
@@ -902,11 +906,11 @@ func TestRepairReextractsMissingCoverFromPrimaryAsset(t *testing.T) {
 	if metadataRev <= initialMetadataRev {
 		t.Fatalf("metadata_rev = %d; want > %d", metadataRev, initialMetadataRev)
 	}
-	if err := runCheck(dataDir, nil); err != nil {
+	if err := runCheck(t.Context(), dataDir, nil); err != nil {
 		t.Fatalf("runCheck after cover re-extract: %v", err)
 	}
 
-	if _, err := database.Exec("UPDATE books SET manual_overrides = ? WHERE id = ?", bookmeta.MarshalOverrides(map[string]bool{"cover": true, "title": true}), bookID); err != nil {
+	if _, err := database.Write(t.Context()).Exec("UPDATE books SET manual_overrides = ? WHERE id = ?", bookmeta.MarshalOverrides(map[string]bool{"cover": true, "title": true}), bookID); err != nil {
 		t.Fatalf("set cover override: %v", err)
 	}
 	if err := os.Remove(coverAbs); err != nil {
@@ -928,7 +932,7 @@ func TestRepairReextractsMissingCoverFromPrimaryAsset(t *testing.T) {
 	}
 	var rawOverrides string
 	var fallbackMetadataRev int64
-	if err := database.QueryRow("SELECT manual_overrides, metadata_rev FROM books WHERE id = ?", bookID).Scan(&rawOverrides, &fallbackMetadataRev); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT manual_overrides, metadata_rev FROM books WHERE id = ?", bookID).Scan(&rawOverrides, &fallbackMetadataRev); err != nil {
 		t.Fatalf("query fallback overrides: %v", err)
 	}
 	if fallbackMetadataRev <= metadataRev {
@@ -941,7 +945,7 @@ func TestRepairReextractsMissingCoverFromPrimaryAsset(t *testing.T) {
 	if !overrides["title"] {
 		t.Fatalf("manual_overrides = %q; unrelated title override should remain", rawOverrides)
 	}
-	if err := runCheck(dataDir, nil); err != nil {
+	if err := runCheck(t.Context(), dataDir, nil); err != nil {
 		t.Fatalf("runCheck after fallback cover re-extract: %v", err)
 	}
 }
@@ -975,7 +979,7 @@ func captureStdout(t *testing.T, fn func() error) (string, error) {
 
 func TestRepairRecoversRootStagedAsset(t *testing.T) {
 	dataDir := t.TempDir()
-	initialized, err := ensureLibraryInitialized(dataDir)
+	initialized, err := ensureLibraryInitialized(t.Context(), dataDir)
 	if err != nil {
 		t.Fatalf("ensureLibraryInitialized: %v", err)
 	}
@@ -997,11 +1001,11 @@ func TestRepairRecoversRootStagedAsset(t *testing.T) {
 	defer database.Close()
 
 	var assetID, storagePath string
-	if err := database.QueryRow("SELECT id, storage_path FROM assets LIMIT 1").Scan(&assetID, &storagePath); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT id, storage_path FROM assets LIMIT 1").Scan(&assetID, &storagePath); err != nil {
 		t.Fatalf("query asset: %v", err)
 	}
 
-	root, err := storage.OpenRoot(database.DB, dataDir)
+	root, err := storage.OpenRoot(database.Read(t.Context()), dataDir)
 	if err != nil {
 		t.Fatalf("OpenRoot: %v", err)
 	}
@@ -1028,14 +1032,14 @@ func TestRepairRecoversRootStagedAsset(t *testing.T) {
 	if _, err := os.Stat(stagedAbs); !os.IsNotExist(err) {
 		t.Fatalf("staged file still exists after repair: %v", err)
 	}
-	if err := runCheck(dataDir, nil); err != nil {
+	if err := runCheck(t.Context(), dataDir, nil); err != nil {
 		t.Fatalf("runCheck after root-staged repair: %v", err)
 	}
 }
 
 func TestRepairRecoversTaglessOrphanByHash(t *testing.T) {
 	dataDir := t.TempDir()
-	initialized, err := ensureLibraryInitialized(dataDir)
+	initialized, err := ensureLibraryInitialized(t.Context(), dataDir)
 	if err != nil {
 		t.Fatalf("ensureLibraryInitialized: %v", err)
 	}
@@ -1055,13 +1059,13 @@ func TestRepairRecoversTaglessOrphanByHash(t *testing.T) {
 		t.Fatalf("db init: %v", err)
 	}
 	defer database.Close()
-	root, err := storage.OpenRoot(database.DB, dataDir)
+	root, err := storage.OpenRoot(database.Read(t.Context()), dataDir)
 	if err != nil {
 		t.Fatalf("OpenRoot: %v", err)
 	}
 
 	var storagePath string
-	if err := database.QueryRow("SELECT storage_path FROM assets LIMIT 1").Scan(&storagePath); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT storage_path FROM assets LIMIT 1").Scan(&storagePath); err != nil {
 		t.Fatalf("query asset: %v", err)
 	}
 	finalAbs := root.Abs(storagePath)
@@ -1075,7 +1079,7 @@ func TestRepairRecoversTaglessOrphanByHash(t *testing.T) {
 	}
 
 	out, err := captureStdout(t, func() error {
-		return runCheck(dataDir, nil)
+		return runCheck(t.Context(), dataDir, nil)
 	})
 	if !errors.Is(err, ErrIssuesFound) {
 		t.Fatalf("runCheck tagless orphan = %v; want ErrIssuesFound", err)
@@ -1095,14 +1099,14 @@ func TestRepairRecoversTaglessOrphanByHash(t *testing.T) {
 	if _, err := os.Stat(orphanAbs); !os.IsNotExist(err) {
 		t.Fatalf("tagless orphan still exists after repair: %v", err)
 	}
-	if err := runCheck(dataDir, nil); err != nil {
+	if err := runCheck(t.Context(), dataDir, nil); err != nil {
 		t.Fatalf("runCheck after hash recovery: %v", err)
 	}
 }
 
 func TestDuplicateImportRestoresMissingManagedFile(t *testing.T) {
 	dataDir := t.TempDir()
-	initialized, err := ensureLibraryInitialized(dataDir)
+	initialized, err := ensureLibraryInitialized(t.Context(), dataDir)
 	if err != nil {
 		t.Fatalf("ensureLibraryInitialized: %v", err)
 	}
@@ -1119,19 +1123,19 @@ func TestDuplicateImportRestoresMissingManagedFile(t *testing.T) {
 		t.Fatalf("db init: %v", err)
 	}
 	defer database.Close()
-	root, err := storage.OpenRoot(database.DB, dataDir)
+	root, err := storage.OpenRoot(database.Read(t.Context()), dataDir)
 	if err != nil {
 		t.Fatalf("OpenRoot: %v", err)
 	}
 	var storagePath string
-	if err := database.QueryRow("SELECT storage_path FROM assets LIMIT 1").Scan(&storagePath); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT storage_path FROM assets LIMIT 1").Scan(&storagePath); err != nil {
 		t.Fatalf("query storage path: %v", err)
 	}
 	finalAbs := root.Abs(storagePath)
 	if err := os.Remove(finalAbs); err != nil {
 		t.Fatalf("remove managed file: %v", err)
 	}
-	if err := runCheck(dataDir, nil); !errors.Is(err, ErrIssuesFound) {
+	if err := runCheck(t.Context(), dataDir, nil); !errors.Is(err, ErrIssuesFound) {
 		t.Fatalf("runCheck after remove = %v; want ErrIssuesFound", err)
 	}
 
@@ -1141,7 +1145,7 @@ func TestDuplicateImportRestoresMissingManagedFile(t *testing.T) {
 	if _, err := os.Stat(finalAbs); err != nil {
 		t.Fatalf("managed file was not restored: %v", err)
 	}
-	if err := runCheck(dataDir, nil); err != nil {
+	if err := runCheck(t.Context(), dataDir, nil); err != nil {
 		t.Fatalf("runCheck after duplicate restore: %v", err)
 	}
 }
@@ -1149,7 +1153,7 @@ func TestDuplicateImportRestoresMissingManagedFile(t *testing.T) {
 func TestCheckUsesEscapedDatabaseURI(t *testing.T) {
 	parent := t.TempDir()
 	dataDir := filepath.Join(parent, "library ? # uri")
-	initialized, err := ensureLibraryInitialized(dataDir)
+	initialized, err := ensureLibraryInitialized(t.Context(), dataDir)
 	if err != nil {
 		t.Fatalf("ensureLibraryInitialized: %v", err)
 	}
@@ -1163,14 +1167,14 @@ func TestCheckUsesEscapedDatabaseURI(t *testing.T) {
 		t.Fatalf("runImport: %v", err)
 	}
 
-	if err := runCheck(dataDir, nil); err != nil {
+	if err := runCheck(t.Context(), dataDir, nil); err != nil {
 		t.Fatalf("runCheck with URI-significant data dir: %v", err)
 	}
 }
 
 func TestCheckAndRepairCurrentHashes(t *testing.T) {
 	dataDir := t.TempDir()
-	initialized, err := ensureLibraryInitialized(dataDir)
+	initialized, err := ensureLibraryInitialized(t.Context(), dataDir)
 	if err != nil {
 		t.Fatalf("ensureLibraryInitialized: %v", err)
 	}
@@ -1192,19 +1196,19 @@ func TestCheckAndRepairCurrentHashes(t *testing.T) {
 
 	var assetID, storagePath, importedHash string
 	var importedSize int64
-	if err := database.QueryRow("SELECT id, storage_path, current_sha256, current_size FROM assets LIMIT 1").Scan(&assetID, &storagePath, &importedHash, &importedSize); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT id, storage_path, current_sha256, current_size FROM assets LIMIT 1").Scan(&assetID, &storagePath, &importedHash, &importedSize); err != nil {
 		t.Fatalf("query asset: %v", err)
 	}
-	root, err := storage.OpenRoot(database.DB, dataDir)
+	root, err := storage.OpenRoot(database.Read(t.Context()), dataDir)
 	if err != nil {
 		t.Fatalf("OpenRoot: %v", err)
 	}
 	absPath := root.Abs(storagePath)
 
-	if _, err := database.Exec("UPDATE assets SET current_sha256 = NULL, current_size = NULL WHERE id = ?", assetID); err != nil {
+	if _, err := database.Write(t.Context()).Exec("UPDATE assets SET current_sha256 = NULL, current_size = NULL WHERE id = ?", assetID); err != nil {
 		t.Fatalf("clear current hash/size: %v", err)
 	}
-	if err := runCheck(dataDir, nil); !errors.Is(err, ErrIssuesFound) {
+	if err := runCheck(t.Context(), dataDir, nil); !errors.Is(err, ErrIssuesFound) {
 		t.Fatalf("runCheck missing current hash = %v; want ErrIssuesFound", err)
 	}
 	if err := runRepair(context.Background(), dataDir, nil); err != nil {
@@ -1217,7 +1221,7 @@ func TestCheckAndRepairCurrentHashes(t *testing.T) {
 	}
 	var backfilledHash string
 	var backfilledSize int64
-	if err := database.QueryRow("SELECT current_sha256, current_size FROM assets WHERE id = ?", assetID).Scan(&backfilledHash, &backfilledSize); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT current_sha256, current_size FROM assets WHERE id = ?", assetID).Scan(&backfilledHash, &backfilledSize); err != nil {
 		t.Fatalf("query backfilled hash/size: %v", err)
 	}
 	if backfilledHash != wantHash || backfilledHash != importedHash {
@@ -1226,14 +1230,14 @@ func TestCheckAndRepairCurrentHashes(t *testing.T) {
 	if backfilledSize != wantSize || backfilledSize != importedSize {
 		t.Fatalf("backfilled size = %d; want %d", backfilledSize, wantSize)
 	}
-	if err := runCheck(dataDir, nil); err != nil {
+	if err := runCheck(t.Context(), dataDir, nil); err != nil {
 		t.Fatalf("runCheck after backfill: %v", err)
 	}
 
 	if err := os.WriteFile(absPath, []byte("changed on disk"), 0o644); err != nil {
 		t.Fatalf("mutate final file: %v", err)
 	}
-	if err := runCheck(dataDir, nil); !errors.Is(err, ErrIssuesFound) {
+	if err := runCheck(t.Context(), dataDir, nil); !errors.Is(err, ErrIssuesFound) {
 		t.Fatalf("runCheck hash mismatch = %v; want ErrIssuesFound", err)
 	}
 	if err := runRepair(context.Background(), dataDir, nil); err != nil {
@@ -1242,7 +1246,7 @@ func TestCheckAndRepairCurrentHashes(t *testing.T) {
 
 	var afterMismatchRepair string
 	var sizeAfterMismatchRepair int64
-	if err := database.QueryRow("SELECT current_sha256, current_size FROM assets WHERE id = ?", assetID).Scan(&afterMismatchRepair, &sizeAfterMismatchRepair); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT current_sha256, current_size FROM assets WHERE id = ?", assetID).Scan(&afterMismatchRepair, &sizeAfterMismatchRepair); err != nil {
 		t.Fatalf("query hash/size after mismatch repair: %v", err)
 	}
 	if afterMismatchRepair != backfilledHash {
@@ -1255,7 +1259,7 @@ func TestCheckAndRepairCurrentHashes(t *testing.T) {
 
 func TestCheckAndRepairReaderCapability(t *testing.T) {
 	dataDir := t.TempDir()
-	initialized, err := ensureLibraryInitialized(dataDir)
+	initialized, err := ensureLibraryInitialized(t.Context(), dataDir)
 	if err != nil {
 		t.Fatalf("ensureLibraryInitialized: %v", err)
 	}
@@ -1288,7 +1292,7 @@ func TestCheckAndRepairReaderCapability(t *testing.T) {
 	var assetID string
 	var formatKey string
 	var canRead int
-	if err := database.QueryRow("SELECT id, format, can_read FROM assets LIMIT 1").Scan(&assetID, &formatKey, &canRead); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT id, format, can_read FROM assets LIMIT 1").Scan(&assetID, &formatKey, &canRead); err != nil {
 		t.Fatalf("query asset format/can_read: %v", err)
 	}
 	if formatKey != "fb2" {
@@ -1297,15 +1301,15 @@ func TestCheckAndRepairReaderCapability(t *testing.T) {
 	if canRead != 1 {
 		t.Fatalf("imported can_read = %d; want 1", canRead)
 	}
-	if _, err := database.Exec("UPDATE assets SET format = 'unknown', can_read = 0 WHERE id = ?", assetID); err != nil {
+	if _, err := database.Write(t.Context()).Exec("UPDATE assets SET format = 'unknown', can_read = 0 WHERE id = ?", assetID); err != nil {
 		t.Fatalf("make format/can_read stale: %v", err)
 	}
 
-	if err := runCheck(dataDir, nil); err != nil {
+	if err := runCheck(t.Context(), dataDir, nil); err != nil {
 		t.Fatalf("fast runCheck with stale can_read = %v; want no deep-only issue", err)
 	}
 	out, err := captureStdout(t, func() error {
-		return runCheck(dataDir, []string{"--deep"})
+		return runCheck(t.Context(), dataDir, []string{"--deep"})
 	})
 	if !errors.Is(err, ErrIssuesFound) {
 		t.Fatalf("runCheck --deep stale can_read = %v; want ErrIssuesFound", err)
@@ -1317,7 +1321,7 @@ func TestCheckAndRepairReaderCapability(t *testing.T) {
 	if err := runRepair(context.Background(), dataDir, nil); err != nil {
 		t.Fatalf("runRepair: %v", err)
 	}
-	if err := database.QueryRow("SELECT format, can_read FROM assets WHERE id = ?", assetID).Scan(&formatKey, &canRead); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT format, can_read FROM assets WHERE id = ?", assetID).Scan(&formatKey, &canRead); err != nil {
 		t.Fatalf("query repaired format/can_read: %v", err)
 	}
 	if formatKey != "fb2" {
@@ -1326,7 +1330,7 @@ func TestCheckAndRepairReaderCapability(t *testing.T) {
 	if canRead != 1 {
 		t.Fatalf("repaired can_read = %d; want 1", canRead)
 	}
-	if err := runCheck(dataDir, nil); err != nil {
+	if err := runCheck(t.Context(), dataDir, nil); err != nil {
 		t.Fatalf("runCheck after can_read repair: %v", err)
 	}
 }

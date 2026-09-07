@@ -32,18 +32,18 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 	// Downloads are addressed by asset_id. Always resolve storage_path from
 	// SQLite for this request: relayout can move files after a page renders, so a
 	// cached path would race and break otherwise valid links.
-	asset, err := s.assetFile(assetID)
+	asset, err := s.assetFile(r.Context(), assetID)
 	if errors.Is(err, sql.ErrNoRows) {
 		http.Error(w, "Asset not found", http.StatusNotFound)
 		return
 	} else if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 
 	fullPath, err := s.managedRoot().Resolve(asset.StoragePath)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 
@@ -61,7 +61,7 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 	// should not re-read samples and open a redundant SQLite write transaction.
 	if asset.KOReaderHash == "" {
 		if hash, err := koreader.PartialMD5File(fullPath); err == nil {
-			_ = db.SetAssetKOReaderHash(s.db, assetID, hash)
+			_ = db.SetAssetKOReaderHash(s.db.Write(r.Context()), assetID, hash)
 		}
 	}
 
@@ -83,18 +83,18 @@ func (s *Server) handleDownloadAs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	asset, err := s.assetFile(assetID)
+	asset, err := s.assetFile(r.Context(), assetID)
 	if errors.Is(err, sql.ErrNoRows) {
 		http.Error(w, "Asset not found", http.StatusNotFound)
 		return
 	} else if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 
 	fullPath, err := s.managedRoot().Resolve(asset.StoragePath)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 
@@ -103,14 +103,14 @@ func (s *Server) handleDownloadAs(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "File not found on disk", http.StatusNotFound)
 		return
 	} else if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	defer f.Close()
 
 	info, err := f.Stat()
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	if !converter.CanConvert(asset.Format, target) {
@@ -130,9 +130,9 @@ func (s *Server) handleDownloadAs(w http.ResponseWriter, r *http.Request) {
 			contentType = "application/octet-stream"
 		}
 	}
-	convertOpts, err := s.assetConversionOptions(asset)
+	convertOpts, err := s.assetConversionOptions(r.Context(), asset)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 
@@ -155,7 +155,7 @@ func (s *Server) handleDownloadAs(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Asset cannot be converted to "+string(target), http.StatusUnprocessableEntity)
 			return
 		}
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	defer cleanup()
@@ -181,7 +181,7 @@ func conversionDependsOnlyOnSource(from format.Format, target converter.Target) 
 
 type assetFileRow struct {
 	StoragePath   string
-	BookID        string
+	BookID        int64
 	Filename      string
 	Extension     string
 	Format        format.Format
@@ -200,11 +200,11 @@ type assetFileRow struct {
 	Tags          string
 }
 
-func (s *Server) assetFile(assetID string) (assetFileRow, error) {
+func (s *Server) assetFile(ctx context.Context, assetID string) (assetFileRow, error) {
 	var a assetFileRow
 	var formatKey string
 	var canRead int
-	err := s.db.QueryRow(`
+	err := s.db.Read(ctx).QueryRow(`
 		SELECT a.storage_path, a.book_id, a.filename, a.extension, a.format, a.can_read,
 		       COALESCE(a.current_sha256, ''),
 		       COALESCE(a.koreader_hash, ''),
@@ -226,10 +226,10 @@ func (s *Server) assetFile(assetID string) (assetFileRow, error) {
 	return a, err
 }
 
-func (s *Server) assetConversionOptions(asset assetFileRow) (converter.ConversionOptions, error) {
+func (s *Server) assetConversionOptions(ctx context.Context, asset assetFileRow) (converter.ConversionOptions, error) {
 	meta := asset.conversionMetadata()
-	if asset.BookID != "" {
-		authorsByBook, err := db.AuthorsByBookIDs(s.db, []string{asset.BookID})
+	if asset.BookID != 0 {
+		authorsByBook, err := db.AuthorsByBookIDs(s.db.Read(ctx), []int64{asset.BookID})
 		if err != nil {
 			return converter.ConversionOptions{}, err
 		}

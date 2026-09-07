@@ -75,7 +75,7 @@ func renameAuthor(parent context.Context, dataDir string, args []string, name, u
 		return err
 	}
 	defer database.Close()
-	root, err := storage.OpenRoot(database.DB, dataDir)
+	root, err := storage.OpenRoot(database.Read(parent), dataDir)
 	if err != nil {
 		return err
 	}

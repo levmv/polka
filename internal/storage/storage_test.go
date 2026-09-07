@@ -19,7 +19,7 @@ func TestPlace(t *testing.T) {
 	relPath := "books/A/Author/book.txt"
 
 	// Success case
-	err := Place(root, relPath, bytes.NewReader(content), func() error {
+	err := Place(root, relPath, "book", bytes.NewReader(content), func() error {
 		return nil
 	})
 	if err != nil {
@@ -38,14 +38,14 @@ func TestPlace(t *testing.T) {
 	dir := filepath.Dir(absPath)
 	entries, _ := os.ReadDir(dir)
 	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), ".tmp-") {
+		if e.Name() != filepath.Base(relPath) {
 			t.Errorf("tmp file leaked: %s", e.Name())
 		}
 	}
 
 	// Failure case during commit
 	relPath2 := "books/B/Author/book2.txt"
-	err = Place(root, relPath2, bytes.NewReader(content), func() error {
+	err = Place(root, relPath2, "book2", bytes.NewReader(content), func() error {
 		return errors.New("db commit failed")
 	})
 	if err == nil {
@@ -58,11 +58,12 @@ func TestPlace(t *testing.T) {
 	}
 
 	dir2 := filepath.Dir(absPath2)
-	entries2, _ := os.ReadDir(dir2)
-	for _, e := range entries2 {
-		if strings.HasPrefix(e.Name(), ".tmp-") {
-			t.Errorf("tmp file leaked on error: %s", e.Name())
-		}
+	entries2, err := os.ReadDir(dir2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries2) != 0 {
+		t.Fatalf("files leaked on failed commit: %v", entries2)
 	}
 }
 

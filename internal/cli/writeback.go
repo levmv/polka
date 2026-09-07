@@ -19,7 +19,14 @@ func runLibraryWriteback(parent context.Context, dataDir string, args []string) 
 	if help, err := parseCommandFlags(fs, args); help || err != nil {
 		return err
 	}
-	bookIDs := fs.Args()
+	bookIDs := make([]int64, 0, fs.NArg())
+	for _, raw := range fs.Args() {
+		bookID, err := parseBookID(raw)
+		if err != nil {
+			return err
+		}
+		bookIDs = append(bookIDs, bookID)
+	}
 
 	database, err := openDatabase(dataDir)
 	if err != nil {
@@ -27,13 +34,13 @@ func runLibraryWriteback(parent context.Context, dataDir string, args []string) 
 	}
 	defer database.Close()
 
-	root, err := storage.OpenRoot(database.DB, dataDir)
+	root, err := storage.OpenRoot(database.Read(parent), dataDir)
 	if err != nil {
 		return err
 	}
 	ctx := parent
 	if !*dryRun {
-		hasAnyAsset, err := db.HasAnyAsset(database.DB)
+		hasAnyAsset, err := db.HasAnyAsset(database.Read(ctx))
 		if err != nil {
 			return err
 		}

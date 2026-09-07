@@ -60,10 +60,10 @@ func TestAPIUsersAdminListAndCreate(t *testing.T) {
 	if created.Username != "carol" || created.Role != db.RoleMember || created.ID <= 0 {
 		t.Fatalf("created = %+v, want carol member", created)
 	}
-	if u, err := database.Authenticate("carol", "newpw"); err != nil || u == nil {
+	if u, err := db.Authenticate(database.Read(t.Context()), "carol", "newpw"); err != nil || u == nil {
 		t.Fatalf("created user cannot authenticate: user=%+v err=%v", u, err)
 	}
-	kids, err := database.CreateShelf(admin.ID, db.ShelfShared, "Kids", db.ShelfManual, "")
+	kids, err := database.CreateShelf(t.Context(), admin.ID, db.ShelfShared, "Kids", db.ShelfManual, "")
 	if err != nil {
 		t.Fatalf("create scope shelf: %v", err)
 	}
@@ -107,11 +107,11 @@ func TestAPIUsersAdminListAndCreate(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("invalid scope create status = %d, want %d", w.Code, http.StatusBadRequest)
 	}
-	if u, err := database.GetUserByUsername("eve"); err != nil || u != nil {
+	if u, err := db.GetUserByUsername(database.Read(t.Context()), "eve"); err != nil || u != nil {
 		t.Fatalf("invalid scope left created user: user=%+v err=%v", u, err)
 	}
 
-	unread, err := database.CreateShelf(admin.ID, db.ShelfShared, "Unread", db.ShelfQuery, "status:unread")
+	unread, err := database.CreateShelf(t.Context(), admin.ID, db.ShelfShared, "Unread", db.ShelfQuery, "status:unread")
 	if err != nil {
 		t.Fatalf("create status shelf: %v", err)
 	}
@@ -130,17 +130,15 @@ func TestAPIUsersAdminListAndCreate(t *testing.T) {
 	if got := strings.TrimSpace(w.Body.String()); got != wantReason {
 		t.Fatalf("status scope error = %q, want %q", got, wantReason)
 	}
-	if u, err := database.GetUserByUsername("frank"); err != nil || u != nil {
+	if u, err := db.GetUserByUsername(database.Read(t.Context()), "frank"); err != nil || u != nil {
 		t.Fatalf("ineligible scope left created user: user=%+v err=%v", u, err)
 	}
-
-	if _, err := database.Exec(`
+	mustExec(t, database, `
 		CREATE TRIGGER fail_broken_user
 		BEFORE INSERT ON users WHEN NEW.username = 'broken'
 		BEGIN SELECT RAISE(ABORT, 'forced user insert failure'); END
-	`); err != nil {
-		t.Fatalf("create failing user trigger: %v", err)
-	}
+	`)
+
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, jsonRequest(t, s, admin.ID, http.MethodPost, "/api/users", userCreateRequest{
 		Username: "Broken",
@@ -158,11 +156,11 @@ func TestAPIUserAccessCanUseAdminPrivateShelf(t *testing.T) {
 
 	admin := mustUser(t, database, "Admin", db.RoleAdmin)
 	reader := mustUser(t, database, "Reader", db.RoleReader)
-	private, err := database.CreateShelf(admin.ID, db.ShelfPersonal, "Kids picks", db.ShelfManual, "")
+	private, err := database.CreateShelf(t.Context(), admin.ID, db.ShelfPersonal, "Kids picks", db.ShelfManual, "")
 	if err != nil {
 		t.Fatalf("create admin private shelf: %v", err)
 	}
-	if err := database.AddBookToShelf(private.ID, admin.ID, "w_1"); err != nil {
+	if err := database.AddBookToShelf(t.Context(), private.ID, admin.ID, 1); err != nil {
 		t.Fatalf("seed private shelf: %v", err)
 	}
 
@@ -188,8 +186,8 @@ func TestAPIUserAccessCanUseAdminPrivateShelf(t *testing.T) {
 	if err := json.UnmarshalRead(w.Body, &books); err != nil {
 		t.Fatalf("decode books: %v", err)
 	}
-	if len(books) != 1 || books[0].ID != "w_1" {
-		t.Fatalf("reader books = %+v, want only w_1", books)
+	if len(books) != 1 || books[0].ID != 1 {
+		t.Fatalf("reader books = %+v, want only 1", books)
 	}
 
 	w = httptest.NewRecorder()
@@ -216,11 +214,11 @@ func TestAPIUserPasswordSelfAndAdmin(t *testing.T) {
 	s := newTestServer(database, dir)
 	handler := testRoutes(t, s)
 
-	memberCurrentSession, err := s.sessions.issue(member.ID)
+	memberCurrentSession, err := s.sessions.issue(t.Context(), member.ID)
 	if err != nil {
 		t.Fatalf("issue current member session: %v", err)
 	}
-	memberOtherSession, err := s.sessions.issue(member.ID)
+	memberOtherSession, err := s.sessions.issue(t.Context(), member.ID)
 	if err != nil {
 		t.Fatalf("issue other member session: %v", err)
 	}
@@ -230,7 +228,7 @@ func TestAPIUserPasswordSelfAndAdmin(t *testing.T) {
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("self password status = %d, want %d; body: %s", w.Code, http.StatusNoContent, w.Body.String())
 	}
-	if u, err := database.Authenticate("bob", "self-new"); err != nil || u == nil {
+	if u, err := db.Authenticate(database.Read(t.Context()), "bob", "self-new"); err != nil || u == nil {
 		t.Fatalf("self password was not changed: user=%+v err=%v", u, err)
 	}
 	assertSessionLive(t, s.sessions, memberCurrentSession, true)
@@ -241,11 +239,11 @@ func TestAPIUserPasswordSelfAndAdmin(t *testing.T) {
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("member reset admin status = %d, want %d", w.Code, http.StatusForbidden)
 	}
-	if u, err := database.Authenticate("admin", "pw"); err != nil || u == nil {
+	if u, err := db.Authenticate(database.Read(t.Context()), "admin", "pw"); err != nil || u == nil {
 		t.Fatalf("admin password unexpectedly changed: user=%+v err=%v", u, err)
 	}
 
-	memberResetSession, err := s.sessions.issue(member.ID)
+	memberResetSession, err := s.sessions.issue(t.Context(), member.ID)
 	if err != nil {
 		t.Fatalf("issue reset member session: %v", err)
 	}
@@ -255,7 +253,7 @@ func TestAPIUserPasswordSelfAndAdmin(t *testing.T) {
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("admin reset status = %d, want %d; body: %s", w.Code, http.StatusNoContent, w.Body.String())
 	}
-	if u, err := database.Authenticate("bob", "admin-reset"); err != nil || u == nil {
+	if u, err := db.Authenticate(database.Read(t.Context()), "bob", "admin-reset"); err != nil || u == nil {
 		t.Fatalf("admin reset password was not applied: user=%+v err=%v", u, err)
 	}
 	assertSessionLive(t, s.sessions, memberResetSession, false)
@@ -301,7 +299,7 @@ func TestAPIUserDeleteGuardsLastAdminAndRevokesSessions(t *testing.T) {
 		t.Fatalf("last admin delete status = %d, want %d; body: %s", w.Code, http.StatusConflict, w.Body.String())
 	}
 
-	memberSession, err := s.sessions.issue(member.ID)
+	memberSession, err := s.sessions.issue(t.Context(), member.ID)
 	if err != nil {
 		t.Fatalf("issue member session: %v", err)
 	}
@@ -310,7 +308,7 @@ func TestAPIUserDeleteGuardsLastAdminAndRevokesSessions(t *testing.T) {
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("delete member status = %d, want %d; body: %s", w.Code, http.StatusNoContent, w.Body.String())
 	}
-	if u, err := database.GetUserByID(member.ID); err != nil || u != nil {
+	if u, err := db.GetUserByID(database.Read(t.Context()), member.ID); err != nil || u != nil {
 		t.Fatalf("deleted member still present: user=%+v err=%v", u, err)
 	}
 
@@ -346,7 +344,7 @@ func jsonRequest(t *testing.T, s *Server, userID int64, method, target string, p
 	req := httptest.NewRequest(method, target, body)
 	req.Header.Set("Content-Type", "application/json")
 	if userID > 0 {
-		sid, err := s.sessions.issue(userID)
+		sid, err := s.sessions.issue(t.Context(), userID)
 		if err != nil {
 			t.Fatalf("issue session: %v", err)
 		}

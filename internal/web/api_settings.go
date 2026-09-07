@@ -46,8 +46,8 @@ func userSettingsDTO(settings *db.UserSettings) UserSettingsDTO {
 }
 
 func (s *Server) handleAPISettings(w http.ResponseWriter, r *http.Request) {
-	settings, err := s.db.GetUserSettings(UserID(r.Context()))
-	if writeUserSettingsError(w, err) {
+	settings, err := db.GetUserSettings(s.db.Read(r.Context()), UserID(r.Context()))
+	if writeUserSettingsError(w, r, err) {
 		return
 	}
 	writeJSON(w, http.StatusOK, userSettingsDTO(settings))
@@ -59,7 +59,7 @@ func (s *Server) handleAPISettingsSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	settings, err := s.db.SaveUserSettings(UserID(r.Context()), db.UserSettingsPatch{
+	settings, err := s.db.SaveUserSettings(r.Context(), UserID(r.Context()), db.UserSettingsPatch{
 		Theme:               req.Theme,
 		ShowContinueReading: req.ShowContinueReading,
 		TimeZone:            req.TimeZone,
@@ -70,13 +70,13 @@ func (s *Server) handleAPISettingsSave(w http.ResponseWriter, r *http.Request) {
 		ReaderLineHeight:    req.ReaderLineHeight,
 		InitializeTimeZone:  req.InitializeTimeZone,
 	})
-	if writeUserSettingsError(w, err) {
+	if writeUserSettingsError(w, r, err) {
 		return
 	}
 	writeJSON(w, http.StatusOK, userSettingsDTO(settings))
 }
 
-func writeUserSettingsError(w http.ResponseWriter, err error) bool {
+func writeUserSettingsError(w http.ResponseWriter, r *http.Request, err error) bool {
 	if err == nil {
 		return false
 	}
@@ -84,7 +84,7 @@ func writeUserSettingsError(w http.ResponseWriter, err error) bool {
 	case errors.Is(err, db.ErrInvalidUserSettings):
 		http.Error(w, err.Error(), http.StatusBadRequest)
 	default:
-		serverError(w, err)
+		serverError(w, r, err)
 	}
 	return true
 }

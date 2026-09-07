@@ -110,7 +110,7 @@ func Serve(ctx context.Context, cfg Config) error {
 	if err := context.Cause(ctx); err != nil {
 		return err
 	}
-	database, err := bootstrap.EnsureLibrary(cfg.DataDir)
+	database, err := bootstrap.EnsureLibrary(ctx, cfg.DataDir)
 	if err != nil {
 		return err
 	}
@@ -119,7 +119,7 @@ func Serve(ctx context.Context, cfg Config) error {
 	// writer lease and closing the database.
 	defer database.Close()
 
-	if err := bootstrapAdmin(database, cfg.AdminUser, cfg.AdminPassword); err != nil {
+	if err := bootstrapAdmin(ctx, database, cfg.AdminUser, cfg.AdminPassword); err != nil {
 		return err
 	}
 	lease, err := db.AcquireWriterLease(ctx, database, db.NewWriterLeaseOwner("serve"), false)
@@ -128,7 +128,7 @@ func Serve(ctx context.Context, cfg Config) error {
 	}
 	defer lease.Release(context.Background())
 
-	root, err := openServeBooksRoot(database, cfg.DataDir)
+	root, err := openServeBooksRoot(ctx, database, cfg.DataDir)
 	if err != nil {
 		return err
 	}
@@ -138,7 +138,7 @@ func Serve(ctx context.Context, cfg Config) error {
 	background := newTaskGroup(context.Background())
 	defer background.Stop()
 	storageQueue := workslot.New()
-	if err := database.RecoverDeliveryJobs(); err != nil {
+	if err := database.RecoverDeliveryJobs(ctx); err != nil {
 		return err
 	}
 
@@ -163,7 +163,7 @@ func Serve(ctx context.Context, cfg Config) error {
 		publicImageClient: defaultPublicImageClient(),
 		coverSearchKey:    newCoverSearchKey(),
 	}
-	ingestConfig, err := ingest.OpenConfig(database.DB, cfg.DataDir)
+	ingestConfig, err := ingest.OpenConfig(database.Read(ctx), cfg.DataDir)
 	if err != nil {
 		return err
 	}
@@ -283,17 +283,17 @@ func Serve(ctx context.Context, cfg Config) error {
 	return nil
 }
 
-func openServeBooksRoot(database *db.DB, dataDir string) (storage.Root, error) {
-	configured, err := storage.RootConfigured(database.DB)
+func openServeBooksRoot(ctx context.Context, database *db.DB, dataDir string) (storage.Root, error) {
+	configured, err := storage.RootConfigured(database.Read(ctx))
 	if err != nil {
 		return storage.Root{}, err
 	}
 	if configured {
 		// A configured missing root is usually a dropped drive or mount. Do not
 		// create it during startup; let reads degrade and write guards report it.
-		return storage.OpenRoot(database.DB, dataDir)
+		return storage.OpenRoot(database.Read(ctx), dataDir)
 	}
-	root, err := storage.SaveRoot(database.DB, dataDir, "")
+	root, err := storage.SaveRoot(database.Write(ctx), dataDir, "")
 	if err != nil {
 		return storage.Root{}, err
 	}
@@ -591,9 +591,9 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		// even when a browser happens to send a Polka session cookie. Kobo handlers
 		// also need the exact connection id to enforce its selected-shelf boundary.
 		if koboPath(path) {
-			connection, ok, err := s.db.KoboConnectionByToken(koboTokenFromPath(path))
+			connection, ok, err := s.db.KoboConnectionByToken(r.Context(), koboTokenFromPath(path))
 			if err != nil {
-				serverError(w, err)
+				serverError(w, r, err)
 				return
 			}
 			if ok {
@@ -608,7 +608,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		if kosyncPath(path) {
 			uid, ok, err := s.kosyncTokenUserID(r)
 			if err != nil {
-				serverError(w, err)
+				serverError(w, r, err)
 				return
 			}
 			if ok {
@@ -620,9 +620,9 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		}
 
 		if cookie, err := r.Cookie(sessionCookieName); err == nil {
-			uid, ok, err := s.sessions.lookup(cookie.Value)
+			uid, ok, err := s.sessions.lookup(r.Context(), cookie.Value)
 			if err != nil {
-				serverError(w, err)
+				serverError(w, r, err)
 				return
 			}
 			if ok {
@@ -641,7 +641,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 				if r.Context().Err() != nil {
 					return
 				}
-				serverError(w, err)
+				serverError(w, r, err)
 				return
 			}
 			if ok {
@@ -658,7 +658,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
-		if n, err := s.db.CountUsers(); err == nil && n == 0 {
+		if n, err := db.CountUsers(s.db.Read(r.Context())); err == nil && n == 0 {
 			http.Redirect(w, r, "/setup", http.StatusFound)
 			return
 		}
@@ -674,7 +674,7 @@ func (s *Server) basicAuthUserID(r *http.Request) (int64, bool, error) {
 	// App tokens are self-identifying app passwords. Try the cheap token
 	// lookup before bcrypt so OPDS/download/cover clients do not pay password
 	// verification on every request.
-	if uid, ok, err := s.db.AppTokenUserID(password); err != nil || ok {
+	if uid, ok, err := s.db.AppTokenUserID(r.Context(), password); err != nil || ok {
 		return uid, ok, err
 	}
 
@@ -707,7 +707,7 @@ func (s *Server) authenticatePassword(ctx context.Context, username, password st
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
-	return s.db.Authenticate(username, password)
+	return db.Authenticate(s.db.Read(ctx), username, password)
 }
 
 func (s *Server) passwordAuthGate() chan struct{} {
@@ -723,7 +723,7 @@ func writePasswordAuthBusy(w http.ResponseWriter) {
 }
 
 func (s *Server) kosyncTokenUserID(r *http.Request) (int64, bool, error) {
-	return s.db.AppTokenUserID(kosyncTokenFromPath(r.URL.Path))
+	return s.db.AppTokenUserID(r.Context(), kosyncTokenFromPath(r.URL.Path))
 }
 
 func basicAuthPath(path string) bool {
@@ -784,8 +784,8 @@ func challengeBasicAuth(w http.ResponseWriter) {
 // the first-run setup page takes over; once any user exists it is a no-op (the
 // credentials are ignored, so leaving them in a unit file is harmless). When the
 // library is empty and no bootstrap creds are given, it logs how to proceed.
-func bootstrapAdmin(database *db.DB, adminUser, adminPassword string) error {
-	n, err := database.CountUsers()
+func bootstrapAdmin(ctx context.Context, database *db.DB, adminUser, adminPassword string) error {
+	n, err := db.CountUsers(database.Read(ctx))
 	if err != nil {
 		return fmt.Errorf("count users: %w", err)
 	}
@@ -796,7 +796,7 @@ func bootstrapAdmin(database *db.DB, adminUser, adminPassword string) error {
 		log.Println("No users yet — open the web UI to create the first admin, or set POLKA_ADMIN_USER/POLKA_ADMIN_PASSWORD (or run `polka user add --admin`).")
 		return nil
 	}
-	if _, err := database.CreateInitialAdmin(adminUser, adminPassword); err != nil {
+	if _, err := database.CreateInitialAdmin(ctx, adminUser, adminPassword); err != nil {
 		if errors.Is(err, db.ErrSetupComplete) {
 			return nil
 		}

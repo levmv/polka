@@ -15,7 +15,7 @@ func TestTokenAddAndList(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	user, err := database.CreateUser("reader:name", "pw", db.RoleMember)
+	user, err := database.CreateUser(t.Context(), "reader:name", "pw", db.RoleMember)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,13 +34,13 @@ func TestTokenAddAndList(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			output, err := captureStdout(t, func() error {
-				return tokenAdd(database, []string{"--base-url", tt.baseURL, user.Username, tt.name})
+				return tokenAdd(t.Context(), database, []string{"--base-url", tt.baseURL, user.Username, tt.name})
 			})
-			defer database.RevokeAppToken(user.ID, tt.name)
+			defer database.RevokeAppToken(t.Context(), user.ID, tt.name)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("token add error = %v, wantErr=%v", err, tt.wantErr)
 			}
-			tokens, err := database.ListAppTokens(user.ID)
+			tokens, err := db.ListAppTokens(database.Read(t.Context()), user.ID)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -62,7 +62,7 @@ func TestTokenAddAndList(t *testing.T) {
 					t.Fatalf("setup output missing %q: %s", want, output)
 				}
 			}
-			listed, err := captureStdout(t, func() error { return tokenList(database, []string{user.Username}) })
+			listed, err := captureStdout(t, func() error { return tokenList(t.Context(), database, []string{user.Username}) })
 			if err != nil || !strings.Contains(listed, tokens[0].Token) {
 				t.Fatalf("token list = %q, err=%v", listed, err)
 			}

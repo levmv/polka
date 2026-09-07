@@ -10,13 +10,13 @@ import (
 func (s *Server) handleAPITags(w http.ResponseWriter, r *http.Request) {
 	scope, err := s.visibilityScope(r)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	tags, err := db.ListTags(s.db, scope, q, 20)
+	tags, err := db.ListTags(s.db.Read(r.Context()), scope, q, 20)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	if tags == nil {

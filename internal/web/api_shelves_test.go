@@ -35,7 +35,7 @@ func TestAPIShelvesManualAndQuery(t *testing.T) {
 		t.Fatalf("manual shelf = %+v", manual)
 	}
 
-	req = httptest.NewRequest("PUT", "/api/shelves/"+manual.ID+"/books/w_1", nil)
+	req = httptest.NewRequest("PUT", "/api/shelves/"+manual.ID+"/books/1", nil)
 	addSessionCookie(t, s, req, u.ID)
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -54,11 +54,11 @@ func TestAPIShelvesManualAndQuery(t *testing.T) {
 	if err := json.UnmarshalRead(w.Body, &books); err != nil {
 		t.Fatalf("decode manual shelf books: %v", err)
 	}
-	if len(books) != 1 || books[0].ID != "w_1" {
-		t.Fatalf("manual shelf books = %+v, want w_1 only", books)
+	if len(books) != 1 || books[0].ID != 1 {
+		t.Fatalf("manual shelf books = %+v, want 1 only", books)
 	}
 
-	req = httptest.NewRequest("GET", "/api/books/w_1/shelves", nil)
+	req = httptest.NewRequest("GET", "/api/books/1/shelves", nil)
 	addSessionCookie(t, s, req, u.ID)
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -97,8 +97,8 @@ func TestAPIShelvesManualAndQuery(t *testing.T) {
 	if err := json.UnmarshalRead(w.Body, &books); err != nil {
 		t.Fatalf("decode query shelf books: %v", err)
 	}
-	if len(books) != 1 || books[0].ID != "w_1" {
-		t.Fatalf("query shelf books = %+v, want Hobbit/w_1 only", books)
+	if len(books) != 1 || books[0].ID != 1 {
+		t.Fatalf("query shelf books = %+v, want Hobbit/1 only", books)
 	}
 }
 
@@ -109,15 +109,15 @@ func TestAPIShelfUpdateQueryAndVisibility(t *testing.T) {
 	admin := mustUser(t, database, "admin", db.RoleAdmin)
 	reader := mustUser(t, database, "reader", db.RoleReader)
 	otherAdmin := mustUser(t, database, "other-admin", db.RoleAdmin)
-	queryShelf, err := database.CreateShelf(admin.ID, db.ShelfShared, "Hobbit search", db.ShelfQuery, "Hobbit")
+	queryShelf, err := database.CreateShelf(t.Context(), admin.ID, db.ShelfShared, "Hobbit search", db.ShelfQuery, "Hobbit")
 	if err != nil {
 		t.Fatalf("create query shelf: %v", err)
 	}
-	deleteShelf, err := database.CreateShelf(admin.ID, db.ShelfShared, "Delete me", db.ShelfManual, "")
+	deleteShelf, err := database.CreateShelf(t.Context(), admin.ID, db.ShelfShared, "Delete me", db.ShelfManual, "")
 	if err != nil {
 		t.Fatalf("create delete shelf: %v", err)
 	}
-	privateShelf, err := database.CreateShelf(reader.ID, db.ShelfPersonal, "Mine", db.ShelfManual, "")
+	privateShelf, err := database.CreateShelf(t.Context(), reader.ID, db.ShelfPersonal, "Mine", db.ShelfManual, "")
 	if err != nil {
 		t.Fatalf("create private shelf: %v", err)
 	}
@@ -171,8 +171,8 @@ func TestAPIShelfUpdateQueryAndVisibility(t *testing.T) {
 	if err := json.UnmarshalRead(w.Body, &books); err != nil {
 		t.Fatalf("decode updated query books: %v", err)
 	}
-	if len(books) != 1 || books[0].ID != "w_2" {
-		t.Fatalf("updated query books = %+v, want Dune/w_2 only", books)
+	if len(books) != 1 || books[0].ID != 2 {
+		t.Fatalf("updated query books = %+v, want Dune/2 only", books)
 	}
 
 	w = httptest.NewRecorder()
@@ -190,21 +190,21 @@ func TestReaderCannotMutateSharedShelfOrAddOutOfScopeBook(t *testing.T) {
 	defer database.Close()
 
 	reader := mustUser(t, database, "reader", db.RoleReader)
-	scopeShelf, err := database.CreateShelf(reader.ID, db.ShelfShared, "Kids", db.ShelfManual, "")
+	scopeShelf, err := database.CreateShelf(t.Context(), reader.ID, db.ShelfShared, "Kids", db.ShelfManual, "")
 	if err != nil {
 		t.Fatalf("create scope shelf: %v", err)
 	}
-	if err := database.AddBookToShelf(scopeShelf.ID, 0, "w_1"); err != nil {
+	if err := database.AddBookToShelf(t.Context(), scopeShelf.ID, 0, 1); err != nil {
 		t.Fatalf("seed scope shelf: %v", err)
 	}
-	if _, err := database.UpdateUserAccess(reader.ID, db.UserAccess{
+	if _, err := database.UpdateUserAccess(t.Context(), reader.ID, db.UserAccess{
 		Role:         db.RoleReader,
 		ContentScope: db.ContentScopeShelves,
 		ShelfIDs:     []string{scopeShelf.ID},
 	}); err != nil {
 		t.Fatalf("scope reader: %v", err)
 	}
-	privateShelf, err := database.CreateShelf(reader.ID, db.ShelfPersonal, "Mine", db.ShelfManual, "")
+	privateShelf, err := database.CreateShelf(t.Context(), reader.ID, db.ShelfPersonal, "Mine", db.ShelfManual, "")
 	if err != nil {
 		t.Fatalf("create private shelf: %v", err)
 	}
@@ -220,9 +220,9 @@ func TestReaderCannotMutateSharedShelfOrAddOutOfScopeBook(t *testing.T) {
 	}{
 		{http.MethodPatch, "/api/shelves/" + scopeShelf.ID, map[string]string{"name": "Renamed"}, http.StatusForbidden},
 		{http.MethodDelete, "/api/shelves/" + scopeShelf.ID, nil, http.StatusForbidden},
-		{http.MethodPut, "/api/shelves/" + scopeShelf.ID + "/books/w_1", nil, http.StatusForbidden},
-		{http.MethodPut, "/api/shelves/" + privateShelf.ID + "/books/w_1", nil, http.StatusNoContent},
-		{http.MethodPut, "/api/shelves/" + privateShelf.ID + "/books/w_2", nil, http.StatusNotFound},
+		{http.MethodPut, "/api/shelves/" + scopeShelf.ID + "/books/1", nil, http.StatusForbidden},
+		{http.MethodPut, "/api/shelves/" + privateShelf.ID + "/books/1", nil, http.StatusNoContent},
+		{http.MethodPut, "/api/shelves/" + privateShelf.ID + "/books/2", nil, http.StatusNotFound},
 	} {
 		req := jsonRequest(t, s, reader.ID, tc.method, tc.path, tc.body)
 		w := httptest.NewRecorder()
@@ -233,14 +233,14 @@ func TestReaderCannotMutateSharedShelfOrAddOutOfScopeBook(t *testing.T) {
 	}
 
 	var count int
-	if err := database.QueryRow(`SELECT COUNT(*) FROM shelf_books WHERE shelf_id = ? AND book_id = 'w_2'`, privateShelf.ID).Scan(&count); err != nil {
-		t.Fatalf("count private shelf w_2: %v", err)
+	if err := database.Read(t.Context()).QueryRow(`SELECT COUNT(*) FROM shelf_books WHERE shelf_id = ? AND book_id = 2`, privateShelf.ID).Scan(&count); err != nil {
+		t.Fatalf("count private shelf 2: %v", err)
 	}
 	if count != 0 {
 		t.Fatalf("out-of-scope book was added to private shelf")
 	}
 	var name string
-	if err := database.QueryRow(`SELECT name FROM shelves WHERE id = ?`, scopeShelf.ID).Scan(&name); err != nil {
+	if err := database.Read(t.Context()).QueryRow(`SELECT name FROM shelves WHERE id = ?`, scopeShelf.ID).Scan(&name); err != nil {
 		t.Fatalf("read shared shelf name: %v", err)
 	}
 	if name != "Kids" {
@@ -274,19 +274,19 @@ func TestAPIShelvesSharedCreationAndScopedVisibility(t *testing.T) {
 	if kids.OwnerID != admin.ID || kids.Visibility != string(db.ShelfShared) {
 		t.Fatalf("shared shelf = %+v, want owner %d and shared visibility", kids, admin.ID)
 	}
-	if err := database.AddBookToShelf(kids.ID, 0, "w_1"); err != nil {
+	if err := database.AddBookToShelf(t.Context(), kids.ID, 0, 1); err != nil {
 		t.Fatalf("seed kids shelf: %v", err)
 	}
 
-	other, err := database.CreateShelf(admin.ID, db.ShelfShared, "Adults", db.ShelfManual, "")
+	other, err := database.CreateShelf(t.Context(), admin.ID, db.ShelfShared, "Adults", db.ShelfManual, "")
 	if err != nil {
 		t.Fatalf("create other shared shelf: %v", err)
 	}
-	private, err := database.CreateShelf(reader.ID, db.ShelfPersonal, "Mine", db.ShelfManual, "")
+	private, err := database.CreateShelf(t.Context(), reader.ID, db.ShelfPersonal, "Mine", db.ShelfManual, "")
 	if err != nil {
 		t.Fatalf("create private shelf: %v", err)
 	}
-	if _, err := database.UpdateUserAccess(reader.ID, db.UserAccess{
+	if _, err := database.UpdateUserAccess(t.Context(), reader.ID, db.UserAccess{
 		Role:         db.RoleReader,
 		ContentScope: db.ContentScopeShelves,
 		ShelfIDs:     []string{kids.ID},

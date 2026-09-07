@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -17,7 +18,7 @@ import (
 // frontend's `BookSummary` / `Book extends BookSummary` and keeps detail-only
 // fields off list rows that never selected them.
 type BookSummaryDTO struct {
-	ID             string   `json:"id"`
+	ID             int64    `json:"id"`
 	Title          string   `json:"title"`
 	AuthorsList    []Author `json:"authors_list"`
 	AuthorsDisplay string   `json:"authors_display"`
@@ -175,7 +176,7 @@ func downloadAsOptions(sourceFormat format.Format) []DownloadAsOption {
 }
 
 type BookSequenceItemDTO struct {
-	ID    string `json:"id"`
+	ID    int64  `json:"id"`
 	Title string `json:"title"`
 }
 
@@ -231,7 +232,7 @@ const (
 func (s *Server) handleAPIBooks(w http.ResponseWriter, r *http.Request) {
 	scope, err := s.visibilityScope(r)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 
@@ -258,13 +259,13 @@ func (s *Server) handleAPIBooks(w http.ResponseWriter, r *http.Request) {
 		// Note: assign with = (not :=) so we don't shadow the outer err that
 		// the `if err != nil` below checks. A shadowed err would silently turn
 		// a failed shelf query into an empty 200 response.
-		shelf, gerr := s.db.GetShelfForUser(shelfID, UserID(r.Context()))
+		shelf, gerr := db.GetShelfForUser(s.db.Read(r.Context()), shelfID, UserID(r.Context()))
 		if errors.Is(gerr, db.ErrShelfNotFound) {
 			http.Error(w, "Shelf not found", http.StatusNotFound)
 			return
 		}
 		if gerr != nil {
-			serverError(w, gerr)
+			serverError(w, r, gerr)
 			return
 		}
 		if shelf.Kind == db.ShelfQuery {
@@ -273,21 +274,21 @@ func (s *Server) handleAPIBooks(w http.ResponseWriter, r *http.Request) {
 			if sortParam == "" && shelf.Query != "" {
 				sort = db.SortRelevance
 			}
-			bookRows, err = db.ListBooks(s.db, scope, UserID(r.Context()), shelf.Query, sort, limit, offset)
+			bookRows, err = db.ListBooks(s.db.Read(r.Context()), scope, UserID(r.Context()), shelf.Query, sort, limit, offset)
 		} else {
-			bookRows, err = db.ListBooksInManualShelf(s.db, scope, shelf.ID, sort, limit, offset)
+			bookRows, err = db.ListBooksInManualShelf(s.db.Read(r.Context()), scope, shelf.ID, sort, limit, offset)
 		}
 	} else {
-		bookRows, err = db.ListBooks(s.db, scope, UserID(r.Context()), q, sort, limit, offset)
+		bookRows, err = db.ListBooks(s.db.Read(r.Context()), scope, UserID(r.Context()), q, sort, limit, offset)
 	}
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 
-	books, err := s.bookSummaryDTOs(bookRows)
+	books, err := s.bookSummaryDTOs(r.Context(), bookRows)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 
@@ -297,7 +298,7 @@ func (s *Server) handleAPIBooks(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAPIBookJumps(w http.ResponseWriter, r *http.Request) {
 	scope, err := s.visibilityScope(r)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	var sort db.BookSort
@@ -310,9 +311,9 @@ func (s *Server) handleAPIBookJumps(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Book jumps require title or author sort", http.StatusBadRequest)
 		return
 	}
-	rows, total, err := db.ListBookJumps(s.db, scope, sort)
+	rows, total, err := db.ListBookJumps(s.db.Read(r.Context()), scope, sort)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	out := BookJumpsDTO{Items: []BookJumpDTO{}, Total: total}
@@ -325,7 +326,10 @@ func (s *Server) handleAPIBookJumps(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAPIBookSequence(w http.ResponseWriter, r *http.Request) {
-	bookID := r.PathValue("id")
+	bookID, validID := pathBookID(w, r, "id")
+	if !validID {
+		return
+	}
 	scope, ok := s.requireBookAccess(w, r, bookID)
 	if !ok {
 		return
@@ -344,32 +348,32 @@ func (s *Server) handleAPIBookSequence(w http.ResponseWriter, r *http.Request) {
 		sortParam := params.Get("sort")
 		sort := bookSortFromParams(q, sortParam)
 		if shelfID != "" {
-			shelf, gerr := s.db.GetShelfForUser(shelfID, UserID(r.Context()))
+			shelf, gerr := db.GetShelfForUser(s.db.Read(r.Context()), shelfID, UserID(r.Context()))
 			if errors.Is(gerr, db.ErrShelfNotFound) {
 				http.Error(w, "Shelf not found", http.StatusNotFound)
 				return
 			}
 			if gerr != nil {
-				serverError(w, gerr)
+				serverError(w, r, gerr)
 				return
 			}
 			if shelf.Kind == db.ShelfQuery {
 				if sortParam == "" && shelf.Query != "" {
 					sort = db.SortRelevance
 				}
-				sequence, err = db.BookSequenceInList(s.db, scope, UserID(r.Context()), bookID, shelf.Query, sort, before, after)
+				sequence, err = db.BookSequenceInList(s.db.Read(r.Context()), scope, UserID(r.Context()), bookID, shelf.Query, sort, before, after)
 			} else {
-				sequence, err = db.BookSequenceInManualShelf(s.db, scope, bookID, shelf.ID, sort, before, after)
+				sequence, err = db.BookSequenceInManualShelf(s.db.Read(r.Context()), scope, bookID, shelf.ID, sort, before, after)
 			}
 		} else {
-			sequence, err = db.BookSequenceInList(s.db, scope, UserID(r.Context()), bookID, q, sort, before, after)
+			sequence, err = db.BookSequenceInList(s.db.Read(r.Context()), scope, UserID(r.Context()), bookID, q, sort, before, after)
 		}
 	default:
 		http.Error(w, "Missing or unsupported list context", http.StatusBadRequest)
 		return
 	}
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 
@@ -398,10 +402,10 @@ func bookSequenceDTO(sequence db.BookSequenceWindow) BookSequenceDTO {
 	}
 }
 
-func (s *Server) bookSummaryDTOs(bookRows []db.BookSummaryRow) ([]BookSummaryDTO, error) {
+func (s *Server) bookSummaryDTOs(ctx context.Context, bookRows []db.BookSummaryRow) ([]BookSummaryDTO, error) {
 	var books []BookSummaryDTO
-	var bookIDs []string
-	bookMap := make(map[string]*BookSummaryDTO)
+	var bookIDs []int64
+	bookMap := make(map[int64]*BookSummaryDTO)
 
 	for _, bRow := range bookRows {
 		books = append(books, summaryRowDTO(bRow))
@@ -412,7 +416,7 @@ func (s *Server) bookSummaryDTOs(bookRows []db.BookSummaryRow) ([]BookSummaryDTO
 		bookMap[books[i].ID] = &books[i]
 	}
 
-	assetRows, err := db.AssetsByBookIDs(s.db, bookIDs)
+	assetRows, err := db.AssetsByBookIDs(s.db.Read(ctx), bookIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -422,7 +426,7 @@ func (s *Server) bookSummaryDTOs(bookRows []db.BookSummaryRow) ([]BookSummaryDTO
 		}
 	}
 
-	authorsByBook, err := db.AuthorsByBookIDs(s.db, bookIDs)
+	authorsByBook, err := db.AuthorsByBookIDs(s.db.Read(ctx), bookIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -439,13 +443,19 @@ func (s *Server) bookSummaryDTOs(bookRows []db.BookSummaryRow) ([]BookSummaryDTO
 // handleAPIBookDetail serves GET /api/books/{id}. PATCH routes to
 // handleAPIBookEdit; the cover sub-path to handleAPICoverUpload.
 func (s *Server) handleAPIBookDetail(w http.ResponseWriter, r *http.Request) {
-	bookID := r.PathValue("id")
+	bookID, validID := pathBookID(w, r, "id")
+	if !validID {
+		return
+	}
 	s.handleAPIBookDetailReturn(w, r, bookID)
 }
 
 // handleAPIBookEdit serves PATCH /api/books/{id}.
 func (s *Server) handleAPIBookEdit(w http.ResponseWriter, r *http.Request) {
-	bookID := r.PathValue("id")
+	bookID, validID := pathBookID(w, r, "id")
+	if !validID {
+		return
+	}
 	if _, ok := s.requireBookAccess(w, r, bookID); !ok {
 		return
 	}

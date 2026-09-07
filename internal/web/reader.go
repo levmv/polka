@@ -19,7 +19,7 @@ import (
 
 type readerPageData struct {
 	layoutPageData
-	BookID          string
+	BookID          int64
 	AssetID         string
 	Title           string
 	Extension       string
@@ -36,7 +36,7 @@ type readerPageData struct {
 }
 
 type readerPageAsset struct {
-	BookID        string
+	BookID        int64
 	AssetID       string
 	Title         string
 	Extension     string
@@ -45,19 +45,22 @@ type readerPageAsset struct {
 }
 
 func (s *Server) handleRead(w http.ResponseWriter, r *http.Request) {
-	bookID := r.PathValue("id")
+	bookID, validID := pathBookID(w, r, "id")
+	if !validID {
+		return
+	}
 
 	scope, err := s.visibilityScope(r)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
-	asset, err := db.PrimaryAssetForBook(s.db, scope, bookID)
+	asset, err := db.PrimaryAssetForBook(s.db.Read(r.Context()), scope, bookID)
 	if errors.Is(err, sql.ErrNoRows) {
 		http.Error(w, "Book or primary asset not found", http.StatusNotFound)
 		return
 	} else if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 
@@ -81,12 +84,12 @@ func (s *Server) handleReadAssetPage(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireAssetAccess(w, r, assetID); !ok {
 		return
 	}
-	asset, err := s.assetFile(assetID)
+	asset, err := s.assetFile(r.Context(), assetID)
 	if errors.Is(err, sql.ErrNoRows) {
 		http.Error(w, "Asset not found", http.StatusNotFound)
 		return
 	} else if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	if !asset.CanRead || format.ReaderForFormat(asset.Format) == format.ReaderNone {
@@ -211,12 +214,12 @@ func (s *Server) handleReadAsset(w http.ResponseWriter, r *http.Request) {
 
 	// Reader files are still addressed by asset_id and resolved from SQLite for
 	// this request. The reader page only carries the id, never a cached path.
-	asset, err := s.assetFile(assetID)
+	asset, err := s.assetFile(r.Context(), assetID)
 	if errors.Is(err, sql.ErrNoRows) {
 		http.Error(w, "Asset not found", http.StatusNotFound)
 		return
 	} else if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	if !asset.CanRead || format.ReaderForFormat(asset.Format) == format.ReaderNone {
@@ -233,7 +236,7 @@ func (s *Server) handleReadAsset(w http.ResponseWriter, r *http.Request) {
 
 	fullPath, err := s.managedRoot().Resolve(asset.StoragePath)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	if asset.Format == format.FormatFB2 {
@@ -245,7 +248,7 @@ func (s *Server) handleReadAsset(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "File not found on disk", http.StatusNotFound)
 			return
 		}
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 
@@ -261,14 +264,14 @@ func (s *Server) serveFB2ReadAsset(w http.ResponseWriter, r *http.Request, asset
 		http.Error(w, "File not found on disk", http.StatusNotFound)
 		return
 	} else if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	defer f.Close()
 
 	info, err := f.Stat()
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 

@@ -25,7 +25,7 @@ type bookWritebackResultDTO struct {
 }
 
 type bulkWritebackRequest struct {
-	IDs []string `json:"ids"`
+	IDs []int64 `json:"ids"`
 }
 
 type bulkWritebackResultDTO struct {
@@ -43,47 +43,50 @@ type writebackRetryResultDTO struct {
 // (route role), synchronous, and mode-agnostic like the CLI — the mode governs
 // UI affordances, not an explicit operator action.
 func (s *Server) handleAPIBookWriteback(w http.ResponseWriter, r *http.Request) {
-	bookID := r.PathValue("id")
+	bookID, validID := pathBookID(w, r, "id")
+	if !validID {
+		return
+	}
 
 	scope, err := s.visibilityScope(r)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	// Confirm the book exists and is visible before touching files.
-	if _, err := db.GetBook(s.db, scope, bookID); errors.Is(err, sql.ErrNoRows) {
+	if _, err := db.GetBook(s.db.Read(r.Context()), scope, bookID); errors.Is(err, sql.ErrNoRows) {
 		http.Error(w, "Book not found", http.StatusNotFound)
 		return
 	} else if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 
 	root := s.managedRoot()
-	catalogHasBooks, err := db.HasAnyAsset(s.db.DB)
+	catalogHasBooks, err := db.HasAnyAsset(s.db.Read(r.Context()))
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	if err := storage.RequireWritableRoot(root, catalogHasBooks); err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 
 	summary, err := writeback.Run(r.Context(), s.db, root, writeback.Options{
-		BookIDs:   []string{bookID},
+		BookIDs:   []int64{bookID},
 		Scope:     scope,
 		CoverRoot: storage.NewRoot(s.dataDir),
 		WorkQueue: s.storageQueue,
 	})
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 
-	refreshed, err := s.bookDetailDTO(scope, UserID(r.Context()), bookID, true)
+	refreshed, err := s.bookDetailDTO(r.Context(), scope, UserID(r.Context()), bookID, true)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 
@@ -106,7 +109,7 @@ func (s *Server) handleAPIBulkWriteback(w http.ResponseWriter, r *http.Request) 
 	if !readJSON(w, r, &req) {
 		return
 	}
-	ids := dedupStrings(req.IDs)
+	ids := db.DedupBookIDs(req.IDs)
 	if len(ids) == 0 {
 		http.Error(w, "no book ids provided", http.StatusBadRequest)
 		return
@@ -118,34 +121,34 @@ func (s *Server) handleAPIBulkWriteback(w http.ResponseWriter, r *http.Request) 
 
 	scope, err := s.visibilityScope(r)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
-	rows, err := db.BooksForBulkEdit(s.db, scope, ids)
+	rows, err := db.BooksForBulkEdit(s.db.Read(r.Context()), scope, ids)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
-	visible := make(map[string]struct{}, len(rows))
+	visible := make(map[int64]struct{}, len(rows))
 	for _, row := range rows {
 		visible[row.ID] = struct{}{}
 	}
-	bookIDs := make([]string, 0, len(rows))
+	bookIDs := make([]int64, 0, len(rows))
 	for _, id := range ids {
 		if _, ok := visible[id]; ok {
 			bookIDs = append(bookIDs, id)
 		}
 	}
-	assetRows, err := db.ListMetadataWritebackAssetsByBookIDs(s.db, scope, bookIDs, 0)
+	assetRows, err := db.ListMetadataWritebackAssetsByBookIDs(s.db.Read(r.Context()), scope, bookIDs, 0)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	statusCode := http.StatusOK
 	if len(assetRows) > 0 {
 		root := s.managedRoot()
-		if err := requireWritebackRoot(s.db, root); err != nil {
-			serverError(w, err)
+		if err := requireWritebackRoot(s.db.Read(r.Context()), root); err != nil {
+			serverError(w, r, err)
 			return
 		}
 		if !s.startWritebackRun(root, writeback.Options{
@@ -166,20 +169,20 @@ func (s *Server) handleAPIBulkWriteback(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleAPIAdminWritebackRetry(w http.ResponseWriter, r *http.Request) {
-	counts, err := db.CountDirtyMetadataWritebackAssets(s.db.DB, db.FullVisibilityScope())
+	counts, err := db.CountDirtyMetadataWritebackAssets(s.db.Read(r.Context()), db.FullVisibilityScope())
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
-	status, err := s.adminStorageStatus()
+	status, err := s.adminStorageStatus(r.Context())
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	if counts.Failed > 0 {
 		root := s.managedRoot()
-		if err := requireWritebackRoot(s.db, root); err != nil {
-			serverError(w, err)
+		if err := requireWritebackRoot(s.db.Read(r.Context()), root); err != nil {
+			serverError(w, r, err)
 			return
 		}
 		if !s.startWritebackRun(root, writeback.Options{
@@ -215,8 +218,8 @@ func (s *Server) startWritebackRun(root storage.Root, opts writeback.Options) bo
 	return true
 }
 
-func requireWritebackRoot(database *db.DB, root storage.Root) error {
-	catalogHasBooks, err := db.HasAnyAsset(database.DB)
+func requireWritebackRoot(queryer db.Queryer, root storage.Root) error {
+	catalogHasBooks, err := db.HasAnyAsset(queryer)
 	if err != nil {
 		return err
 	}

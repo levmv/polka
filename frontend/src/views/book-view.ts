@@ -189,7 +189,7 @@ function openDownload(url: string): void {
 // is view state, not route ownership. Whoever navigates away next can therefore
 // cancel this page's request instead of racing its render.
 export function initBookDetail(
-    bookId: string,
+    bookId: number,
     root: HTMLElement,
     context: RouteMountContext,
 ): RouteController {
@@ -216,7 +216,7 @@ export function initBookDetail(
     };
 }
 
-async function loadBookDetail(view: BookDetailView, bookId: string): Promise<void> {
+async function loadBookDetail(view: BookDetailView, bookId: number): Promise<void> {
     const container = view.root.querySelector<HTMLElement>('#book-detail-container');
     if (!container) return;
     // The page marks itself busy for its own data, the way the library does.
@@ -276,16 +276,8 @@ function updateBackLink(root: HTMLElement, context: BookListContext | null): voi
     link.setAttribute('aria-label', label);
 }
 
-// The clamp and the hidden toggle ship in the markup, so a long blurb is never
-// briefly full height. This decides, once the text has been laid out, whether
-// the blurb earns a toggle or should simply be shown whole.
-// How tall a blurb may stand. Both numbers are line-heights rather than lines
-// of text, because a blurb that arrives as several <p> blocks spends real
-// height on the gaps between them and stands taller than the same count of
-// plain prose lines — which is what made the collapsed block look inconsistent
-// from book to book. A blurb no taller than the slack is shown whole — hiding a
-// line or two behind a click buys nothing — and anything longer is cut to the
-// cap.
+// Height budgets use multiples of line-height to include paragraph spacing.
+// The larger threshold leaves nearly fitting descriptions expanded.
 const COLLAPSED_DESCRIPTION_LINES = 13;
 const WHOLE_DESCRIPTION_LINES = 15;
 // However the gaps fall, a collapsed blurb still has to say something.

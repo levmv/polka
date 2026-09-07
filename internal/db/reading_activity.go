@@ -39,7 +39,7 @@ type readingSession struct {
 	ClosedAt         sql.NullInt64
 }
 
-func getWebReadingSession(tx *sql.Tx, userID int64, sourceID []byte) (*readingSession, error) {
+func getWebReadingSession(tx *Tx, userID int64, sourceID []byte) (*readingSession, error) {
 	s := new(readingSession)
 	err := tx.QueryRow(`
 		SELECT id, asset_id, time_zone, segment, segment_started_at, counted_ms, observed_at, last_activity_at, closed_at
@@ -68,7 +68,7 @@ func (db *DB) StartWebReadingSession(ctx context.Context, userID int64, assetID,
 		return ReadingActivityResult{}, ErrInvalidReaderInput
 	}
 	var result ReadingActivityResult
-	err = db.Transact(ctx, func(tx *sql.Tx) error {
+	err = db.Transact(ctx, func(tx *Tx) error {
 		s, err := getWebReadingSession(tx, userID, rawID)
 		if err == nil {
 			if s.AssetID != assetID {
@@ -147,7 +147,7 @@ func (db *DB) CheckpointWebReadingSession(ctx context.Context, userID int64, ass
 		return ReadingActivityResult{}, ErrInvalidReaderInput
 	}
 	var result ReadingActivityResult
-	err = db.Transact(ctx, func(tx *sql.Tx) error {
+	err = db.Transact(ctx, func(tx *Tx) error {
 		s, err := getWebReadingSession(tx, userID, rawID)
 		if errors.Is(err, sql.ErrNoRows) {
 			// A page can finish after its account/session was removed or the
@@ -204,7 +204,7 @@ func (db *DB) CheckpointWebReadingSession(ctx context.Context, userID int64, ass
 	return result, err
 }
 
-func addReadingTimeByDay(tx *sql.Tx, s *readingSession, end int64) error {
+func addReadingTimeByDay(tx *Tx, s *readingSession, end int64) error {
 	location, err := time.LoadLocation(s.TimeZone)
 	if err != nil {
 		return fmt.Errorf("load reading session time zone: %w", err)

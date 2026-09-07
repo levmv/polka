@@ -16,6 +16,7 @@ import (
 	"net/netip"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -89,7 +90,10 @@ type fetchedPublicImage struct {
 }
 
 func (s *Server) handleAPICoverSearch(w http.ResponseWriter, r *http.Request) {
-	bookID := r.PathValue("id")
+	bookID, validID := pathBookID(w, r, "id")
+	if !validID {
+		return
+	}
 	if _, ok := s.requireBookAccess(w, r, bookID); !ok {
 		return
 	}
@@ -118,12 +122,12 @@ func (s *Server) handleAPICoverSearch(w http.ResponseWriter, r *http.Request) {
 		}
 		token, err := s.signCoverSearchToken(payload)
 		if err != nil {
-			serverError(w, err)
+			serverError(w, r, err)
 			return
 		}
 		out = append(out, coverSearchResultDTO{
 			Token:      token,
-			PreviewURL: "/api/books/" + url.PathEscape(bookID) + "/cover-search/preview?token=" + url.QueryEscape(token),
+			PreviewURL: "/api/books/" + strconv.FormatInt(bookID, 10) + "/cover-search/preview?token=" + url.QueryEscape(token),
 			Source:     result.Source,
 			Width:      result.Width,
 			Height:     result.Height,
@@ -133,7 +137,10 @@ func (s *Server) handleAPICoverSearch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAPICoverSearchPreview(w http.ResponseWriter, r *http.Request) {
-	bookID := r.PathValue("id")
+	bookID, validID := pathBookID(w, r, "id")
+	if !validID {
+		return
+	}
 	if _, ok := s.requireBookAccess(w, r, bookID); !ok {
 		return
 	}
@@ -160,7 +167,10 @@ func (s *Server) handleAPICoverSearchPreview(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *Server) handleAPICoverSearchApply(w http.ResponseWriter, r *http.Request) {
-	bookID := r.PathValue("id")
+	bookID, validID := pathBookID(w, r, "id")
+	if !validID {
+		return
+	}
 	if _, ok := s.requireBookAccess(w, r, bookID); !ok {
 		return
 	}

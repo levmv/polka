@@ -19,7 +19,10 @@ import (
 	"math"
 	"os"
 	"path"
+	"strconv"
+	"strings"
 
+	"github.com/levmv/polka/internal/id"
 	"github.com/levmv/polka/internal/imagecodec"
 	"github.com/levmv/polka/internal/storage"
 )
@@ -74,22 +77,51 @@ func DefaultOptions() Options {
 // possibly-remote books disk. Durable originals sit flat under covers/; the
 // rebuildable display/thumb cache lives under a top-level cache/ that is safe to
 // delete at any time.
-func OriginalPath(bookID string) string {
-	return path.Join("covers", bookID)
+func OriginalPath(bookID int64) string {
+	return path.Join("covers", strconv.FormatInt(bookID, 10))
+}
+
+// TempLabel lets repair identify an original awaiting final placement.
+// Import stages by source asset ID until its book ID has committed.
+func TempLabel(bookID int64) string {
+	return "book-" + strconv.FormatInt(bookID, 10) + "-cover"
+}
+
+func ParseTempLabel(label string) (int64, bool) {
+	label, ok := strings.CutPrefix(label, "book-")
+	if !ok {
+		return 0, false
+	}
+	raw, ok := strings.CutSuffix(label, "-cover")
+	if !ok {
+		return 0, false
+	}
+	bookID, err := strconv.ParseInt(raw, 10, 64)
+	return bookID, err == nil && bookID > 0
+}
+
+// AssetTempLabel identifies an import's cover before its book ID is committed.
+func AssetTempLabel(assetID string) string {
+	return assetID + "-cover"
+}
+
+func ParseAssetTempLabel(label string) (string, bool) {
+	assetID, ok := strings.CutSuffix(label, "-cover")
+	return assetID, ok && strings.HasPrefix(assetID, string(id.Asset)) && len(assetID) > len(id.Asset)
 }
 
 // CachePath deliberately does not include cover_version. cover_version is only
 // a browser cache-busting token in URLs; server-side derived files are replaced
 // by deleting this stable cache path when a new original cover is uploaded.
-func CachePath(bookID string, variant Variant) string {
-	return path.Join("cache", "covers", CacheVersion, string(variant), bookID+".jpg")
+func CachePath(bookID int64, variant Variant) string {
+	return path.Join("cache", "covers", CacheVersion, string(variant), strconv.FormatInt(bookID, 10)+".jpg")
 }
 
 // RemoveDerived deletes the rebuildable display/thumb cache for a book, so the
 // next read regenerates them from the (newly replaced) original. Best-effort: a
 // leftover stale variant is harmless because reads regenerate any cache older
 // than the original's mtime.
-func RemoveDerived(root storage.Root, bookID string) {
+func RemoveDerived(root storage.Root, bookID int64) {
 	for _, variant := range []Variant{VariantDisplay, VariantThumb} {
 		cachePath, err := root.Resolve(CachePath(bookID, variant))
 		if err != nil {

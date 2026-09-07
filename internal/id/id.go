@@ -13,7 +13,6 @@ var crockford = base32.NewEncoding("0123456789ABCDEFGHJKMNPQRSTVWXYZ").WithPaddi
 type Kind string
 
 const (
-	Book               Kind = "b_"
 	Asset              Kind = "a_"
 	Author             Kind = "au_"
 	AppToken           Kind = "t_"

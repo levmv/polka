@@ -30,7 +30,7 @@ type Options struct {
 	FailedOnly bool
 	Limit      int
 	Scope      db.VisibilityScope
-	BookIDs    []string
+	BookIDs    []int64
 	// CoverRoot points at the app data dir, where covers/<book_id> originals
 	// live. When unset, Run falls back to root for package-level tests.
 	CoverRoot storage.Root
@@ -49,7 +49,7 @@ const (
 
 type Result struct {
 	AssetID     string
-	BookID      string
+	BookID      int64
 	StoragePath string
 	Status      Status
 	Error       string
@@ -83,7 +83,7 @@ func Run(ctx context.Context, database *db.DB, root storage.Root, opts Options) 
 		opts.Scope = db.FullVisibilityScope()
 	}
 
-	rows, err := planAssets(database, opts)
+	rows, err := planAssets(database.Read(ctx), opts)
 	if err != nil {
 		return Summary{}, err
 	}
@@ -144,24 +144,24 @@ func appendResult(summary *Summary, result Result) {
 	summary.Results = append(summary.Results, result)
 }
 
-func planAssets(database *db.DB, opts Options) ([]db.MetadataWritebackAssetRow, error) {
+func planAssets(queryer db.Queryer, opts Options) ([]db.MetadataWritebackAssetRow, error) {
 	if len(opts.BookIDs) > 0 {
-		return db.ListMetadataWritebackAssetsByBookIDs(database, opts.Scope, opts.BookIDs, opts.Limit)
+		return db.ListMetadataWritebackAssetsByBookIDs(queryer, opts.Scope, opts.BookIDs, opts.Limit)
 	}
 	if opts.All {
-		return db.ListAllMetadataWritebackAssets(database, opts.Scope, opts.Limit)
+		return db.ListAllMetadataWritebackAssets(queryer, opts.Scope, opts.Limit)
 	}
 	if opts.FailedOnly {
-		return db.ListFailedMetadataWritebackAssets(database, opts.Scope, opts.Limit)
+		return db.ListFailedMetadataWritebackAssets(queryer, opts.Scope, opts.Limit)
 	}
-	return db.ListDirtyMetadataWritebackAssets(database, opts.Scope, opts.Limit)
+	return db.ListDirtyMetadataWritebackAssets(queryer, opts.Scope, opts.Limit)
 }
 
 func writeAsset(ctx context.Context, database *db.DB, root storage.Root, assetID string, opts Options) (Result, error) {
 	if err := context.Cause(ctx); err != nil {
 		return Result{}, err
 	}
-	row, err := db.GetMetadataWritebackAsset(database, assetID)
+	row, err := db.GetMetadataWritebackAsset(database.Read(ctx), assetID)
 	if err != nil {
 		result := Result{AssetID: assetID, Status: StatusFailed, Error: err.Error()}
 		if errors.Is(err, sql.ErrNoRows) {
@@ -208,7 +208,7 @@ func writeAsset(ctx context.Context, database *db.DB, root storage.Root, assetID
 		return fail(ctx, database, result, err)
 	}
 
-	snapshot, err := db.LoadMetadataWritebackSnapshot(database, row.BookID)
+	snapshot, err := db.LoadMetadataWritebackSnapshot(database.Read(ctx), row.BookID)
 	if err != nil {
 		return fail(ctx, database, result, fmt.Errorf("load metadata snapshot: %w", err))
 	}
@@ -259,7 +259,7 @@ func writeAsset(ctx context.Context, database *db.DB, root storage.Root, assetID
 		return result, nil
 	}
 
-	previousAttempt, hasPreviousAttempt, err := db.LoadMetadataWritebackAttempt(database, row.AssetID)
+	previousAttempt, hasPreviousAttempt, err := db.LoadMetadataWritebackAttempt(database.Read(ctx), row.AssetID)
 	if err != nil {
 		return fail(ctx, database, result, err)
 	}
@@ -272,7 +272,7 @@ func writeAsset(ctx context.Context, database *db.DB, root storage.Root, assetID
 		Size:         renderedSize.N,
 		KOReaderHash: renderedKOReaderHash,
 	}
-	if err := database.Transact(ctx, func(tx *sql.Tx) error {
+	if err := database.Transact(ctx, func(tx *db.Tx) error {
 		return db.UpsertMetadataWritebackAttempt(tx, attempt)
 	}); err != nil {
 		return fail(ctx, database, result, err)
@@ -358,10 +358,10 @@ func loadWritebackCover(root storage.Root, snapshot db.MetadataWritebackSnapshot
 	}
 	coverBytes, err := os.ReadFile(fullPath)
 	if err != nil {
-		return nil, fmt.Errorf("read cover original for %s: %w", snapshot.BookID, err)
+		return nil, fmt.Errorf("read cover original for %d: %w", snapshot.BookID, err)
 	}
 	if _, err := covers.Validate(coverBytes); err != nil {
-		return nil, fmt.Errorf("validate cover original for %s: %w", snapshot.BookID, err)
+		return nil, fmt.Errorf("validate cover original for %d: %w", snapshot.BookID, err)
 	}
 	return coverBytes, nil
 }
@@ -407,7 +407,7 @@ func validateCurrentBytes(row db.MetadataWritebackAssetRow, currentHash string, 
 }
 
 func markSuccess(ctx context.Context, database *db.DB, row db.MetadataWritebackAssetRow, hash string, size int64, koReaderHash string, metadataRev int64) error {
-	return database.Transact(ctx, func(tx *sql.Tx) error {
+	return database.Transact(ctx, func(tx *db.Tx) error {
 		return db.MarkMetadataWritebackSuccess(tx, row.AssetID, row.StoragePath, hash, size, koReaderHash, metadataRev)
 	})
 }
@@ -424,7 +424,7 @@ func fail(ctx context.Context, database *db.DB, result Result, err error) (Resul
 }
 
 func recordWritebackError(ctx context.Context, database *db.DB, assetID string, err error) error {
-	if recordErr := database.Transact(ctx, func(tx *sql.Tx) error {
+	if recordErr := database.Transact(ctx, func(tx *db.Tx) error {
 		return db.MarkMetadataWritebackError(tx, assetID, err)
 	}); recordErr != nil {
 		return fmt.Errorf("record metadata write-back failure for %s: %w", assetID, recordErr)

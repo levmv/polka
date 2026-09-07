@@ -27,13 +27,13 @@ type AuthorAdminPage struct {
 func (s *Server) handleAPIAuthors(w http.ResponseWriter, r *http.Request) {
 	scope, err := s.visibilityScope(r)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	rows, err := db.ListAuthorNames(s.db, scope, q, 20)
+	rows, err := db.ListAuthorNames(s.db.Read(r.Context()), scope, q, 20)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 
@@ -48,7 +48,7 @@ func (s *Server) handleAPIAuthors(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAPIAuthorList(w http.ResponseWriter, r *http.Request) {
 	scope, err := s.visibilityScope(r)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	pageSize, err := collectionPageSize(r)
@@ -61,9 +61,9 @@ func (s *Server) handleAPIAuthorList(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid cursor", http.StatusBadRequest)
 		return
 	}
-	rows, err := db.ListAuthorCountsPage(s.db, scope, cursor.Primary, cursor.Tie, pageSize+1)
+	rows, err := db.ListAuthorCountsPage(s.db.Read(r.Context()), scope, cursor.Primary, cursor.Tie, pageSize+1)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	hasNext := len(rows) > pageSize
@@ -98,12 +98,12 @@ func (s *Server) handleAPIAuthorInfo(w http.ResponseWriter, r *http.Request) {
 	}
 	scope, err := s.visibilityScope(r)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
-	info, ok, err := db.GetAuthorInfo(s.db, scope, name)
+	info, ok, err := db.GetAuthorInfo(s.db.Read(r.Context()), scope, name)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	if !ok {
@@ -137,13 +137,13 @@ func (s *Server) handleAPIAuthorRename(w http.ResponseWriter, r *http.Request) {
 
 	releaseStorageSlot, err := s.acquireStorageWorkSlot(r.Context())
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	defer releaseStorageSlot()
 
 	res, err := relayout.RenameAuthor(r.Context(), s.db, s.managedRoot(), req.Old, req.New)
-	if writeAuthorOpError(w, err) {
+	if writeAuthorOpError(w, r, err) {
 		return
 	}
 	writeAuthorOpResult(w, res)
@@ -172,26 +172,26 @@ func (s *Server) handleAPIAuthorSortName(w http.ResponseWriter, r *http.Request)
 
 	releaseStorageSlot, err := s.acquireStorageWorkSlot(r.Context())
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	defer releaseStorageSlot()
 
 	res, err := relayout.SetAuthorSortName(r.Context(), s.db, s.managedRoot(), req.Name, req.SortName)
-	if writeAuthorOpError(w, err) {
+	if writeAuthorOpError(w, r, err) {
 		return
 	}
 	writeAuthorOpResult(w, res)
 }
 
-func writeAuthorOpError(w http.ResponseWriter, err error) bool {
+func writeAuthorOpError(w http.ResponseWriter, r *http.Request, err error) bool {
 	if err == nil {
 		return false
 	}
 	if errors.Is(err, db.ErrAuthorNotFound) {
 		http.Error(w, "Author not found", http.StatusNotFound)
 	} else {
-		serverError(w, err)
+		serverError(w, r, err)
 	}
 	return true
 }
@@ -207,7 +207,7 @@ func writeAuthorOpResult(w http.ResponseWriter, res relayout.AuthorMutationResul
 func (s *Server) requireFullCatalogScope(w http.ResponseWriter, r *http.Request) bool {
 	scope, err := s.visibilityScope(r)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return false
 	}
 	if !scope.IsFull() {

@@ -57,8 +57,7 @@ func TestAPIReadingActivityBoundaries(t *testing.T) {
 	}
 	// Scoped accounts cannot record activity against hidden assets even when
 	// they know another reader's session identity.
-	if _, err := database.Exec(`UPDATE users SET content_scope = 'shelves' WHERE id = ?`, alice.ID); err != nil {
-		t.Fatal(err)
-	}
+	mustExec(t, database, `UPDATE users SET content_scope = 'shelves' WHERE id = ?`, alice.ID)
+
 	call(alice.ID, http.MethodPut, endpoint, request, http.StatusNotFound)
 }

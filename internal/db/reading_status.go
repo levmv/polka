@@ -38,7 +38,7 @@ const (
 
 type ReadingStatusState struct {
 	UserID      int64
-	BookID      string
+	BookID      int64
 	Status      string
 	LastEventID string
 	UpdatedAt   int64
@@ -59,8 +59,7 @@ func ValidReadingStatus(status string) bool {
 	}
 }
 
-func GetReadingStatus(queryer Queryer, userID int64, bookID string) (ReadingStatusState, error) {
-	bookID = strings.TrimSpace(bookID)
+func GetReadingStatus(queryer Queryer, userID int64, bookID int64) (ReadingStatusState, error) {
 	if userID <= 0 {
 		return ReadingStatusState{}, ErrUserIDRequired
 	}
@@ -85,13 +84,13 @@ func GetReadingStatus(queryer Queryer, userID int64, bookID string) (ReadingStat
 	return state, nil
 }
 
-func (db *DB) SetReadingStatus(ctx context.Context, userID int64, bookID, status string, source ReadingStatusSource) (ReadingStatusChange, error) {
+func (db *DB) SetReadingStatus(ctx context.Context, userID int64, bookID int64, status string, source ReadingStatusSource) (ReadingStatusChange, error) {
 	status = strings.ToLower(strings.TrimSpace(status))
 	if !ValidReadingStatus(status) {
 		return ReadingStatusChange{}, ErrInvalidReadingStatus
 	}
 	var change ReadingStatusChange
-	err := db.Transact(ctx, func(tx *sql.Tx) error {
+	err := db.Transact(ctx, func(tx *Tx) error {
 		var err error
 		change, err = setReadingStatus(tx, userID, bookID, status, source)
 		return err
@@ -99,7 +98,7 @@ func (db *DB) SetReadingStatus(ctx context.Context, userID int64, bookID, status
 	return change, err
 }
 
-func setReadingStatus(tx *sql.Tx, userID int64, bookID, status string, source ReadingStatusSource) (ReadingStatusChange, error) {
+func setReadingStatus(tx *Tx, userID int64, bookID int64, status string, source ReadingStatusSource) (ReadingStatusChange, error) {
 	current, err := GetReadingStatus(tx, userID, bookID)
 	if err != nil {
 		return ReadingStatusChange{}, err
@@ -136,7 +135,7 @@ func setReadingStatus(tx *sql.Tx, userID int64, bookID, status string, source Re
 
 func (db *DB) AdvanceReadingStatusForDocumentHash(ctx context.Context, userID int64, documentHash string, progress float64) (ReadingStatusChange, error) {
 	var change ReadingStatusChange
-	err := db.Transact(ctx, func(tx *sql.Tx) error {
+	err := db.Transact(ctx, func(tx *Tx) error {
 		var err error
 		change, err = advanceReadingStatusForDocumentHash(tx, userID, documentHash, progress)
 		return err
@@ -144,18 +143,18 @@ func (db *DB) AdvanceReadingStatusForDocumentHash(ctx context.Context, userID in
 	return change, err
 }
 
-func advanceReadingStatusForDocumentHash(tx *sql.Tx, userID int64, documentHash string, progress float64) (ReadingStatusChange, error) {
+func advanceReadingStatusForDocumentHash(tx *Tx, userID int64, documentHash string, progress float64) (ReadingStatusChange, error) {
 	target, err := ResolveKOReaderHash(tx, documentHash)
 	if err != nil {
 		return ReadingStatusChange{}, fmt.Errorf("resolve koreader reading status: %w", err)
 	}
-	if target.BookID == "" || target.Ambiguous {
+	if target.BookID == 0 || target.Ambiguous {
 		return ReadingStatusChange{}, nil
 	}
 	return advanceReadingStatus(tx, userID, target.BookID, progress, ReadingStatusSourceKOSync)
 }
 
-func advanceReadingStatus(tx *sql.Tx, userID int64, bookID string, progress float64, source ReadingStatusSource) (ReadingStatusChange, error) {
+func advanceReadingStatus(tx *Tx, userID int64, bookID int64, progress float64, source ReadingStatusSource) (ReadingStatusChange, error) {
 	current, err := GetReadingStatus(tx, userID, bookID)
 	if err != nil {
 		return ReadingStatusChange{}, err
@@ -178,9 +177,9 @@ func advanceReadingStatus(tx *sql.Tx, userID int64, bookID string, progress floa
 	return setReadingStatus(tx, userID, bookID, target, source)
 }
 
-func (db *DB) UndoAutomaticReadingStatus(ctx context.Context, userID int64, bookID, eventID string) (ReadingStatusChange, error) {
+func (db *DB) UndoAutomaticReadingStatus(ctx context.Context, userID int64, bookID int64, eventID string) (ReadingStatusChange, error) {
 	var change ReadingStatusChange
-	err := db.Transact(ctx, func(tx *sql.Tx) error {
+	err := db.Transact(ctx, func(tx *Tx) error {
 		current, err := GetReadingStatus(tx, userID, bookID)
 		if err != nil {
 			return err

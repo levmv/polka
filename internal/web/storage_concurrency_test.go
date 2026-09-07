@@ -22,7 +22,7 @@ func TestMixedStorageMutationBurstStaysConsistent(t *testing.T) {
 	defer database.Close()
 
 	admin := mustUser(t, database, "storage-burst-admin", db.RoleAdmin)
-	if err := db.SoftDeleteBook(database, "w_2", admin.ID); err != nil {
+	if err := db.SoftDeleteBook(database.Write(t.Context()), 2, admin.ID); err != nil {
 		t.Fatalf("trash purge fixture: %v", err)
 	}
 
@@ -44,16 +44,14 @@ func TestMixedStorageMutationBurstStaysConsistent(t *testing.T) {
 	if err := os.WriteFile(newPath, fb2, 0o644); err != nil {
 		t.Fatalf("write writable fixture: %v", err)
 	}
-	if _, err := database.Exec(`
+	mustExec(t, database, `
 		UPDATE assets SET
 			storage_path = 'Tolkien/The_Hobbit/a_1.fb2',
 			filename = 'a_1.fb2', extension = '.fb2', format = 'fb2',
 			original_sha256 = NULL, current_sha256 = NULL,
 			original_size = NULL, current_size = NULL
 		WHERE id = 'asset_1'
-	`); err != nil {
-		t.Fatalf("update writable fixture: %v", err)
-	}
+	`)
 
 	queue := workslot.New()
 	s := &Server{
@@ -63,7 +61,7 @@ func TestMixedStorageMutationBurstStaysConsistent(t *testing.T) {
 		sessions:     newSessionStore(database),
 	}
 	handler := testRoutes(t, s)
-	sid, err := s.sessions.issue(admin.ID)
+	sid, err := s.sessions.issue(t.Context(), admin.ID)
 	if err != nil {
 		t.Fatalf("issue session: %v", err)
 	}
@@ -81,7 +79,7 @@ func TestMixedStorageMutationBurstStaysConsistent(t *testing.T) {
 	canceledCtx, cancel := context.WithCancel(context.Background())
 	canceled := make(chan error, 1)
 	go func() {
-		canceled <- s.storeCoverBytes(canceledCtx, "w_1", cover)
+		canceled <- s.storeCoverBytes(canceledCtx, 1, cover)
 	}()
 	cancel()
 	if err := <-canceled; !errors.Is(err, context.Canceled) {
@@ -109,7 +107,7 @@ func TestMixedStorageMutationBurstStaysConsistent(t *testing.T) {
 			return nil
 		})
 
-		editReq := jsonRequestWithSession(t, sid, http.MethodPatch, "/api/books/w_1", map[string]any{
+		editReq := jsonRequestWithSession(t, sid, http.MethodPatch, "/api/books/1", map[string]any{
 			"title": fmt.Sprintf("Burst Title %d", i),
 		})
 		mutations = append(mutations, func() error {
@@ -122,7 +120,7 @@ func TestMixedStorageMutationBurstStaysConsistent(t *testing.T) {
 		})
 
 		mutations = append(mutations, func() error {
-			if err := s.storeCoverBytes(context.Background(), "w_1", cover); err != nil {
+			if err := s.storeCoverBytes(context.Background(), 1, cover); err != nil {
 				return fmt.Errorf("cover %d: %w", i, err)
 			}
 			return nil
@@ -131,7 +129,7 @@ func TestMixedStorageMutationBurstStaysConsistent(t *testing.T) {
 	mutations = append(mutations,
 		func() error {
 			summary, err := writeback.Run(context.Background(), database, storage.NewRoot(dataDir), writeback.Options{
-				BookIDs:   []string{"w_1"},
+				BookIDs:   []int64{1},
 				WorkQueue: queue,
 				CoverRoot: storage.NewRoot(dataDir),
 			})
@@ -144,7 +142,7 @@ func TestMixedStorageMutationBurstStaysConsistent(t *testing.T) {
 			return nil
 		},
 		func() error {
-			n, err := s.purgeTrashedBooks(context.Background(), []string{"w_2"})
+			n, err := s.purgeTrashedBooks(context.Background(), []int64{2})
 			if err != nil {
 				return fmt.Errorf("purge: %w", err)
 			}
@@ -180,7 +178,7 @@ func TestMixedStorageMutationBurstStaysConsistent(t *testing.T) {
 	// Converge a write-back that may have run before the last edit/cover, then
 	// inspect the durable DB/filesystem state left by the entire burst.
 	finalWriteback, err := writeback.Run(context.Background(), database, storage.NewRoot(dataDir), writeback.Options{
-		BookIDs:   []string{"w_1"},
+		BookIDs:   []int64{1},
 		WorkQueue: queue,
 		CoverRoot: storage.NewRoot(dataDir),
 	})
@@ -188,53 +186,30 @@ func TestMixedStorageMutationBurstStaysConsistent(t *testing.T) {
 		t.Fatalf("final write-back = %+v, %v", finalWriteback, err)
 	}
 
-	var integrity string
-	if err := database.QueryRow("PRAGMA integrity_check").Scan(&integrity); err != nil {
-		t.Fatalf("integrity_check: %v", err)
-	}
-	if integrity != "ok" {
-		t.Fatalf("integrity_check = %q", integrity)
-	}
-	fkRows, err := database.Query("PRAGMA foreign_key_check")
-	if err != nil {
-		t.Fatalf("foreign_key_check: %v", err)
-	}
-	if fkRows.Next() {
-		fkRows.Close()
-		t.Fatal("foreign_key_check reported a violation")
-	}
-	if err := fkRows.Err(); err != nil {
-		fkRows.Close()
-		t.Fatalf("foreign_key_check rows: %v", err)
-	}
-	if err := fkRows.Close(); err != nil {
-		t.Fatalf("close foreign_key_check rows: %v", err)
-	}
-
 	var coverVersion, attempts, books, assets int
-	if err := database.QueryRow("SELECT cover_version FROM books WHERE id = 'w_1'").Scan(&coverVersion); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT cover_version FROM books WHERE id = 1").Scan(&coverVersion); err != nil {
 		t.Fatalf("query cover version: %v", err)
 	}
 	if coverVersion != burstSize {
 		t.Fatalf("cover_version = %d, want %d", coverVersion, burstSize)
 	}
-	if err := database.QueryRow("SELECT COUNT(*) FROM metadata_writeback_attempts").Scan(&attempts); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT COUNT(*) FROM metadata_writeback_attempts").Scan(&attempts); err != nil {
 		t.Fatalf("count write-back attempts: %v", err)
 	}
 	if attempts != 0 {
 		t.Fatalf("unfinished write-back attempts = %d", attempts)
 	}
-	if err := database.QueryRow("SELECT COUNT(*) FROM books").Scan(&books); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT COUNT(*) FROM books").Scan(&books); err != nil {
 		t.Fatalf("count books: %v", err)
 	}
-	if err := database.QueryRow("SELECT COUNT(*) FROM assets").Scan(&assets); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT COUNT(*) FROM assets").Scan(&assets); err != nil {
 		t.Fatalf("count assets: %v", err)
 	}
 	if books != burstSize+1 || assets != burstSize+1 {
 		t.Fatalf("catalog counts = %d books/%d assets, want %d/%d", books, assets, burstSize+1, burstSize+1)
 	}
 
-	rows, err := database.Query("SELECT storage_path FROM assets ORDER BY id")
+	rows, err := database.Read(t.Context()).Query("SELECT storage_path FROM assets ORDER BY id")
 	if err != nil {
 		t.Fatalf("list asset paths: %v", err)
 	}

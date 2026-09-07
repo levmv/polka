@@ -69,13 +69,13 @@ func runStorageTemplate(ctx context.Context, dataDir string, args []string) erro
 			printStorageTemplateUsage()
 			return reportedErrorf("usage: polka storage template current")
 		}
-		return runStorageTemplateCurrent(dataDir)
+		return runStorageTemplateCurrent(ctx, dataDir)
 	case "preview":
 		if len(args) != 2 {
 			printStorageTemplateUsage()
 			return reportedErrorf("usage: polka storage template preview <template>")
 		}
-		return runStorageTemplatePreview(dataDir, args[1])
+		return runStorageTemplatePreview(ctx, dataDir, args[1])
 	case "apply":
 		return runStorageTemplateApply(ctx, dataDir, args[1:])
 	default:
@@ -106,14 +106,14 @@ Examples:
 `, storage.DefaultBookPathTemplate)
 }
 
-func runStorageTemplateCurrent(dataDir string) error {
+func runStorageTemplateCurrent(ctx context.Context, dataDir string) error {
 	database, err := openDatabaseReadOnly(dataDir)
 	if err != nil {
 		return err
 	}
 	defer database.Close()
 
-	template, err := storage.OpenBookPathTemplate(database.DB)
+	template, err := storage.OpenBookPathTemplate(database.Read(ctx))
 	if err != nil {
 		return err
 	}
@@ -121,14 +121,14 @@ func runStorageTemplateCurrent(dataDir string) error {
 	return nil
 }
 
-func runStorageTemplatePreview(dataDir, template string) error {
+func runStorageTemplatePreview(ctx context.Context, dataDir, template string) error {
 	database, err := openDatabaseReadOnly(dataDir)
 	if err != nil {
 		return err
 	}
 	defer database.Close()
 
-	plan, err := buildStorageTemplatePlan(database, template)
+	plan, err := buildStorageTemplatePlan(database.Read(ctx), template)
 	if err != nil {
 		return err
 	}
@@ -157,7 +157,7 @@ func runStorageTemplateApply(parent context.Context, dataDir string, args []stri
 	}
 	defer database.Close()
 
-	root, err := storage.OpenRoot(database.DB, dataDir)
+	root, err := storage.OpenRoot(database.Read(parent), dataDir)
 	if err != nil {
 		return err
 	}
@@ -172,7 +172,7 @@ func runStorageTemplateApply(parent context.Context, dataDir string, args []stri
 	defer func() { retErr = lease.finish(retErr) }()
 	ctx := lease.Context()
 
-	plan, err := buildStorageTemplatePlan(database, template)
+	plan, err := buildStorageTemplatePlan(database.Read(parent), template)
 	if err != nil {
 		return err
 	}
@@ -197,7 +197,7 @@ func runStorageTemplateApply(parent context.Context, dataDir string, args []stri
 		return err
 	}
 
-	saved, err := storage.SaveBookPathTemplate(database.DB, template)
+	saved, err := storage.SaveBookPathTemplate(database.Write(ctx), template)
 	if err != nil {
 		return err
 	}
@@ -232,11 +232,11 @@ type storageTemplateChange struct {
 	NewPath string
 }
 
-func buildStorageTemplatePlan(database *db.DB, template string) (storageTemplatePlan, error) {
+func buildStorageTemplatePlan(queryer db.Queryer, template string) (storageTemplatePlan, error) {
 	if err := storage.ValidateBookPathTemplate(template); err != nil {
 		return storageTemplatePlan{}, err
 	}
-	assets, err := db.AllAssetsWithPrimaryAuthor(database)
+	assets, err := db.AllAssetsWithPrimaryAuthor(queryer)
 	if err != nil {
 		return storageTemplatePlan{}, err
 	}
@@ -387,7 +387,7 @@ func applyStorageTemplateMoves(ctx context.Context, database *db.DB, root storag
 			}
 			continue
 		}
-		if _, err := database.Exec("UPDATE assets SET storage_path = ?, filename = ?, updated_at = unixepoch() WHERE id = ?", c.NewPath, filepath.Base(c.NewPath), c.AssetID); err != nil {
+		if _, err := database.Write(ctx).Exec("UPDATE assets SET storage_path = ?, filename = ?, updated_at = unixepoch() WHERE id = ?", c.NewPath, filepath.Base(c.NewPath), c.AssetID); err != nil {
 			if backErr := storage.Move(root, c.NewPath, c.OldPath); backErr != nil {
 				warnings = append(warnings, fmt.Sprintf("%s: update DB failed (%v), rollback to %s also failed (%v); run `polka repair`", c.AssetID, err, c.OldPath, backErr))
 			} else {

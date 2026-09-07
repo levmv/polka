@@ -76,31 +76,32 @@ func (s *Server) handleOPDSRoot(w http.ResponseWriter, r *http.Request) {
 		SearchHref: absoluteURL(r, "/opds/osd", nil),
 	}, entries)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	writeOPDS(w, opds.NavigationFeedType, body)
 }
 
 func (s *Server) handleOPDSRecent(w http.ResponseWriter, r *http.Request) {
+	queryer := s.db.Read(r.Context())
 	limit, offset, ok := parseOPDSPagination(w, r)
 	if !ok {
 		return
 	}
 	scope, err := s.visibilityScope(r)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 
-	rows, err := db.ListRecentOPDSPublications(s.db, scope, limit, offset)
+	rows, err := db.ListRecentOPDSPublications(queryer, scope, limit, offset)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
-	total, err := db.CountOPDSPublications(s.db, scope)
+	total, err := db.CountOPDSPublications(queryer, scope)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	s.writeOPDSPagedAcquisition(w, r, opdsAcquisitionPage{
@@ -116,13 +117,13 @@ func (s *Server) handleOPDSRecent(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleOPDSSeries(w http.ResponseWriter, r *http.Request) {
 	scope, err := s.visibilityScope(r)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	after := strings.TrimSpace(r.URL.Query().Get("after"))
-	series, err := db.ListSeriesCountsPage(s.db, scope, "", after, opdsDefaultLimit+1)
+	series, err := db.ListSeriesCountsPage(s.db.Read(r.Context()), scope, "", after, opdsDefaultLimit+1)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	nextHref := ""
@@ -152,12 +153,12 @@ func (s *Server) handleOPDSSeries(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleOPDSTags(w http.ResponseWriter, r *http.Request) {
 	scope, err := s.visibilityScope(r)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
-	tags, err := db.ListTags(s.db, scope, "", 0)
+	tags, err := db.ListTags(s.db.Read(r.Context()), scope, "", 0)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 
@@ -177,9 +178,9 @@ func (s *Server) handleOPDSTags(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleOPDSShelves(w http.ResponseWriter, r *http.Request) {
-	shelves, err := s.db.ListShelvesForUser(UserID(r.Context()))
+	shelves, err := db.ListShelvesForUser(s.db.Read(r.Context()), UserID(r.Context()))
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 
@@ -202,41 +203,42 @@ func (s *Server) handleOPDSShelves(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleOPDSShelf(w http.ResponseWriter, r *http.Request) {
+	queryer := s.db.Read(r.Context())
 	limit, offset, ok := parseOPDSPagination(w, r)
 	if !ok {
 		return
 	}
 	userID := UserID(r.Context())
-	shelf, err := s.db.GetShelfForUser(r.PathValue("id"), userID)
+	shelf, err := db.GetShelfForUser(queryer, r.PathValue("id"), userID)
 	if errors.Is(err, db.ErrShelfNotFound) {
 		http.Error(w, "Shelf not found", http.StatusNotFound)
 		return
 	}
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	scope, err := s.visibilityScope(r)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 
 	var rows []db.OPDSPublicationRow
 	var total int
 	if shelf.Kind == db.ShelfQuery {
-		rows, err = db.SearchOPDSPublications(s.db, scope, userID, shelf.Query, limit, offset)
+		rows, err = db.SearchOPDSPublications(queryer, scope, userID, shelf.Query, limit, offset)
 		if err == nil {
-			total, err = db.CountSearchOPDSPublications(s.db, scope, userID, shelf.Query)
+			total, err = db.CountSearchOPDSPublications(queryer, scope, userID, shelf.Query)
 		}
 	} else {
-		rows, err = db.ListManualShelfOPDSPublications(s.db, scope, shelf.ID, limit, offset)
+		rows, err = db.ListManualShelfOPDSPublications(queryer, scope, shelf.ID, limit, offset)
 		if err == nil {
-			total, err = db.CountManualShelfOPDSPublications(s.db, scope, shelf.ID)
+			total, err = db.CountManualShelfOPDSPublications(queryer, scope, shelf.ID)
 		}
 	}
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 
@@ -261,7 +263,7 @@ func (s *Server) writeOPDSNavigation(w http.ResponseWriter, r *http.Request, id,
 		SearchHref: absoluteURL(r, "/opds/osd", nil),
 	}, entries)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	writeOPDS(w, opds.NavigationFeedType, body)
@@ -275,24 +277,25 @@ func pluralBooks(n int) string {
 }
 
 func (s *Server) handleOPDSBooks(w http.ResponseWriter, r *http.Request) {
+	queryer := s.db.Read(r.Context())
 	limit, offset, ok := parseOPDSPagination(w, r)
 	if !ok {
 		return
 	}
 	scope, err := s.visibilityScope(r)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 
-	rows, err := db.ListOPDSPublications(s.db, scope, limit, offset)
+	rows, err := db.ListOPDSPublications(queryer, scope, limit, offset)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
-	total, err := db.CountOPDSPublications(s.db, scope)
+	total, err := db.CountOPDSPublications(queryer, scope)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	s.writeOPDSPagedAcquisition(w, r, opdsAcquisitionPage{
@@ -303,13 +306,14 @@ func (s *Server) handleOPDSBooks(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleOPDSSearch(w http.ResponseWriter, r *http.Request) {
+	queryer := s.db.Read(r.Context())
 	limit, offset, ok := parseOPDSPagination(w, r)
 	if !ok {
 		return
 	}
 	scope, err := s.visibilityScope(r)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 
@@ -318,14 +322,14 @@ func (s *Server) handleOPDSSearch(w http.ResponseWriter, r *http.Request) {
 	total := 0
 	if query != "" {
 		var err error
-		rows, err = db.SearchOPDSPublications(s.db, scope, UserID(r.Context()), query, limit, offset)
+		rows, err = db.SearchOPDSPublications(queryer, scope, UserID(r.Context()), query, limit, offset)
 		if err != nil {
-			serverError(w, err)
+			serverError(w, r, err)
 			return
 		}
-		total, err = db.CountSearchOPDSPublications(s.db, scope, UserID(r.Context()), query)
+		total, err = db.CountSearchOPDSPublications(queryer, scope, UserID(r.Context()), query)
 		if err != nil {
-			serverError(w, err)
+			serverError(w, r, err)
 			return
 		}
 	}
@@ -396,7 +400,7 @@ func (s *Server) handleOPDSOpenSearch(w http.ResponseWriter, r *http.Request) {
 	template := absoluteURL(r, "/opds/search", nil) + "?q={searchTerms}"
 	body, err := opds.OpenSearchDescription(template)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	writeOPDS(w, opds.OpenSearchType, body)
@@ -407,24 +411,25 @@ func (s *Server) handleOPDSOpenSearch(w http.ResponseWriter, r *http.Request) {
 // books without a downloadable asset are skipped (an acquisition entry without an
 // acquisition link is useless to a reader).
 func (s *Server) writeOPDSAcquisition(w http.ResponseWriter, r *http.Request, meta opds.AcquisitionMeta, rows []db.OPDSPublicationRow) {
-	bookIDs := make([]string, 0, len(rows))
+	queryer := s.db.Read(r.Context())
+	bookIDs := make([]int64, 0, len(rows))
 	for _, row := range rows {
 		bookIDs = append(bookIDs, row.ID)
 	}
 
-	assetRows, err := db.AssetsByBookIDs(s.db, bookIDs)
+	assetRows, err := db.AssetsByBookIDs(queryer, bookIDs)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
-	assetsByBook := make(map[string][]db.AssetRow)
+	assetsByBook := make(map[int64][]db.AssetRow)
 	for _, a := range assetRows {
 		assetsByBook[a.BookID] = append(assetsByBook[a.BookID], a)
 	}
 
-	authorsByBook, err := db.AuthorsByBookIDs(s.db, bookIDs)
+	authorsByBook, err := db.AuthorsByBookIDs(queryer, bookIDs)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 
@@ -437,7 +442,7 @@ func (s *Server) writeOPDSAcquisition(w http.ResponseWriter, r *http.Request, me
 		links = append(links, opdsCoverLinks(r, row.ID, row.CoverVersion)...)
 
 		pub := opds.Publication{
-			ID:            "urn:polka:book:" + row.ID,
+			ID:            "urn:polka:book:" + strconv.FormatInt(row.ID, 10),
 			Title:         row.Title,
 			Updated:       time.Unix(row.UpdatedAt, 0),
 			Authors:       opdsAuthorNames(authorsByBook[row.ID]),
@@ -456,7 +461,7 @@ func (s *Server) writeOPDSAcquisition(w http.ResponseWriter, r *http.Request, me
 
 	body, err := opds.Acquisition(time.Now(), meta, pubs)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	writeOPDS(w, opds.AcquisitionFeedType, body)
@@ -517,7 +522,7 @@ func opdsAssetLinks(r *http.Request, assets []db.AssetRow) []opds.Link {
 	return links
 }
 
-func opdsCoverLinks(r *http.Request, bookID string, coverVersion int) []opds.Link {
+func opdsCoverLinks(r *http.Request, bookID int64, coverVersion int) []opds.Link {
 	q := url.Values{}
 	if coverVersion > 0 {
 		q.Set("v", strconv.Itoa(coverVersion))
@@ -525,7 +530,7 @@ func opdsCoverLinks(r *http.Request, bookID string, coverVersion int) []opds.Lin
 	thumbQ := cloneValues(q)
 	thumbQ.Set("variant", "thumb")
 
-	escapedID := url.PathEscape(bookID)
+	escapedID := strconv.FormatInt(bookID, 10)
 	return []opds.Link{
 		{Rel: opds.ImageRel, Href: absoluteURL(r, "/covers/"+escapedID, q), Type: "image/jpeg"},
 		{Rel: opds.ThumbnailRel, Href: absoluteURL(r, "/covers/"+escapedID, thumbQ), Type: "image/jpeg"},

@@ -1,12 +1,13 @@
 package db
 
 import (
+	"context" // Keep named zones available in the standalone binary.
 	"database/sql"
 	"errors"
 	"fmt"
 	"math"
 	"time"
-	_ "time/tzdata" // Keep named zones available in the standalone binary.
+	_ "time/tzdata"
 )
 
 var (
@@ -60,7 +61,7 @@ type UserSettingsPatch struct {
 	InitializeTimeZone  bool // Set TimeZone only if no zone is saved yet.
 }
 
-func (db *DB) GetUserSettings(userID int64) (*UserSettings, error) {
+func GetUserSettings(queryer Queryer, userID int64) (*UserSettings, error) {
 	if userID <= 0 {
 		return nil, ErrUserIDRequired
 	}
@@ -73,7 +74,7 @@ func (db *DB) GetUserSettings(userID int64) (*UserSettings, error) {
 		ReaderLineHeight:  DefaultReaderLineHeight,
 	}
 	var showContinueReading int
-	err := db.QueryRow(`
+	err := queryer.QueryRow(`
 		SELECT theme, show_continue_reading, COALESCE(time_zone, ''),
 			reader_flow, reader_style, reader_font_size, reader_column_width, reader_line_height, updated_at
 		FROM user_settings
@@ -90,7 +91,7 @@ func (db *DB) GetUserSettings(userID int64) (*UserSettings, error) {
 	return settings, nil
 }
 
-func (db *DB) SaveUserSettings(userID int64, patch UserSettingsPatch) (*UserSettings, error) {
+func (db *DB) SaveUserSettings(ctx context.Context, userID int64, patch UserSettingsPatch) (*UserSettings, error) {
 	if userID <= 0 {
 		return nil, ErrUserIDRequired
 	}
@@ -121,7 +122,7 @@ func (db *DB) SaveUserSettings(userID int64, patch UserSettingsPatch) (*UserSett
 
 	// Apply only submitted fields, so saves from different tabs cannot replace
 	// unrelated settings. Automatic zone detection only fills an unset zone.
-	if _, err := db.Exec(`
+	if _, err := db.Write(ctx).Exec(`
 		INSERT INTO user_settings (user_id, theme, show_continue_reading, time_zone,
 			reader_flow, reader_style, reader_font_size, reader_column_width, reader_line_height, updated_at)
 		VALUES (?, COALESCE(?, 'system'), COALESCE(?, 1), ?,
@@ -144,7 +145,7 @@ func (db *DB) SaveUserSettings(userID int64, patch UserSettingsPatch) (*UserSett
 		patch.ReaderFlow, patch.ReaderStyle, patch.ReaderFontSize, patch.ReaderColumnWidth, patch.ReaderLineHeight); err != nil {
 		return nil, fmt.Errorf("save user settings: %w", err)
 	}
-	return db.GetUserSettings(userID)
+	return GetUserSettings(db.Read(ctx), userID)
 }
 
 func validateUserTimeZone(name string) error {

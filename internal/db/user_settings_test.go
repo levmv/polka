@@ -8,11 +8,11 @@ import (
 
 func TestUserSettingsLifecycle(t *testing.T) {
 	database := newTestDB(t)
-	alice, err := database.CreateUser("alice", "pw", RoleMember)
+	alice, err := database.CreateUser(t.Context(), "alice", "pw", RoleMember)
 	if err != nil {
 		t.Fatal(err)
 	}
-	bob, err := database.CreateUser("bob", "pw", RoleMember)
+	bob, err := database.CreateUser(t.Context(), "bob", "pw", RoleMember)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -21,7 +21,7 @@ func TestUserSettingsLifecycle(t *testing.T) {
 		UserID: alice.ID, Theme: ThemeSystem, ShowContinueReading: true, ReaderFlow: ReaderFlowPaginated,
 		ReaderStyle: ReaderStylePaper, ReaderColumnWidth: 760, ReaderLineHeight: 1.72,
 	}
-	settings, err := database.GetUserSettings(alice.ID)
+	settings, err := GetUserSettings(database.Read(t.Context()), alice.ID)
 	if err != nil || *settings != defaults {
 		t.Fatalf("defaults = %+v, %v; want %+v", settings, err, defaults)
 	}
@@ -65,7 +65,7 @@ func TestUserSettingsLifecycle(t *testing.T) {
 			}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			settings, err = database.SaveUserSettings(alice.ID, tc.patch)
+			settings, err = database.SaveUserSettings(t.Context(), alice.ID, tc.patch)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -77,14 +77,14 @@ func TestUserSettingsLifecycle(t *testing.T) {
 			if *settings != want {
 				t.Fatalf("settings = %+v; want %+v", settings, want)
 			}
-			stored, err := database.GetUserSettings(alice.ID)
+			stored, err := GetUserSettings(database.Read(t.Context()), alice.ID)
 			if err != nil || *stored != want {
 				t.Fatalf("stored = %+v, %v; want %+v", stored, err, want)
 			}
 		})
 	}
 	defaults.UserID = bob.ID
-	settings, err = database.GetUserSettings(bob.ID)
+	settings, err = GetUserSettings(database.Read(t.Context()), bob.ID)
 	if err != nil || *settings != defaults {
 		t.Fatalf("other user's settings = %+v, %v", settings, err)
 	}
@@ -92,11 +92,11 @@ func TestUserSettingsLifecycle(t *testing.T) {
 
 func TestUserSettingsRejectInvalidPatch(t *testing.T) {
 	database := newTestDB(t)
-	user, err := database.CreateUser("reader", "pw", RoleMember)
+	user, err := database.CreateUser(t.Context(), "reader", "pw", RoleMember)
 	if err != nil {
 		t.Fatal(err)
 	}
-	before, err := database.SaveUserSettings(user.ID, UserSettingsPatch{Theme: new(ThemeSepia)})
+	before, err := database.SaveUserSettings(t.Context(), user.ID, UserSettingsPatch{Theme: new(ThemeSepia)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,23 +119,23 @@ func TestUserSettingsRejectInvalidPatch(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.patch.ShowContinueReading = new(false)
-			if _, err := database.SaveUserSettings(user.ID, tc.patch); !errors.Is(err, tc.wantErr) {
+			if _, err := database.SaveUserSettings(t.Context(), user.ID, tc.patch); !errors.Is(err, tc.wantErr) {
 				t.Fatalf("error = %v; want %v", err, tc.wantErr)
 			}
-			after, err := database.GetUserSettings(user.ID)
+			after, err := GetUserSettings(database.Read(t.Context()), user.ID)
 			if err != nil || *after != *before {
 				t.Fatalf("invalid patch changed settings: %+v, %v", after, err)
 			}
 		})
 	}
-	if _, err := database.GetUserSettings(0); !errors.Is(err, ErrUserIDRequired) {
+	if _, err := GetUserSettings(database.Read(t.Context()), 0); !errors.Is(err, ErrUserIDRequired) {
 		t.Fatalf("missing user: %v", err)
 	}
 }
 
 func TestUserSettingsConcurrentPatches(t *testing.T) {
 	database := newTestDB(t)
-	user, err := database.CreateUser("reader", "pw", RoleMember)
+	user, err := database.CreateUser(t.Context(), "reader", "pw", RoleMember)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +149,7 @@ func TestUserSettingsConcurrentPatches(t *testing.T) {
 	for _, patch := range patches {
 		go func() {
 			<-start
-			_, err := database.SaveUserSettings(user.ID, patch)
+			_, err := database.SaveUserSettings(t.Context(), user.ID, patch)
 			done <- err
 		}()
 	}
@@ -159,7 +159,7 @@ func TestUserSettingsConcurrentPatches(t *testing.T) {
 			t.Error(err)
 		}
 	}
-	settings, err := database.GetUserSettings(user.ID)
+	settings, err := GetUserSettings(database.Read(t.Context()), user.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,11 +173,11 @@ func TestUserSettingsConcurrentPatches(t *testing.T) {
 
 func TestUserTimeZoneInitialization(t *testing.T) {
 	database := newTestDB(t)
-	user, err := database.CreateUser("reader", "pw", RoleMember)
+	user, err := database.CreateUser(t.Context(), "reader", "pw", RoleMember)
 	if err != nil {
 		t.Fatal(err)
 	}
-	settings, err := database.GetUserSettings(user.ID)
+	settings, err := GetUserSettings(database.Read(t.Context()), user.ID)
 	if err != nil || settings.TimeZone != "" {
 		t.Fatalf("unset time zone: %+v, %v", settings, err)
 	}
@@ -192,13 +192,13 @@ func TestUserTimeZoneInitialization(t *testing.T) {
 		{UserSettingsPatch{Theme: new(ThemeDark)}, "UTC"},
 		{UserSettingsPatch{ReaderFontSize: new(2)}, "UTC"},
 	} {
-		settings, err = database.SaveUserSettings(user.ID, tc.patch)
+		settings, err = database.SaveUserSettings(t.Context(), user.ID, tc.patch)
 		if err != nil || settings.TimeZone != tc.want {
 			t.Fatalf("time zone = %+v, %v; want %s", settings, err, tc.want)
 		}
 	}
 	for _, zone := range []string{"", "Local", "Mars/Olympus", "../UTC", "/etc/localtime"} {
-		if _, err := database.SaveUserSettings(user.ID, UserSettingsPatch{TimeZone: &zone}); !errors.Is(err, ErrInvalidTimeZone) {
+		if _, err := database.SaveUserSettings(t.Context(), user.ID, UserSettingsPatch{TimeZone: &zone}); !errors.Is(err, ErrInvalidTimeZone) {
 			t.Fatalf("time zone %q error = %v", zone, err)
 		}
 	}

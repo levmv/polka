@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/levmv/polka/internal/bootstrap"
@@ -21,13 +22,13 @@ func TestMergeEditedBookAutoWritebackUpdatesEveryFile(t *testing.T) {
 	s, handler, userID := writebackIdentityServer(t)
 	a, _ := addWritebackIdentityBook(t, s, "one")
 	b, _ := addWritebackIdentityBook(t, s, "two")
-	writebackIdentityJSON(t, s, handler, userID, http.MethodPatch, "/api/books/"+b.BookID, map[string]any{"publisher": "Former publisher"})
-	writebackIdentityJSON(t, s, handler, userID, http.MethodPost, "/api/books/"+b.BookID+"/writeback", nil)
+	writebackIdentityJSON(t, s, handler, userID, http.MethodPatch, "/api/books/"+strconv.FormatInt(b.BookID, 10), map[string]any{"publisher": "Former publisher"})
+	writebackIdentityJSON(t, s, handler, userID, http.MethodPost, "/api/books/"+strconv.FormatInt(b.BookID, 10)+"/writeback", nil)
 	writebackIdentityJSON(t, s, handler, userID, http.MethodPost, "/api/cleanup/duplicates/merge", map[string]any{
-		"survivor_id": a.BookID, "book_ids": []string{a.BookID, b.BookID},
+		"survivor_id": a.BookID, "book_ids": []int64{a.BookID, b.BookID},
 	})
 
-	state, err := db.GetBookWritebackState(s.db, a.BookID)
+	state, err := db.GetBookWritebackState(s.db.Read(t.Context()), a.BookID)
 	if err != nil || state.Dirty != 2 {
 		t.Fatalf("merged writeback state = %+v, %v; want both files dirty", state, err)
 	}
@@ -53,10 +54,10 @@ func TestRestoreWritebackAcknowledgementMatchesRestoredBytes(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s, handler, userID := writebackIdentityServer(t)
 			a, original := addWritebackIdentityBook(t, s, "restore")
-			writebackIdentityJSON(t, s, handler, userID, http.MethodPatch, "/api/books/"+a.BookID, map[string]any{"title": "Edited title"})
-			writebackIdentityJSON(t, s, handler, userID, http.MethodPost, "/api/books/"+a.BookID+"/writeback", nil)
+			writebackIdentityJSON(t, s, handler, userID, http.MethodPatch, "/api/books/"+strconv.FormatInt(a.BookID, 10), map[string]any{"title": "Edited title"})
+			writebackIdentityJSON(t, s, handler, userID, http.MethodPost, "/api/books/"+strconv.FormatInt(a.BookID, 10)+"/writeback", nil)
 			current := readWritebackIdentityAsset(t, s, a.AssetID)
-			row, err := db.GetMetadataWritebackAsset(s.db, a.AssetID)
+			row, err := db.GetMetadataWritebackAsset(s.db.Read(t.Context()), a.AssetID)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -77,7 +78,7 @@ func TestRestoreWritebackAcknowledgementMatchesRestoredBytes(t *testing.T) {
 			if data := readWritebackIdentityAsset(t, s, a.AssetID); !bytes.Equal(data, source) {
 				t.Fatal("restored file differs from uploaded bytes")
 			}
-			state, err := db.GetBookWritebackState(s.db, a.BookID)
+			state, err := db.GetBookWritebackState(s.db.Read(req.Context()), a.BookID)
 			if err != nil || state.Dirty != tc.wantDirty {
 				t.Fatalf("restored writeback state = %+v, %v; want dirty=%d", state, err, tc.wantDirty)
 			}
@@ -93,7 +94,7 @@ func TestRestoreWritebackAcknowledgementMatchesRestoredBytes(t *testing.T) {
 func writebackIdentityServer(t *testing.T) (*Server, http.Handler, int64) {
 	t.Helper()
 	dir := t.TempDir()
-	database, err := bootstrap.EnsureLibrary(dir)
+	database, err := bootstrap.EnsureLibrary(t.Context(), dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +129,7 @@ func writebackIdentityJSON(t *testing.T, s *Server, handler http.Handler, userID
 
 func readWritebackIdentityAsset(t *testing.T, s *Server, assetID string) []byte {
 	t.Helper()
-	row, err := db.GetMetadataWritebackAsset(s.db, assetID)
+	row, err := db.GetMetadataWritebackAsset(s.db.Read(t.Context()), assetID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +142,7 @@ func readWritebackIdentityAsset(t *testing.T, s *Server, assetID string) []byte 
 
 func runIdentityAutoWriteback(t *testing.T, s *Server, wantPlanned int) {
 	t.Helper()
-	if err := writeback.SaveMode(s.db, writeback.ModeAuto); err != nil {
+	if err := writeback.SaveMode(s.db.Write(t.Context()), writeback.ModeAuto); err != nil {
 		t.Fatal(err)
 	}
 	service := writeback.NewService(s.db, s.managedRoot(), writeback.ServiceOptions{CoverRoot: s.dataRoot(), WorkQueue: s.storageQueue})

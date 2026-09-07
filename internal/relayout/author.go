@@ -2,7 +2,6 @@ package relayout
 
 import (
 	"context"
-	"database/sql"
 
 	"github.com/levmv/polka/internal/bookmeta"
 	"github.com/levmv/polka/internal/db"
@@ -29,7 +28,7 @@ type AuthorMutationResult struct {
 // relayout.Book's contract: the metadata change is durable and the DB matches
 // disk.
 func RenameAuthor(ctx context.Context, database *db.DB, root storage.Root, oldName, newName string) (AuthorMutationResult, error) {
-	return mutateAuthor(ctx, database, root, func(tx *sql.Tx) ([]string, error) {
+	return mutateAuthor(ctx, database, root, func(tx *db.Tx) ([]int64, error) {
 		return db.RenameOrMergeAuthor(tx, oldName, newName, bookmeta.AuthorSort(newName))
 	})
 }
@@ -39,7 +38,7 @@ func RenameAuthor(ctx context.Context, database *db.DB, root storage.Root, oldNa
 // so the override moves files just like a rename. Shares RenameAuthor's
 // contract: a returned error is fatal; per-book relayout failures are warnings.
 func SetAuthorSortName(ctx context.Context, database *db.DB, root storage.Root, name, sortName string) (AuthorMutationResult, error) {
-	return mutateAuthor(ctx, database, root, func(tx *sql.Tx) ([]string, error) {
+	return mutateAuthor(ctx, database, root, func(tx *db.Tx) ([]int64, error) {
 		return db.SetAuthorSortName(tx, name, sortName)
 	})
 }
@@ -47,10 +46,10 @@ func SetAuthorSortName(ctx context.Context, database *db.DB, root storage.Root, 
 // mutateAuthor gives both author operations the same affected-book contract:
 // bump metadata revisions and refresh search in the transaction, then relayout
 // canonical paths after commit with warning semantics.
-func mutateAuthor(ctx context.Context, database *db.DB, root storage.Root, apply func(tx *sql.Tx) ([]string, error)) (AuthorMutationResult, error) {
-	var affected []string
+func mutateAuthor(ctx context.Context, database *db.DB, root storage.Root, apply func(tx *db.Tx) ([]int64, error)) (AuthorMutationResult, error) {
+	var affected []int64
 
-	mutation, err := MutateBooks(ctx, database, root, func(tx *sql.Tx) (Changed, error) {
+	mutation, err := MutateBooks(ctx, database, root, func(tx *db.Tx) (Changed, error) {
 		var err error
 		affected, err = apply(tx)
 		if err != nil {

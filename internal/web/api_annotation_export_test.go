@@ -16,14 +16,13 @@ func TestAPIAnnotationExportIsStandaloneEscapedAndUserScoped(t *testing.T) {
 
 	alice := mustUser(t, database, "alice-export", db.RoleMember)
 	bob := mustUser(t, database, "bob-export", db.RoleMember)
-	if _, err := database.Exec(`
-		UPDATE books SET title = 'A/B: <Book>' WHERE id = 'w_1';
+	mustExec(t, database, `
+		UPDATE books SET title = 'A/B: <Book>' WHERE id = 1;
 		UPDATE authors SET name = 'Writer & <script>Co</script>' WHERE id = 'a_1';
 		UPDATE assets SET format = 'epub', can_read = 1, is_primary = 1 WHERE id = 'asset_1';
-	`); err != nil {
-		t.Fatalf("prepare export metadata: %v", err)
-	}
-	ann, err := database.CreateAnnotation(alice.ID, "asset_1", db.AnnotationCreate{
+	`)
+
+	ann, err := database.CreateAnnotation(t.Context(), alice.ID, "asset_1", db.AnnotationCreate{
 		CFI:   `epubcfi(/6/2[<bad>])`,
 		Quote: `Quoted </mark><script>alert("quote")</script>`,
 		Note:  `<img src=x onerror="alert('note')">`,
@@ -32,11 +31,9 @@ func TestAPIAnnotationExportIsStandaloneEscapedAndUserScoped(t *testing.T) {
 		t.Fatalf("create annotation: %v", err)
 	}
 	created := time.Date(2026, time.July, 27, 12, 30, 0, 0, time.UTC).Unix()
-	if _, err := database.Exec(`
+	mustExec(t, database, `
 		UPDATE user_annotations SET created_at = ?, updated_at = ? WHERE id = ?
-	`, created, created+3600, ann.ID); err != nil {
-		t.Fatalf("set annotation times: %v", err)
-	}
+	`, created, created+3600, ann.ID)
 
 	s := newTestServer(database, dir)
 	handler := testRoutes(t, s)

@@ -39,7 +39,7 @@ type KoboConnection struct {
 // decides when the durable projection needs a new revision.
 type KoboPublication struct {
 	AssetID       string
-	BookID        string
+	BookID        int64
 	Format        string
 	Size          int64
 	Title         string
@@ -71,18 +71,18 @@ type koboCandidate struct {
 // Replacing instead of editing makes both revocation and a shelf change atomic:
 // the old token and its projection disappear in the same transaction.
 func (db *DB) ReplaceKoboConnection(ctx context.Context, userID int64, shelfID string) (*KoboConnection, error) {
-	shelf, err := db.GetShelfForUser(shelfID, userID)
+	shelf, err := GetShelfForUser(db.Read(ctx), shelfID, userID)
 	if err != nil {
 		return nil, err
 	}
 	token := newDeviceToken()
 	connectionID := id.New(id.KoboConnection)
 
-	err = db.Transact(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, "DELETE FROM kobo_connections WHERE user_id = ?", userID); err != nil {
+	err = db.Transact(ctx, func(tx *Tx) error {
+		if _, err := tx.Exec("DELETE FROM kobo_connections WHERE user_id = ?", userID); err != nil {
 			return fmt.Errorf("replace kobo connection: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx, `
+		if _, err := tx.Exec(`
 			INSERT INTO kobo_connections (id, user_id, shelf_id, token)
 			VALUES (?, ?, ?, ?)
 		`, connectionID, userID, shelf.ID, token); err != nil {
@@ -93,11 +93,11 @@ func (db *DB) ReplaceKoboConnection(ctx context.Context, userID int64, shelfID s
 	if err != nil {
 		return nil, err
 	}
-	return db.KoboConnectionForUser(userID)
+	return KoboConnectionForUser(db.Read(ctx), userID)
 }
 
-func (db *DB) KoboConnectionForUser(userID int64) (*KoboConnection, error) {
-	return scanKoboConnection(db.QueryRow(`
+func KoboConnectionForUser(queryer Queryer, userID int64) (*KoboConnection, error) {
+	return scanKoboConnection(queryer.QueryRow(`
 		SELECT kc.id, kc.user_id, kc.shelf_id, s.name, kc.token, kc.revision,
 		       kc.created_at, kc.updated_at, kc.last_used_at
 		FROM kobo_connections kc
@@ -121,8 +121,8 @@ func scanKoboConnection(row *sql.Row) (*KoboConnection, error) {
 	return &connection, nil
 }
 
-func (db *DB) DeleteKoboConnection(userID int64) error {
-	result, err := db.Exec("DELETE FROM kobo_connections WHERE user_id = ?", userID)
+func (db *DB) DeleteKoboConnection(ctx context.Context, userID int64) error {
+	result, err := db.Write(ctx).Exec("DELETE FROM kobo_connections WHERE user_id = ?", userID)
 	if err != nil {
 		return fmt.Errorf("delete kobo connection: %w", err)
 	}
@@ -135,12 +135,12 @@ func (db *DB) DeleteKoboConnection(userID int64) error {
 // KoboConnectionByToken authenticates a Kobo URL using its device credential.
 // The last-used timestamp is throttled so cover and download traffic does not
 // turn every request into a database write.
-func (db *DB) KoboConnectionByToken(token string) (*KoboConnection, bool, error) {
+func (db *DB) KoboConnectionByToken(ctx context.Context, token string) (*KoboConnection, bool, error) {
 	token = normalizeDeviceToken(token)
 	if token == "" {
 		return nil, false, nil
 	}
-	connection, err := scanKoboConnection(db.QueryRow(`
+	connection, err := scanKoboConnection(db.Read(ctx).QueryRow(`
 		SELECT kc.id, kc.user_id, kc.shelf_id, s.name, kc.token, kc.revision,
 		       kc.created_at, kc.updated_at, kc.last_used_at
 		FROM kobo_connections kc
@@ -156,12 +156,15 @@ func (db *DB) KoboConnectionByToken(token string) (*KoboConnection, bool, error)
 
 	now := time.Now().Unix()
 	if !connection.LastUsedAt.Valid || now-connection.LastUsedAt.Int64 >= 3600 {
-		if _, err := db.Exec(`
+		updated, err := db.ExecBestEffort(ctx, `
 			UPDATE kobo_connections SET last_used_at = ? WHERE id = ?
-		`, now, connection.ID); err != nil {
+		`, now, connection.ID)
+		if err != nil {
 			return nil, false, fmt.Errorf("bump kobo connection: %w", err)
 		}
-		connection.LastUsedAt = sql.NullInt64{Int64: now, Valid: true}
+		if updated {
+			connection.LastUsedAt = sql.NullInt64{Int64: now, Valid: true}
+		}
 	}
 	return connection, true, nil
 }
@@ -177,19 +180,19 @@ func (db *DB) SyncKoboConnection(ctx context.Context, connectionID string, after
 	var changes []KoboChange
 	var currentRevision int64
 	var more bool
-	err := db.Transact(ctx, func(tx *sql.Tx) error {
+	err := db.Transact(ctx, func(tx *Tx) error {
 		connection, shelf, scope, err := loadKoboSyncState(tx, connectionID)
 		if err != nil {
 			return err
 		}
-		currentRevision, err = reconcileKoboItems(ctx, tx, connection, shelf, scope)
+		currentRevision, err = reconcileKoboItems(tx, connection, shelf, scope)
 		if err != nil {
 			return err
 		}
 		if after > currentRevision {
 			return ErrKoboInvalidCursor
 		}
-		changes, more, err = listKoboChanges(ctx, tx, connectionID, after, limit)
+		changes, more, err = listKoboChanges(tx, connectionID, after, limit)
 		return err
 	})
 	if err != nil {
@@ -198,7 +201,7 @@ func (db *DB) SyncKoboConnection(ctx context.Context, connectionID string, after
 	return changes, currentRevision, more, nil
 }
 
-func loadKoboSyncState(tx *sql.Tx, connectionID string) (*KoboConnection, *Shelf, VisibilityScope, error) {
+func loadKoboSyncState(tx *Tx, connectionID string) (*KoboConnection, *Shelf, VisibilityScope, error) {
 	var connection KoboConnection
 	var shelf Shelf
 	var kind, role, contentScope string
@@ -234,13 +237,13 @@ func loadKoboSyncState(tx *sql.Tx, connectionID string) (*KoboConnection, *Shelf
 	return &connection, &shelf, scope, nil
 }
 
-func reconcileKoboItems(ctx context.Context, tx *sql.Tx, connection *KoboConnection, shelf *Shelf, scope VisibilityScope) (int64, error) {
+func reconcileKoboItems(tx *Tx, connection *KoboConnection, shelf *Shelf, scope VisibilityScope) (int64, error) {
 	type existingItem struct {
 		Fingerprint string
 		Present     bool
 	}
 	existing := make(map[string]existingItem)
-	rows, err := tx.QueryContext(ctx, `
+	rows, err := tx.Query(`
 		SELECT asset_id, fingerprint, present
 		FROM kobo_items
 		WHERE connection_id = ?
@@ -267,7 +270,7 @@ func reconcileKoboItems(ctx context.Context, tx *sql.Tx, connection *KoboConnect
 	// A repeat sync normally has one projection row per current candidate. That
 	// gives the candidate slice a free, accurate capacity hint and avoids its
 	// repeated growth. A brand-new connection still starts naturally at zero.
-	candidates, err := listKoboCandidates(ctx, tx, connection.UserID, shelf, scope, len(existing))
+	candidates, err := listKoboCandidates(tx, connection.UserID, shelf, scope, len(existing))
 	if err != nil {
 		return 0, err
 	}
@@ -285,7 +288,7 @@ func reconcileKoboItems(ctx context.Context, tx *sql.Tx, connection *KoboConnect
 		}
 		revision++
 		if !found {
-			if _, err := tx.ExecContext(ctx, `
+			if _, err := tx.Exec(`
 				INSERT INTO kobo_items
 				    (connection_id, asset_id, book_id, fingerprint, present, revision, first_revision)
 				VALUES (?, ?, ?, ?, 1, ?, ?)
@@ -294,7 +297,7 @@ func reconcileKoboItems(ctx context.Context, tx *sql.Tx, connection *KoboConnect
 			}
 			continue
 		}
-		if _, err := tx.ExecContext(ctx, `
+		if _, err := tx.Exec(`
 			UPDATE kobo_items
 			SET book_id = ?, fingerprint = ?, present = 1, revision = ?, updated_at = unixepoch()
 			WHERE connection_id = ? AND asset_id = ?
@@ -312,7 +315,7 @@ func reconcileKoboItems(ctx context.Context, tx *sql.Tx, connection *KoboConnect
 	slices.Sort(removals)
 	for _, assetID := range removals {
 		revision++
-		if _, err := tx.ExecContext(ctx, `
+		if _, err := tx.Exec(`
 			UPDATE kobo_items
 			SET present = 0, revision = ?, updated_at = unixepoch()
 			WHERE connection_id = ? AND asset_id = ?
@@ -322,7 +325,7 @@ func reconcileKoboItems(ctx context.Context, tx *sql.Tx, connection *KoboConnect
 	}
 
 	if revision != connection.Revision {
-		if _, err := tx.ExecContext(ctx, `
+		if _, err := tx.Exec(`
 			UPDATE kobo_connections SET revision = ?, updated_at = unixepoch() WHERE id = ?
 		`, revision, connection.ID); err != nil {
 			return 0, fmt.Errorf("advance kobo revision: %w", err)
@@ -331,7 +334,7 @@ func reconcileKoboItems(ctx context.Context, tx *sql.Tx, connection *KoboConnect
 	return revision, nil
 }
 
-func listKoboCandidates(ctx context.Context, tx *sql.Tx, userID int64, shelf *Shelf, scope VisibilityScope, capacityHint int) ([]koboCandidate, error) {
+func listKoboCandidates(tx *Tx, userID int64, shelf *Shelf, scope VisibilityScope, capacityHint int) ([]koboCandidate, error) {
 	var withSQL, fromSQL, whereSQL string
 	var args []any
 
@@ -384,7 +387,7 @@ func listKoboCandidates(ctx context.Context, tx *sql.Tx, userID int64, shelf *Sh
 		withSQL = ranked
 	}
 
-	rows, err := tx.QueryContext(ctx, fmt.Sprintf(`
+	rows, err := tx.Query(fmt.Sprintf(`
 		%s
 		SELECT id, book_id, format, current_size, title, description,
 		       publisher, published_date, language, series, series_index,
@@ -436,8 +439,8 @@ func scanKoboCandidate(row rowScanner) (koboCandidate, error) {
 	return candidate, nil
 }
 
-func listKoboChanges(ctx context.Context, tx *sql.Tx, connectionID string, after int64, limit int) ([]KoboChange, bool, error) {
-	rows, err := tx.QueryContext(ctx, `
+func listKoboChanges(tx *Tx, connectionID string, after int64, limit int) ([]KoboChange, bool, error) {
+	rows, err := tx.Query(`
 		SELECT ki.asset_id, ki.book_id, COALESCE(a.format, ''),
 		       COALESCE(a.current_size, a.original_size, 0),
 		       COALESCE(b.title, ''), COALESCE(b.description, ''),
@@ -498,8 +501,8 @@ func listKoboChanges(ctx context.Context, tx *sql.Tx, connectionID string, after
 // KoboPublicationForAsset verifies the last reconciled projection and live
 // bytes. HTTP handlers separately enforce the owner's current visibility scope;
 // shelf additions/removals become projection changes at the next library sync.
-func (db *DB) KoboPublicationForAsset(connectionID, assetID string) (*KoboPublication, error) {
-	row := db.QueryRow(`
+func KoboPublicationForAsset(queryer Queryer, connectionID, assetID string) (*KoboPublication, error) {
+	row := queryer.QueryRow(`
 		SELECT ki.asset_id, ki.book_id, a.format,
 		       COALESCE(a.current_size, a.original_size, 0),
 		       b.title, COALESCE(b.description, ''), COALESCE(b.publisher, ''),

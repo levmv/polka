@@ -64,7 +64,7 @@ func TestServiceWaitsForStableFileThenImports(t *testing.T) {
 	}
 
 	var storagePath string
-	if err := database.QueryRow("SELECT storage_path FROM assets LIMIT 1").Scan(&storagePath); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT storage_path FROM assets LIMIT 1").Scan(&storagePath); err != nil {
 		t.Fatalf("query storage_path: %v", err)
 	}
 	if _, err := os.Stat(root.Abs(storagePath)); err != nil {
@@ -151,11 +151,11 @@ func TestServiceDeletesSourceAfterImportWhenConfigured(t *testing.T) {
 	if _, err := os.Stat(src); !os.IsNotExist(err) {
 		t.Fatalf("source exists after import with delete enabled; err=%v", err)
 	}
-	var bookID string
-	if err := database.QueryRow("SELECT id FROM books LIMIT 1").Scan(&bookID); err != nil {
+	var bookID int64
+	if err := database.Read(t.Context()).QueryRow("SELECT id FROM books LIMIT 1").Scan(&bookID); err != nil {
 		t.Fatalf("query imported book: %v", err)
 	}
-	if _, err := database.Exec("UPDATE books SET deleted_at = unixepoch() WHERE id = ?", bookID); err != nil {
+	if _, err := database.Write(t.Context()).Exec("UPDATE books SET deleted_at = unixepoch() WHERE id = ?", bookID); err != nil {
 		t.Fatalf("trash imported book: %v", err)
 	}
 
@@ -174,7 +174,7 @@ func TestServiceDeletesSourceAfterImportWhenConfigured(t *testing.T) {
 		t.Fatalf("duplicate source exists after import with delete enabled; err=%v", err)
 	}
 	var stillTrashed bool
-	if err := database.QueryRow("SELECT deleted_at IS NOT NULL FROM books WHERE id = ?", bookID).Scan(&stillTrashed); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT deleted_at IS NOT NULL FROM books WHERE id = ?", bookID).Scan(&stillTrashed); err != nil {
 		t.Fatalf("query duplicate book: %v", err)
 	}
 	if !stillTrashed {
@@ -441,17 +441,17 @@ func TestServiceImportsCalibreDirectoryAsGroup(t *testing.T) {
 	}
 
 	var books, assets int
-	if err := database.QueryRow("SELECT COUNT(*) FROM books").Scan(&books); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT COUNT(*) FROM books").Scan(&books); err != nil {
 		t.Fatalf("count books: %v", err)
 	}
-	if err := database.QueryRow("SELECT COUNT(*) FROM assets").Scan(&assets); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT COUNT(*) FROM assets").Scan(&assets); err != nil {
 		t.Fatalf("count assets: %v", err)
 	}
 	if books != 1 || assets != 2 {
 		t.Fatalf("books/assets = %d/%d; want 1/2", books, assets)
 	}
 	var title, author string
-	if err := database.QueryRow(`
+	if err := database.Read(t.Context()).QueryRow(`
 		SELECT b.title, a.name
 		FROM books b
 		JOIN book_authors ba ON ba.book_id = b.id
@@ -475,11 +475,11 @@ func TestServiceImportsCalibreDirectoryAsGroup(t *testing.T) {
 		t.Fatalf("second summary = %+v; want no repeated group work", second)
 	}
 
-	var bookID string
-	if err := database.QueryRow("SELECT id FROM books LIMIT 1").Scan(&bookID); err != nil {
+	var bookID int64
+	if err := database.Read(t.Context()).QueryRow("SELECT id FROM books LIMIT 1").Scan(&bookID); err != nil {
 		t.Fatalf("query book ID: %v", err)
 	}
-	if _, err := database.Exec("UPDATE books SET deleted_at = unixepoch() WHERE id = ?", bookID); err != nil {
+	if _, err := database.Write(t.Context()).Exec("UPDATE books SET deleted_at = unixepoch() WHERE id = ?", bookID); err != nil {
 		t.Fatalf("trash book: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(bookDir, "Calibre Book.fb2"), []byte("<FictionBook/>"), 0o644); err != nil {
@@ -493,13 +493,13 @@ func TestServiceImportsCalibreDirectoryAsGroup(t *testing.T) {
 		t.Fatalf("restoring summary = %+v; want one imported and restored group", restored)
 	}
 	var bookTrashed bool
-	if err := database.QueryRow("SELECT deleted_at IS NOT NULL FROM books WHERE id = ?", bookID).Scan(&bookTrashed); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT deleted_at IS NOT NULL FROM books WHERE id = ?", bookID).Scan(&bookTrashed); err != nil {
 		t.Fatalf("query restored book: %v", err)
 	}
 	if bookTrashed {
 		t.Fatal("book stayed in Trash after ingest added a format")
 	}
-	if err := database.QueryRow("SELECT COUNT(*) FROM assets WHERE book_id = ?", bookID).Scan(&assets); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT COUNT(*) FROM assets WHERE book_id = ?", bookID).Scan(&assets); err != nil {
 		t.Fatalf("count restored assets: %v", err)
 	}
 	if assets != 3 {

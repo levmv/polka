@@ -29,7 +29,7 @@ func TestAPIReaderStateLifecycle(t *testing.T) {
 	if err := json.UnmarshalRead(w.Body, &state); err != nil {
 		t.Fatalf("decode default state: %v", err)
 	}
-	if state.AssetID != "asset_1" || state.BookID != "w_1" || state.Progress != 0 || state.Locator.String() != "{}" || state.LastReadAt != 0 {
+	if state.AssetID != "asset_1" || state.BookID != 1 || state.Progress != 0 || state.Locator.String() != "{}" || state.LastReadAt != 0 {
 		t.Fatalf("default state = %+v", state)
 	}
 	if state.ReadingStatus.Status != db.ReadingStatusUnread {
@@ -141,7 +141,7 @@ func TestAPIReaderAutoFinishCanBeUndone(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, user.ID, http.MethodPost, "/api/books/w_1/reading-status/undo", readingStatusUndoRequest{EventID: state.StatusTransitionID}))
+	handler.ServeHTTP(w, jsonRequest(t, s, user.ID, http.MethodPost, "/api/books/1/reading-status/undo", readingStatusUndoRequest{EventID: state.StatusTransitionID}))
 	if w.Code != http.StatusOK {
 		t.Fatalf("undo status = %d: %s", w.Code, w.Body.String())
 	}
@@ -153,7 +153,7 @@ func TestAPIReaderAutoFinishCanBeUndone(t *testing.T) {
 		t.Fatalf("restored status = %+v", restored)
 	}
 
-	readerState, err := database.GetReaderState(user.ID, "asset_1")
+	readerState, err := db.GetReaderState(database.Read(t.Context()), user.ID, "asset_1")
 	if err != nil || readerState.Progress != progress {
 		t.Fatalf("undo changed reader position = %+v, err %v", readerState, err)
 	}
@@ -305,14 +305,12 @@ func TestAPIContinueReading(t *testing.T) {
 	defer database.Close()
 
 	user := mustUser(t, database, "reader", db.RoleMember)
-	if _, err := database.Exec(`
+	mustExec(t, database, `
 			INSERT INTO user_asset_state (user_id, asset_id, progress, locator, last_read_at, updated_at)
 			VALUES (?, 'asset_1', 0.42, '{"engine":"foliate","cfi":"epubcfi(/6/2)","fraction":0.42}', 100, 100);
 			INSERT INTO user_book_reading_state (user_id, book_id, status, updated_at)
-			VALUES (?, 'w_1', 'reading', 100)
-		`, user.ID, user.ID); err != nil {
-		t.Fatalf("insert reader state: %v", err)
-	}
+			VALUES (?, 1, 'reading', 100)
+		`, user.ID, user.ID)
 
 	s := newTestServer(database, dir)
 	handler := testRoutes(t, s)
@@ -329,11 +327,11 @@ func TestAPIContinueReading(t *testing.T) {
 	if len(items) != 1 {
 		t.Fatalf("got %d continue items, want 1", len(items))
 	}
-	if items[0].ID != "w_1" || items[0].AssetID != "asset_1" || items[0].Progress != 0.42 || len(items[0].Assets) != 1 {
+	if items[0].ID != 1 || items[0].AssetID != "asset_1" || items[0].Progress != 0.42 || len(items[0].Assets) != 1 {
 		t.Fatalf("continue item = %+v", items[0])
 	}
 
-	if _, err := database.SaveUserSettings(user.ID, db.UserSettingsPatch{
+	if _, err := database.SaveUserSettings(t.Context(), user.ID, db.UserSettingsPatch{
 		ShowContinueReading: new(false),
 	}); err != nil {
 		t.Fatalf("hide continue reading: %v", err)

@@ -17,7 +17,7 @@ func TestOpenRootDefaultsToBooksSubdir(t *testing.T) {
 	}
 	defer database.Close()
 
-	root, err := OpenRoot(database.DB, dataDir)
+	root, err := OpenRoot(database.Read(t.Context()), dataDir)
 	if err != nil {
 		t.Fatalf("OpenRoot: %v", err)
 	}
@@ -39,7 +39,7 @@ func TestSaveRootResolvesRelativeToDataDir(t *testing.T) {
 	}
 	defer database.Close()
 
-	root, err := SaveRoot(database.DB, dataDir, "managed")
+	root, err := SaveRoot(database.Write(t.Context()), dataDir, "managed")
 	if err != nil {
 		t.Fatalf("SaveRoot: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestSaveRootResolvesRelativeToDataDir(t *testing.T) {
 		t.Fatalf("saved root.Path = %q; want %q", root.Path, want)
 	}
 
-	loaded, err := OpenRoot(database.DB, dataDir)
+	loaded, err := OpenRoot(database.Read(t.Context()), dataDir)
 	if err != nil {
 		t.Fatalf("OpenRoot: %v", err)
 	}

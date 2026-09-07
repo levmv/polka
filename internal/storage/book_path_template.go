@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/levmv/polka/internal/bookmeta"
@@ -22,7 +23,7 @@ type BookPathData struct {
 	Series           string
 	SeriesIndex      string
 	AssetID          string
-	BookID           string
+	BookID           int64
 	Ext              string
 	OriginalFilename string
 }
@@ -199,7 +200,7 @@ func (d BookPathData) bookPathField(name string, useDefault bool) (string, bool)
 	case "asset_id":
 		return strings.TrimSpace(d.AssetID), true
 	case "book_id":
-		return strings.TrimSpace(d.BookID), true
+		return strconv.FormatInt(d.BookID, 10), true
 	case "original_filename":
 		return strings.TrimSpace(d.OriginalFilename), true
 	case "ext":

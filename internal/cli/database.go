@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -19,12 +20,12 @@ func openDatabaseReadOnly(dataDir string) (*db.DB, error) {
 	return bootstrap.OpenExistingReadOnly(dataDir)
 }
 
-func ensureLibraryInitialized(dataDir string) (*db.DB, error) {
-	return bootstrap.EnsureLibrary(dataDir)
+func ensureLibraryInitialized(ctx context.Context, dataDir string) (*db.DB, error) {
+	return bootstrap.EnsureLibrary(ctx, dataDir)
 }
 
-func ensureLibraryWithoutBooksRoot(dataDir string) (*db.DB, error) {
-	return bootstrap.EnsureLibraryWithoutBooksRoot(dataDir)
+func ensureLibraryWithoutBooksRoot(ctx context.Context, dataDir string) (*db.DB, error) {
+	return bootstrap.EnsureLibraryWithoutBooksRoot(ctx, dataDir)
 }
 
 func noteStorageFilesystem(root storage.Root) {

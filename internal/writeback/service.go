@@ -64,7 +64,7 @@ func (s *Service) Start(ctx context.Context) {
 }
 
 func (s *Service) RunOnce(ctx context.Context) (Summary, error) {
-	mode, err := OpenMode(s.db.DB)
+	mode, err := OpenMode(s.db.Read(ctx))
 	if err != nil {
 		return Summary{}, err
 	}
@@ -74,7 +74,7 @@ func (s *Service) RunOnce(ctx context.Context) (Summary, error) {
 
 	now := s.now()
 	rows, err := db.ListAutomaticMetadataWritebackAssets(
-		s.db,
+		s.db.Read(ctx),
 		db.FullVisibilityScope(),
 		now.Add(-retryAfter).Unix(),
 		s.batchLimit,
@@ -86,7 +86,7 @@ func (s *Service) RunOnce(ctx context.Context) (Summary, error) {
 	if len(rows) == 0 {
 		return summary, nil
 	}
-	catalogHasBooks, err := db.HasAnyAsset(s.db.DB)
+	catalogHasBooks, err := db.HasAnyAsset(s.db.Read(ctx))
 	if err != nil {
 		return summary, err
 	}

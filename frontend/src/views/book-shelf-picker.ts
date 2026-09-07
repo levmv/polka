@@ -15,7 +15,7 @@ const SHELF_SEARCH_THRESHOLD = 7;
 export function renderShelfPicker(
     panel: HTMLElement,
     popover: ManagedPopover,
-    bookId: string,
+    bookId: number,
 ): void {
     panel.classList.add('shelf-popover');
     // Arrow-key nav reads the live DOM, so bind once even though the popover
@@ -74,7 +74,7 @@ function handleShelfNav(event: KeyboardEvent): void {
 function buildShelfPicker(
     panel: HTMLElement,
     popover: ManagedPopover,
-    bookId: string,
+    bookId: number,
     memberships: BookShelfMembership[],
 ): void {
     panel.replaceChildren();
@@ -116,7 +116,7 @@ function buildShelfPicker(
     panel.appendChild(buildCreateRow(popover, bookId));
 }
 
-function shelfPickerRow(membership: BookShelfMembership, bookId: string): HTMLElement {
+function shelfPickerRow(membership: BookShelfMembership, bookId: number): HTMLElement {
     const label = document.createElement('label');
     label.className = 'shelf-picker-row';
     label.dataset.name = membership.name.toLowerCase();
@@ -169,7 +169,7 @@ function shelfPickerRow(membership: BookShelfMembership, bookId: string): HTMLEl
 
 // The create affordance opens the normal shelf dialog. Close this popover first
 // so the floating panel cannot sit above the modal.
-function buildCreateRow(popover: ManagedPopover, bookId: string): HTMLElement {
+function buildCreateRow(popover: ManagedPopover, bookId: number): HTMLElement {
     const wrap = document.createElement('div');
     wrap.className = 'shelf-popover-create';
 

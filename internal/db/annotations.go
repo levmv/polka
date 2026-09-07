@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -57,14 +58,14 @@ type AnnotationNoteUpdate struct {
 	Note string
 }
 
-func (db *DB) ListAnnotations(userID int64, assetID string) ([]Annotation, error) {
+func ListAnnotations(queryer Queryer, userID int64, assetID string) ([]Annotation, error) {
 	if userID <= 0 {
 		return nil, ErrUserIDRequired
 	}
-	if _, err := db.GetReaderState(userID, assetID); err != nil {
+	if _, err := GetReaderState(queryer, userID, assetID); err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`
+	rows, err := queryer.Query(`
 		SELECT `+annotationColumns+`
 		FROM user_annotations
 		WHERE user_id = ? AND asset_id = ?
@@ -89,11 +90,11 @@ func (db *DB) ListAnnotations(userID int64, assetID string) ([]Annotation, error
 	return out, nil
 }
 
-func (db *DB) CreateAnnotation(userID int64, assetID string, input AnnotationCreate) (Annotation, error) {
+func (db *DB) CreateAnnotation(ctx context.Context, userID int64, assetID string, input AnnotationCreate) (Annotation, error) {
 	if userID <= 0 {
 		return Annotation{}, ErrUserIDRequired
 	}
-	if _, err := db.GetReaderState(userID, assetID); err != nil {
+	if _, err := GetReaderState(db.Read(ctx), userID, assetID); err != nil {
 		return Annotation{}, err
 	}
 	ann, err := normalizeAnnotation(userID, assetID, input)
@@ -102,7 +103,7 @@ func (db *DB) CreateAnnotation(userID int64, assetID string, input AnnotationCre
 	}
 	ann.ID = id.New(id.Annotation)
 
-	if _, err := db.Exec(`
+	if _, err := db.Write(ctx).Exec(`
 		INSERT INTO user_annotations
 			(id, user_id, asset_id, kind, cfi, quote, context_before, context_after, note, color, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
@@ -119,12 +120,12 @@ func (db *DB) CreateAnnotation(userID int64, assetID string, input AnnotationCre
 	`, ann.ID, ann.UserID, ann.AssetID, ann.Kind, ann.CFI, ann.Quote, ann.ContextBefore, ann.ContextAfter, ann.Note, ann.Color); err != nil {
 		return Annotation{}, fmt.Errorf("create annotation: %w", err)
 	}
-	return db.GetAnnotationByAnchor(userID, assetID, ann.Kind, ann.CFI)
+	return GetAnnotationByAnchor(db.Read(ctx), userID, assetID, ann.Kind, ann.CFI)
 }
 
-func (db *DB) GetAnnotationByAnchor(userID int64, assetID, kind, cfi string) (Annotation, error) {
+func GetAnnotationByAnchor(queryer Queryer, userID int64, assetID, kind, cfi string) (Annotation, error) {
 	var ann Annotation
-	err := scanAnnotation(db.QueryRow(`
+	err := scanAnnotation(queryer.QueryRow(`
 		SELECT `+annotationColumns+`
 		FROM user_annotations
 		WHERE user_id = ? AND asset_id = ? AND kind = ? AND cfi = ?
@@ -138,7 +139,7 @@ func (db *DB) GetAnnotationByAnchor(userID int64, assetID, kind, cfi string) (An
 	return ann, nil
 }
 
-func (db *DB) UpdateAnnotationNote(userID int64, assetID, annotationID string, input AnnotationNoteUpdate) (Annotation, error) {
+func (db *DB) UpdateAnnotationNote(ctx context.Context, userID int64, assetID, annotationID string, input AnnotationNoteUpdate) (Annotation, error) {
 	if userID <= 0 {
 		return Annotation{}, ErrUserIDRequired
 	}
@@ -146,19 +147,19 @@ func (db *DB) UpdateAnnotationNote(userID int64, assetID, annotationID string, i
 	if err != nil {
 		return Annotation{}, err
 	}
-	if _, err := db.Exec(`
+	if _, err := db.Write(ctx).Exec(`
 		UPDATE user_annotations
 		SET note = ?, updated_at = unixepoch()
 		WHERE id = ? AND user_id = ? AND asset_id = ?
 	`, note, annotationID, userID, assetID); err != nil {
 		return Annotation{}, fmt.Errorf("update annotation note: %w", err)
 	}
-	return db.GetAnnotationByID(userID, assetID, annotationID)
+	return GetAnnotationByID(db.Read(ctx), userID, assetID, annotationID)
 }
 
-func (db *DB) GetAnnotationByID(userID int64, assetID, annotationID string) (Annotation, error) {
+func GetAnnotationByID(queryer Queryer, userID int64, assetID, annotationID string) (Annotation, error) {
 	var ann Annotation
-	err := scanAnnotation(db.QueryRow(`
+	err := scanAnnotation(queryer.QueryRow(`
 		SELECT `+annotationColumns+`
 		FROM user_annotations
 		WHERE id = ? AND user_id = ? AND asset_id = ?
@@ -172,11 +173,11 @@ func (db *DB) GetAnnotationByID(userID int64, assetID, annotationID string) (Ann
 	return ann, nil
 }
 
-func (db *DB) DeleteAnnotation(userID int64, assetID, annotationID string) error {
+func (db *DB) DeleteAnnotation(ctx context.Context, userID int64, assetID, annotationID string) error {
 	if userID <= 0 {
 		return ErrUserIDRequired
 	}
-	res, err := db.Exec(`
+	res, err := db.Write(ctx).Exec(`
 		DELETE FROM user_annotations
 		WHERE id = ? AND user_id = ? AND asset_id = ?
 	`, annotationID, userID, assetID)

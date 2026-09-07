@@ -33,14 +33,14 @@ func TestCoverPathsAreDataDirRelative(t *testing.T) {
 	// Covers live in the app data dir, not the books root: durable originals sit
 	// flat under covers/, and the rebuildable cache under a top-level cache/.
 	// These paths are load-bearing — a silent drift would orphan every cover.
-	if got := OriginalPath("w_abc"); got != "covers/w_abc" {
-		t.Fatalf("OriginalPath = %q; want covers/w_abc", got)
+	if got := OriginalPath(106); got != "covers/106" {
+		t.Fatalf("OriginalPath = %q; want covers/106", got)
 	}
-	if got := CachePath("w_abc", VariantDisplay); got != "cache/covers/v2/display/w_abc.jpg" {
-		t.Fatalf("CachePath display = %q; want cache/covers/v2/display/w_abc.jpg", got)
+	if got := CachePath(106, VariantDisplay); got != "cache/covers/v2/display/106.jpg" {
+		t.Fatalf("CachePath display = %q; want cache/covers/v2/display/106.jpg", got)
 	}
-	if got := CachePath("w_abc", VariantThumb); got != "cache/covers/v2/thumb/w_abc.jpg" {
-		t.Fatalf("CachePath thumb = %q; want cache/covers/v2/thumb/w_abc.jpg", got)
+	if got := CachePath(106, VariantThumb); got != "cache/covers/v2/thumb/106.jpg" {
+		t.Fatalf("CachePath thumb = %q; want cache/covers/v2/thumb/106.jpg", got)
 	}
 }
 
