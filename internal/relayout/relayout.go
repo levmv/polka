@@ -6,6 +6,7 @@
 package relayout
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -28,9 +29,9 @@ import (
 // a returned error as a warning: the metadata change is already durable and the
 // DB stays consistent with disk; `polka repair` recovers the rare unrecoverable
 // window via the asset-id tag. Returns the number of files relocated.
-func Book(database *db.DB, root storage.Root, bookID string) (int, error) {
+func Book(ctx context.Context, database *db.DB, root storage.Root, bookID int64) (int, error) {
 	var title, sortTitle, series, seriesIndex string
-	if err := database.QueryRow(`
+	if err := database.Read(ctx).QueryRow(`
 		SELECT title, COALESCE(sort_title, ''), COALESCE(series, ''),
 		       CASE WHEN series_index IS NULL THEN '' ELSE CAST(series_index AS TEXT) END
 		FROM books
@@ -38,12 +39,12 @@ func Book(database *db.DB, root storage.Root, bookID string) (int, error) {
 	`, bookID).Scan(&title, &sortTitle, &series, &seriesIndex); err != nil {
 		return 0, fmt.Errorf("load title: %w", err)
 	}
-	template, err := storage.OpenBookPathTemplate(database)
+	template, err := storage.OpenBookPathTemplate(database.Read(ctx))
 	if err != nil {
 		return 0, err
 	}
 
-	primaryAuthor, primaryAuthorSort, err := db.PrimaryAuthor(database, bookID)
+	primaryAuthor, primaryAuthorSort, err := db.PrimaryAuthor(database.Read(ctx), bookID)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return 0, fmt.Errorf("primary author: %w", err)
 	}
@@ -52,7 +53,7 @@ func Book(database *db.DB, root storage.Root, bookID string) (int, error) {
 		primaryAuthorSort = bookmeta.AuthorSort("Unknown Author")
 	}
 
-	assets, err := db.AssetsByBookIDs(database, []string{bookID})
+	assets, err := db.AssetsByBookIDs(database.Read(ctx), []int64{bookID})
 	if err != nil {
 		return 0, err
 	}
@@ -93,7 +94,7 @@ func Book(database *db.DB, root storage.Root, bookID string) (int, error) {
 			// File still at the old path the DB points at — no divergence.
 			return moved, fmt.Errorf("move %s: %w", a.ID, err)
 		}
-		if _, err := database.Exec("UPDATE assets SET storage_path = ?, filename = ? WHERE id = ?", newPath, filepath.Base(newPath), a.ID); err != nil {
+		if _, err := database.Write(ctx).Exec("UPDATE assets SET storage_path = ?, filename = ? WHERE id = ?", newPath, filepath.Base(newPath), a.ID); err != nil {
 			// Compensate: move the file back so the DB (old path) stays valid.
 			if backErr := storage.Move(root, newPath, a.StoragePath); backErr != nil {
 				return moved, fmt.Errorf("update storage_path %s failed and rollback move also failed (DB/disk diverged, run `polka repair`): update=%v rollback=%w", a.ID, err, backErr)

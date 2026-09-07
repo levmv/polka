@@ -19,7 +19,7 @@ test.describe('Reader', () => {
     const card = page.locator('.book-card', { hasText: title });
     await expect(card).toBeVisible();
     const href = await card.locator('.book-title-link').getAttribute('href');
-    const bookId = href?.split('/').pop()?.split('?')[0];
+    const bookId = Number(href?.split('/').pop()?.split('?')[0]);
     if (!bookId) throw new Error('missing vertical EPUB book id');
 
     try {
@@ -67,7 +67,7 @@ test.describe('Reader', () => {
         data: { ids: [bookId] },
       });
       expect(trash.ok()).toBeTruthy();
-      const purge = await page.request.delete(`/api/books/${encodeURIComponent(bookId)}/purge`);
+      const purge = await page.request.delete(`/api/books/${bookId}/purge`);
       expect(purge.status()).toBe(204);
     }
   });
@@ -75,7 +75,7 @@ test.describe('Reader', () => {
   test('EPUB reader supports controls and persists reading state', async ({ page }) => {
     const reader = page.locator('.reader-page');
     const displayToggle = page.locator('[data-reader-display-toggle]');
-    let bookId = '';
+    let bookId = 0;
     let assetId = '';
 
     await test.step('opens with the default layout', async () => {
@@ -86,7 +86,7 @@ test.describe('Reader', () => {
       const href = await card.locator('.book-title-link').getAttribute('href');
       if (!href) throw new Error('missing book link');
       // The href carries the ?from= context; the id is the path alone.
-      bookId = (href.split('/').pop() || '').split('?')[0];
+      bookId = Number(href.split('/').pop()?.split('?')[0]);
       if (!bookId) throw new Error('missing book id');
 
       await page.goto(`/read/${bookId}`);
@@ -438,7 +438,7 @@ test.describe('Reader', () => {
     const card = page.locator('.book-card', { hasText: title });
     await expect(card).toBeVisible();
     const href = await card.locator('.book-title-link').getAttribute('href');
-    const bookId = href?.split('/').pop()?.split('?')[0];
+    const bookId = Number(href?.split('/').pop()?.split('?')[0]);
     if (!bookId) throw new Error('missing tolerated EPUB book id');
 
     try {
@@ -466,7 +466,7 @@ test.describe('Reader', () => {
         data: { ids: [bookId] },
       });
       expect(trash.ok()).toBeTruthy();
-      const purge = await page.request.delete(`/api/books/${encodeURIComponent(bookId)}/purge`);
+      const purge = await page.request.delete(`/api/books/${bookId}/purge`);
       expect(purge.status()).toBe(204);
     }
   });
@@ -485,7 +485,7 @@ test.describe('Reader', () => {
     const card = page.locator('.book-card', { hasText: title });
     await expect(card).toBeVisible();
     const href = await card.locator('.book-title-link').getAttribute('href');
-    const bookId = href?.split('/').pop()?.split('?')[0];
+    const bookId = Number(href?.split('/').pop()?.split('?')[0]);
     if (!bookId) throw new Error('missing UTF-8 path EPUB book id');
 
     try {
@@ -512,7 +512,7 @@ test.describe('Reader', () => {
         data: { ids: [bookId] },
       });
       expect(trash.ok()).toBeTruthy();
-      const purge = await page.request.delete(`/api/books/${encodeURIComponent(bookId)}/purge`);
+      const purge = await page.request.delete(`/api/books/${bookId}/purge`);
       expect(purge.status()).toBe(204);
     }
   });
@@ -523,7 +523,7 @@ test.describe('Reader', () => {
     await expect(card).toBeVisible();
 
     const href = await card.locator('.book-title-link').getAttribute('href');
-    const bookId = href?.split('/').pop();
+    const bookId = Number(href?.split('/').pop()?.split('?')[0]);
     if (!bookId) throw new Error('missing book id');
 
     await page.goto(`/read/${bookId}`);

@@ -65,7 +65,7 @@ type SeriesCard struct {
 	Author        string
 	BookCount     int
 	FinishedCount int
-	CoverBookID   string
+	CoverBookID   int64
 	CoverVersion  int
 }
 

@@ -20,14 +20,7 @@ import { beginGlobalLoading } from '../loading-indicator';
 import { confirmModal, openModal, registerOverlayReopen, updateOverlayEntry } from '../modal';
 import { titleSort } from '../titles';
 import { showToast } from '../toast';
-import type {
-    Author,
-    Book,
-    BookSequenceItem,
-    BookSequenceWindow,
-    BookSummary,
-    BookUpdate,
-} from '../types';
+import type { Author, Book, BookSequenceItem, BookSequenceWindow, BookSummary } from '../types';
 import { activeBookDetailHost, type BookDetailHost } from './book-detail-host';
 import {
     type CoverDraftController,
@@ -76,7 +69,7 @@ function renderDateHint(el: HTMLElement | null, b: Book) {
     el.style.display = 'flex';
 }
 
-function syncEditFormFromBook(form: HTMLFormElement, b: Book, uiID: string = b.id) {
+function syncEditFormFromBook(form: HTMLFormElement, b: Book, uiID: string = String(b.id)) {
     const f = form as any;
     f.title.value = b.title || '';
     f.sort_title.value = b.sort_title || b.title || '';
@@ -111,7 +104,7 @@ registerOverlayReopen(BOOK_EDIT_OVERLAY, (overlay) => {
     const fromBook = isBookPath(window.location.pathname);
     const listContext = readBookListContextFromLocation();
     const host = fromBook ? activeBookDetailHost() : null;
-    void openEditModal({ id: overlay.target }, listContext, null, host);
+    void openEditModal({ id: Number(overlay.target) }, listContext, null, host);
 });
 
 export async function openEditModal(
@@ -123,7 +116,7 @@ export async function openEditModal(
     host?: BookDetailHost | null,
 ) {
     let cancelled = false;
-    const overlay: OverlayEntry = { kind: BOOK_EDIT_OVERLAY, target: summary.id };
+    const overlay: OverlayEntry = { kind: BOOK_EDIT_OVERLAY, target: String(summary.id) };
     const { modal, root } = openModal({
         title: 'Edit book',
         body: `
@@ -177,7 +170,7 @@ function openLoadedEditModal(
     // matter where edit was opened from, instead of trusting the caller's shape.
     host?.showBook(b, listContext);
     // Element ids stay pinned to the opened modal; Save & Next rebinds b below.
-    const uiID = b.id;
+    const uiID = String(b.id);
     let coverDraft: CoverDraftController | null = null;
     let overlay = initialOverlay;
 
@@ -581,7 +574,7 @@ function openLoadedEditModal(
             if (closed) return;
             b = nextBook;
             host?.showBook(b, listContext);
-            overlay = { ...overlay, target: b.id };
+            overlay = { ...overlay, target: String(b.id) };
             updateOverlayEntry(overlay);
             syncEditFormFromBook(form, b, uiID);
             savedState = readEditForm(form);
@@ -1205,7 +1198,7 @@ async function maybeOfferAuthorConvergence(
     b: Book,
     prevAuthors: string,
     nextAuthors: string,
-    uiID: string = b.id,
+    uiID: string = String(b.id),
 ) {
     const oldTokens = splitAuthors(prevAuthors);
     const newTokens = splitAuthors(nextAuthors);

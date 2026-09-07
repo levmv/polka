@@ -126,14 +126,12 @@ func TestAPIAppTokensErrors(t *testing.T) {
 	if w.Code != http.StatusConflict {
 		t.Fatalf("duplicate create status = %d, want %d", w.Code, http.StatusConflict)
 	}
-
-	if _, err := database.Exec(`
+	mustExec(t, database, `
 		CREATE TRIGGER fail_broken_token
 		BEFORE INSERT ON app_tokens WHEN NEW.name = 'Broken'
 		BEGIN SELECT RAISE(ABORT, 'forced token insert failure'); END
-	`); err != nil {
-		t.Fatalf("create failing token trigger: %v", err)
-	}
+	`)
+
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, jsonRequest(t, s, user.ID, http.MethodPost, "/api/app-tokens", appTokenCreateRequest{Name: "Broken"}))
 	if w.Code != http.StatusInternalServerError || strings.TrimSpace(w.Body.String()) != "Internal server error" {

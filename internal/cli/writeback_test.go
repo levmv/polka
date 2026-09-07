@@ -19,12 +19,12 @@ func TestLibraryWritebackDryRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("InitPath: %v", err)
 	}
-	if _, err := database.Exec("INSERT INTO books (id, title, sort_title, metadata_rev) VALUES ('w1', 'Book', 'Book', 1)"); err != nil {
+	if _, err := database.Write(t.Context()).Exec("INSERT INTO books (id, title, sort_title, metadata_rev) VALUES (1, 'Book', 'Book', 1)"); err != nil {
 		t.Fatalf("insert book: %v", err)
 	}
-	if _, err := database.Exec(`
+	if _, err := database.Write(t.Context()).Exec(`
 		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, writeback_rev)
-		VALUES ('as1', 'w1', 'A/Book/as1.epub', 'as1.epub', '.epub', 'epub', 0)
+		VALUES ('as1', 1, 'A/Book/as1.epub', 'as1.epub', '.epub', 'epub', 0)
 	`); err != nil {
 		t.Fatalf("insert asset: %v", err)
 	}

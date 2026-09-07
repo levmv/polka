@@ -61,7 +61,7 @@ type appBootstrapDTO struct {
 func (s *Server) handleApp(w http.ResponseWriter, r *http.Request) {
 	data, err := s.appPageData(r)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -84,16 +84,16 @@ const appContentSecurityPolicy = "default-src 'self'; script-src 'self'; " +
 
 func (s *Server) appPageData(r *http.Request) (appPageData, error) {
 	userID := UserID(r.Context())
-	u, err := s.db.GetUserByID(userID)
+	u, err := db.GetUserByID(s.db.Read(r.Context()), userID)
 	if err != nil {
 		return appPageData{}, err
 	}
-	settings, err := s.db.GetUserSettings(userID)
+	settings, err := db.GetUserSettings(s.db.Read(r.Context()), userID)
 	if err != nil {
 		return appPageData{}, err
 	}
 
-	sendEnabled, err := delivery.Enabled(s.db)
+	sendEnabled, err := delivery.Enabled(s.db.Read(r.Context()))
 	if err != nil {
 		return appPageData{}, err
 	}
@@ -139,7 +139,7 @@ func sessionCookieSecure(r *http.Request) bool {
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		// No accounts yet: the only meaningful action is creating the first admin.
-		if n, err := s.db.CountUsers(); err == nil && n == 0 {
+		if n, err := db.CountUsers(s.db.Read(r.Context())); err == nil && n == 0 {
 			http.Redirect(w, r, "/setup", http.StatusFound)
 			return
 		}
@@ -163,7 +163,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			if r.Context().Err() != nil {
 				return
 			}
-			serverError(w, err)
+			serverError(w, r, err)
 			return
 		}
 		if user == nil {
@@ -172,9 +172,9 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		sid, err := s.sessions.issue(user.ID)
+		sid, err := s.sessions.issue(r.Context(), user.ID)
 		if err != nil {
-			serverError(w, err)
+			serverError(w, r, err)
 			return
 		}
 		setSessionCookie(w, r, sid)
@@ -189,7 +189,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	var revokeErr error
 	if c, err := r.Cookie(sessionCookieName); err == nil {
-		revokeErr = s.sessions.revoke(c.Value)
+		revokeErr = s.sessions.revoke(r.Context(), c.Value)
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
@@ -201,7 +201,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		Secure:   sessionCookieSecure(r),
 	})
 	if revokeErr != nil {
-		serverError(w, revokeErr)
+		serverError(w, r, revokeErr)
 		return
 	}
 	http.Redirect(w, r, "/login", http.StatusFound)
@@ -211,9 +211,9 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 // only while the library has no users; later accounts are managed by an
 // authenticated admin or with `polka user`.
 func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
-	n, err := s.db.CountUsers()
+	n, err := db.CountUsers(s.db.Read(r.Context()))
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	if n > 0 {
@@ -244,7 +244,7 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		user, err := s.db.CreateInitialAdmin(username, password)
+		user, err := s.db.CreateInitialAdmin(r.Context(), username, password)
 		if err != nil {
 			if errors.Is(err, db.ErrSetupComplete) {
 				http.Redirect(w, r, "/login", http.StatusFound)
@@ -254,9 +254,9 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		sid, err := s.sessions.issue(user.ID)
+		sid, err := s.sessions.issue(r.Context(), user.ID)
 		if err != nil {
-			serverError(w, err)
+			serverError(w, r, err)
 			return
 		}
 		setSessionCookie(w, r, sid)

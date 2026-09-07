@@ -42,7 +42,7 @@ func (s *Server) handleAPIReadingActivity(w http.ResponseWriter, r *http.Request
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}
-	if writeReaderStateError(w, err) {
+	if writeReaderStateError(w, r, err) {
 		return
 	}
 	writeJSON(w, http.StatusOK, result)

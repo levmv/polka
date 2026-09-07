@@ -125,8 +125,8 @@ func NewService(database *db.DB, root storage.Root, path string, opts Options) *
 	}
 }
 
-func NewServiceFromSettings(database *db.DB, dataDir string, root storage.Root, opts Options) (*Service, error) {
-	cfg, err := OpenConfig(database, dataDir)
+func NewServiceFromSettings(ctx context.Context, database *db.DB, dataDir string, root storage.Root, opts Options) (*Service, error) {
+	cfg, err := OpenConfig(database.Read(ctx), dataDir)
 	if err != nil {
 		return nil, err
 	}
@@ -189,7 +189,7 @@ func (s *Service) ScanOnce(ctx context.Context, force bool) (Summary, error) {
 		return summary, nil
 	}
 
-	catalogHasBooks, err := db.HasAnyAsset(s.db)
+	catalogHasBooks, err := db.HasAnyAsset(s.db.Read(ctx))
 	if err != nil {
 		s.setLastError(err)
 		return summary, err
@@ -202,7 +202,7 @@ func (s *Service) ScanOnce(ctx context.Context, force bool) (Summary, error) {
 	renderer := pdfcover.NewRenderer()
 	defer renderer.Close()
 	importOptions := importer.Options{CoverRoot: s.coverRoot}
-	template, err := storage.OpenBookPathTemplate(s.db)
+	template, err := storage.OpenBookPathTemplate(s.db.Read(ctx))
 	if err != nil {
 		s.setLastError(err)
 		return summary, err

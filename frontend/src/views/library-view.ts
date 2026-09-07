@@ -832,7 +832,7 @@ function currentLibraryContext(state: LibraryViewState): BookListContext {
 
 function currentLibrarySequence(
     state: LibraryViewState,
-    bookID: string,
+    bookID: number,
 ): BookSequenceWindow | null {
     // A jumped page does not contain the preceding slice, so let the edit
     // controller fetch its bounded server-side window instead of temporarily
@@ -948,30 +948,28 @@ function replaceRenderedBook(state: LibraryViewState, updated: BookSummary): voi
 
     if (state.view === 'table') {
         const row = state.root.querySelector<HTMLTableRowElement>(
-            `.table-row[data-id=${CSS.escape(updated.id)}]`,
+            `.table-row[data-id="${updated.id}"]`,
         );
         row?.replaceWith(createBookRow(state, updated));
         state.selection?.syncAfterRender();
         return;
     }
 
-    const card = state.root.querySelector<HTMLElement>(
-        `.book-card[data-id=${CSS.escape(updated.id)}]`,
-    );
+    const card = state.root.querySelector<HTMLElement>(`.book-card[data-id="${updated.id}"]`);
     card?.replaceWith(createBookCard(updated, currentLibraryContext(state)));
     state.selection?.syncAfterRender();
 }
 
 // removeRenderedBooks drops the given books from view state and the DOM without
 // re-rendering the rest, then re-syncs selection so no trashed id lingers.
-function removeRenderedBooks(state: LibraryViewState, ids: string[]): void {
+function removeRenderedBooks(state: LibraryViewState, ids: number[]): void {
     if (ids.length === 0) return;
     const drop = new Set(ids);
     state.books = state.books.filter((book) => !drop.has(book.id));
     const container = state.root.querySelector<HTMLElement>('#library-grid');
     const selector = renderedBookSelector(state);
     for (const id of ids) {
-        container?.querySelector<HTMLElement>(`${selector}[data-id=${CSS.escape(id)}]`)?.remove();
+        container?.querySelector<HTMLElement>(`${selector}[data-id="${id}"]`)?.remove();
     }
     state.selection?.syncAfterRender();
     if (state.books.length === 0) renderBooks(state, state.books);
@@ -1178,7 +1176,7 @@ function tagsCellHtml(b: BookSummary): string {
 function createBookRow(state: LibraryViewState, b: BookSummary): HTMLTableRowElement {
     const tr = document.createElement('tr');
     tr.className = 'table-row';
-    tr.dataset.id = b.id;
+    tr.dataset.id = String(b.id);
 
     const href = escapeHtml(bookURL(b.id, currentLibraryContext(state)));
     const coverHtml = `<a href="${href}" class="table-cover-link"><img loading="lazy" src="${coverUrl(b.id, b.cover_version, 'thumb')}" class="table-cover-image" alt=""></a>`;

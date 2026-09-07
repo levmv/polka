@@ -15,8 +15,15 @@ func newTestDB(t testing.TB) *DB {
 	return database
 }
 
-func bookIDs(books []BookSummaryRow) []string {
-	ids := make([]string, 0, len(books))
+func mustExec(t testing.TB, database *DB, query string, args ...any) {
+	t.Helper()
+	if _, err := database.Write(t.Context()).Exec(query, args...); err != nil {
+		t.Fatalf("exec %q: %v", query, err)
+	}
+}
+
+func bookIDs(books []BookSummaryRow) []int64 {
+	ids := make([]int64, 0, len(books))
 	for _, book := range books {
 		ids = append(ids, book.ID)
 	}

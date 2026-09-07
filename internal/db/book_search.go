@@ -2,7 +2,6 @@ package db
 
 import (
 	"crypto/sha256"
-	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -32,9 +31,8 @@ func ValidateSearchQuery(q string) SearchQueryValidation {
 	return SearchQueryValidation{Valid: true, scopeMatch: scopeMatch}
 }
 
-// ParseQuery converts a user query into the FTS5 MATCH part of the search. It
-// remains public for small query builders and diagnostics; relational filters
-// such as no:cover and status:reading intentionally do not appear in the result.
+// ParseQuery converts a user query into the FTS5 MATCH expression. Relational
+// filters such as no:cover and status:reading do not appear in the result.
 func ParseQuery(q string) string {
 	parsed, _ := parseSearchQuery(q, true)
 	return parsed.ftsMatch()
@@ -48,13 +46,7 @@ func QueryTerm(field, value string) string {
 
 // UpdateSearchIndex rebuilds the search table row for a book from the
 // relational catalog.
-func UpdateSearchIndex(tx *sql.Tx, bookID string) error {
-	if _, err := tx.Exec("DELETE FROM search WHERE book_id = ?", bookID); err != nil {
-		return fmt.Errorf("delete search: %w", err)
-	}
-
-	// Gather every indexed field in one pass: the direct books columns plus the
-	// authors (reusing colAuthors) and filenames as correlated subqueries.
+func UpdateSearchIndex(tx *Tx, bookID int64) error {
 	var title, series, tags, description, identifiers, authors, filenames string
 	err := tx.QueryRow(fmt.Sprintf(`
 		SELECT
@@ -73,9 +65,9 @@ func UpdateSearchIndex(tx *sql.Tx, bookID string) error {
 	}
 
 	if _, err := tx.Exec(`
-		INSERT INTO search (rowid, book_id, title, authors, series, tags, description, identifiers, filename, tag_keys)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, nil, bookID, title, authors, series, tags, description, identifiers, filenames, TagSearchKeys(tags)); err != nil {
+		INSERT OR REPLACE INTO search (rowid, title, authors, series, tags, description, identifiers, filename, tag_keys)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, bookID, title, authors, series, tags, description, identifiers, filenames, TagSearchKeys(tags)); err != nil {
 		return fmt.Errorf("insert search: %w", err)
 	}
 	return nil
@@ -424,7 +416,7 @@ func newBookSearchPlan(scope VisibilityScope, userID int64, rawQuery string) boo
 	joined := "books b"
 	where := "b.deleted_at IS NULL"
 	if match != "" {
-		joined = "search s JOIN books b ON s.book_id = b.id"
+		joined = "search s JOIN books b ON s.rowid = b.id"
 		where = "search MATCH ? AND " + where
 	}
 

@@ -126,9 +126,8 @@ func TestAPISendOptionsPlansKindleEPUB(t *testing.T) {
 	defer database.Close()
 
 	admin := mustUser(t, database, "admin", db.RoleAdmin)
-	if _, err := database.Exec("UPDATE assets SET format = 'epub', current_size = 1024, is_primary = 1 WHERE id = 'asset_1'"); err != nil {
-		t.Fatalf("update asset: %v", err)
-	}
+	mustExec(t, database, "UPDATE assets SET format = 'epub', current_size = 1024, is_primary = 1 WHERE id = 'asset_1'")
+
 	enableSending(t, database)
 	s := newTestServer(database, dir)
 	handler := testRoutes(t, s)
@@ -155,7 +154,7 @@ func TestAPISendOptionsPlansKindleEPUB(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, admin.ID, http.MethodGet, "/api/send/options?book=w_1", nil))
+	handler.ServeHTTP(w, jsonRequest(t, s, admin.ID, http.MethodGet, "/api/send/options?book=1", nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("send options status = %d; body: %s", w.Code, w.Body.String())
 	}
@@ -179,13 +178,12 @@ func TestAPISendOptionsChoicesUsePersistedFormat(t *testing.T) {
 	defer database.Close()
 
 	admin := mustUser(t, database, "admin", db.RoleAdmin)
-	if _, err := database.Exec(`
-		INSERT INTO books (id, title, sort_title) VALUES ('w_fb2_zip', 'FB2 Zip', 'FB2 Zip');
+	mustExec(t, database, `
+		INSERT INTO books (id, title, sort_title) VALUES (132, 'FB2 Zip', 'FB2 Zip');
 		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, current_size, is_primary)
-			VALUES ('asset_fb2_zip', 'w_fb2_zip', 'Books/fb2.zip', 'fb2.zip', '.fb2.zip', 'fb2', 1024, 1);
-	`); err != nil {
-		t.Fatalf("seed fb2.zip asset: %v", err)
-	}
+			VALUES ('asset_fb2_zip', 132, 'Books/fb2.zip', 'fb2.zip', '.fb2.zip', 'fb2', 1024, 1);
+	`)
+
 	enableSending(t, database)
 	s := newTestServer(database, dir)
 	handler := testRoutes(t, s)
@@ -213,7 +211,7 @@ func TestAPISendOptionsChoicesUsePersistedFormat(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, admin.ID, http.MethodGet, "/api/send/options?book=w_fb2_zip", nil))
+	handler.ServeHTTP(w, jsonRequest(t, s, admin.ID, http.MethodGet, "/api/send/options?book=132", nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("send options status = %d; body: %s", w.Code, w.Body.String())
 	}
@@ -341,7 +339,7 @@ func TestRunDeliveryJobUsesTransportAndMarksSent(t *testing.T) {
 			if string(got) != "epub content" {
 				t.Fatalf("delivery copy content = %q", got)
 			}
-			current, err := database.GetDeliveryJobByID(job.ID)
+			current, err := db.GetDeliveryJobByID(database.Read(ctx), job.ID)
 			if err != nil {
 				t.Fatalf("get job during transport: %v", err)
 			}
@@ -362,7 +360,7 @@ func TestRunDeliveryJobUsesTransportAndMarksSent(t *testing.T) {
 	if _, err := os.Stat(copyPath); !os.IsNotExist(err) {
 		t.Fatalf("delivery temp copy after success stat err = %v, want not exist", err)
 	}
-	reloaded, err := database.GetDeliveryJobByID(job.ID)
+	reloaded, err := db.GetDeliveryJobByID(database.Read(t.Context()), job.ID)
 	if err != nil {
 		t.Fatalf("reload job: %v", err)
 	}
@@ -403,7 +401,7 @@ func TestRunDeliveryJobHidesUnexpectedTransportErrorAndCleansTempCopy(t *testing
 	if _, err := os.Stat(copyPath); !os.IsNotExist(err) {
 		t.Fatalf("delivery temp copy after failure stat err = %v, want not exist", err)
 	}
-	reloaded, err := database.GetDeliveryJobByID(job.ID)
+	reloaded, err := db.GetDeliveryJobByID(database.Read(t.Context()), job.ID)
 	if err != nil {
 		t.Fatalf("reload job: %v", err)
 	}
@@ -429,7 +427,7 @@ func TestRunDeliveryJobStoresTransportUserMessage(t *testing.T) {
 	if err := s.runDeliveryJob(context.Background(), job.ID); err != nil {
 		t.Fatalf("runDeliveryJob: %v", err)
 	}
-	reloaded, err := database.GetDeliveryJobByID(job.ID)
+	reloaded, err := db.GetDeliveryJobByID(database.Read(t.Context()), job.ID)
 	if err != nil {
 		t.Fatalf("reload job: %v", err)
 	}
@@ -458,7 +456,7 @@ func TestRunDeliveryJobFinalSizeGuardSkipsTransport(t *testing.T) {
 	if transport.calls != 0 {
 		t.Fatalf("transport calls = %d, want 0", transport.calls)
 	}
-	reloaded, err := database.GetDeliveryJobByID(job.ID)
+	reloaded, err := db.GetDeliveryJobByID(database.Read(t.Context()), job.ID)
 	if err != nil {
 		t.Fatalf("reload job: %v", err)
 	}
@@ -507,7 +505,7 @@ func TestDeliveryWorkerDrainsDurableQueueSerially(t *testing.T) {
 
 	statusCounts := map[string]int{}
 	for _, job := range jobs {
-		current, err := database.GetDeliveryJobByID(job.ID)
+		current, err := db.GetDeliveryJobByID(database.Read(ctx), job.ID)
 		if err != nil {
 			t.Fatalf("get job while first send is blocked: %v", err)
 		}
@@ -522,7 +520,7 @@ func TestDeliveryWorkerDrainsDurableQueueSerially(t *testing.T) {
 	for {
 		sent := 0
 		for _, job := range jobs {
-			current, err := database.GetDeliveryJobByID(job.ID)
+			current, err := db.GetDeliveryJobByID(database.Read(ctx), job.ID)
 			if err != nil {
 				t.Fatalf("get drained job: %v", err)
 			}
@@ -574,7 +572,7 @@ func TestSendingSwitchGatesDeliveryAPI(t *testing.T) {
 	sendOptions := func() SendOptionsDTO {
 		t.Helper()
 		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, jsonRequest(t, s, admin.ID, http.MethodGet, "/api/send/options?book=w_1", nil))
+		handler.ServeHTTP(rec, jsonRequest(t, s, admin.ID, http.MethodGet, "/api/send/options?book=1", nil))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("send options status = %d; body: %s", rec.Code, rec.Body.String())
 		}
@@ -591,7 +589,7 @@ func TestSendingSwitchGatesDeliveryAPI(t *testing.T) {
 
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, jsonRequest(t, s, admin.ID, http.MethodPost, "/api/deliveries", map[string]any{
-		"book_id": "w_1",
+		"book_id": 1,
 	}))
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("create delivery while off = %d, want %d; body: %s", w.Code, http.StatusForbidden, w.Body.String())
@@ -652,14 +650,14 @@ func (e testUserMessageError) UserMessage() string {
 
 func enableSending(t *testing.T, database *db.DB) {
 	t.Helper()
-	if err := delivery.SaveEnabled(database, true); err != nil {
+	if err := delivery.SaveEnabled(database.Write(t.Context()), true); err != nil {
 		t.Fatalf("enable sending: %v", err)
 	}
 }
 
 func seedDeliveryEmailSettings(t *testing.T, database *db.DB, attachmentLimitMB int) {
 	t.Helper()
-	if err := delivery.SaveSMTPConfig(database, delivery.SMTPConfig{
+	if err := delivery.SaveSMTPConfig(database.Write(t.Context()), delivery.SMTPConfig{
 		Host:              "smtp.example.org",
 		Port:              delivery.DefaultSMTPPort,
 		Security:          delivery.SMTPSecurityPlain,
@@ -673,12 +671,12 @@ func seedDeliveryEmailSettings(t *testing.T, database *db.DB, attachmentLimitMB 
 
 func createQueuedDeliveryJob(t *testing.T, database *db.DB, userID int64, target sql.NullString) *db.DeliveryJob {
 	t.Helper()
-	job, err := database.CreateDeliveryJob(db.DeliveryJob{
+	job, err := database.CreateDeliveryJob(t.Context(), db.DeliveryJob{
 		UserID:      userID,
 		DeviceName:  "Kindle",
 		DeviceEmail: "reader@kindle.com",
 		Preset:      db.DeliveryPresetKindle,
-		BookID:      "w_1",
+		BookID:      1,
 		AssetID:     sql.NullString{String: "asset_1", Valid: true},
 		Title:       "The Hobbit",
 		Target:      target,

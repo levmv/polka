@@ -59,7 +59,7 @@ func TestSetupConcurrentRequestsCreateOneAdmin(t *testing.T) {
 			t.Fatal("setup did not finish")
 		}
 	}
-	if n, err := database.CountUsers(); err != nil || n != 1 || sessions != 1 {
+	if n, err := db.CountUsers(database.Read(t.Context())); err != nil || n != 1 || sessions != 1 {
 		t.Fatalf("users = %d, sessions = %d, err = %v; want one initial admin and session", n, sessions, err)
 	}
 }
@@ -105,7 +105,7 @@ func TestSetupCrossOriginProtection(t *testing.T) {
 			if w.Code != wantStatus {
 				t.Errorf("setup status = %d, want %d: %s", w.Code, wantStatus, w.Body.String())
 			}
-			if n, err := database.CountUsers(); err != nil || n != wantUsers {
+			if n, err := db.CountUsers(database.Read(req.Context())); err != nil || n != wantUsers {
 				t.Fatalf("users = %d, err = %v; want %d", n, err, wantUsers)
 			}
 		})
@@ -116,14 +116,13 @@ func TestAppPageContentSecurityPolicy(t *testing.T) {
 	database, dir := setupTestDB(t)
 	defer database.Close()
 
-	user, err := database.CreateUser("admin", "password", db.RoleAdmin)
+	user, err := database.CreateUser(t.Context(), "admin", "password", db.RoleAdmin)
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
 	const hostileUsername = `</script><script>alert(1)</script>`
-	if _, err := database.Exec("UPDATE users SET username = ? WHERE id = ?", hostileUsername, user.ID); err != nil {
-		t.Fatalf("set hostile username: %v", err)
-	}
+	mustExec(t, database, "UPDATE users SET username = ? WHERE id = ?", hostileUsername, user.ID)
+
 	s := &Server{db: database, dataDir: dir}
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req = req.WithContext(withUserID(req.Context(), user.ID))

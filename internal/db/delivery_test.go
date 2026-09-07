@@ -10,7 +10,7 @@ import (
 
 func TestDeliveryDeviceLifecycleKeepsOneDefault(t *testing.T) {
 	database := newTestDB(t)
-	user, err := database.CreateUser("alice", "pw", RoleReader)
+	user, err := database.CreateUser(t.Context(), "alice", "pw", RoleReader)
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
@@ -29,7 +29,7 @@ func TestDeliveryDeviceLifecycleKeepsOneDefault(t *testing.T) {
 	if !second.IsDefault {
 		t.Fatalf("second device should be default: %+v", second)
 	}
-	first, err = database.GetDeliveryDevice(user.ID, first.ID)
+	first, err = GetDeliveryDevice(database.Read(t.Context()), user.ID, first.ID)
 	if err != nil {
 		t.Fatalf("reload first: %v", err)
 	}
@@ -44,7 +44,7 @@ func TestDeliveryDeviceLifecycleKeepsOneDefault(t *testing.T) {
 	if err := database.DeleteDeliveryDevice(context.Background(), user.ID, second.ID); err != nil {
 		t.Fatalf("delete second: %v", err)
 	}
-	first, err = database.GetDeliveryDevice(user.ID, first.ID)
+	first, err = GetDeliveryDevice(database.Read(t.Context()), user.ID, first.ID)
 	if err != nil {
 		t.Fatalf("reload promoted first: %v", err)
 	}
@@ -55,72 +55,70 @@ func TestDeliveryDeviceLifecycleKeepsOneDefault(t *testing.T) {
 
 func TestDeliveryBookForPlanAppliesScope(t *testing.T) {
 	database := newTestDB(t)
-	user, err := database.CreateUser("reader", "pw", RoleReader)
+	user, err := database.CreateUser(t.Context(), "reader", "pw", RoleReader)
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
-	shelf, err := database.CreateShelf(user.ID, ShelfShared, "Allowed", ShelfManual, "")
+	shelf, err := database.CreateShelf(t.Context(), user.ID, ShelfShared, "Allowed", ShelfManual, "")
 	if err != nil {
 		t.Fatalf("create shelf: %v", err)
 	}
-	if _, err := database.Exec(`
-		INSERT INTO books (id, title, sort_title) VALUES ('allowed', 'Allowed', 'Allowed');
-		INSERT INTO books (id, title, sort_title) VALUES ('blocked', 'Blocked', 'Blocked');
+	mustExec(t, database, `
+		INSERT INTO books (id, title, sort_title) VALUES (11, 'Allowed', 'Allowed');
+		INSERT INTO books (id, title, sort_title) VALUES (12, 'Blocked', 'Blocked');
 		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, current_size, is_primary)
-			VALUES ('asset_allowed', 'allowed', 'a.epub', 'a.epub', '.epub', 'epub', 100, 1);
+			VALUES ('asset_allowed', 11, 'a.epub', 'a.epub', '.epub', 'epub', 100, 1);
 		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, current_size, is_primary)
-			VALUES ('asset_blocked', 'blocked', 'b.epub', 'b.epub', '.epub', 'epub', 100, 1);
-	`); err != nil {
-		t.Fatalf("seed books/assets: %v", err)
-	}
-	if err := database.AddBookToShelf(shelf.ID, 0, "allowed"); err != nil {
+			VALUES ('asset_blocked', 12, 'b.epub', 'b.epub', '.epub', 'epub', 100, 1);
+	`)
+
+	if err := database.AddBookToShelf(t.Context(), shelf.ID, 0, 11); err != nil {
 		t.Fatalf("add allowed to shelf: %v", err)
 	}
-	if _, err := database.UpdateUserAccess(user.ID, UserAccess{Role: RoleReader, ContentScope: ContentScopeShelves, ShelfIDs: []string{shelf.ID}}); err != nil {
+	if _, err := database.UpdateUserAccess(t.Context(), user.ID, UserAccess{Role: RoleReader, ContentScope: ContentScopeShelves, ShelfIDs: []string{shelf.ID}}); err != nil {
 		t.Fatalf("scope user: %v", err)
 	}
-	scope, err := database.VisibilityScopeForUser(user.ID)
+	scope, err := VisibilityScopeForUser(database.Read(t.Context()), user.ID)
 	if err != nil {
 		t.Fatalf("scope: %v", err)
 	}
 
-	book, assets, err := database.DeliveryBookForPlan(scope, "allowed")
+	book, assets, err := DeliveryBookForPlan(database.Read(t.Context()), scope, 11)
 	if err != nil {
 		t.Fatalf("allowed book: %v", err)
 	}
-	if book.ID != "allowed" || len(assets) != 1 || assets[0].ID != "asset_allowed" {
+	if book.ID != 11 || len(assets) != 1 || assets[0].ID != "asset_allowed" {
 		t.Fatalf("allowed book/assets = %+v %+v", book, assets)
 	}
-	if _, _, err := database.DeliveryBookForPlan(scope, "blocked"); !errors.Is(err, sql.ErrNoRows) {
+	if _, _, err := DeliveryBookForPlan(database.Read(t.Context()), scope, 12); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("blocked err = %v, want sql.ErrNoRows", err)
 	}
 }
 
 func TestDeliveryJobLifecycle(t *testing.T) {
 	database := newTestDB(t)
-	user, err := database.CreateUser("alice", "pw", RoleReader)
+	user, err := database.CreateUser(t.Context(), "alice", "pw", RoleReader)
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
-	if _, err := database.Exec(`
-		INSERT INTO books (id, title, sort_title) VALUES ('w1', 'Book', 'Book');
+	mustExec(t, database, `
+		INSERT INTO books (id, title, sort_title) VALUES (1, 'Book', 'Book');
 		INSERT INTO assets (id, book_id, storage_path, filename, extension, format)
-			VALUES ('a1', 'w1', 'a.epub', 'a.epub', '.epub', 'epub');
-	`); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
+			VALUES ('a1', 1, 'a.epub', 'a.epub', '.epub', 'epub');
+	`)
+
 	device, err := database.CreateDeliveryDevice(context.Background(), user.ID, "Kindle", "alice@kindle.com", DeliveryPresetKindle, true)
 	if err != nil {
 		t.Fatalf("create device: %v", err)
 	}
 
-	job, err := database.CreateDeliveryJob(DeliveryJob{
+	job, err := database.CreateDeliveryJob(t.Context(), DeliveryJob{
 		UserID:      user.ID,
 		DeviceID:    sql.NullString{String: device.ID, Valid: true},
 		DeviceName:  device.Name,
 		DeviceEmail: device.Email,
 		Preset:      device.Preset,
-		BookID:      "w1",
+		BookID:      1,
 		AssetID:     sql.NullString{String: "a1", Valid: true},
 		Title:       "Book",
 		Filename:    "Book.epub",
@@ -132,16 +130,16 @@ func TestDeliveryJobLifecycle(t *testing.T) {
 	if job.Status != DeliveryStatusQueued {
 		t.Fatalf("new job status = %q", job.Status)
 	}
-	if err := database.SetDeliveryJobStatus(job.ID, DeliveryStatusSending, ""); err != nil {
+	if err := database.SetDeliveryJobStatus(t.Context(), job.ID, DeliveryStatusSending, ""); err != nil {
 		t.Fatalf("set sending: %v", err)
 	}
-	converting, err := database.CreateDeliveryJob(DeliveryJob{
+	converting, err := database.CreateDeliveryJob(t.Context(), DeliveryJob{
 		ID:          "dj_converting",
 		UserID:      user.ID,
 		DeviceName:  device.Name,
 		DeviceEmail: device.Email,
 		Preset:      device.Preset,
-		BookID:      "w1",
+		BookID:      1,
 		AssetID:     sql.NullString{String: "a1", Valid: true},
 		Title:       "Book",
 		Filename:    "Book.epub",
@@ -149,16 +147,16 @@ func TestDeliveryJobLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create converting job: %v", err)
 	}
-	if err := database.SetDeliveryJobStatus(converting.ID, DeliveryStatusConverting, ""); err != nil {
+	if err := database.SetDeliveryJobStatus(t.Context(), converting.ID, DeliveryStatusConverting, ""); err != nil {
 		t.Fatalf("set converting: %v", err)
 	}
-	queued, err := database.CreateDeliveryJob(DeliveryJob{
+	queued, err := database.CreateDeliveryJob(t.Context(), DeliveryJob{
 		ID:          "dj_queued",
 		UserID:      user.ID,
 		DeviceName:  device.Name,
 		DeviceEmail: device.Email,
 		Preset:      device.Preset,
-		BookID:      "w1",
+		BookID:      1,
 		AssetID:     sql.NullString{String: "a1", Valid: true},
 		Title:       "Book",
 		Filename:    "Book.epub",
@@ -167,31 +165,31 @@ func TestDeliveryJobLifecycle(t *testing.T) {
 		t.Fatalf("create queued job: %v", err)
 	}
 
-	if err := database.RecoverDeliveryJobs(); err != nil {
+	if err := database.RecoverDeliveryJobs(t.Context()); err != nil {
 		t.Fatalf("recover deliveries: %v", err)
 	}
-	job, err = database.GetDeliveryJob(user.ID, job.ID)
+	job, err = GetDeliveryJob(database.Read(t.Context()), user.ID, job.ID)
 	if err != nil {
 		t.Fatalf("reload job: %v", err)
 	}
 	if job.Status != DeliveryStatusFailed || !strings.Contains(job.Error, "may have been sent") {
 		t.Fatalf("interrupted sending job = %+v", job)
 	}
-	converting, err = database.GetDeliveryJob(user.ID, converting.ID)
+	converting, err = GetDeliveryJob(database.Read(t.Context()), user.ID, converting.ID)
 	if err != nil {
 		t.Fatalf("reload converting job: %v", err)
 	}
 	if converting.Status != DeliveryStatusQueued || converting.Error != "" {
 		t.Fatalf("recovered converting job = %+v, want queued", converting)
 	}
-	queued, err = database.GetDeliveryJob(user.ID, queued.ID)
+	queued, err = GetDeliveryJob(database.Read(t.Context()), user.ID, queued.ID)
 	if err != nil {
 		t.Fatalf("reload queued job: %v", err)
 	}
 	if queued.Status != DeliveryStatusQueued || queued.Error != "" {
 		t.Fatalf("untouched queued job = %+v", queued)
 	}
-	next, err := database.NextQueuedDeliveryJob()
+	next, err := NextQueuedDeliveryJob(database.Read(t.Context()))
 	if err != nil {
 		t.Fatalf("next queued delivery: %v", err)
 	}

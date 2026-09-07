@@ -8,7 +8,8 @@
 -- Unix milliseconds; publication dates and local calendar days are text.
 
 CREATE TABLE books (
-    id TEXT PRIMARY KEY,
+    -- Stable catalog identity and FTS address; deleted identities are not reused.
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
     title TEXT NOT NULL,
     sort_title TEXT NOT NULL,
     -- Denormalized primary author sort key for large-library list sorting.
@@ -45,17 +46,17 @@ CREATE TABLE books (
 -- Trash listing: only the soft-deleted books, newest-trashed first.
 CREATE INDEX idx_books_deleted_at ON books(deleted_at) WHERE deleted_at IS NOT NULL;
 
--- Browse indexes exclude Trash and follow the list queries' ordering/tie-breaks.
-CREATE INDEX idx_books_live_author_sort ON books(primary_author_sort, sort_title COLLATE NOCASE, title COLLATE NOCASE, id) WHERE deleted_at IS NULL;
-CREATE INDEX idx_books_live_added ON books(added_at DESC, id) WHERE deleted_at IS NULL;
-CREATE INDEX idx_books_live_title ON books(sort_title COLLATE NOCASE, title COLLATE NOCASE, id) WHERE deleted_at IS NULL;
-CREATE INDEX idx_books_live_pubdate ON books(published_date DESC, added_at DESC, id) WHERE deleted_at IS NULL;
+-- Browse indexes exclude Trash and follow the list queries' ordering.
+-- books.id is already stored as each index's implicit rowid tie-break.
+CREATE INDEX idx_books_live_author_sort ON books(primary_author_sort, sort_title COLLATE NOCASE, title COLLATE NOCASE) WHERE deleted_at IS NULL;
+CREATE INDEX idx_books_live_added ON books(added_at DESC) WHERE deleted_at IS NULL;
+CREATE INDEX idx_books_live_title ON books(sort_title COLLATE NOCASE, title COLLATE NOCASE) WHERE deleted_at IS NULL;
+CREATE INDEX idx_books_live_pubdate ON books(published_date DESC, added_at DESC) WHERE deleted_at IS NULL;
 CREATE INDEX idx_books_live_series_order ON books(
     series,
     CASE WHEN series_index IS NOT NULL AND series_index > 0 THEN 0 ELSE 1 END,
     CASE WHEN series_index IS NOT NULL AND series_index > 0 THEN series_index ELSE 0 END,
-    title COLLATE NOCASE,
-    id
+    title COLLATE NOCASE
 ) WHERE deleted_at IS NULL;
 
 -- storage_path is relative to the managed storage root. Access resolves the
@@ -63,7 +64,7 @@ CREATE INDEX idx_books_live_series_order ON books(
 -- the default file for workflows that need one asset per book.
 CREATE TABLE assets (
     id TEXT PRIMARY KEY,
-    book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
     storage_path TEXT NOT NULL,
     filename TEXT NOT NULL, -- Basename of the current storage_path.
     original_filename TEXT NOT NULL DEFAULT '', -- Basename at import.
@@ -133,7 +134,7 @@ CREATE INDEX idx_authors_name ON authors(name);
 -- author_order defines the display order and primary author. The first author
 -- is also the author used by canonical path construction.
 CREATE TABLE book_authors (
-    book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
     author_id TEXT NOT NULL REFERENCES authors(id) ON DELETE CASCADE,
     role TEXT,
     author_order INTEGER DEFAULT 0,
@@ -150,7 +151,7 @@ CREATE TABLE duplicate_dismissals (
     id           TEXT PRIMARY KEY,
     reason       TEXT NOT NULL,
     detector_key TEXT NOT NULL,
-    book_ids     TEXT NOT NULL, -- Sorted, newline-separated IDs of dismissed books.
+    book_ids     TEXT NOT NULL, -- JSON array of dismissed book IDs.
     created_at   INTEGER NOT NULL DEFAULT (unixepoch()),
     created_by   INTEGER REFERENCES users(id) ON DELETE SET NULL
 );
@@ -230,7 +231,7 @@ CREATE INDEX idx_shelves_owner_visibility_position ON shelves(owner_id, visibili
 
 CREATE TABLE shelf_books (
     shelf_id TEXT NOT NULL REFERENCES shelves(id) ON DELETE CASCADE,
-    book_id  TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    book_id  INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
     position INTEGER NOT NULL DEFAULT 0,
     added_at INTEGER NOT NULL DEFAULT (unixepoch()),
     PRIMARY KEY (shelf_id, book_id)
@@ -330,7 +331,7 @@ CREATE TABLE reading_session_days (
 -- No row means unread, so importing books creates no per-user status rows.
 CREATE TABLE user_book_reading_state (
     user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    book_id      TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    book_id      INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
     status       TEXT NOT NULL CHECK (status IN ('unread', 'reading', 'finished', 'dropped')),
     last_event_id TEXT,
     updated_at   INTEGER NOT NULL DEFAULT (unixepoch()),
@@ -343,7 +344,7 @@ CREATE TABLE user_book_reading_events (
     seq          INTEGER PRIMARY KEY AUTOINCREMENT,
     id           TEXT NOT NULL UNIQUE,
     user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    book_id      TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    book_id      INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
     -- Explicitly link one status history rather than deriving it from global
     -- insertion order. Duplicate merge can retain independent histories for
     -- the same resulting book without making Undo cross between them.
@@ -404,7 +405,7 @@ CREATE INDEX idx_kobo_connections_shelf_id ON kobo_connections(shelf_id);
 CREATE TABLE kobo_items (
     connection_id TEXT NOT NULL REFERENCES kobo_connections(id) ON DELETE CASCADE,
     asset_id       TEXT NOT NULL,
-    book_id        TEXT NOT NULL,
+    book_id        INTEGER NOT NULL,
     fingerprint    TEXT NOT NULL,
     present        INTEGER NOT NULL CHECK (present IN (0, 1)),
     revision       INTEGER NOT NULL CHECK (revision > 0),
@@ -461,7 +462,7 @@ CREATE TABLE delivery_jobs (
     device_name  TEXT NOT NULL,
     device_email TEXT NOT NULL,
     preset       TEXT NOT NULL,
-    book_id      TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    book_id      INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
     asset_id     TEXT REFERENCES assets(id) ON DELETE SET NULL,
     title        TEXT NOT NULL,
     target       TEXT, -- Conversion target format; NULL sends the original file.
@@ -497,10 +498,10 @@ CREATE TABLE writer_leases (
 );
 
 -- Contentless FTS5 projection rebuilt when searchable metadata changes. The
--- relational tables remain authoritative; book_id is retained for joins.
+-- rowid is books.id and survives rebuilds and VACUUM. The relational tables
+-- remain authoritative; catalog joins use the same integer identity.
 -- tag_keys contains encoded whole-tag tokens produced by TagSearchKeys.
 CREATE VIRTUAL TABLE search USING fts5(
-    book_id UNINDEXED,
     title,
     authors,
     series,
@@ -510,10 +511,9 @@ CREATE VIRTUAL TABLE search USING fts5(
     filename,
     tag_keys,
     content='',
-    contentless_delete=1,
-    contentless_unindexed=1
+    contentless_delete=1
 );
 
 -- Prefer title, authors, then series. Exact tag keys filter membership without
 -- contributing relevance; ordinary word searches exclude that internal column.
-INSERT INTO search(search, rank) VALUES ('rank', 'bm25(0.0, 10.0, 8.0, 4.0, 1.0, 1.0, 1.0, 1.0, 0.0)');
+INSERT INTO search(search, rank) VALUES ('rank', 'bm25(10.0, 8.0, 4.0, 1.0, 1.0, 1.0, 1.0, 0.0)');

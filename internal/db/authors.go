@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/levmv/polka/internal/bookmeta"
 	"github.com/levmv/polka/internal/id"
@@ -23,7 +22,7 @@ var ErrAuthorNotFound = errors.New("no author named")
 // (dropping any link that would duplicate one the book already has) and the
 // now-orphaned oldName row is deleted. This matches polka's model where an
 // author's identity is its exact name string.
-func RenameOrMergeAuthor(tx *sql.Tx, oldName, newName, newSortName string) ([]string, error) {
+func RenameOrMergeAuthor(tx *Tx, oldName, newName, newSortName string) ([]int64, error) {
 	var oldID string
 	err := tx.QueryRow("SELECT id FROM authors WHERE name = ?", oldName).Scan(&oldID)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -86,7 +85,7 @@ func RenameOrMergeAuthor(tx *sql.Tx, oldName, newName, newSortName string) ([]st
 // linked to; the caller owns metadata_rev/search/relayout bookkeeping.
 // sort_name selects both the bucket and the author folder, so a change moves
 // files for books where the author is primary.
-func SetAuthorSortName(tx *sql.Tx, name, sortName string) ([]string, error) {
+func SetAuthorSortName(tx *Tx, name, sortName string) ([]int64, error) {
 	var id, existingSortName string
 	err := tx.QueryRow("SELECT id, sort_name FROM authors WHERE name = ?", name).Scan(&id, &existingSortName)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -110,15 +109,15 @@ func SetAuthorSortName(tx *sql.Tx, name, sortName string) ([]string, error) {
 	return affected, nil
 }
 
-func bookIDsForAuthor(tx *sql.Tx, authorID string) ([]string, error) {
+func bookIDsForAuthor(tx *Tx, authorID string) ([]int64, error) {
 	rows, err := tx.Query("SELECT book_id FROM book_authors WHERE author_id = ?", authorID)
 	if err != nil {
 		return nil, fmt.Errorf("books for author: %w", err)
 	}
 	defer rows.Close()
-	var ids []string
+	var ids []int64
 	for rows.Next() {
-		var id string
+		var id int64
 		if err := rows.Scan(&id); err != nil {
 			return nil, fmt.Errorf("books for author scan: %w", err)
 		}
@@ -152,7 +151,7 @@ func bookIDsForAuthor(tx *sql.Tx, authorID string) ([]string, error) {
 // key. Real inputs hit this — an EPUB listing one creator twice, or an editor
 // typing "Ivanov; Ivanov" — so every caller (edit, bulk, import) relies on this
 // silent dedup rather than surfacing a constraint error.
-func UpsertBookAuthors(tx *sql.Tx, bookID string, authors []bookmeta.AuthorMeta) (primaryName, primarySortName string, err error) {
+func UpsertBookAuthors(tx *Tx, bookID int64, authors []bookmeta.AuthorMeta) (primaryName, primarySortName string, err error) {
 	authors = dedupAuthorsByName(authors)
 
 	if _, err := tx.Exec("DELETE FROM book_authors WHERE book_id = ?", bookID); err != nil {
@@ -207,18 +206,13 @@ func dedupAuthorsByName(authors []bookmeta.AuthorMeta) []bookmeta.AuthorMeta {
 // authoritative ordered author links. It intentionally does not touch
 // books.updated_at: this is an internal denormalized projection, not a user
 // metadata edit.
-func updatePrimaryAuthorSorts(execer Execer, bookIDs []string) error {
+func updatePrimaryAuthorSorts(tx *Tx, bookIDs []int64) error {
 	if len(bookIDs) == 0 {
 		return nil
 	}
-	placeholders := strings.Repeat("?,", len(bookIDs))
-	placeholders = placeholders[:len(placeholders)-1]
-	args := make([]any, len(bookIDs))
-	for i, id := range bookIDs {
-		args[i] = id
-	}
+	placeholders, args := idPlaceholders(bookIDs)
 
-	_, err := execer.Exec(`
+	_, err := tx.Exec(`
 		UPDATE books
 		SET primary_author_sort = COALESCE((
 			SELECT a.sort_name
@@ -252,7 +246,7 @@ func DeleteOrphanAuthors(execer Execer) (int64, error) {
 }
 
 type AuthorRow struct {
-	BookID   string
+	BookID   int64
 	Name     string
 	SortName string
 	Role     string
@@ -263,17 +257,12 @@ type AuthorRow struct {
 // id. This is the structured counterpart to the comma-joined `authors` string
 // in the list/detail projections — callers build both the authors array and the
 // `&`-joined display string from it.
-func AuthorsByBookIDs(queryer Queryer, bookIDs []string) (map[string][]AuthorRow, error) {
+func AuthorsByBookIDs(queryer Queryer, bookIDs []int64) (map[int64][]AuthorRow, error) {
 	if len(bookIDs) == 0 {
-		return map[string][]AuthorRow{}, nil
+		return map[int64][]AuthorRow{}, nil
 	}
 
-	placeholders := strings.Repeat("?,", len(bookIDs))
-	placeholders = placeholders[:len(placeholders)-1]
-	args := make([]any, len(bookIDs))
-	for i, id := range bookIDs {
-		args[i] = id
-	}
+	placeholders, args := idPlaceholders(bookIDs)
 
 	rows, err := queryer.Query(`
 		SELECT ba.book_id, a.name, a.sort_name, ba.role, ba.author_order
@@ -287,7 +276,7 @@ func AuthorsByBookIDs(queryer Queryer, bookIDs []string) (map[string][]AuthorRow
 	}
 	defer rows.Close()
 
-	byBook := make(map[string][]AuthorRow)
+	byBook := make(map[int64][]AuthorRow)
 	for rows.Next() {
 		var a AuthorRow
 		var role sql.NullString
@@ -426,7 +415,7 @@ func GetAuthorInfo(queryer Queryer, scope VisibilityScope, name string) (AuthorC
 	return a, true, nil
 }
 
-func PrimaryAuthor(queryer Queryer, bookID string) (string, string, error) {
+func PrimaryAuthor(queryer Queryer, bookID int64) (string, string, error) {
 	var name, sortName string
 	err := queryer.QueryRow(`
 		SELECT a.name, a.sort_name

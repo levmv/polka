@@ -17,7 +17,10 @@ import (
 )
 
 func (s *Server) handleCover(w http.ResponseWriter, r *http.Request) {
-	bookID := r.PathValue("id")
+	bookID, validID := pathBookID(w, r, "id")
+	if !validID {
+		return
+	}
 	if !s.requireCoverAccess(w, r, bookID) {
 		return
 	}
@@ -34,7 +37,7 @@ func (s *Server) handleCover(w http.ResponseWriter, r *http.Request) {
 	root := s.dataRoot()
 	originalPath, err := root.Resolve(covers.OriginalPath(bookID))
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	originalStat, err := os.Stat(originalPath)
@@ -44,7 +47,7 @@ func (s *Server) handleCover(w http.ResponseWriter, r *http.Request) {
 			// the frontend would have to paper over with a "No Cover" block.
 			s.serveGeneratedCover(w, r, bookID, variant)
 		} else {
-			serverError(w, err)
+			serverError(w, r, err)
 		}
 		return
 	}
@@ -52,7 +55,7 @@ func (s *Server) handleCover(w http.ResponseWriter, r *http.Request) {
 	cacheRel := covers.CachePath(bookID, variant)
 	cachePath, err := root.Resolve(cacheRel)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	if cacheStat, err := os.Stat(cachePath); err == nil && !cacheStat.ModTime().Before(originalStat.ModTime()) {
@@ -62,24 +65,24 @@ func (s *Server) handleCover(w http.ResponseWriter, r *http.Request) {
 
 	src, err := os.ReadFile(originalPath)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	opts := covers.DefaultOptions()
 	processed, err := covers.Process(src, variant, opts)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
-	if err := storage.Place(root, cacheRel, bytes.NewReader(processed.Bytes), nil); err != nil {
-		serverError(w, err)
+	if err := storage.Place(root, cacheRel, covers.TempLabel(bookID), bytes.NewReader(processed.Bytes), nil); err != nil {
+		serverError(w, r, err)
 		return
 	}
 	serveCoverBytes(w, r, processed.Bytes, filepath.Base(cachePath), time.Now(), processed.ContentType)
 }
 
-func (s *Server) requireCoverAccess(w http.ResponseWriter, r *http.Request, bookID string) bool {
-	_, ok := s.requireAccess(w, r, bookID, func(q db.Queryer, scope db.VisibilityScope, bookID string) (bool, error) {
+func (s *Server) requireCoverAccess(w http.ResponseWriter, r *http.Request, bookID int64) bool {
+	_, ok := requireAccess(s, w, r, bookID, func(q db.Queryer, scope db.VisibilityScope, bookID int64) (bool, error) {
 		allowed, err := db.CanAccessBook(q, scope, bookID)
 		if err != nil || allowed || !db.RoleAtLeast(contextUser(r.Context()).Role, db.RoleMember) {
 			return allowed, err
@@ -93,10 +96,10 @@ func (s *Server) requireCoverAccess(w http.ResponseWriter, r *http.Request, book
 // with no stored cover. The image is not cached on disk: it is a pure function
 // of title+author (which a single edit can change), so we instead let the
 // browser revalidate via an ETag over those inputs.
-func (s *Server) serveGeneratedCover(w http.ResponseWriter, r *http.Request, bookID string, variant covers.Variant) {
-	title, author, found, err := s.db.PlaceholderCoverText(bookID)
+func (s *Server) serveGeneratedCover(w http.ResponseWriter, r *http.Request, bookID int64, variant covers.Variant) {
+	title, author, found, err := db.PlaceholderCoverText(s.db.Read(r.Context()), bookID)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	if !found {
@@ -115,7 +118,7 @@ func (s *Server) serveGeneratedCover(w http.ResponseWriter, r *http.Request, boo
 
 	enc, err := covers.Placeholder(title, author, variant, covers.DefaultOptions())
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 
@@ -176,7 +179,7 @@ func serveCoverFile(w http.ResponseWriter, r *http.Request, fullPath, contentTyp
 		if os.IsNotExist(err) {
 			http.NotFound(w, r)
 		} else {
-			serverError(w, err)
+			serverError(w, r, err)
 		}
 		return
 	}
@@ -184,7 +187,7 @@ func serveCoverFile(w http.ResponseWriter, r *http.Request, fullPath, contentTyp
 
 	stat, err := f.Stat()
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 

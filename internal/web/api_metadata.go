@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"net/http"
@@ -29,17 +30,20 @@ type MetadataCandidateDTO struct {
 }
 
 func (s *Server) handleAPIMetadataCandidates(w http.ResponseWriter, r *http.Request) {
-	bookID := r.PathValue("id")
+	bookID, validID := pathBookID(w, r, "id")
+	if !validID {
+		return
+	}
 	if _, ok := s.requireBookAccess(w, r, bookID); !ok {
 		return
 	}
 
-	query, err := s.metadataQueryForBook(bookID)
+	query, err := s.metadataQueryForBook(r.Context(), bookID)
 	if errors.Is(err, sql.ErrNoRows) {
 		http.Error(w, "Book not found", http.StatusNotFound)
 		return
 	} else if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 
@@ -100,8 +104,8 @@ func (s *Server) metadataRegistry() metalookup.Registry {
 	return metalookup.NewRegistry(nil)
 }
 
-func (s *Server) metadataQueryForBook(bookID string) (metalookup.Query, error) {
-	b, err := db.GetBook(s.db, db.FullVisibilityScope(), bookID)
+func (s *Server) metadataQueryForBook(ctx context.Context, bookID int64) (metalookup.Query, error) {
+	b, err := db.GetBook(s.db.Read(ctx), db.FullVisibilityScope(), bookID)
 	if err != nil {
 		return metalookup.Query{}, err
 	}
@@ -111,7 +115,7 @@ func (s *Server) metadataQueryForBook(bookID string) (metalookup.Query, error) {
 		Title: b.Title,
 	}
 
-	authorsByBook, err := db.AuthorsByBookIDs(s.db, []string{bookID})
+	authorsByBook, err := db.AuthorsByBookIDs(s.db.Read(ctx), []int64{bookID})
 	if err != nil {
 		return metalookup.Query{}, err
 	}

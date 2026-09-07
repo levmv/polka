@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -18,7 +19,7 @@ import (
 // and the admin UI. Passwords are read from the terminal without echo (or from
 // stdin when piped, for scripting); they never go through a flag, which would
 // leak them into shell history and the process list.
-func runUser(dataDir string, args []string) error {
+func runUser(ctx context.Context, dataDir string, args []string) error {
 	if len(args) == 0 || helpRequested(args) {
 		printUserUsage()
 		if len(args) == 0 {
@@ -33,10 +34,10 @@ func runUser(dataDir string, args []string) error {
 		return nil
 	}
 
-	var run func(*db.DB, []string) error
+	var run func(context.Context, *db.DB, []string) error
 	switch sub {
 	case "add":
-		return runUserAdd(dataDir, rest)
+		return runUserAdd(ctx, dataDir, rest)
 	case "list":
 		run = userList
 	case "passwd":
@@ -53,7 +54,7 @@ func runUser(dataDir string, args []string) error {
 		return err
 	}
 	defer database.Close()
-	return run(database, rest)
+	return run(ctx, database, rest)
 }
 
 func printUserUsage() {
@@ -85,7 +86,7 @@ type userAddRequest struct {
 	role     string
 }
 
-func runUserAdd(dataDir string, args []string) error {
+func runUserAdd(ctx context.Context, dataDir string, args []string) error {
 	req, err := parseUserAddArgs(args)
 	if err != nil {
 		return err
@@ -95,12 +96,12 @@ func runUserAdd(dataDir string, args []string) error {
 		return err
 	}
 
-	database, err := ensureLibraryInitialized(dataDir)
+	database, err := ensureLibraryInitialized(ctx, dataDir)
 	if err != nil {
 		return err
 	}
 	defer database.Close()
-	return createUser(database, req, password)
+	return createUser(ctx, database, req, password)
 }
 
 func parseUserAddArgs(args []string) (userAddRequest, error) {
@@ -139,8 +140,8 @@ func parseUserAddArgs(args []string) (userAddRequest, error) {
 	return userAddRequest{username: positional[0], role: role}, nil
 }
 
-func createUser(database *db.DB, req userAddRequest, password string) error {
-	u, err := database.CreateUser(req.username, password, req.role)
+func createUser(ctx context.Context, database *db.DB, req userAddRequest, password string) error {
+	u, err := database.CreateUser(ctx, req.username, password, req.role)
 	if err != nil {
 		return err
 	}
@@ -148,12 +149,12 @@ func createUser(database *db.DB, req userAddRequest, password string) error {
 	return nil
 }
 
-func userList(database *db.DB, args []string) error {
+func userList(ctx context.Context, database *db.DB, args []string) error {
 	if len(args) != 0 {
 		printUserSubcommandUsage("list")
 		return errors.New("usage: polka user list")
 	}
-	users, err := database.ListUsers()
+	users, err := db.ListUsers(database.Read(ctx))
 	if err != nil {
 		return err
 	}
@@ -167,12 +168,12 @@ func userList(database *db.DB, args []string) error {
 	return nil
 }
 
-func userPasswd(database *db.DB, args []string) error {
+func userPasswd(ctx context.Context, database *db.DB, args []string) error {
 	if len(args) != 1 {
 		printUserSubcommandUsage("passwd")
 		return errors.New("usage: polka user passwd <username>")
 	}
-	u, err := database.GetUserByUsername(args[0])
+	u, err := db.GetUserByUsername(database.Read(ctx), args[0])
 	if err != nil {
 		return err
 	}
@@ -183,19 +184,19 @@ func userPasswd(database *db.DB, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := database.SetUserPassword(u.ID, password); err != nil {
+	if err := database.SetUserPassword(ctx, u.ID, password); err != nil {
 		return err
 	}
 	fmt.Printf("Updated password for %q\n", u.Username)
 	return nil
 }
 
-func userRemove(database *db.DB, args []string) error {
+func userRemove(ctx context.Context, database *db.DB, args []string) error {
 	if len(args) != 1 {
 		printUserSubcommandUsage("remove")
 		return errors.New("usage: polka user remove <username>")
 	}
-	u, err := database.GetUserByUsername(args[0])
+	u, err := db.GetUserByUsername(database.Read(ctx), args[0])
 	if err != nil {
 		return err
 	}
@@ -203,7 +204,7 @@ func userRemove(database *db.DB, args []string) error {
 		return fmt.Errorf("no user named %q", args[0])
 	}
 
-	if err := database.DeleteUser(u.ID); err != nil {
+	if err := database.DeleteUser(ctx, u.ID); err != nil {
 		if errors.Is(err, db.ErrLastAdmin) {
 			return errors.New("refusing to remove the only admin account")
 		}

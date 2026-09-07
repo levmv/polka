@@ -20,7 +20,7 @@ func runLibrary(ctx context.Context, dataDir string, args []string) error {
 	case "authors", "author":
 		return runLibraryAuthors(ctx, dataDir, rest)
 	case "shelves", "shelf":
-		return runLibraryShelves(dataDir, rest)
+		return runLibraryShelves(ctx, dataDir, rest)
 	case "writeback":
 		return runLibraryWriteback(ctx, dataDir, rest)
 	default:

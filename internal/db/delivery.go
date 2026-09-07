@@ -57,7 +57,7 @@ type DeliveryJob struct {
 	DeviceName  string
 	DeviceEmail string
 	Preset      string
-	BookID      string
+	BookID      int64
 	AssetID     sql.NullString
 	Title       string
 	Target      sql.NullString
@@ -71,7 +71,7 @@ type DeliveryJob struct {
 }
 
 type DeliveryBookRow struct {
-	ID      string
+	ID      int64
 	Title   string
 	Authors string
 }
@@ -94,11 +94,11 @@ func ValidDeliveryPreset(preset string) bool {
 	}
 }
 
-func (db *DB) ListDeliveryDevices(userID int64) ([]DeliveryDevice, error) {
+func ListDeliveryDevices(queryer Queryer, userID int64) ([]DeliveryDevice, error) {
 	if userID <= 0 {
 		return nil, ErrUserIDRequired
 	}
-	rows, err := db.Query(`
+	rows, err := queryer.Query(`
 		SELECT `+deliveryDeviceColumns+`
 		FROM delivery_devices
 		WHERE user_id = ?
@@ -120,11 +120,11 @@ func (db *DB) ListDeliveryDevices(userID int64) ([]DeliveryDevice, error) {
 	return devices, rows.Err()
 }
 
-func (db *DB) GetDeliveryDevice(userID int64, deviceID string) (*DeliveryDevice, error) {
+func GetDeliveryDevice(queryer Queryer, userID int64, deviceID string) (*DeliveryDevice, error) {
 	if userID <= 0 {
 		return nil, ErrUserIDRequired
 	}
-	device, err := scanDeliveryDevice(db.QueryRow(`
+	device, err := scanDeliveryDevice(queryer.QueryRow(`
 		SELECT `+deliveryDeviceColumns+`
 		FROM delivery_devices
 		WHERE user_id = ? AND id = ?
@@ -138,11 +138,11 @@ func (db *DB) GetDeliveryDevice(userID int64, deviceID string) (*DeliveryDevice,
 	return &device, nil
 }
 
-func (db *DB) DefaultDeliveryDevice(userID int64) (*DeliveryDevice, error) {
+func DefaultDeliveryDevice(queryer Queryer, userID int64) (*DeliveryDevice, error) {
 	if userID <= 0 {
 		return nil, ErrUserIDRequired
 	}
-	device, err := scanDeliveryDevice(db.QueryRow(`
+	device, err := scanDeliveryDevice(queryer.QueryRow(`
 		SELECT `+deliveryDeviceColumns+`
 		FROM delivery_devices
 		WHERE user_id = ?
@@ -163,7 +163,7 @@ func (db *DB) CreateDeliveryDevice(ctx context.Context, userID int64, name, emai
 		return nil, err
 	}
 	deviceID := id.New(id.DeliveryDevice)
-	err := db.Transact(ctx, func(tx *sql.Tx) error {
+	err := db.Transact(ctx, func(tx *Tx) error {
 		var count int
 		if err := tx.QueryRow("SELECT COUNT(*) FROM delivery_devices WHERE user_id = ?", userID).Scan(&count); err != nil {
 			return fmt.Errorf("count delivery devices: %w", err)
@@ -191,7 +191,7 @@ func (db *DB) CreateDeliveryDevice(ctx context.Context, userID int64, name, emai
 	if err != nil {
 		return nil, err
 	}
-	return db.GetDeliveryDevice(userID, deviceID)
+	return GetDeliveryDevice(db.Read(ctx), userID, deviceID)
 }
 
 func (db *DB) UpdateDeliveryDevice(ctx context.Context, userID int64, device DeliveryDevice) (*DeliveryDevice, error) {
@@ -201,7 +201,7 @@ func (db *DB) UpdateDeliveryDevice(ctx context.Context, userID int64, device Del
 	if err := validateDeliveryDeviceInput(userID, device.Name, device.Email, device.Preset); err != nil {
 		return nil, err
 	}
-	err := db.Transact(ctx, func(tx *sql.Tx) error {
+	err := db.Transact(ctx, func(tx *Tx) error {
 		if device.IsDefault {
 			if _, err := tx.Exec("UPDATE delivery_devices SET is_default = 0, updated_at = unixepoch() WHERE user_id = ?", userID); err != nil {
 				return fmt.Errorf("clear delivery default: %w", err)
@@ -231,14 +231,14 @@ func (db *DB) UpdateDeliveryDevice(ctx context.Context, userID int64, device Del
 	if err != nil {
 		return nil, err
 	}
-	return db.GetDeliveryDevice(userID, device.ID)
+	return GetDeliveryDevice(db.Read(ctx), userID, device.ID)
 }
 
 func (db *DB) DeleteDeliveryDevice(ctx context.Context, userID int64, deviceID string) error {
 	if userID <= 0 {
 		return ErrUserIDRequired
 	}
-	return db.Transact(ctx, func(tx *sql.Tx) error {
+	return db.Transact(ctx, func(tx *Tx) error {
 		res, err := tx.Exec("DELETE FROM delivery_devices WHERE user_id = ? AND id = ?", userID, deviceID)
 		if err != nil {
 			return fmt.Errorf("delete delivery device: %w", err)
@@ -250,7 +250,7 @@ func (db *DB) DeleteDeliveryDevice(ctx context.Context, userID int64, deviceID s
 	})
 }
 
-func ensureDeliveryDefault(tx *sql.Tx, userID int64) error {
+func ensureDeliveryDefault(tx *Tx, userID int64) error {
 	var defaults int
 	if err := tx.QueryRow("SELECT COUNT(*) FROM delivery_devices WHERE user_id = ? AND is_default = 1", userID).Scan(&defaults); err != nil {
 		return fmt.Errorf("count delivery defaults: %w", err)
@@ -290,10 +290,10 @@ func validateDeliveryDeviceInput(userID int64, name, email, preset string) error
 	return nil
 }
 
-func (db *DB) DeliveryBookForPlan(scope VisibilityScope, bookID string) (DeliveryBookRow, []DeliveryAssetRow, error) {
+func DeliveryBookForPlan(queryer Queryer, scope VisibilityScope, bookID int64) (DeliveryBookRow, []DeliveryAssetRow, error) {
 	where, args := scope.AppendBookWhere("b.id = ? AND b.deleted_at IS NULL", "b.id", bookID)
 	var book DeliveryBookRow
-	err := db.QueryRow(`
+	err := queryer.QueryRow(`
 		SELECT b.id, b.title, `+colAuthors+`
 		FROM books b
 		WHERE `+where+`
@@ -306,7 +306,7 @@ func (db *DB) DeliveryBookForPlan(scope VisibilityScope, bookID string) (Deliver
 		return DeliveryBookRow{}, nil, fmt.Errorf("get delivery book: %w", err)
 	}
 
-	rows, err := db.Query(`
+	rows, err := queryer.Query(`
 		SELECT id, filename, extension, format, COALESCE(current_size, original_size, 0), is_primary
 		FROM assets
 		WHERE book_id = ?
@@ -335,14 +335,14 @@ func (db *DB) DeliveryBookForPlan(scope VisibilityScope, bookID string) (Deliver
 	return book, assets, nil
 }
 
-func (db *DB) CreateDeliveryJob(job DeliveryJob) (*DeliveryJob, error) {
+func (db *DB) CreateDeliveryJob(ctx context.Context, job DeliveryJob) (*DeliveryJob, error) {
 	if job.ID == "" {
 		job.ID = id.New(id.DeliveryJob)
 	}
 	if job.Status == "" {
 		job.Status = DeliveryStatusQueued
 	}
-	_, err := db.Exec(`
+	_, err := db.Write(ctx).Exec(`
 		INSERT INTO delivery_jobs (
 			id, user_id, device_id, device_name, device_email, preset, book_id,
 			asset_id, title, target, filename, size_bytes, status, error
@@ -354,14 +354,14 @@ func (db *DB) CreateDeliveryJob(job DeliveryJob) (*DeliveryJob, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create delivery job: %w", err)
 	}
-	return db.GetDeliveryJob(job.UserID, job.ID)
+	return GetDeliveryJob(db.Read(ctx), job.UserID, job.ID)
 }
 
-func (db *DB) GetDeliveryJob(userID int64, jobID string) (*DeliveryJob, error) {
+func GetDeliveryJob(queryer Queryer, userID int64, jobID string) (*DeliveryJob, error) {
 	if userID <= 0 {
 		return nil, ErrUserIDRequired
 	}
-	job, err := scanDeliveryJobRow(db.QueryRow(`
+	job, err := scanDeliveryJobRow(queryer.QueryRow(`
 		SELECT `+deliveryJobColumns+`
 		FROM delivery_jobs
 		WHERE user_id = ? AND id = ?
@@ -375,8 +375,8 @@ func (db *DB) GetDeliveryJob(userID int64, jobID string) (*DeliveryJob, error) {
 	return job, nil
 }
 
-func (db *DB) GetDeliveryJobByID(jobID string) (*DeliveryJob, error) {
-	job, err := scanDeliveryJobRow(db.QueryRow(`
+func GetDeliveryJobByID(queryer Queryer, jobID string) (*DeliveryJob, error) {
+	job, err := scanDeliveryJobRow(queryer.QueryRow(`
 		SELECT `+deliveryJobColumns+`
 		FROM delivery_jobs
 		WHERE id = ?
@@ -393,8 +393,8 @@ func (db *DB) GetDeliveryJobByID(jobID string) (*DeliveryJob, error) {
 // NextQueuedDeliveryJob returns the oldest durable delivery waiting for the
 // single server worker. The writer lease guarantees there is only one worker
 // process, so a separate claim/lock protocol would add no useful safety here.
-func (db *DB) NextQueuedDeliveryJob() (*DeliveryJob, error) {
-	job, err := scanDeliveryJobRow(db.QueryRow(`
+func NextQueuedDeliveryJob(queryer Queryer) (*DeliveryJob, error) {
+	job, err := scanDeliveryJobRow(queryer.QueryRow(`
 		SELECT ` + deliveryJobColumns + `
 		FROM delivery_jobs
 		WHERE status = 'queued'
@@ -410,7 +410,7 @@ func (db *DB) NextQueuedDeliveryJob() (*DeliveryJob, error) {
 	return job, nil
 }
 
-func (db *DB) ListDeliveryJobs(userID int64, limit int) ([]DeliveryJob, error) {
+func ListDeliveryJobs(queryer Queryer, userID int64, limit int) ([]DeliveryJob, error) {
 	if userID <= 0 {
 		return nil, ErrUserIDRequired
 	}
@@ -419,7 +419,7 @@ func (db *DB) ListDeliveryJobs(userID int64, limit int) ([]DeliveryJob, error) {
 	} else if limit > 100 {
 		limit = 100
 	}
-	rows, err := db.Query(`
+	rows, err := queryer.Query(`
 		SELECT `+deliveryJobColumns+`
 		FROM delivery_jobs
 		WHERE user_id = ?
@@ -442,7 +442,7 @@ func (db *DB) ListDeliveryJobs(userID int64, limit int) ([]DeliveryJob, error) {
 	return jobs, rows.Err()
 }
 
-func (db *DB) SetDeliveryJobStatus(jobID, status, errorMessage string) error {
+func (db *DB) SetDeliveryJobStatus(ctx context.Context, jobID, status, errorMessage string) error {
 	if !validDeliveryStatus(status) {
 		return fmt.Errorf("invalid delivery status %q", status)
 	}
@@ -450,7 +450,7 @@ func (db *DB) SetDeliveryJobStatus(jobID, status, errorMessage string) error {
 	if status == DeliveryStatusSent {
 		sentExpr = "unixepoch()"
 	}
-	res, err := db.Exec(`
+	res, err := db.Write(ctx).Exec(`
 		UPDATE delivery_jobs
 		SET status = ?, error = ?, updated_at = unixepoch(), sent_at = `+sentExpr+`
 		WHERE id = ?
@@ -464,8 +464,8 @@ func (db *DB) SetDeliveryJobStatus(jobID, status, errorMessage string) error {
 	return nil
 }
 
-func (db *DB) SetDeliveryJobSize(jobID string, size int64) error {
-	_, err := db.Exec("UPDATE delivery_jobs SET size_bytes = ?, updated_at = unixepoch() WHERE id = ?", size, jobID)
+func (db *DB) SetDeliveryJobSize(ctx context.Context, jobID string, size int64) error {
+	_, err := db.Write(ctx).Exec("UPDATE delivery_jobs SET size_bytes = ?, updated_at = unixepoch() WHERE id = ?", size, jobID)
 	if err != nil {
 		return fmt.Errorf("set delivery job size: %w", err)
 	}
@@ -474,8 +474,8 @@ func (db *DB) SetDeliveryJobSize(jobID string, size int64) error {
 
 // RecoverDeliveryJobs preserves work which is safe to repeat while refusing to
 // automatically duplicate a possibly completed SMTP send.
-func (db *DB) RecoverDeliveryJobs() error {
-	_, err := db.Exec(`
+func (db *DB) RecoverDeliveryJobs(ctx context.Context) error {
+	_, err := db.Write(ctx).Exec(`
 		UPDATE delivery_jobs
 		SET status = CASE status
 		        WHEN 'converting' THEN 'queued'

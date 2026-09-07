@@ -125,7 +125,7 @@ func runSubcommand(ctx context.Context, dataDir, subcommand string, subArgs []st
 	case "serve":
 		return runServe(ctx, dataDir, subArgs)
 	case "check":
-		return runCheck(dataDir, subArgs)
+		return runCheck(ctx, dataDir, subArgs)
 	case "repair":
 		return runRepair(ctx, dataDir, subArgs)
 	case "convert":
@@ -139,9 +139,9 @@ func runSubcommand(ctx context.Context, dataDir, subcommand string, subArgs []st
 	case "library":
 		return runLibrary(ctx, dataDir, subArgs)
 	case "user":
-		return runUser(dataDir, subArgs)
+		return runUser(ctx, dataDir, subArgs)
 	case "token":
-		return runToken(dataDir, subArgs)
+		return runToken(ctx, dataDir, subArgs)
 	default:
 		return fmt.Errorf("unknown subcommand: %s", subcommand)
 	}

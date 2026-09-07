@@ -60,7 +60,7 @@ func (s *Server) handleAPIAdminStorageImportPreview(w http.ResponseWriter, r *ht
 	}
 	preview, err := s.previewFolderImport(r.Context(), path)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, preview)
@@ -78,23 +78,23 @@ func (s *Server) handleAPIAdminStorageImportRun(w http.ResponseWriter, r *http.R
 	}
 
 	root := s.managedRoot()
-	catalogHasBooks, err := db.HasAnyAsset(s.db.DB)
+	catalogHasBooks, err := db.HasAnyAsset(s.db.Read(r.Context()))
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	if err := storage.RequireWritableRoot(root, catalogHasBooks); err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
-	template, err := storage.OpenBookPathTemplate(s.db.DB)
+	template, err := storage.OpenBookPathTemplate(s.db.Read(r.Context()))
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	releaseImport, err := s.acquireStorageWorkSlot(r.Context())
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	defer releaseImport()
@@ -106,12 +106,12 @@ func (s *Server) handleAPIAdminStorageImportRun(w http.ResponseWriter, r *http.R
 		CoverRoot:    s.dataRoot(),
 	})
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
-	status, err := s.adminStorageStatus()
+	status, err := s.adminStorageStatus(r.Context())
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	result.Storage = status
@@ -177,7 +177,7 @@ func (s *Server) previewFolderImport(ctx context.Context, rootPath string) (Fold
 				out.CalibreBooks++
 				for _, source := range sources {
 					out.Files++
-					if err := out.addProbe(ctx, source.Path, rootPath, s.db); err != nil {
+					if err := out.addProbe(ctx, source.Path, rootPath, s.db.Read(ctx)); err != nil {
 						return err
 					}
 				}
@@ -193,7 +193,7 @@ func (s *Server) previewFolderImport(ctx context.Context, rootPath string) (Fold
 			return nil
 		}
 		out.Files++
-		return out.addProbe(ctx, path, rootPath, s.db)
+		return out.addProbe(ctx, path, rootPath, s.db.Read(ctx))
 	}, func(path string, err error) {
 		out.addError(path, rootPath, err)
 	})

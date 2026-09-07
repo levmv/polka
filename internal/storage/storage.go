@@ -2,9 +2,8 @@
 // storage root.
 //
 // It also owns the canonical relative path policy for managed book assets.
-// Callers still commit database state at the right boundary and pass relative
-// paths here for atomic-ish file placement or moves, preserving the
-// SQLite-as-truth invariant.
+// Callers coordinate database commits with file mutations; SQLite remains
+// the source of truth.
 package storage
 
 import (
@@ -45,6 +44,16 @@ func WritebackTempRelPath(finalRelPath, label string) string {
 // check and repair to distinguish orphan candidates from managed content.
 func IsWritebackTempFileName(name string) bool {
 	return strings.HasPrefix(name, ".writeback-") && strings.HasSuffix(name, ".tmp")
+}
+
+// ParseWritebackTempName extracts the label of an adjacent replacement file.
+func ParseWritebackTempName(name string) (string, bool) {
+	if !IsWritebackTempFileName(name) {
+		return "", false
+	}
+	rest := strings.TrimSuffix(strings.TrimPrefix(name, ".writeback-"), ".tmp")
+	label, nonce, ok := strings.CutLast(rest, "-")
+	return label, ok && label != "" && nonce != ""
 }
 
 func WriteAdjacentTemp(root Root, finalRelPath, label string, data []byte) (string, error) {
@@ -165,6 +174,16 @@ func Stage(root Root, label string, src io.Reader) (StagedFile, error) {
 	return staged, nil
 }
 
+// ParseStagedTempName extracts the label of a file left by Stage.
+func ParseStagedTempName(name string) (string, bool) {
+	rest, ok := strings.CutPrefix(name, ".tmp-")
+	if !ok {
+		return "", false
+	}
+	nonce, label, ok := strings.Cut(rest, "-")
+	return label, ok && nonce != "" && label != ""
+}
+
 func (s StagedFile) Finalize(root Root, relPath string) error {
 	dstPath, err := root.Resolve(relPath)
 	if err != nil {
@@ -190,55 +209,32 @@ func (s StagedFile) Cleanup() {
 	}
 }
 
-// Place stages to a temp file in the destination directory, flush/fsyncs, calls
-// the optional commitDB function, and then moves the temp file to relPath. The
-// normal path is an atomic os.Rename; a cross-device rename falls back to copying
-// into a destination temp file before the final rename. The temp file name
-// includes the final base name, including asset_id for book assets, so a crash
-// after DB commit but before final rename is recoverable by `polka repair`. No
-// partial/half-written file ever appears at the final path. Temporary sources
-// are removed in normal operation; after a successful cross-device fallback, a
-// failed best-effort source cleanup may leave a complete orphan for check/repair.
-// Known accepted gap: the file is fsynced but the parent directory is not, so a
-// power loss right after rename can lose the directory entry — fold parent-dir
-// sync into a future durability hardening pass rather than fixing it piecemeal
-// here.
-func Place(root Root, relPath string, src io.Reader, commitDB func() error) error {
+// Place writes and fsyncs a temp beside relPath, calls the optional commitDB,
+// then moves the complete file to relPath. Label lets repair identify the temp
+// if placement fails after commit. Cross-device moves copy through a destination
+// temp; a failed source cleanup can leave a complete orphan for check/repair.
+// The parent directory is not fsynced, so a power loss after rename can lose
+// the directory entry.
+func Place(root Root, relPath, label string, src io.Reader, commitDB func() error) error {
 	dstPath, err := root.Resolve(relPath)
 	if err != nil {
 		return err
 	}
-	dir := filepath.Dir(dstPath)
-
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("create destination directory: %w", err)
-	}
-
-	tmpPath := stagedPath(dir, relPath)
-	f, err := os.Create(tmpPath)
+	tmpRel, err := WriteAdjacentTempWith(root, relPath, label, func(w io.Writer) error {
+		_, err := io.Copy(w, src)
+		return err
+	})
 	if err != nil {
-		return fmt.Errorf("create tmp: %w", err)
+		return err
 	}
+	tmpPath := root.Abs(tmpRel)
 
 	committed := false
 	defer func() {
-		f.Close()
 		if !committed {
 			os.Remove(tmpPath)
 		}
 	}()
-
-	if _, err := io.Copy(f, src); err != nil {
-		return fmt.Errorf("copy: %w", err)
-	}
-
-	if err := f.Sync(); err != nil {
-		return fmt.Errorf("sync staged file: %w", err)
-	}
-
-	if err := f.Close(); err != nil {
-		return fmt.Errorf("close staged file: %w", err)
-	}
 
 	if commitDB != nil {
 		if err := commitDB(); err != nil {
@@ -286,13 +282,8 @@ func ReplaceWithStaged(root Root, stagedRelPath, relPath string) error {
 // moveFileWithRename moves within the managed root, falling back to copy when
 // the kernel refuses the rename as cross-device.
 //
-// The fallback is not defensive padding: every managed move stays inside one
-// books root, but "one root" does not imply one filesystem. Union mounts —
-// mergerfs, unionfs, an Unraid user share — present several disks as a single
-// tree and return EXDEV for a rename that would cross branches, which is exactly
-// the storage layout a home NAS running polka tends to have. Without this,
-// import and relayout would fail on those setups for no reason the user could
-// act on. Do not remove it on the grounds that the paths share a root.
+// A managed root can span filesystems (e.g. mergerfs or an Unraid user share),
+// so even moves within it may return EXDEV.
 func moveFileWithRename(src, dst string, rename func(string, string) error) error {
 	if err := rename(src, dst); err != nil {
 		if !errors.Is(err, syscall.EXDEV) {

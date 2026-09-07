@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -63,18 +64,18 @@ func TestCoverHandler(t *testing.T) {
 		dataDir: dir,
 	}
 	reader := mustUser(t, database, "cover-reader", db.RoleReader)
-	coverRequest := func(target, bookID string) *http.Request {
+	coverRequest := func(target string, bookID int64) *http.Request {
 		req := httptest.NewRequest(http.MethodGet, target, nil)
-		req.SetPathValue("id", bookID)
+		req.SetPathValue("id", strconv.FormatInt(bookID, 10))
 		return req.WithContext(withUser(req.Context(), reader))
 	}
 
-	coverPath := covers.OriginalPath("w_1")
+	coverPath := covers.OriginalPath(1)
 	os.MkdirAll(filepath.Join(dir, filepath.Dir(coverPath)), 0o755)
 	os.WriteFile(filepath.Join(dir, coverPath), testPNG(t), 0o644)
-	database.Exec("UPDATE books SET cover_version = 1 WHERE id = 'w_1'")
+	mustExec(t, database, "UPDATE books SET cover_version = 1 WHERE id = 1")
 
-	req := coverRequest("/covers/w_1", "w_1")
+	req := coverRequest("/covers/1", 1)
 	w := httptest.NewRecorder()
 	s.handleCover(w, req)
 
@@ -89,20 +90,20 @@ func TestCoverHandler(t *testing.T) {
 		t.Errorf("expected jpeg content type, got %q", res.Header.Get("Content-Type"))
 	}
 
-	cachePath := filepath.Join(dir, covers.CachePath("w_1", covers.VariantDisplay))
+	cachePath := filepath.Join(dir, covers.CachePath(1, covers.VariantDisplay))
 	if _, err := os.Stat(cachePath); err != nil {
 		t.Errorf("expected display cache file: %v", err)
 	}
 
-	req = coverRequest("/covers/w_1?variant=thumb", "w_1")
+	req = coverRequest("/covers/1?variant=thumb", 1)
 	w = httptest.NewRecorder()
 	s.handleCover(w, req)
 	if w.Result().StatusCode != http.StatusOK {
 		t.Errorf("expected thumb 200, got %d", w.Result().StatusCode)
 	}
 
-	// w_2 exists but has no stored cover file: a generated fallback is served.
-	req = coverRequest("/covers/w_2", "w_2")
+	// Book 2 exists but has no stored cover file: a generated fallback is served.
+	req = coverRequest("/covers/2", 2)
 	w = httptest.NewRecorder()
 	s.handleCover(w, req)
 
@@ -125,12 +126,12 @@ func TestCoverHandler(t *testing.T) {
 	}
 	// A no-cover book must not leave a cache file behind; the fallback is
 	// regenerated on the fly, never stored.
-	if _, err := os.Stat(filepath.Join(dir, covers.CachePath("w_2", covers.VariantDisplay))); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(dir, covers.CachePath(2, covers.VariantDisplay))); !os.IsNotExist(err) {
 		t.Errorf("generated cover should not be cached on disk")
 	}
 
 	// Conditional fallback requests return before the image is rendered.
-	req = coverRequest("/covers/w_2", "w_2")
+	req = coverRequest("/covers/2", 2)
 	req.Header.Set("If-None-Match", generatedETag)
 	w = httptest.NewRecorder()
 	s.handleCover(w, req)
@@ -143,7 +144,7 @@ func TestCoverHandler(t *testing.T) {
 	}
 
 	// An unknown book ID still 404s — no DB row, nothing to render from.
-	req = coverRequest("/covers/w_999", "w_999")
+	req = coverRequest("/covers/999", 999)
 	w = httptest.NewRecorder()
 	s.handleCover(w, req)
 	if w.Result().StatusCode != http.StatusNotFound {
@@ -182,31 +183,30 @@ func TestCoverHandlerAllowsMemberTrashCoversOnly(t *testing.T) {
 	member := mustUser(t, database, "member-trash-cover", db.RoleMember)
 	reader := mustUser(t, database, "reader-trash-cover", db.RoleReader)
 
-	coverPath := covers.OriginalPath("w_1")
+	coverPath := covers.OriginalPath(1)
 	if err := os.MkdirAll(filepath.Join(dir, filepath.Dir(coverPath)), 0o755); err != nil {
 		t.Fatalf("mkdir cover dir: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, coverPath), testPNG(t), 0o644); err != nil {
 		t.Fatalf("write cover: %v", err)
 	}
-	if _, err := database.Exec("UPDATE books SET cover_version = 1 WHERE id = 'w_1'"); err != nil {
-		t.Fatalf("mark cover: %v", err)
-	}
-	if err := db.SoftDeleteBook(database, "w_1", member.ID); err != nil {
+	mustExec(t, database, "UPDATE books SET cover_version = 1 WHERE id = 1")
+
+	if err := db.SoftDeleteBook(database.Write(t.Context()), 1, member.ID); err != nil {
 		t.Fatalf("soft delete: %v", err)
 	}
 
 	s := newTestServer(database, dir)
 	handler := testRoutes(t, s)
 
-	memberReq := jsonRequest(t, s, member.ID, http.MethodGet, "/covers/w_1", nil)
+	memberReq := jsonRequest(t, s, member.ID, http.MethodGet, "/covers/1", nil)
 	memberRec := httptest.NewRecorder()
 	handler.ServeHTTP(memberRec, memberReq)
 	if memberRec.Code != http.StatusOK {
 		t.Fatalf("member trash cover = %d, want 200; body: %s", memberRec.Code, memberRec.Body.String())
 	}
 
-	readerReq := jsonRequest(t, s, reader.ID, http.MethodGet, "/covers/w_1", nil)
+	readerReq := jsonRequest(t, s, reader.ID, http.MethodGet, "/covers/1", nil)
 	readerRec := httptest.NewRecorder()
 	handler.ServeHTTP(readerRec, readerReq)
 	if readerRec.Code != http.StatusNotFound {
@@ -224,21 +224,21 @@ func TestAPICoverUpload(t *testing.T) {
 	}
 	member := mustUser(t, database, "member", db.RoleMember)
 
-	uploadReq := func(bookID string, filename string, contentType string, content []byte) *http.Request {
+	uploadReq := func(bookID int64, filename string, contentType string, content []byte) *http.Request {
 		var b bytes.Buffer
 		mw := multipart.NewWriter(&b)
 		part, _ := mw.CreateFormFile("cover", filename)
 		part.Write(content)
 		mw.Close()
 
-		req := httptest.NewRequest("POST", "/api/books/"+bookID+"/cover", &b)
+		req := httptest.NewRequest("POST", "/api/books/"+strconv.FormatInt(bookID, 10)+"/cover", &b)
 		req.Header.Set("Content-Type", mw.FormDataContentType())
-		req.SetPathValue("id", bookID)
+		req.SetPathValue("id", strconv.FormatInt(bookID, 10))
 		return req.WithContext(withUser(req.Context(), member))
 	}
 
 	// 1. Upload valid PNG
-	req := uploadReq("w_1", "test.png", "image/png", testPNG(t))
+	req := uploadReq(1, "test.png", "image/png", testPNG(t))
 	w := httptest.NewRecorder()
 	s.handleAPICoverUpload(w, req)
 
@@ -248,16 +248,16 @@ func TestAPICoverUpload(t *testing.T) {
 	}
 
 	var coverVersion int
-	database.QueryRow("SELECT cover_version FROM books WHERE id = 'w_1'").Scan(&coverVersion)
+	database.Read(req.Context()).QueryRow("SELECT cover_version FROM books WHERE id = 1").Scan(&coverVersion)
 	if coverVersion != 1 {
 		t.Errorf("expected cover_version 1, got %d", coverVersion)
 	}
-	if _, err := os.Stat(filepath.Join(dir, covers.OriginalPath("w_1"))); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, covers.OriginalPath(1))); err != nil {
 		t.Errorf("expected original cover file: %v", err)
 	}
 
 	// 2. Upload invalid image (text file)
-	req = uploadReq("w_2", "test.txt", "text/plain", []byte("not an image"))
+	req = uploadReq(2, "test.txt", "text/plain", []byte("not an image"))
 	w = httptest.NewRecorder()
 	s.handleAPICoverUpload(w, req)
 
@@ -286,7 +286,7 @@ func TestStoreCoverWaitsForStorageSlotAndMergesCurrentOverrides(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		close(started)
-		done <- s.storeCoverBytes(context.Background(), "w_1", coverBytes)
+		done <- s.storeCoverBytes(context.Background(), 1, coverBytes)
 	}()
 	<-started
 
@@ -299,7 +299,7 @@ func TestStoreCoverWaitsForStorageSlotAndMergesCurrentOverrides(t *testing.T) {
 	case <-time.After(50 * time.Millisecond):
 	}
 	var coverVersion int
-	if err := database.QueryRow("SELECT cover_version FROM books WHERE id = 'w_1'").Scan(&coverVersion); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT cover_version FROM books WHERE id = 1").Scan(&coverVersion); err != nil {
 		releasePausedWriteback()
 		t.Fatalf("query cover version: %v", err)
 	}
@@ -310,7 +310,7 @@ func TestStoreCoverWaitsForStorageSlotAndMergesCurrentOverrides(t *testing.T) {
 
 	// Commit another override while the cover is queued. The cover transaction
 	// must load the then-current map, rather than replace an earlier snapshot.
-	if _, err := database.Exec(`UPDATE books SET manual_overrides = '{"title":true}' WHERE id = 'w_1'`); err != nil {
+	if _, err := database.Write(t.Context()).Exec(`UPDATE books SET manual_overrides = '{"title":true}' WHERE id = 1`); err != nil {
 		releasePausedWriteback()
 		t.Fatalf("set concurrent override: %v", err)
 	}
@@ -325,14 +325,14 @@ func TestStoreCoverWaitsForStorageSlotAndMergesCurrentOverrides(t *testing.T) {
 	}
 
 	var rawOverrides string
-	if err := database.QueryRow("SELECT cover_version, manual_overrides FROM books WHERE id = 'w_1'").Scan(&coverVersion, &rawOverrides); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT cover_version, manual_overrides FROM books WHERE id = 1").Scan(&coverVersion, &rawOverrides); err != nil {
 		t.Fatalf("query stored cover: %v", err)
 	}
 	overrides := bookmeta.ParseOverrides(rawOverrides)
 	if coverVersion != 1 || !overrides["title"] || !overrides["cover"] {
 		t.Fatalf("cover state = version:%d overrides:%v; want title+cover at version 1", coverVersion, overrides)
 	}
-	if _, err := os.Stat(filepath.Join(dir, covers.OriginalPath("w_1"))); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, covers.OriginalPath(1))); err != nil {
 		t.Fatalf("stored cover missing: %v", err)
 	}
 }
@@ -349,10 +349,10 @@ func TestAPIGeneratedCoverPreviewDoesNotPersist(t *testing.T) {
 
 	req := httptest.NewRequest(
 		"POST",
-		"/api/books/w_1/cover-generated-preview",
+		"/api/books/1/cover-generated-preview",
 		strings.NewReader(`{"title":"Draft Title","author":"Draft Author"}`),
 	)
-	req.SetPathValue("id", "w_1")
+	req.SetPathValue("id", "1")
 	req = req.WithContext(withUser(req.Context(), member))
 	w := httptest.NewRecorder()
 	s.handleAPIGeneratedCoverPreview(w, req)
@@ -377,10 +377,10 @@ func TestAPIGeneratedCoverPreviewDoesNotPersist(t *testing.T) {
 
 	req = httptest.NewRequest(
 		"POST",
-		"/api/books/w_1/cover-generated-preview",
+		"/api/books/1/cover-generated-preview",
 		strings.NewReader(`{"title":"Draft Title","author":"Draft Author","seed":2}`),
 	)
-	req.SetPathValue("id", "w_1")
+	req.SetPathValue("id", "1")
 	req = req.WithContext(withUser(req.Context(), member))
 	w = httptest.NewRecorder()
 	s.handleAPIGeneratedCoverPreview(w, req)
@@ -397,10 +397,10 @@ func TestAPIGeneratedCoverPreviewDoesNotPersist(t *testing.T) {
 
 	req = httptest.NewRequest(
 		"POST",
-		"/api/books/w_1/cover-generated-preview",
+		"/api/books/1/cover-generated-preview",
 		strings.NewReader(`{"title":"Draft Title","author":"Draft Author","seed":2,"style":"label"}`),
 	)
-	req.SetPathValue("id", "w_1")
+	req.SetPathValue("id", "1")
 	req = req.WithContext(withUser(req.Context(), member))
 	w = httptest.NewRecorder()
 	s.handleAPIGeneratedCoverPreview(w, req)
@@ -416,22 +416,22 @@ func TestAPIGeneratedCoverPreviewDoesNotPersist(t *testing.T) {
 	}
 
 	var coverVersion int
-	if err := database.QueryRow("SELECT cover_version FROM books WHERE id = 'w_1'").Scan(&coverVersion); err != nil {
+	if err := database.Read(req.Context()).QueryRow("SELECT cover_version FROM books WHERE id = 1").Scan(&coverVersion); err != nil {
 		t.Fatalf("query cover_version: %v", err)
 	}
 	if coverVersion != 0 {
 		t.Fatalf("cover_version = %d, want 0", coverVersion)
 	}
-	if _, err := os.Stat(filepath.Join(dir, covers.OriginalPath("w_1"))); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(dir, covers.OriginalPath(1))); !os.IsNotExist(err) {
 		t.Fatalf("generated preview should not store original cover, stat err = %v", err)
 	}
 
 	req = httptest.NewRequest(
 		"POST",
-		"/api/books/w_missing/cover-generated-preview",
+		"/api/books/152/cover-generated-preview",
 		strings.NewReader(`{"title":"Draft Title","author":"Draft Author"}`),
 	)
-	req.SetPathValue("id", "w_missing")
+	req.SetPathValue("id", "152")
 	req = req.WithContext(withUser(req.Context(), member))
 	w = httptest.NewRecorder()
 	s.handleAPIGeneratedCoverPreview(w, req)
@@ -462,10 +462,10 @@ func TestAPICoverURL(t *testing.T) {
 
 	req := httptest.NewRequest(
 		"POST",
-		"/api/books/w_1/cover-url",
+		"/api/books/1/cover-url",
 		strings.NewReader(`{"url":"https://covers.openlibrary.org/b/id/1-L.jpg?default=false"}`),
 	)
-	req.SetPathValue("id", "w_1")
+	req.SetPathValue("id", "1")
 	req = req.WithContext(withUser(req.Context(), member))
 	w := httptest.NewRecorder()
 	s.handleAPICoverURL(w, req)
@@ -481,8 +481,8 @@ func TestAPICoverURL(t *testing.T) {
 	var coverVersion int
 	var metadataRev int64
 	var overrides string
-	if err := database.QueryRow(
-		"SELECT cover_version, metadata_rev, manual_overrides FROM books WHERE id = 'w_1'",
+	if err := database.Read(req.Context()).QueryRow(
+		"SELECT cover_version, metadata_rev, manual_overrides FROM books WHERE id = 1",
 	).Scan(&coverVersion, &metadataRev, &overrides); err != nil {
 		t.Fatalf("query cover fields: %v", err)
 	}
@@ -495,16 +495,16 @@ func TestAPICoverURL(t *testing.T) {
 	if !bookmeta.ParseOverrides(overrides)["cover"] {
 		t.Fatalf("manual_overrides = %q, want cover override", overrides)
 	}
-	if _, err := os.Stat(filepath.Join(dir, covers.OriginalPath("w_1"))); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, covers.OriginalPath(1))); err != nil {
 		t.Fatalf("expected original cover file: %v", err)
 	}
 
 	req = httptest.NewRequest(
 		"POST",
-		"/api/books/w_1/cover-url",
+		"/api/books/1/cover-url",
 		strings.NewReader(`{"url":"https://example.test/cover.png"}`),
 	)
-	req.SetPathValue("id", "w_1")
+	req.SetPathValue("id", "1")
 	req = req.WithContext(withUser(req.Context(), member))
 	w = httptest.NewRecorder()
 	s.handleAPICoverURL(w, req)
@@ -517,10 +517,10 @@ func TestAPICoverURL(t *testing.T) {
 	})}
 	req = httptest.NewRequest(
 		http.MethodPost,
-		"/api/books/w_1/cover-url",
+		"/api/books/1/cover-url",
 		strings.NewReader(`{"url":"https://covers.openlibrary.org/b/id/1-L.jpg"}`),
 	)
-	req.SetPathValue("id", "w_1")
+	req.SetPathValue("id", "1")
 	req = req.WithContext(withUser(req.Context(), member))
 	w = httptest.NewRecorder()
 	s.handleAPICoverURL(w, req)
@@ -671,8 +671,8 @@ func TestAPICoverSearchProviderErrorStatesCause(t *testing.T) {
 		})},
 	}
 	member := mustUser(t, database, "member-cover-search-error", db.RoleMember)
-	req := httptest.NewRequest(http.MethodGet, "/api/books/w_1/cover-search?title=Dune", nil)
-	req.SetPathValue("id", "w_1")
+	req := httptest.NewRequest(http.MethodGet, "/api/books/1/cover-search?title=Dune", nil)
+	req.SetPathValue("id", "1")
 	req = req.WithContext(withUser(req.Context(), member))
 	w := httptest.NewRecorder()
 	s.handleAPICoverSearch(w, req)
@@ -792,10 +792,10 @@ func TestAPICoverSearchApply(t *testing.T) {
 
 	req := httptest.NewRequest(
 		http.MethodPost,
-		"/api/books/w_1/cover-search",
+		"/api/books/1/cover-search",
 		strings.NewReader(`{"token":"`+token+`"}`),
 	)
-	req.SetPathValue("id", "w_1")
+	req.SetPathValue("id", "1")
 	req = req.WithContext(withUser(req.Context(), member))
 	w := httptest.NewRecorder()
 	s.handleAPICoverSearchApply(w, req)
@@ -807,7 +807,7 @@ func TestAPICoverSearchApply(t *testing.T) {
 		t.Fatalf("requested URL = %q", requestedURL)
 	}
 	var coverVersion int
-	if err := database.QueryRow("SELECT cover_version FROM books WHERE id = 'w_1'").Scan(&coverVersion); err != nil {
+	if err := database.Read(req.Context()).QueryRow("SELECT cover_version FROM books WHERE id = 1").Scan(&coverVersion); err != nil {
 		t.Fatalf("query cover_version: %v", err)
 	}
 	if coverVersion != 1 {

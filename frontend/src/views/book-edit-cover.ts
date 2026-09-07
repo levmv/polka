@@ -61,7 +61,7 @@ export type CoverDraftController = {
     renderPending: () => void;
     resetToStored: () => void;
     syncControls: (disabled: boolean) => void;
-    savePending: (bookID: string) => Promise<Book>;
+    savePending: (bookID: number) => Promise<Book>;
     destroy: () => void;
 };
 
@@ -579,7 +579,7 @@ export function createCoverDraftController(opts: {
     };
 }
 
-export function renderStoredEditCover(b: Book, uiID: string = b.id): void {
+export function renderStoredEditCover(b: Book, uiID: string = String(b.id)): void {
     const coverContainer = document.getElementById(`edit-cover-container-${uiID}`);
     if (!coverContainer) return;
     coverContainer.classList.remove('is-fetched');

@@ -26,7 +26,7 @@ const (
 )
 
 type Book struct {
-	ID      string
+	ID      int64
 	Title   string
 	Authors string
 	Assets  []Asset

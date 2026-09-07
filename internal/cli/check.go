@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -15,7 +16,7 @@ import (
 
 var ErrIssuesFound = errors.New("issues found")
 
-func runCheck(dataDir string, args []string) error {
+func runCheck(ctx context.Context, dataDir string, args []string) error {
 	fs := commandFlagSet("check", "polka check [--deep]")
 	deep := fs.Bool("deep", false, "verify hashes and reader capabilities by reading asset contents")
 	if help, err := parseCommandFlags(fs, args); help || err != nil {
@@ -31,7 +32,7 @@ func runCheck(dataDir string, args []string) error {
 		return err
 	}
 	defer database.Close()
-	root, err := storage.OpenRoot(database.DB, dataDir)
+	root, err := storage.OpenRoot(database.Read(ctx), dataDir)
 	if err != nil {
 		return err
 	}
@@ -43,16 +44,16 @@ func runCheck(dataDir string, args []string) error {
 	} else if err != nil {
 		return err
 	}
-	template, err := storage.OpenBookPathTemplate(database.DB)
+	template, err := storage.OpenBookPathTemplate(database.Read(ctx))
 	if err != nil {
 		return err
 	}
 
-	assets, err := db.AllAssetsWithPrimaryAuthor(database)
+	assets, err := db.AllAssetsWithPrimaryAuthor(database.Read(ctx))
 	if err != nil {
 		return err
 	}
-	bookCovers, err := db.AllBookCovers(database)
+	bookCovers, err := db.AllBookCovers(database.Read(ctx))
 	if err != nil {
 		return err
 	}
@@ -137,14 +138,14 @@ func runCheck(dataDir string, args []string) error {
 		rel := covers.OriginalPath(w.ID)
 		absPath, err := dataRoot.Resolve(rel)
 		if err != nil {
-			invalidStoragePaths = append(invalidStoragePaths, fmt.Sprintf("cover %s (%s): %v", w.ID, rel, err))
+			invalidStoragePaths = append(invalidStoragePaths, fmt.Sprintf("cover %d (%s): %v", w.ID, rel, err))
 			continue
 		}
 		if w.CoverVersion > 0 {
 			referencedCoverPaths[absPath] = true
 			info, err := os.Stat(absPath)
 			if os.IsNotExist(err) {
-				missingCoverOriginals = append(missingCoverOriginals, fmt.Sprintf("%s (%s)", w.ID, rel))
+				missingCoverOriginals = append(missingCoverOriginals, fmt.Sprintf("%d (%s)", w.ID, rel))
 			} else if err != nil {
 				ioErrors = append(ioErrors, fmt.Sprintf("stat cover %s: %v", rel, err))
 			} else if info.IsDir() {
@@ -156,7 +157,7 @@ func runCheck(dataDir string, args []string) error {
 	var orphanFiles []string
 	var emptyDirs []string
 	var stagedFiles []string
-	writebackAttempts, err := db.ListMetadataWritebackAttempts(database)
+	writebackAttempts, err := db.ListMetadataWritebackAttempts(database.Read(ctx))
 	if err != nil {
 		return err
 	}

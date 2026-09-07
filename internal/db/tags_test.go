@@ -9,18 +9,17 @@ func TestListTags(t *testing.T) {
 	database := newTestDB(t)
 
 	must := func(query string) {
-		if _, err := database.Exec(query); err != nil {
-			t.Fatalf("exec %q: %v", query, err)
-		}
-	}
-	must("INSERT INTO books (id, title, sort_title, tags) VALUES ('w1', 'T1', 'T1', ' Fantasy, classics, Fantasy ')")
-	must("INSERT INTO books (id, title, sort_title, tags) VALUES ('w2', 'T2', 'T2', 'science fiction, CLASSICS')")
-	must("INSERT INTO books (id, title, sort_title, tags) VALUES ('w3', 'T3', 'T3', '')")
-	must(`INSERT INTO books (id, title, sort_title, tags) VALUES ('w4', 'T4', 'T4', '100% real, under_score, path\name')`)
-	must("INSERT INTO books (id, title, sort_title, tags) VALUES ('w5', 'T5', 'T5', 'Классика')")
-	must("INSERT INTO books (id, title, sort_title, tags, deleted_at) VALUES ('w_deleted', 'Deleted', 'Deleted', 'archived', 1)")
+		mustExec(t, database, query)
 
-	must(`INSERT INTO books (id, title, sort_title, tags) VALUES ('w6', 'T6', 'T6', 'İstanbul, Kelvin')`)
+	}
+	must("INSERT INTO books (id, title, sort_title, tags) VALUES (1, 'T1', 'T1', ' Fantasy, classics, Fantasy ')")
+	must("INSERT INTO books (id, title, sort_title, tags) VALUES (2, 'T2', 'T2', 'science fiction, CLASSICS')")
+	must("INSERT INTO books (id, title, sort_title, tags) VALUES (3, 'T3', 'T3', '')")
+	must(`INSERT INTO books (id, title, sort_title, tags) VALUES (4, 'T4', 'T4', '100% real, under_score, path\name')`)
+	must("INSERT INTO books (id, title, sort_title, tags) VALUES (5, 'T5', 'T5', 'Классика')")
+	must("INSERT INTO books (id, title, sort_title, tags, deleted_at) VALUES (122, 'Deleted', 'Deleted', 'archived', 1)")
+
+	must(`INSERT INTO books (id, title, sort_title, tags) VALUES (6, 'T6', 'T6', 'İstanbul, Kelvin')`)
 
 	wantAll := []string{"100% real", "classics", "Fantasy", "İstanbul", "Kelvin", `path\name`, "science fiction", "under_score", "Классика"}
 	for _, tt := range []struct {
@@ -42,7 +41,7 @@ func TestListTags(t *testing.T) {
 		{"limited", "", 2, wantAll[:2]},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := ListTags(database, FullVisibilityScope(), tt.q, tt.limit)
+			got, err := ListTags(database.Read(t.Context()), FullVisibilityScope(), tt.q, tt.limit)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -52,8 +51,8 @@ func TestListTags(t *testing.T) {
 		})
 	}
 
-	must("UPDATE books SET tags = 'newtag' WHERE id = 'w2'")
-	updated, err := ListTags(database, FullVisibilityScope(), "new", 20)
+	must("UPDATE books SET tags = 'newtag' WHERE id = 2")
+	updated, err := ListTags(database.Read(t.Context()), FullVisibilityScope(), "new", 20)
 	if err != nil {
 		t.Fatalf("ListTags updated: %v", err)
 	}
@@ -64,17 +63,17 @@ func TestListTags(t *testing.T) {
 
 func TestListTagsVisibility(t *testing.T) {
 	database := newTestDB(t)
-	if _, err := database.Exec(`
+	mustExec(t, database, `
 		INSERT INTO users (id, username, password_hash, role, content_scope) VALUES
 			(1, 'reader', 'unused', 'reader', 'shelves'),
 			(2, 'curator', 'unused', 'admin', 'all');
 		INSERT INTO books (id, title, sort_title, tags, deleted_at) VALUES
-			('manual', 'Manual book', 'Manual book', 'Fantasy, Shared', NULL),
-			('query', 'Query book', 'Query book', 'Science fiction, Shared, Классика, İstanbul', NULL),
-			('both', 'Query overlap', 'Query overlap', 'Adventure, Shared', NULL),
-			('hidden', 'Hidden book', 'Hidden book', 'Hİdden, Классика тайная', NULL),
-			('trashed', 'Query trashed', 'Query trashed', 'Archived', 1);
-		INSERT INTO search (book_id, title, tags) SELECT id, title, tags FROM books;
+			(1, 'Manual book', 'Manual book', 'Fantasy, Shared', NULL),
+			(2, 'Query book', 'Query book', 'Science fiction, Shared, Классика, İstanbul', NULL),
+			(3, 'Query overlap', 'Query overlap', 'Adventure, Shared', NULL),
+			(4, 'Hidden book', 'Hidden book', 'Hİdden, Классика тайная', NULL),
+			(5, 'Query trashed', 'Query trashed', 'Archived', 1);
+		INSERT INTO search (rowid, title, tags) SELECT  id, title, tags FROM books;
 		INSERT INTO shelves (id, name, kind, owner_id, visibility, query, query_match) VALUES
 			('manual', 'Manual', 'manual', 2, 'shared', NULL, NULL),
 			('query', 'Query', 'query', 2, 'shared', 'title:Query', ?),
@@ -83,12 +82,10 @@ func TestListTagsVisibility(t *testing.T) {
 			('own_query', 'Own query', 'query', 1, 'personal', 'title:Hidden', ?),
 			('empty_query', 'Empty query', 'query', 2, 'shared', '', '');
 		INSERT INTO shelf_books (shelf_id, book_id) VALUES
-			('manual', 'manual'), ('manual', 'both'), ('manual', 'trashed'),
-			('curator_personal', 'hidden'), ('own_manual', 'hidden');
+			('manual', 1), ('manual', 3), ('manual', 5),
+			('curator_personal', 4), ('own_manual', 4);
 		INSERT INTO user_scope_shelves (user_id, shelf_id) VALUES (2, 'curator_personal');
-	`, ParseQuery("title:Query"), ParseQuery("title:Hidden")); err != nil {
-		t.Fatalf("seed tag visibility: %v", err)
-	}
+	`, ParseQuery("title:Query"), ParseQuery("title:Hidden"))
 
 	manual := []string{"Adventure", "Fantasy", "Shared"}
 	query := []string{"Adventure", "İstanbul", "Science fiction", "Shared", "Классика"}
@@ -115,16 +112,14 @@ func TestListTagsVisibility(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			// Seed even ineligible grants to exercise the read-side access boundary.
-			if _, err := database.Exec(`DELETE FROM user_scope_shelves WHERE user_id = 1`); err != nil {
-				t.Fatal(err)
-			}
+			mustExec(t, database, `DELETE FROM user_scope_shelves WHERE user_id = 1`)
+
 			for _, shelf := range tt.shelves {
-				if _, err := database.Exec(`INSERT INTO user_scope_shelves (user_id, shelf_id) VALUES (1, ?)`, shelf); err != nil {
-					t.Fatal(err)
-				}
+				mustExec(t, database, `INSERT INTO user_scope_shelves (user_id, shelf_id) VALUES (1, ?)`, shelf)
+
 			}
 			scope := VisibilityScope{UserID: 1, ContentScope: ContentScopeShelves}
-			got, err := ListTags(database, scope, tt.q, tt.limit)
+			got, err := ListTags(database.Read(t.Context()), scope, tt.q, tt.limit)
 			if err != nil {
 				t.Fatal(err)
 			}

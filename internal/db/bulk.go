@@ -10,7 +10,7 @@ import (
 // computing its transform: the current tags/series values and the manual-override
 // set to merge into.
 type BulkEditRow struct {
-	ID          string
+	ID          int64
 	Tags        sql.NullString
 	Series      sql.NullString
 	SeriesIndex sql.NullFloat64
@@ -18,9 +18,8 @@ type BulkEditRow struct {
 }
 
 // idPlaceholders builds a "?,?,?" list and the matching args for an IN clause.
-func idPlaceholders(ids []string) (string, []any) {
-	placeholders := strings.Repeat("?,", len(ids))
-	placeholders = placeholders[:len(placeholders)-1]
+func idPlaceholders[T any](ids []T) (string, []any) {
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
 	args := make([]any, len(ids))
 	for i, id := range ids {
 		args[i] = id
@@ -32,7 +31,7 @@ func idPlaceholders(ids []string) (string, []any) {
 // that are visible in scope. Books that are missing, trashed, or out of scope are
 // simply omitted, so the caller can treat the returned set as the authoritative
 // list of books it may mutate.
-func BooksForBulkEdit(queryer Queryer, scope VisibilityScope, ids []string) ([]BulkEditRow, error) {
+func BooksForBulkEdit(queryer Queryer, scope VisibilityScope, ids []int64) ([]BulkEditRow, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -65,7 +64,7 @@ func BooksForBulkEdit(queryer Queryer, scope VisibilityScope, ids []string) ([]B
 
 // BookSummaryRowsByIDs returns list-projection rows for the given books visible in
 // scope, so a mutation handler can hand updated summaries back to the client.
-func BookSummaryRowsByIDs(queryer Queryer, scope VisibilityScope, ids []string) ([]BookSummaryRow, error) {
+func BookSummaryRowsByIDs(queryer Queryer, scope VisibilityScope, ids []int64) ([]BookSummaryRow, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}

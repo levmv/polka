@@ -6,7 +6,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strings"
 
 	"github.com/levmv/polka/internal/covers"
 	"github.com/levmv/polka/internal/db"
@@ -15,17 +14,17 @@ import (
 )
 
 type cleanupDuplicateDismissRequest struct {
-	BookIDs []string `json:"book_ids"`
+	BookIDs []int64 `json:"book_ids"`
 }
 
 type cleanupDuplicateMergeRequest struct {
-	SurvivorID string   `json:"survivor_id"`
-	BookIDs    []string `json:"book_ids"`
+	SurvivorID int64   `json:"survivor_id"`
+	BookIDs    []int64 `json:"book_ids"`
 }
 
 type cleanupDuplicateMergeResponse struct {
 	Survivor         BookSummaryDTO `json:"survivor"`
-	TrashedIDs       []string       `json:"trashed_ids"`
+	TrashedIDs       []int64        `json:"trashed_ids"`
 	RelayoutWarnings int            `json:"relayout_warnings"`
 }
 
@@ -55,20 +54,20 @@ type Cleanup struct {
 func (s *Server) handleAPICleanup(w http.ResponseWriter, r *http.Request) {
 	scope, err := s.visibilityScope(r)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 
-	counts, err := db.GetCleanupCounts(s.db, scope)
+	counts, err := db.GetCleanupCounts(s.db.Read(r.Context()), scope)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 
 	limit := 24
-	dupCount, dupGroups, err := db.GetPossibleDuplicates(s.db, scope, limit)
+	dupCount, dupGroups, err := db.GetPossibleDuplicates(s.db.Read(r.Context()), scope, limit)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 
@@ -81,9 +80,9 @@ func (s *Server) handleAPICleanup(w http.ResponseWriter, r *http.Request) {
 	cleanup.PossibleDuplicates.Count = dupCount
 	var apiDupGroups []DuplicateGroupAPI
 	for _, g := range dupGroups {
-		books, err := s.bookSummaryDTOs(g.Books)
+		books, err := s.bookSummaryDTOs(r.Context(), g.Books)
 		if err != nil {
-			serverError(w, err)
+			serverError(w, r, err)
 			return
 		}
 		apiDupGroups = append(apiDupGroups, DuplicateGroupAPI{
@@ -108,7 +107,7 @@ func (s *Server) handleAPICleanupDuplicateDismiss(w http.ResponseWriter, r *http
 	if !readJSON(w, r, &req) {
 		return
 	}
-	ids := dedupStrings(req.BookIDs)
+	ids := db.DedupBookIDs(req.BookIDs)
 	if len(ids) < 2 {
 		http.Error(w, "at least two book ids are required", http.StatusBadRequest)
 		return
@@ -116,13 +115,13 @@ func (s *Server) handleAPICleanupDuplicateDismiss(w http.ResponseWriter, r *http
 
 	scope, err := s.visibilityScope(r)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
-	err = s.db.Transact(r.Context(), func(tx *sql.Tx) error {
+	err = s.db.Transact(r.Context(), func(tx *db.Tx) error {
 		return db.DismissDuplicateGroup(tx, scope, ids, u.ID)
 	})
-	if writeDuplicateMutationError(w, err) {
+	if writeDuplicateMutationError(w, r, err) {
 		return
 	}
 
@@ -136,26 +135,25 @@ func (s *Server) handleAPICleanupDuplicateMerge(w http.ResponseWriter, r *http.R
 	if !readJSON(w, r, &req) {
 		return
 	}
-	req.SurvivorID = strings.TrimSpace(req.SurvivorID)
-	ids := dedupStrings(req.BookIDs)
-	if req.SurvivorID == "" || len(ids) < 2 {
+	ids := db.DedupBookIDs(req.BookIDs)
+	if req.SurvivorID <= 0 || len(ids) < 2 {
 		http.Error(w, "survivor_id and at least two book ids are required", http.StatusBadRequest)
 		return
 	}
 
 	scope, err := s.visibilityScope(r)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
-	coverSourceID, err := db.DuplicateMergeCoverSource(s.db, scope, req.SurvivorID, ids)
-	if writeDuplicateMutationError(w, err) {
+	coverSourceID, err := db.DuplicateMergeCoverSource(s.db.Read(r.Context()), scope, req.SurvivorID, ids)
+	if writeDuplicateMutationError(w, r, err) {
 		return
 	}
 
-	coverFromID := ""
+	coverFromID := int64(0)
 	var coverBytes []byte
-	if coverSourceID != "" {
+	if coverSourceID != 0 {
 		if b, ok := s.readDuplicateCover(coverSourceID); ok {
 			coverFromID = coverSourceID
 			coverBytes = b
@@ -167,10 +165,10 @@ func (s *Server) handleAPICleanupDuplicateMerge(w http.ResponseWriter, r *http.R
 	coverRel := covers.OriginalPath(req.SurvivorID)
 	coverTempRel := ""
 	cleanupCoverTemp := false
-	if coverFromID != "" {
-		coverTempRel, err = storage.WriteAdjacentTemp(dataRoot, coverRel, req.SurvivorID+"-cover", coverBytes)
+	if coverFromID != 0 {
+		coverTempRel, err = storage.WriteAdjacentTemp(dataRoot, coverRel, covers.TempLabel(req.SurvivorID), coverBytes)
 		if err != nil {
-			serverError(w, err)
+			serverError(w, r, err)
 			return
 		}
 		cleanupCoverTemp = true
@@ -187,12 +185,12 @@ func (s *Server) handleAPICleanupDuplicateMerge(w http.ResponseWriter, r *http.R
 
 	releaseStorageSlot, err := s.acquireStorageWorkSlot(r.Context())
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	defer releaseStorageSlot()
 
-	mutation, err := relayout.MutateBooks(r.Context(), s.db, s.managedRoot(), func(tx *sql.Tx) (relayout.Changed, error) {
+	mutation, err := relayout.MutateBooks(r.Context(), s.db, s.managedRoot(), func(tx *db.Tx) (relayout.Changed, error) {
 		var err error
 		result, err = db.MergeDuplicateBooks(tx, scope, db.DuplicateMergeRequest{
 			SurvivorID:  req.SurvivorID,
@@ -204,19 +202,19 @@ func (s *Server) handleAPICleanupDuplicateMerge(w http.ResponseWriter, r *http.R
 			return relayout.Changed{}, err
 		}
 		return relayout.Changed{
-			BumpMetadataRev: []string{result.SurvivorID},
-			Relayout:        []string{result.SurvivorID},
-			Reindex:         append([]string{result.SurvivorID}, result.TrashedIDs...),
+			BumpMetadataRev: []int64{result.SurvivorID},
+			Relayout:        []int64{result.SurvivorID},
+			Reindex:         append([]int64{result.SurvivorID}, result.TrashedIDs...),
 		}, nil
 	})
-	if writeDuplicateMutationError(w, err) {
+	if writeDuplicateMutationError(w, r, err) {
 		return
 	}
 	cleanupCoverTemp = false
 
 	if coverTempRel != "" {
 		if err := storage.ReplaceWithStaged(dataRoot, coverTempRel, coverRel); err != nil {
-			serverError(w, err)
+			serverError(w, r, err)
 			return
 		}
 		coverTempRel = ""
@@ -224,21 +222,21 @@ func (s *Server) handleAPICleanupDuplicateMerge(w http.ResponseWriter, r *http.R
 
 	relayoutWarnings := len(mutation.Warnings)
 	for _, warning := range mutation.Warnings {
-		log.Printf("relayout after duplicate merge of %s: %v", req.SurvivorID, warning)
+		log.Printf("relayout after duplicate merge of %d: %v", req.SurvivorID, warning)
 	}
 
 	if result.FilledCover {
 		covers.RemoveDerived(dataRoot, req.SurvivorID)
 	}
 
-	rows, err := db.BookSummaryRowsByIDs(s.db, scope, []string{req.SurvivorID})
+	rows, err := db.BookSummaryRowsByIDs(s.db.Read(r.Context()), scope, []int64{req.SurvivorID})
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
-	books, err := s.bookSummaryDTOs(orderSummaryRows([]string{req.SurvivorID}, rows))
+	books, err := s.bookSummaryDTOs(r.Context(), orderSummaryRows([]int64{req.SurvivorID}, rows))
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	if len(books) == 0 {
@@ -253,23 +251,23 @@ func (s *Server) handleAPICleanupDuplicateMerge(w http.ResponseWriter, r *http.R
 	})
 }
 
-func (s *Server) readDuplicateCover(bookID string) ([]byte, bool) {
+func (s *Server) readDuplicateCover(bookID int64) ([]byte, bool) {
 	coverPath, err := s.dataRoot().Resolve(covers.OriginalPath(bookID))
 	if err != nil {
-		log.Printf("duplicate merge cover source %s: %v", bookID, err)
+		log.Printf("duplicate merge cover source %d: %v", bookID, err)
 		return nil, false
 	}
 	b, err := os.ReadFile(coverPath)
 	if err != nil {
 		if !os.IsNotExist(err) {
-			log.Printf("duplicate merge cover source %s: %v", bookID, err)
+			log.Printf("duplicate merge cover source %d: %v", bookID, err)
 		}
 		return nil, false
 	}
 	return b, true
 }
 
-func writeDuplicateMutationError(w http.ResponseWriter, err error) bool {
+func writeDuplicateMutationError(w http.ResponseWriter, r *http.Request, err error) bool {
 	if err == nil {
 		return false
 	}
@@ -279,7 +277,7 @@ func writeDuplicateMutationError(w http.ResponseWriter, err error) bool {
 	case errors.Is(err, sql.ErrNoRows):
 		http.Error(w, "Book not found", http.StatusNotFound)
 	default:
-		serverError(w, err)
+		serverError(w, r, err)
 	}
 	return true
 }

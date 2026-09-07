@@ -16,7 +16,7 @@ func TestAPIKoboConnectionLifecycleAndIsolation(t *testing.T) {
 	defer database.Close()
 	alice := mustUser(t, database, "alice-native-kobo", db.RoleMember)
 	bob := mustUser(t, database, "bob-native-kobo", db.RoleMember)
-	shelf, err := database.CreateShelf(alice.ID, db.ShelfPersonal, "Travel", db.ShelfManual, "")
+	shelf, err := database.CreateShelf(t.Context(), alice.ID, db.ShelfPersonal, "Travel", db.ShelfManual, "")
 	if err != nil {
 		t.Fatal(err)
 	}

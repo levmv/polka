@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -29,16 +30,18 @@ var ErrInvalidAppTokenInput = errors.New("invalid app token input")
 
 // CreateAppToken issues and stores a random token for a user. name must be
 // non-empty and unique for that user.
-func (db *DB) CreateAppToken(userID int64, name string) (*AppToken, error) {
+func (db *DB) CreateAppToken(ctx context.Context, userID int64, name string) (*AppToken, error) {
 	if name == "" {
 		return nil, errorWithDetail(ErrInvalidAppTokenInput, "token name must not be empty")
 	}
 
 	token := &AppToken{ID: id.New(id.AppToken), Name: name, Token: newDeviceToken()}
-	err := db.QueryRow(
-		"INSERT INTO app_tokens (id, user_id, name, token) VALUES (?, ?, ?, ?) RETURNING created_at",
-		token.ID, userID, token.Name, token.Token,
-	).Scan(&token.CreatedAt)
+	err := db.Transact(ctx, func(tx *Tx) error {
+		return tx.QueryRow(
+			"INSERT INTO app_tokens (id, user_id, name, token) VALUES (?, ?, ?, ?) RETURNING created_at",
+			token.ID, userID, token.Name, token.Token,
+		).Scan(&token.CreatedAt)
+	})
 	if err != nil {
 		if isUniqueViolation(err) {
 			return nil, ErrTokenNameExists
@@ -49,8 +52,8 @@ func (db *DB) CreateAppToken(userID int64, name string) (*AppToken, error) {
 }
 
 // ListAppTokens returns a user's tokens, including their secrets, newest first.
-func (db *DB) ListAppTokens(userID int64) ([]AppToken, error) {
-	rows, err := db.Query(
+func ListAppTokens(queryer Queryer, userID int64) ([]AppToken, error) {
+	rows, err := queryer.Query(
 		"SELECT id, name, token, created_at, last_used_at FROM app_tokens WHERE user_id = ? ORDER BY created_at DESC",
 		userID,
 	)
@@ -72,8 +75,8 @@ func (db *DB) ListAppTokens(userID int64) ([]AppToken, error) {
 
 // RevokeAppToken deletes a user's token by name. Returns sql.ErrNoRows if no such
 // token exists for that user.
-func (db *DB) RevokeAppToken(userID int64, name string) error {
-	res, err := db.Exec("DELETE FROM app_tokens WHERE user_id = ? AND name = ?", userID, name)
+func (db *DB) RevokeAppToken(ctx context.Context, userID int64, name string) error {
+	res, err := db.Write(ctx).Exec("DELETE FROM app_tokens WHERE user_id = ? AND name = ?", userID, name)
 	if err != nil {
 		return fmt.Errorf("revoke app token: %w", err)
 	}
@@ -85,8 +88,8 @@ func (db *DB) RevokeAppToken(userID int64, name string) error {
 
 // RevokeAppTokenByID deletes a user's token by id. It is used by the web UI so
 // token names never have to become URL path components.
-func (db *DB) RevokeAppTokenByID(userID int64, tokenID string) error {
-	res, err := db.Exec("DELETE FROM app_tokens WHERE user_id = ? AND id = ?", userID, tokenID)
+func (db *DB) RevokeAppTokenByID(ctx context.Context, userID int64, tokenID string) error {
+	res, err := db.Write(ctx).Exec("DELETE FROM app_tokens WHERE user_id = ? AND id = ?", userID, tokenID)
 	if err != nil {
 		return fmt.Errorf("revoke app token: %w", err)
 	}
@@ -100,14 +103,14 @@ func (db *DB) RevokeAppTokenByID(userID int64, tokenID string) error {
 // live token matched. It opportunistically records last_used_at (throttled to at
 // most once per hour, like session bumps) so ordinary OPDS browsing does not turn
 // every request into a write.
-func (db *DB) AppTokenUserID(token string) (int64, bool, error) {
+func (db *DB) AppTokenUserID(ctx context.Context, token string) (int64, bool, error) {
 	token = normalizeDeviceToken(token)
 	if token == "" {
 		return 0, false, nil
 	}
 	var userID int64
 	var lastUsed sql.NullInt64
-	err := db.QueryRow(
+	err := db.Read(ctx).QueryRow(
 		"SELECT user_id, last_used_at FROM app_tokens WHERE token = ?", token,
 	).Scan(&userID, &lastUsed)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -119,7 +122,7 @@ func (db *DB) AppTokenUserID(token string) (int64, bool, error) {
 
 	now := time.Now().Unix()
 	if !lastUsed.Valid || now-lastUsed.Int64 >= 3600 {
-		if _, err := db.Exec("UPDATE app_tokens SET last_used_at = ? WHERE token = ?", now, token); err != nil {
+		if _, err := db.ExecBestEffort(ctx, "UPDATE app_tokens SET last_used_at = ? WHERE token = ?", now, token); err != nil {
 			return 0, false, fmt.Errorf("bump app token: %w", err)
 		}
 	}

@@ -50,7 +50,7 @@ func TestAuthMiddleware(t *testing.T) {
 	check("read asset→401", "/read/assets/asset_1", "", http.StatusUnauthorized, false)
 	check("opds→401", "/opds", "", http.StatusUnauthorized, false)
 	check("kosync→401", "/kosync/dead/users/auth", "", http.StatusUnauthorized, false)
-	check("cover→401", "/covers/w_1", "", http.StatusUnauthorized, false)
+	check("cover→401", "/covers/1", "", http.StatusUnauthorized, false)
 	check("setup open", "/setup", "", http.StatusOK, true)
 	check("static open", "/static/app.js", "", http.StatusOK, true)
 	check("manifest open", "/static/manifest.webmanifest", "", http.StatusOK, true)
@@ -62,7 +62,7 @@ func TestAuthMiddleware(t *testing.T) {
 	}
 
 	// A valid session passes through and the request carries the user id.
-	sid, _ := s.sessions.issue(u.ID)
+	sid, _ := s.sessions.issue(t.Context(), u.ID)
 	var ran bool
 	h := s.authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ran = true
@@ -85,7 +85,7 @@ func TestAuthMiddlewareBasicAuth(t *testing.T) {
 	u := mustUser(t, database, "alice", "admin")
 	s := newTestServer(database, dir)
 
-	for _, path := range []string{"/opds", "/opds/books", "/download/asset_1", "/covers/w_1"} {
+	for _, path := range []string{"/opds", "/opds/books", "/download/asset_1", "/covers/1"} {
 		t.Run(path, func(t *testing.T) {
 			var ran bool
 			h := s.authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -159,7 +159,7 @@ func TestAuthMiddlewareAppToken(t *testing.T) {
 	defer database.Close()
 
 	u := mustUser(t, database, "alice", "admin")
-	created, err := database.CreateAppToken(u.ID, "kobo")
+	created, err := database.CreateAppToken(t.Context(), u.ID, "kobo")
 	if err != nil {
 		t.Fatalf("create token: %v", err)
 	}
@@ -202,7 +202,7 @@ func TestAuthMiddlewareAppToken(t *testing.T) {
 	var badKOSyncRan bool
 	hBadKO := s.authMiddleware(okHandler(&badKOSyncRan))
 	reqBadKO := httptest.NewRequest("GET", "/kosync/not-a-token/users/auth", nil)
-	sid, err := s.sessions.issue(u.ID)
+	sid, err := s.sessions.issue(t.Context(), u.ID)
 	if err != nil {
 		t.Fatalf("issue browser session: %v", err)
 	}
@@ -230,7 +230,7 @@ func TestAuthMiddlewareAppToken(t *testing.T) {
 	}
 
 	// A revoked token stops working.
-	if err := database.RevokeAppToken(u.ID, "kobo"); err != nil {
+	if err := database.RevokeAppToken(t.Context(), u.ID, "kobo"); err != nil {
 		t.Fatalf("revoke: %v", err)
 	}
 	var ran bool

@@ -1,6 +1,7 @@
 package bootstrap
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -19,17 +20,17 @@ func DatabasePath(dataDir string) string {
 
 // EnsureLibrary opens or creates the catalog and initializes a fresh library's
 // managed-books and ingest layouts.
-func EnsureLibrary(dataDir string) (*db.DB, error) {
-	return ensureLibrary(dataDir, true)
+func EnsureLibrary(ctx context.Context, dataDir string) (*db.DB, error) {
+	return ensureLibrary(ctx, dataDir, true)
 }
 
 // EnsureLibraryWithoutBooksRoot initializes the database and ingest layout
 // without choosing or creating a managed books root.
-func EnsureLibraryWithoutBooksRoot(dataDir string) (*db.DB, error) {
-	return ensureLibrary(dataDir, false)
+func EnsureLibraryWithoutBooksRoot(ctx context.Context, dataDir string) (*db.DB, error) {
+	return ensureLibrary(ctx, dataDir, false)
 }
 
-func ensureLibrary(dataDir string, ensureBooksRoot bool) (*db.DB, error) {
+func ensureLibrary(ctx context.Context, dataDir string, ensureBooksRoot bool) (*db.DB, error) {
 	if dataDir == "" {
 		return nil, errors.New("data directory is required")
 	}
@@ -49,7 +50,7 @@ func ensureLibrary(dataDir string, ensureBooksRoot bool) (*db.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := ensureDefaults(database, dataDir, ensureBooksRoot); err != nil {
+	if err := ensureDefaults(ctx, database, dataDir, ensureBooksRoot); err != nil {
 		database.Close()
 		return nil, err
 	}
@@ -85,15 +86,15 @@ func requireDatabaseFile(dataDir string) error {
 	return nil
 }
 
-func ensureDefaults(database *db.DB, dataDir string, ensureBooksRoot bool) error {
-	rootConfigured, err := storage.RootConfigured(database.DB)
+func ensureDefaults(ctx context.Context, database *db.DB, dataDir string, ensureBooksRoot bool) error {
+	rootConfigured, err := storage.RootConfigured(database.Read(ctx))
 	if err != nil {
 		return err
 	}
 	fresh := !rootConfigured
 
 	if ensureBooksRoot && !rootConfigured {
-		root, err := storage.SaveRoot(database.DB, dataDir, "")
+		root, err := storage.SaveRoot(database.Write(ctx), dataDir, "")
 		if err != nil {
 			return err
 		}
@@ -103,21 +104,21 @@ func ensureDefaults(database *db.DB, dataDir string, ensureBooksRoot bool) error
 	}
 
 	if fresh {
-		if _, err := storage.SaveBookPathTemplate(database.DB, ""); err != nil {
+		if _, err := storage.SaveBookPathTemplate(database.Write(ctx), ""); err != nil {
 			return err
 		}
-		if err := ingest.SaveEnabled(database.DB, true); err != nil {
+		if err := ingest.SaveEnabled(database.Write(ctx), true); err != nil {
 			return err
 		}
-		if err := ingest.SaveDeleteSources(database.DB, false); err != nil {
+		if err := ingest.SaveDeleteSources(database.Write(ctx), false); err != nil {
 			return err
 		}
-		if _, err := ingest.SavePath(database.DB, dataDir, ""); err != nil {
+		if _, err := ingest.SavePath(database.Write(ctx), dataDir, ""); err != nil {
 			return err
 		}
 	}
 
-	cfg, err := ingest.OpenConfig(database.DB, dataDir)
+	cfg, err := ingest.OpenConfig(database.Read(ctx), dataDir)
 	if err != nil {
 		return err
 	}

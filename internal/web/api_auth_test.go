@@ -18,7 +18,7 @@ func TestAPIMe(t *testing.T) {
 	u := mustUser(t, database, "Alice", db.RoleMember)
 
 	s := newTestServer(database, dir)
-	sid, err := s.sessions.issue(u.ID)
+	sid, err := s.sessions.issue(t.Context(), u.ID)
 	if err != nil {
 		t.Fatalf("issue session: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestLogoutRequiresSameOriginPost(t *testing.T) {
 	s := newTestServer(database, dir)
 	handler := testRoutes(t, s)
 
-	sid, err := s.sessions.issue(u.ID)
+	sid, err := s.sessions.issue(t.Context(), u.ID)
 	if err != nil {
 		t.Fatalf("issue session: %v", err)
 	}
@@ -123,7 +123,7 @@ func testRoutes(t *testing.T, s *Server) http.Handler {
 
 func addSessionCookie(t *testing.T, s *Server, req *http.Request, userID int64) {
 	t.Helper()
-	sid, err := s.sessions.issue(userID)
+	sid, err := s.sessions.issue(t.Context(), userID)
 	if err != nil {
 		t.Fatalf("issue session: %v", err)
 	}

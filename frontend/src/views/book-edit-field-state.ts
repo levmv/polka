@@ -44,10 +44,10 @@ export function stateKey(state: BookUpdate): string {
     return JSON.stringify(state);
 }
 
-export function validateTitle(form: HTMLFormElement, bookId: string): boolean {
+export function validateTitle(form: HTMLFormElement, uiID: string): boolean {
     const titleInput = form.querySelector<HTMLInputElement>('input[name="title"]');
     const valid = !!titleInput?.value.trim();
-    const error = document.getElementById(`title-error-${bookId}`);
+    const error = document.getElementById(`title-error-${uiID}`);
     if (error) error.style.display = valid ? 'none' : 'block';
     return valid;
 }

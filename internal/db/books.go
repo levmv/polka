@@ -14,7 +14,7 @@ import (
 // with the detail-only fields the single-book view loads, so a list query can't
 // hand back fields it never selected.
 type BookSummaryRow struct {
-	ID           string
+	ID           int64
 	Title        string
 	Series       sql.NullString
 	SeriesIndex  sql.NullFloat64
@@ -52,8 +52,8 @@ const (
 	bookSummaryColumns = `b.id, b.title, b.series, b.series_index, b.tags, b.cover_version,
 		b.published_date`
 
-	// colAuthors is retained for specialized flat projections such as FTS and
-	// delivery. UI-facing book rows load ordered authors from book_authors.
+	// colAuthors flattens author names for FTS and delivery. UI-facing book rows
+	// load ordered authors from book_authors.
 	colAuthors = `COALESCE((SELECT group_concat(name, ', ') FROM (
 		SELECT a.name FROM book_authors ba
 		JOIN authors a ON ba.author_id = a.id
@@ -222,7 +222,7 @@ const (
 )
 
 type BookSequenceItem struct {
-	ID    string
+	ID    int64
 	Title string
 }
 
@@ -232,7 +232,7 @@ type BookSequenceWindow struct {
 	Total        int
 }
 
-func BookSequenceInList(queryer Queryer, scope VisibilityScope, userID int64, bookID, q string, sort BookSort, before, after int) (BookSequenceWindow, error) {
+func BookSequenceInList(queryer Queryer, scope VisibilityScope, userID int64, bookID int64, q string, sort BookSort, before, after int) (BookSequenceWindow, error) {
 	plan := newBookSearchPlan(scope, userID, q)
 	return queryBookSequenceWindow(
 		queryer,
@@ -247,7 +247,7 @@ func BookSequenceInList(queryer Queryer, scope VisibilityScope, userID int64, bo
 	)
 }
 
-func BookSequenceInManualShelf(queryer Queryer, scope VisibilityScope, bookID, shelfID string, sort BookSort, before, after int) (BookSequenceWindow, error) {
+func BookSequenceInManualShelf(queryer Queryer, scope VisibilityScope, bookID int64, shelfID string, sort BookSort, before, after int) (BookSequenceWindow, error) {
 	withSQL, fromSQL, args := scope.joinVisibleBooks("shelf_books sb JOIN books b ON b.id = sb.book_id")
 	args = append(args, shelfID)
 	return queryBookSequenceWindow(
@@ -263,7 +263,7 @@ func BookSequenceInManualShelf(queryer Queryer, scope VisibilityScope, bookID, s
 	)
 }
 
-func queryBookSequenceWindow(queryer Queryer, bookID, withSQL, fromSQL, whereSQL, orderBy string, before, after int, args ...any) (BookSequenceWindow, error) {
+func queryBookSequenceWindow(queryer Queryer, bookID int64, withSQL string, fromSQL string, whereSQL string, orderBy string, before, after int, args ...any) (BookSequenceWindow, error) {
 	withPrefix := "WITH "
 	if strings.TrimSpace(withSQL) != "" {
 		withPrefix += withSQL + ","
@@ -377,7 +377,7 @@ func ListBooksInManualShelf(queryer Queryer, scope VisibilityScope, shelfID stri
 	return books, nil
 }
 
-func GetBook(queryer Queryer, scope VisibilityScope, bookID string) (BookDetailRow, error) {
+func GetBook(queryer Queryer, scope VisibilityScope, bookID int64) (BookDetailRow, error) {
 	where, args := scope.AppendBookWhere("b.id = ? AND b.deleted_at IS NULL", "b.id", bookID)
 	row := queryer.QueryRow(fmt.Sprintf(`
 		SELECT b.id, b.title, b.series, b.series_index, b.tags, b.cover_version,
@@ -398,9 +398,9 @@ func GetBook(queryer Queryer, scope VisibilityScope, bookID string) (BookDetailR
 // PlaceholderCoverText returns the title and primary-author name for a book,
 // the inputs for a generated fallback cover. found is false when the book does
 // not exist (so the cover handler can keep returning 404 for unknown IDs).
-func (db *DB) PlaceholderCoverText(bookID string) (title, author string, found bool, err error) {
+func PlaceholderCoverText(queryer Queryer, bookID int64) (title, author string, found bool, err error) {
 	var a sql.NullString
-	err = db.QueryRow(
+	err = queryer.QueryRow(
 		`SELECT b.title, `+subPrimaryAuthorName+` FROM books b WHERE b.id = ?`, bookID,
 	).Scan(&title, &a)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -410,4 +410,21 @@ func (db *DB) PlaceholderCoverText(bookID string) (title, author string, found b
 		return "", "", false, err
 	}
 	return title, a.String, true, nil
+}
+
+// DedupBookIDs returns positive IDs in their original order, without duplicates.
+func DedupBookIDs(in []int64) []int64 {
+	seen := make(map[int64]struct{}, len(in))
+	out := make([]int64, 0, len(in))
+	for _, id := range in {
+		if id <= 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
 }

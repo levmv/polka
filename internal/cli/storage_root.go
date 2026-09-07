@@ -59,7 +59,7 @@ func runStorageRootSet(parent context.Context, dataDir string, args []string) (r
 		return err
 	}
 
-	database, err := ensureLibraryWithoutBooksRoot(dataDir)
+	database, err := ensureLibraryWithoutBooksRoot(parent, dataDir)
 	if err != nil {
 		return err
 	}
@@ -84,7 +84,7 @@ func runStorageRootSet(parent context.Context, dataDir string, args []string) (r
 		return err
 	}
 
-	saved, err := storage.SaveRoot(database.DB, dataDir, configured)
+	saved, err := storage.SaveRoot(database.Write(ctx), dataDir, configured)
 	if err != nil {
 		return err
 	}
@@ -99,7 +99,7 @@ type storageRootAsset struct {
 }
 
 func storageRootAssets(ctx context.Context, database *db.DB) ([]storageRootAsset, error) {
-	rows, err := database.QueryContext(ctx, `SELECT id, storage_path FROM assets ORDER BY id`)
+	rows, err := database.Read(ctx).Query(`SELECT id, storage_path FROM assets ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("query asset paths: %w", err)
 	}

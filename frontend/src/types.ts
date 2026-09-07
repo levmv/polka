@@ -15,7 +15,7 @@ export interface SeriesSummary {
     author: string;
     book_count: number;
     finished_count: number;
-    cover_book_id: string;
+    cover_book_id: number;
     cover_version: number;
 }
 
@@ -25,7 +25,7 @@ export interface CursorPage<T> {
 }
 
 export interface BookSummary {
-    id: string;
+    id: number;
     title: string;
     authors_list: Author[];
     authors_display: string;
@@ -78,7 +78,7 @@ export interface BookWritebackResult {
 }
 
 export interface BookSequenceItem {
-    id: string;
+    id: number;
     title: string;
 }
 
@@ -160,7 +160,7 @@ export interface ReaderLocator {
 
 export interface ReaderState {
     asset_id: string;
-    book_id: string;
+    book_id: number;
     progress: number;
     locator: ReaderLocator;
     last_read_at?: number;
@@ -395,7 +395,7 @@ export interface DeliveryJob {
     device_name: string;
     device_email: string;
     preset: DeliveryPreset;
-    book_id: string;
+    book_id: number;
     asset_id?: string;
     title: string;
     target?: string;
@@ -480,7 +480,7 @@ export type BulkOperation =
     | BulkAuthorsSetOperation;
 
 export interface BulkEditRequest {
-    ids: string[];
+    ids: number[];
     operations: BulkOperation[];
 }
 
@@ -494,7 +494,7 @@ export interface BulkEditResult {
 
 export interface BulkTrashResult {
     trashed: number;
-    ids: string[];
+    ids: number[];
 }
 
 export interface BulkWritebackResult {
@@ -538,6 +538,6 @@ export interface Cleanup {
 
 export interface CleanupDuplicateMergeResult {
     survivor: BookSummary;
-    trashed_ids: string[];
+    trashed_ids: number[];
     relayout_warnings: number;
 }

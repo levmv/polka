@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"net/http"
@@ -51,12 +52,12 @@ type userAccessRequest struct {
 	ScopeShelfIDs []string `json:"scope_shelf_ids"`
 }
 
-func (s *Server) userDTO(u db.User) (UserDTO, error) {
-	scopeShelfIDs, err := db.UserScopeShelfIDs(s.db, u.ID)
+func (s *Server) userDTO(ctx context.Context, u db.User) (UserDTO, error) {
+	scopeShelfIDs, err := db.UserScopeShelfIDs(s.db.Read(ctx), u.ID)
 	if err != nil {
 		return UserDTO{}, err
 	}
-	sharedShelfNames, err := db.SharedShelfNamesOwnedBy(s.db, u.ID)
+	sharedShelfNames, err := db.SharedShelfNamesOwnedBy(s.db.Read(ctx), u.ID)
 	if err != nil {
 		return UserDTO{}, err
 	}
@@ -72,10 +73,10 @@ func (s *Server) userDTO(u db.User) (UserDTO, error) {
 	}, nil
 }
 
-func (s *Server) userDTOs(users []db.User) ([]UserDTO, error) {
+func (s *Server) userDTOs(ctx context.Context, users []db.User) ([]UserDTO, error) {
 	out := make([]UserDTO, 0, len(users))
 	for _, u := range users {
-		dto, err := s.userDTO(u)
+		dto, err := s.userDTO(ctx, u)
 		if err != nil {
 			return nil, err
 		}
@@ -93,9 +94,9 @@ func (s *Server) requireRole(w http.ResponseWriter, r *http.Request, minRole str
 			return nil, false
 		}
 		var err error
-		u, err = s.db.GetUserByID(userID)
+		u, err = db.GetUserByID(s.db.Read(r.Context()), userID)
 		if err != nil {
-			serverError(w, err)
+			serverError(w, r, err)
 			return nil, false
 		}
 		if u == nil {
@@ -117,9 +118,9 @@ func (s *Server) handleAPIMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	u, err := s.db.GetUserByID(userID)
+	u, err := db.GetUserByID(s.db.Read(r.Context()), userID)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	if u == nil {
@@ -131,15 +132,15 @@ func (s *Server) handleAPIMe(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAPIUsers(w http.ResponseWriter, r *http.Request) {
-	users, err := s.db.ListUsers()
+	users, err := db.ListUsers(s.db.Read(r.Context()))
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 
-	out, err := s.userDTOs(users)
+	out, err := s.userDTOs(r.Context(), users)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -154,8 +155,7 @@ func (s *Server) handleAPIUserCreate(w http.ResponseWriter, r *http.Request) {
 	if contentScope == "" && len(req.ScopeShelfIDs) > 0 {
 		contentScope = db.ContentScopeShelves
 	}
-	u, err := s.db.CreateUserWithAccess(
-		req.Username,
+	u, err := s.db.CreateUserWithAccess(r.Context(), req.Username,
 		req.Password,
 		db.UserAccess{
 			Role:          req.Role,
@@ -177,14 +177,14 @@ func (s *Server) handleAPIUserCreate(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, db.ErrScopeShelfNotEligible):
 			http.Error(w, err.Error(), http.StatusBadRequest)
 		default:
-			serverError(w, err)
+			serverError(w, r, err)
 		}
 		return
 	}
 
-	dto, err := s.userDTO(*u)
+	dto, err := s.userDTO(r.Context(), *u)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, dto)
@@ -195,9 +195,9 @@ func (s *Server) handleAPIUserUpdate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	target, err := s.db.GetUserByID(userID)
+	target, err := db.GetUserByID(s.db.Read(r.Context()), userID)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	if target == nil {
@@ -216,7 +216,7 @@ func (s *Server) handleAPIUserUpdate(w http.ResponseWriter, r *http.Request) {
 		req.ContentScope = target.ContentScope
 	}
 
-	updated, err := s.db.UpdateUserAccess(userID, db.UserAccess{
+	updated, err := s.db.UpdateUserAccess(r.Context(), userID, db.UserAccess{
 		Role:          req.Role,
 		ContentScope:  req.ContentScope,
 		ShelfIDs:      req.ScopeShelfIDs,
@@ -237,13 +237,13 @@ func (s *Server) handleAPIUserUpdate(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, db.ErrScopeShelfNotEligible):
 			http.Error(w, err.Error(), http.StatusBadRequest)
 		default:
-			serverError(w, err)
+			serverError(w, r, err)
 		}
 		return
 	}
-	dto, err := s.userDTO(*updated)
+	dto, err := s.userDTO(r.Context(), *updated)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, dto)
@@ -254,14 +254,14 @@ func (s *Server) handleAPIUserDelete(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := s.db.DeleteUser(userID); err != nil {
+	if err := s.db.DeleteUser(r.Context(), userID); err != nil {
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
 			http.Error(w, "User not found", http.StatusNotFound)
 		case errors.Is(err, db.ErrLastAdmin):
 			http.Error(w, "Cannot remove the last admin", http.StatusConflict)
 		default:
-			serverError(w, err)
+			serverError(w, r, err)
 		}
 		return
 	}
@@ -285,14 +285,14 @@ func (s *Server) handleAPIUserPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.db.SetUserPassword(userID, req.Password); err != nil {
+	if err := s.db.SetUserPassword(r.Context(), userID, req.Password); err != nil {
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
 			http.Error(w, "User not found", http.StatusNotFound)
 		case errors.Is(err, db.ErrInvalidUserInput):
 			http.Error(w, err.Error(), http.StatusBadRequest)
 		default:
-			serverError(w, err)
+			serverError(w, r, err)
 		}
 		return
 	}
@@ -307,12 +307,12 @@ func (s *Server) handleAPIUserPassword(w http.ResponseWriter, r *http.Request) {
 	}
 	var revokeErr error
 	if current.ID == userID {
-		revokeErr = s.sessions.revokeUserExcept(userID, currentSID)
+		revokeErr = s.sessions.revokeUserExcept(r.Context(), userID, currentSID)
 	} else {
-		revokeErr = s.sessions.revokeUser(userID)
+		revokeErr = s.sessions.revokeUser(r.Context(), userID)
 	}
 	if revokeErr != nil {
-		serverError(w, revokeErr)
+		serverError(w, r, revokeErr)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

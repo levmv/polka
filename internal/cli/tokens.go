@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -17,7 +18,7 @@ import (
 // app-password tokens from the shell — the headless counterpart to the Settings
 // UI. A token lets OPDS readers and KOReader sync authenticate without the
 // account's real password, and can be revoked per device.
-func runToken(dataDir string, args []string) error {
+func runToken(ctx context.Context, dataDir string, args []string) error {
 	if len(args) == 0 || helpRequested(args) {
 		printTokenUsage()
 		if len(args) == 0 {
@@ -32,7 +33,7 @@ func runToken(dataDir string, args []string) error {
 		return nil
 	}
 
-	var run func(*db.DB, []string) error
+	var run func(context.Context, *db.DB, []string) error
 	switch sub {
 	case "add":
 		run = tokenAdd
@@ -50,7 +51,7 @@ func runToken(dataDir string, args []string) error {
 		return err
 	}
 	defer database.Close()
-	return run(database, rest)
+	return run(ctx, database, rest)
 }
 
 func printTokenUsage() {
@@ -74,7 +75,7 @@ func printTokenSubcommandUsage(sub string) {
 	}
 }
 
-func tokenAdd(database *db.DB, args []string) error {
+func tokenAdd(ctx context.Context, database *db.DB, args []string) error {
 	flags, positional, err := splitTokenAddArgs(args)
 	if err != nil {
 		return err
@@ -92,12 +93,12 @@ func tokenAdd(database *db.DB, args []string) error {
 	if err != nil {
 		return err
 	}
-	user, err := resolveUser(database, positional[0])
+	user, err := resolveUser(database.Read(ctx), positional[0])
 	if err != nil {
 		return err
 	}
 
-	token, err := database.CreateAppToken(user.ID, positional[1])
+	token, err := database.CreateAppToken(ctx, user.ID, positional[1])
 	if err != nil {
 		if errors.Is(err, db.ErrTokenNameExists) {
 			return fmt.Errorf("%q already has a token named %q", user.Username, positional[1])
@@ -163,17 +164,17 @@ func printCreatedToken(w io.Writer, name, username, token, baseURL string) {
 	fmt.Fprintf(w, "    Server:   %s/kosync/%s\n", baseURL, token)
 }
 
-func tokenList(database *db.DB, args []string) error {
+func tokenList(ctx context.Context, database *db.DB, args []string) error {
 	if len(args) != 1 {
 		printTokenSubcommandUsage("list")
 		return errors.New("usage: polka token list <username>")
 	}
-	user, err := resolveUser(database, args[0])
+	user, err := resolveUser(database.Read(ctx), args[0])
 	if err != nil {
 		return err
 	}
 
-	tokens, err := database.ListAppTokens(user.ID)
+	tokens, err := db.ListAppTokens(database.Read(ctx), user.ID)
 	if err != nil {
 		return err
 	}
@@ -192,17 +193,17 @@ func tokenList(database *db.DB, args []string) error {
 	return nil
 }
 
-func tokenRevoke(database *db.DB, args []string) error {
+func tokenRevoke(ctx context.Context, database *db.DB, args []string) error {
 	if len(args) != 2 {
 		printTokenSubcommandUsage("revoke")
 		return errors.New("usage: polka token revoke <username> <name>")
 	}
-	user, err := resolveUser(database, args[0])
+	user, err := resolveUser(database.Read(ctx), args[0])
 	if err != nil {
 		return err
 	}
 
-	if err := database.RevokeAppToken(user.ID, args[1]); err != nil {
+	if err := database.RevokeAppToken(ctx, user.ID, args[1]); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("%q has no token named %q", user.Username, args[1])
 		}
@@ -212,8 +213,8 @@ func tokenRevoke(database *db.DB, args []string) error {
 	return nil
 }
 
-func resolveUser(database *db.DB, username string) (*db.User, error) {
-	u, err := database.GetUserByUsername(username)
+func resolveUser(queryer db.Queryer, username string) (*db.User, error) {
+	u, err := db.GetUserByUsername(queryer, username)
 	if err != nil {
 		return nil, err
 	}

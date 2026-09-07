@@ -4,31 +4,30 @@ import "testing"
 
 func TestShelvesVisibilityAndMembership(t *testing.T) {
 	database := newTestDB(t)
+	mustExec(t, database, "INSERT INTO books (id, title, sort_title, added_at) VALUES (1, 'One', 'One', 1)")
+	mustExec(t, database, "INSERT INTO books (id, title, sort_title, added_at) VALUES (2, 'Two', 'Two', 2)")
+	mustExec(t, database, "INSERT INTO authors (id, name, sort_name) VALUES ('a1', 'Author', 'Author')")
+	mustExec(t, database, "INSERT INTO book_authors (book_id, author_id, author_order) VALUES (1, 'a1', 0)")
+	mustExec(t, database, "INSERT INTO book_authors (book_id, author_id, author_order) VALUES (2, 'a1', 0)")
 
-	database.Exec("INSERT INTO books (id, title, sort_title, added_at) VALUES ('w1', 'One', 'One', 1)")
-	database.Exec("INSERT INTO books (id, title, sort_title, added_at) VALUES ('w2', 'Two', 'Two', 2)")
-	database.Exec("INSERT INTO authors (id, name, sort_name) VALUES ('a1', 'Author', 'Author')")
-	database.Exec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES ('w1', 'a1', 0)")
-	database.Exec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES ('w2', 'a1', 0)")
-
-	user, err := database.CreateUser("alice", "pw", RoleMember)
+	user, err := database.CreateUser(t.Context(), "alice", "pw", RoleMember)
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
 
-	shared, err := database.CreateShelf(user.ID, ShelfShared, "Shared", ShelfManual, "")
+	shared, err := database.CreateShelf(t.Context(), user.ID, ShelfShared, "Shared", ShelfManual, "")
 	if err != nil {
 		t.Fatalf("CreateShelf shared: %v", err)
 	}
-	private, err := database.CreateShelf(user.ID, ShelfPersonal, "Private", ShelfManual, "")
+	private, err := database.CreateShelf(t.Context(), user.ID, ShelfPersonal, "Private", ShelfManual, "")
 	if err != nil {
 		t.Fatalf("CreateShelf private: %v", err)
 	}
-	if _, err := database.CreateShelf(user.ID, ShelfPersonal, "Author search", ShelfQuery, "author:Author"); err != nil {
+	if _, err := database.CreateShelf(t.Context(), user.ID, ShelfPersonal, "Author search", ShelfQuery, "author:Author"); err != nil {
 		t.Fatalf("CreateShelf query: %v", err)
 	}
 
-	visibleSharedOnly, err := database.ListShelves(0)
+	visibleSharedOnly, err := ListShelves(database.Read(t.Context()), 0)
 	if err != nil {
 		t.Fatalf("ListShelves shared: %v", err)
 	}
@@ -36,7 +35,7 @@ func TestShelvesVisibilityAndMembership(t *testing.T) {
 		t.Fatalf("shared-only shelves = %+v, want only %s", visibleSharedOnly, shared.ID)
 	}
 
-	visibleToUser, err := database.ListShelves(user.ID)
+	visibleToUser, err := ListShelves(database.Read(t.Context()), user.ID)
 	if err != nil {
 		t.Fatalf("ListShelves user: %v", err)
 	}
@@ -44,22 +43,22 @@ func TestShelvesVisibilityAndMembership(t *testing.T) {
 		t.Fatalf("user-visible shelves = %d, want 4", len(visibleToUser))
 	}
 
-	if err := database.AddBookToShelf(private.ID, user.ID, "w2"); err != nil {
-		t.Fatalf("AddBookToShelf w2: %v", err)
+	if err := database.AddBookToShelf(t.Context(), private.ID, user.ID, 2); err != nil {
+		t.Fatalf("AddBookToShelf 2: %v", err)
 	}
-	if err := database.AddBookToShelf(private.ID, user.ID, "w1"); err != nil {
-		t.Fatalf("AddBookToShelf w1: %v", err)
+	if err := database.AddBookToShelf(t.Context(), private.ID, user.ID, 1); err != nil {
+		t.Fatalf("AddBookToShelf 1: %v", err)
 	}
 
-	books, err := ListBooksInManualShelf(database, FullVisibilityScope(), private.ID, SortAdded, 10, 0)
+	books, err := ListBooksInManualShelf(database.Read(t.Context()), FullVisibilityScope(), private.ID, SortAdded, 10, 0)
 	if err != nil {
 		t.Fatalf("ListBooksInManualShelf: %v", err)
 	}
-	if len(books) != 2 || books[0].ID != "w2" || books[1].ID != "w1" {
-		t.Fatalf("manual shelf order = %+v, want [w2 w1]", books)
+	if len(books) != 2 || books[0].ID != 2 || books[1].ID != 1 {
+		t.Fatalf("manual shelf order = %+v, want [2 1]", books)
 	}
 
-	memberships, err := database.ListBookShelfMemberships(user.ID, "w2")
+	memberships, err := ListBookShelfMemberships(database.Read(t.Context()), user.ID, 2)
 	if err != nil {
 		t.Fatalf("ListBookShelfMemberships: %v", err)
 	}

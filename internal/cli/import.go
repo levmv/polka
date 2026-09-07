@@ -55,7 +55,7 @@ type importSummary struct {
 type importOutcome struct {
 	Source   string          `json:"source"`
 	Status   string          `json:"status"`
-	BookID   string          `json:"book_id,omitempty"`
+	BookID   int64           `json:"book_id,omitempty"`
 	InTrash  bool            `json:"in_trash,omitzero"`
 	Restored bool            `json:"restored,omitzero"`
 	AssetID  string          `json:"asset_id,omitempty"`
@@ -128,7 +128,7 @@ func runImportPath(ctx context.Context, dataDir, srcPath string, opts importComm
 	if opts.dryRun {
 		database, err = openDatabase(dataDir)
 	} else {
-		database, err = ensureLibraryInitialized(dataDir)
+		database, err = ensureLibraryInitialized(ctx, dataDir)
 	}
 	if err != nil {
 		return err
@@ -159,12 +159,12 @@ func runImportPath(ctx context.Context, dataDir, srcPath string, opts importComm
 
 func importSinglePath(ctx context.Context, database *db.DB, dataDir, srcPath string, opts importCommandOptions, report *importReport) error {
 	if opts.dryRun {
-		item, err := probeImportOutcome(ctx, database, srcPath)
+		item, err := probeImportOutcome(ctx, database.Read(ctx), srcPath)
 		recordImportOutcome(report, opts, item, true)
 		return err
 	}
 
-	root, coverRoot, template, err := openImportStorage(database, dataDir)
+	root, coverRoot, template, err := openImportStorage(database.Read(ctx), dataDir)
 	if err != nil {
 		return err
 	}
@@ -199,7 +199,7 @@ func importFolderPath(ctx context.Context, database *db.DB, dataDir, rootPath st
 	var renderer *pdfcover.Renderer
 	if !opts.dryRun {
 		var err error
-		root, coverRoot, template, err = openImportStorage(database, dataDir)
+		root, coverRoot, template, err = openImportStorage(database.Read(ctx), dataDir)
 		if err != nil {
 			return err
 		}
@@ -230,7 +230,7 @@ func importFolderPath(ctx context.Context, database *db.DB, dataDir, rootPath st
 				var item importOutcome
 				if opts.dryRun {
 					var probeErr error
-					item, probeErr = probeImportGroup(ctx, database, path, sources)
+					item, probeErr = probeImportGroup(ctx, database.Read(ctx), path, sources)
 					if probeErr != nil {
 						return probeErr
 					}
@@ -257,7 +257,7 @@ func importFolderPath(ctx context.Context, database *db.DB, dataDir, rootPath st
 		}
 
 		if opts.dryRun {
-			item, probeErr := probeImportOutcome(ctx, database, path)
+			item, probeErr := probeImportOutcome(ctx, database.Read(ctx), path)
 			if probeErr != nil {
 				if cause := context.Cause(ctx); cause != nil {
 					return cause

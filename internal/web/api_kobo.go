@@ -39,13 +39,13 @@ func koboConnectionDTO(r *http.Request, connection *db.KoboConnection) KoboConne
 
 func (s *Server) handleAPIKoboConnection(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "private, no-store")
-	connection, err := s.db.KoboConnectionForUser(UserID(r.Context()))
+	connection, err := db.KoboConnectionForUser(s.db.Read(r.Context()), UserID(r.Context()))
 	if errors.Is(err, db.ErrKoboConnectionNotFound) {
 		writeJSON(w, http.StatusOK, nil)
 		return
 	}
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, koboConnectionDTO(r, connection))
@@ -67,19 +67,19 @@ func (s *Server) handleAPIKoboConnectionCreate(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, koboConnectionDTO(r, connection))
 }
 
 func (s *Server) handleAPIKoboConnectionDelete(w http.ResponseWriter, r *http.Request) {
-	if err := s.db.DeleteKoboConnection(UserID(r.Context())); err != nil {
+	if err := s.db.DeleteKoboConnection(r.Context(), UserID(r.Context())); err != nil {
 		if errors.Is(err, db.ErrKoboConnectionNotFound) {
 			http.Error(w, "Kobo connection not found", http.StatusNotFound)
 			return
 		}
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

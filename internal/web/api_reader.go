@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json/jsontext"
 	"errors"
 	"net/http"
@@ -11,7 +12,7 @@ import (
 
 type ReaderStateDTO struct {
 	AssetID            string           `json:"asset_id"`
-	BookID             string           `json:"book_id"`
+	BookID             int64            `json:"book_id"`
 	Progress           float64          `json:"progress"`
 	Locator            db.ReaderLocator `json:"locator"`
 	LastReadAt         int64            `json:"last_read_at,omitzero"`
@@ -100,8 +101,8 @@ func annotationDTOs(rows []db.Annotation) []AnnotationDTO {
 }
 
 func (s *Server) handleAPIContinueReading(w http.ResponseWriter, r *http.Request) {
-	settings, err := s.db.GetUserSettings(UserID(r.Context()))
-	if writeUserSettingsError(w, err) {
+	settings, err := db.GetUserSettings(s.db.Read(r.Context()), UserID(r.Context()))
+	if writeUserSettingsError(w, r, err) {
 		return
 	}
 	if !settings.ShowContinueReading {
@@ -118,34 +119,34 @@ func (s *Server) handleAPIContinueReading(w http.ResponseWriter, r *http.Request
 
 	scope, err := s.visibilityScope(r)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
-	rows, err := db.ListContinueReading(s.db, scope, UserID(r.Context()), limit)
-	if writeReaderStateError(w, err) {
+	rows, err := db.ListContinueReading(s.db.Read(r.Context()), scope, UserID(r.Context()), limit)
+	if writeReaderStateError(w, r, err) {
 		return
 	}
 
-	books, err := s.continueReadingDTOs(rows)
+	books, err := s.continueReadingDTOs(r.Context(), rows)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, books)
 }
 
-func (s *Server) continueReadingDTOs(rows []db.ContinueReadingRow) ([]ContinueReadingDTO, error) {
+func (s *Server) continueReadingDTOs(ctx context.Context, rows []db.ContinueReadingRow) ([]ContinueReadingDTO, error) {
 	summaryRows := make([]db.BookSummaryRow, len(rows))
 	for i, row := range rows {
 		summaryRows[i] = row.BookSummaryRow
 	}
 
-	summaries, err := s.bookSummaryDTOs(summaryRows)
+	summaries, err := s.bookSummaryDTOs(ctx, summaryRows)
 	if err != nil {
 		return nil, err
 	}
 
-	byID := make(map[string]BookSummaryDTO, len(summaries))
+	byID := make(map[int64]BookSummaryDTO, len(summaries))
 	for _, summary := range summaries {
 		byID[summary.ID] = summary
 	}
@@ -171,12 +172,12 @@ func (s *Server) handleAPIReaderState(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireAssetAccess(w, r, assetID); !ok {
 		return
 	}
-	state, err := s.db.GetReaderState(UserID(r.Context()), assetID)
-	if writeReaderStateError(w, err) {
+	state, err := db.GetReaderState(s.db.Read(r.Context()), UserID(r.Context()), assetID)
+	if writeReaderStateError(w, r, err) {
 		return
 	}
-	status, err := db.GetReadingStatus(s.db, UserID(r.Context()), state.BookID)
-	if writeReaderStateError(w, err) {
+	status, err := db.GetReadingStatus(s.db.Read(r.Context()), UserID(r.Context()), state.BookID)
+	if writeReaderStateError(w, r, err) {
 		return
 	}
 	writeJSON(w, http.StatusOK, readerStateDTO(state, db.ReadingStatusChange{State: status}))
@@ -208,7 +209,7 @@ func (s *Server) handleAPIReaderStateSave(w http.ResponseWriter, r *http.Request
 		db.ReaderLocator(req.Locator),
 		db.ReadingStatusSourceWebReader,
 	)
-	if writeReaderStateError(w, err) {
+	if writeReaderStateError(w, r, err) {
 		return
 	}
 	writeJSON(w, http.StatusOK, readerStateDTO(state, change))
@@ -219,7 +220,7 @@ func (s *Server) handleAPIReaderStateReset(w http.ResponseWriter, r *http.Reques
 	if _, ok := s.requireAssetAccess(w, r, assetID); !ok {
 		return
 	}
-	if writeReaderStateError(w, s.db.ResetReaderState(UserID(r.Context()), assetID)) {
+	if writeReaderStateError(w, r, s.db.ResetReaderState(r.Context(), UserID(r.Context()), assetID)) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -236,7 +237,7 @@ func (s *Server) handleAPIReaderStateTouch(w http.ResponseWriter, r *http.Reques
 		assetID,
 		db.ReadingStatusSourceWebReader,
 	)
-	if writeReaderStateError(w, err) {
+	if writeReaderStateError(w, r, err) {
 		return
 	}
 	writeJSON(w, http.StatusOK, readerStateDTO(state, change))
@@ -247,8 +248,8 @@ func (s *Server) handleAPIAnnotations(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireAssetAccess(w, r, assetID); !ok {
 		return
 	}
-	rows, err := s.db.ListAnnotations(UserID(r.Context()), assetID)
-	if writeReaderStateError(w, err) {
+	rows, err := db.ListAnnotations(s.db.Read(r.Context()), UserID(r.Context()), assetID)
+	if writeReaderStateError(w, r, err) {
 		return
 	}
 	writeJSON(w, http.StatusOK, annotationDTOs(rows))
@@ -263,7 +264,7 @@ func (s *Server) handleAPIAnnotationCreate(w http.ResponseWriter, r *http.Reques
 	if !readJSON(w, r, &req) {
 		return
 	}
-	ann, err := s.db.CreateAnnotation(UserID(r.Context()), assetID, db.AnnotationCreate{
+	ann, err := s.db.CreateAnnotation(r.Context(), UserID(r.Context()), assetID, db.AnnotationCreate{
 		Kind:          req.Kind,
 		CFI:           req.CFI,
 		Quote:         req.Quote,
@@ -272,7 +273,7 @@ func (s *Server) handleAPIAnnotationCreate(w http.ResponseWriter, r *http.Reques
 		Note:          req.Note,
 		Color:         req.Color,
 	})
-	if writeReaderStateError(w, err) {
+	if writeReaderStateError(w, r, err) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, annotationDTO(ann))
@@ -287,10 +288,10 @@ func (s *Server) handleAPIAnnotationUpdate(w http.ResponseWriter, r *http.Reques
 	if !readJSON(w, r, &req) {
 		return
 	}
-	ann, err := s.db.UpdateAnnotationNote(UserID(r.Context()), assetID, r.PathValue("annotationID"), db.AnnotationNoteUpdate{
+	ann, err := s.db.UpdateAnnotationNote(r.Context(), UserID(r.Context()), assetID, r.PathValue("annotationID"), db.AnnotationNoteUpdate{
 		Note: req.Note,
 	})
-	if writeReaderStateError(w, err) {
+	if writeReaderStateError(w, r, err) {
 		return
 	}
 	writeJSON(w, http.StatusOK, annotationDTO(ann))
@@ -301,14 +302,14 @@ func (s *Server) handleAPIAnnotationDelete(w http.ResponseWriter, r *http.Reques
 	if _, ok := s.requireAssetAccess(w, r, assetID); !ok {
 		return
 	}
-	err := s.db.DeleteAnnotation(UserID(r.Context()), assetID, r.PathValue("annotationID"))
-	if writeReaderStateError(w, err) {
+	err := s.db.DeleteAnnotation(r.Context(), UserID(r.Context()), assetID, r.PathValue("annotationID"))
+	if writeReaderStateError(w, r, err) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func writeReaderStateError(w http.ResponseWriter, err error) bool {
+func writeReaderStateError(w http.ResponseWriter, r *http.Request, err error) bool {
 	if err == nil {
 		return false
 	}
@@ -322,7 +323,7 @@ func writeReaderStateError(w http.ResponseWriter, err error) bool {
 	case errors.Is(err, db.ErrInvalidAnnotation):
 		http.Error(w, err.Error(), http.StatusBadRequest)
 	default:
-		serverError(w, err)
+		serverError(w, r, err)
 	}
 	return true
 }

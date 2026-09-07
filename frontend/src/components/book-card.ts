@@ -6,7 +6,7 @@ import type { BookSummary } from '../types';
 export function createBookCard(b: BookSummary, context?: BookListContext | null): HTMLElement {
     const el = document.createElement('div');
     el.className = 'book-card';
-    el.dataset.id = b.id;
+    el.dataset.id = String(b.id);
 
     const href = escapeHtml(bookURL(b.id, context));
 

@@ -14,6 +14,7 @@ import (
 
 	"github.com/levmv/polka/internal/bookmeta"
 	"github.com/levmv/polka/internal/covers"
+	"github.com/levmv/polka/internal/db"
 	"github.com/levmv/polka/internal/storage"
 )
 
@@ -48,7 +49,7 @@ func validateCoverBytes(coverBytes []byte) (validatedCoverBytes, error) {
 // promotion, and derived-cache invalidation this method holds the same storage
 // slot as write-back/import/relayout. A write-back therefore cannot observe a
 // new cover revision while the old original is still on disk.
-func (s *Server) storeCoverBytes(ctx context.Context, bookID string, coverBytes validatedCoverBytes) error {
+func (s *Server) storeCoverBytes(ctx context.Context, bookID int64, coverBytes validatedCoverBytes) error {
 	releaseStorageSlot, err := s.acquireStorageWorkSlot(ctx)
 	if err != nil {
 		return err
@@ -57,8 +58,8 @@ func (s *Server) storeCoverBytes(ctx context.Context, bookID string, coverBytes 
 
 	coverPath := covers.OriginalPath(bookID)
 	root := s.dataRoot()
-	err = storage.Place(root, coverPath, bytes.NewReader([]byte(coverBytes)), func() error {
-		return s.db.Transact(ctx, func(tx *sql.Tx) error {
+	err = storage.Place(root, coverPath, covers.TempLabel(bookID), bytes.NewReader([]byte(coverBytes)), func() error {
+		return s.db.Transact(ctx, func(tx *db.Tx) error {
 			var overrides sql.NullString
 			if err := tx.QueryRow(`
 				SELECT manual_overrides
@@ -89,12 +90,12 @@ func (s *Server) storeCoverBytes(ctx context.Context, bookID string, coverBytes 
 	return nil
 }
 
-func (s *Server) storeCoverAndReturnBook(w http.ResponseWriter, r *http.Request, bookID string, coverBytes validatedCoverBytes) {
+func (s *Server) storeCoverAndReturnBook(w http.ResponseWriter, r *http.Request, bookID int64, coverBytes validatedCoverBytes) {
 	if err := s.storeCoverBytes(r.Context(), bookID, coverBytes); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			http.NotFound(w, r)
 		} else {
-			serverError(w, err)
+			serverError(w, r, err)
 		}
 		return
 	}
@@ -103,7 +104,10 @@ func (s *Server) storeCoverAndReturnBook(w http.ResponseWriter, r *http.Request,
 }
 
 func (s *Server) handleAPICoverUpload(w http.ResponseWriter, r *http.Request) {
-	bookID := r.PathValue("id")
+	bookID, validID := pathBookID(w, r, "id")
+	if !validID {
+		return
+	}
 	if _, ok := s.requireBookAccess(w, r, bookID); !ok {
 		return
 	}
@@ -134,7 +138,10 @@ func (s *Server) handleAPICoverUpload(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAPIGeneratedCoverPreview(w http.ResponseWriter, r *http.Request) {
-	bookID := r.PathValue("id")
+	bookID, validID := pathBookID(w, r, "id")
+	if !validID {
+		return
+	}
 	if _, ok := s.requireBookAccess(w, r, bookID); !ok {
 		return
 	}
@@ -153,7 +160,7 @@ func (s *Server) handleAPIGeneratedCoverPreview(w http.ResponseWriter, r *http.R
 
 	enc, err := covers.GeneratedStyled(title, author, covers.VariantDisplay, covers.DefaultOptions(), req.Seed, req.Style)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 
@@ -163,7 +170,10 @@ func (s *Server) handleAPIGeneratedCoverPreview(w http.ResponseWriter, r *http.R
 }
 
 func (s *Server) handleAPICoverURL(w http.ResponseWriter, r *http.Request) {
-	bookID := r.PathValue("id")
+	bookID, validID := pathBookID(w, r, "id")
+	if !validID {
+		return
+	}
 	if _, ok := s.requireBookAccess(w, r, bookID); !ok {
 		return
 	}

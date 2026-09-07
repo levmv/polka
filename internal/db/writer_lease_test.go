@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 )
 
 func TestWriterLeaseBlocksFreshForeignOwner(t *testing.T) {
@@ -23,42 +22,11 @@ func TestWriterLeaseBlocksFreshForeignOwner(t *testing.T) {
 	}
 }
 
-func TestWriterLeaseHeartbeatReportsForcedTakeover(t *testing.T) {
-	database := newTestDB(t)
-
-	ctx := t.Context()
-	first, err := AcquireWriterLease(ctx, database, "first", false)
-	if err != nil {
-		t.Fatalf("Acquire first: %v", err)
-	}
-	errC := make(chan error, 1)
-	go func() {
-		errC <- first.RunHeartbeat(ctx, 5*time.Millisecond)
-	}()
-
-	forced, err := AcquireWriterLease(ctx, database, "forced", true)
-	if err != nil {
-		t.Fatalf("Acquire forced: %v", err)
-	}
-	defer forced.Release(context.Background())
-
-	select {
-	case err := <-errC:
-		if !errors.Is(err, ErrWriterLeaseHeld) {
-			t.Fatalf("heartbeat error = %v; want ErrWriterLeaseHeld", err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("heartbeat did not report forced takeover")
-	}
-}
-
 func TestWriterLeaseAllowsStaleOrForcedClaim(t *testing.T) {
 	database := newTestDB(t)
 
 	ctx := context.Background()
-	if _, err := database.Exec("INSERT INTO writer_leases (name, owner, updated_at) VALUES (?, ?, ?)", storageWriterLeaseName, "old", 100); err != nil {
-		t.Fatalf("seed lease: %v", err)
-	}
+	mustExec(t, database, "INSERT INTO writer_leases (name, owner, updated_at) VALUES (?, ?, ?)", storageWriterLeaseName, "old", 100)
 
 	stale, err := AcquireWriterLease(ctx, database, "stale-claim", false)
 	if err != nil {
@@ -80,7 +48,7 @@ func TestWriterLeaseAllowsStaleOrForcedClaim(t *testing.T) {
 		t.Fatalf("release stale owner: %v", err)
 	}
 	var owner string
-	if err := database.QueryRow("SELECT owner FROM writer_leases WHERE name = ?", storageWriterLeaseName).Scan(&owner); err != nil {
+	if err := database.Read(ctx).QueryRow("SELECT owner FROM writer_leases WHERE name = ?", storageWriterLeaseName).Scan(&owner); err != nil {
 		t.Fatalf("query forced lease: %v", err)
 	}
 	if owner != "forced" {
@@ -90,7 +58,7 @@ func TestWriterLeaseAllowsStaleOrForcedClaim(t *testing.T) {
 		t.Fatalf("release forced owner: %v", err)
 	}
 	var count int
-	if err := database.QueryRow("SELECT COUNT(*) FROM writer_leases WHERE name = ?", storageWriterLeaseName).Scan(&count); err != nil {
+	if err := database.Read(ctx).QueryRow("SELECT COUNT(*) FROM writer_leases WHERE name = ?", storageWriterLeaseName).Scan(&count); err != nil {
 		t.Fatalf("count leases: %v", err)
 	}
 	if count != 0 {

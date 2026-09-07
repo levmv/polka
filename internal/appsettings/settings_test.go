@@ -15,16 +15,16 @@ func TestGetSet(t *testing.T) {
 	}
 	defer database.Close()
 
-	if got, ok, err := Get(database, "missing"); err != nil || ok || got != "" {
+	if got, ok, err := Get(database.Read(t.Context()), "missing"); err != nil || ok || got != "" {
 		t.Fatalf("Get missing = %q, %v, %v; want empty, false, nil", got, ok, err)
 	}
-	if err := Set(database, "example", "value"); err != nil {
+	if err := Set(database.Write(t.Context()), "example", "value"); err != nil {
 		t.Fatalf("Set: %v", err)
 	}
-	if err := Set(database, "example", "updated"); err != nil {
+	if err := Set(database.Write(t.Context()), "example", "updated"); err != nil {
 		t.Fatalf("Set update: %v", err)
 	}
-	got, ok, err := Get(database, "example")
+	got, ok, err := Get(database.Read(t.Context()), "example")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -40,27 +40,27 @@ func TestBoolSettings(t *testing.T) {
 	}
 	defer database.Close()
 
-	got, err := GetBool(database, "missing", true)
+	got, err := GetBool(database.Read(t.Context()), "missing", true)
 	if err != nil {
 		t.Fatalf("GetBool default: %v", err)
 	}
 	if !got {
 		t.Fatalf("GetBool missing = false; want default true")
 	}
-	if err := SetBool(database, "flag", false); err != nil {
+	if err := SetBool(database.Write(t.Context()), "flag", false); err != nil {
 		t.Fatalf("SetBool: %v", err)
 	}
-	got, err = GetBool(database, "flag", true)
+	got, err = GetBool(database.Read(t.Context()), "flag", true)
 	if err != nil {
 		t.Fatalf("GetBool: %v", err)
 	}
 	if got {
 		t.Fatalf("GetBool flag = true; want false")
 	}
-	if err := Set(database, "flag", "bad"); err != nil {
+	if err := Set(database.Write(t.Context()), "flag", "bad"); err != nil {
 		t.Fatalf("Set bad: %v", err)
 	}
-	if _, err := GetBool(database, "flag", true); err == nil || !strings.Contains(err.Error(), `invalid flag value "bad"`) {
+	if _, err := GetBool(database.Read(t.Context()), "flag", true); err == nil || !strings.Contains(err.Error(), `invalid flag value "bad"`) {
 		t.Fatalf("GetBool bad error = %v; want invalid flag value", err)
 	}
 }

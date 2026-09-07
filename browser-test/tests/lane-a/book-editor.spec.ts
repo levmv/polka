@@ -2,7 +2,7 @@ import { Buffer } from 'node:buffer';
 import { epub } from '../book-fixtures';
 import { expect, type Locator, type Page, test } from '../fixtures';
 
-let disposableBookIDs: string[] = [];
+let disposableBookIDs: number[] = [];
 
 test.beforeEach(() => {
   disposableBookIDs = [];
@@ -12,7 +12,7 @@ test.afterEach(async ({ page }) => {
   for (const bookID of disposableBookIDs) {
     const trash = await page.request.post('/api/books/bulk/trash', { data: { ids: [bookID] } });
     expect(trash.ok()).toBeTruthy();
-    const purge = await page.request.delete(`/api/books/${encodeURIComponent(bookID)}/purge`);
+    const purge = await page.request.delete(`/api/books/${bookID}/purge`);
     expect(purge.status()).toBe(204);
   }
 });
@@ -28,7 +28,7 @@ async function uploadDisposableBook(page: Page, prefix: string): Promise<string>
   const card = page.locator('.book-card', { hasText: title });
   await expect(card).toBeVisible();
   const href = await card.locator('.book-title-link').getAttribute('href');
-  const bookID = href ? new URL(href, page.url()).pathname.split('/').pop() : '';
+  const bookID = href ? Number(new URL(href, page.url()).pathname.split('/').pop()) : 0;
   if (!bookID) throw new Error('missing disposable editor book id');
   disposableBookIDs.push(bookID);
   return title;
@@ -103,9 +103,9 @@ test.describe('Book editor', () => {
     await titleLink.click();
     await expect(page.locator('.detail-title')).toHaveText('Foundation');
 
-    const bookID = new URL(page.url()).pathname.split('/').pop();
+    const bookID = Number(new URL(page.url()).pathname.split('/').pop());
     if (!bookID) throw new Error('missing book id');
-    const baselineResponse = await page.request.get(`/api/books/${encodeURIComponent(bookID)}`);
+    const baselineResponse = await page.request.get(`/api/books/${bookID}`);
     expect(baselineResponse.ok()).toBe(true);
     const baseline = await baselineResponse.json();
     const concurrentPublisher = `Concurrent Press ${Date.now().toString(36)}`;
@@ -120,7 +120,7 @@ test.describe('Book editor', () => {
       // from that stale draft. The form must not echo its old publisher value.
       await page.evaluate(
         async ({ id, publisher }) => {
-          const res = await fetch(`/api/books/${encodeURIComponent(id)}`, {
+          const res = await fetch(`/api/books/${id}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ publisher }),
@@ -141,7 +141,7 @@ test.describe('Book editor', () => {
 
       await expect
         .poll(async () => {
-          const response = await page.request.get(`/api/books/${encodeURIComponent(bookID)}`);
+          const response = await page.request.get(`/api/books/${bookID}`);
           const book = await response.json();
           return { publisher: book.publisher, series: book.series };
         })
@@ -149,7 +149,7 @@ test.describe('Book editor', () => {
     } finally {
       await page.evaluate(
         async ({ id, publisher, series }) => {
-          const res = await fetch(`/api/books/${encodeURIComponent(id)}`, {
+          const res = await fetch(`/api/books/${id}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ publisher, series }),
@@ -229,7 +229,7 @@ test.describe('Book editor', () => {
     const contextQuery = currentURL.searchParams.toString();
     const sequence = await page.evaluate(
       async ({ id, query }) => {
-        const res = await fetch(`/api/books/${encodeURIComponent(id)}/sequence?${query}&before=0&after=1`);
+        const res = await fetch(`/api/books/${id}/sequence?${query}&before=0&after=1`);
         if (!res.ok) throw new Error(await res.text());
         return await res.json();
       },
@@ -778,8 +778,7 @@ test.describe('Book editor', () => {
     const containerText = (await coverContainer.textContent())?.trim() ?? '';
     expect(containerText).toBe('');
 
-    // The recognized date shows in the field itself (parsed from a full ISO
-    // string); the hint stays silent — only an unparseable value flags now.
+    // A recognized ISO date is displayed in human form without a warning.
     const dateInput = page.locator('[id^="date-input-"]');
     await expect(dateInput).toHaveValue('13 June 2026');
     const dateHint = page.locator('[id^="date-validation-"]');

@@ -81,24 +81,24 @@ func TestOPDSShelves(t *testing.T) {
 
 	alice := mustUser(t, database, "alice", db.RoleMember)
 	bob := mustUser(t, database, "bob", db.RoleMember)
-	shared, err := database.CreateShelf(alice.ID, db.ShelfShared, "Shared", db.ShelfManual, "")
+	shared, err := database.CreateShelf(t.Context(), alice.ID, db.ShelfShared, "Shared", db.ShelfManual, "")
 	if err != nil {
 		t.Fatalf("create shared shelf: %v", err)
 	}
-	personal, err := database.CreateShelf(alice.ID, db.ShelfPersonal, "Mine & Yours", db.ShelfManual, "")
+	personal, err := database.CreateShelf(t.Context(), alice.ID, db.ShelfPersonal, "Mine & Yours", db.ShelfManual, "")
 	if err != nil {
 		t.Fatalf("create personal shelf: %v", err)
 	}
-	query, err := database.CreateShelf(alice.ID, db.ShelfPersonal, "Tolkien", db.ShelfQuery, "Hobbit")
+	query, err := database.CreateShelf(t.Context(), alice.ID, db.ShelfPersonal, "Tolkien", db.ShelfQuery, "Hobbit")
 	if err != nil {
 		t.Fatalf("create query shelf: %v", err)
 	}
-	hidden, err := database.CreateShelf(bob.ID, db.ShelfPersonal, "Bob only", db.ShelfManual, "")
+	hidden, err := database.CreateShelf(t.Context(), bob.ID, db.ShelfPersonal, "Bob only", db.ShelfManual, "")
 	if err != nil {
 		t.Fatalf("create hidden shelf: %v", err)
 	}
 	for _, shelfID := range []string{shared.ID, personal.ID} {
-		if err := database.AddBookToShelf(shelfID, alice.ID, "w_1"); err != nil {
+		if err := database.AddBookToShelf(t.Context(), shelfID, alice.ID, 1); err != nil {
 			t.Fatalf("add Hobbit to %s: %v", shelfID, err)
 		}
 	}
@@ -191,9 +191,8 @@ func TestOPDSSeriesNav(t *testing.T) {
 	defer database.Close()
 
 	_ = mustUser(t, database, "alice", db.RoleMember)
-	if _, err := database.Exec(`UPDATE books SET series = 'Middle-earth' WHERE id = 'w_1'`); err != nil {
-		t.Fatalf("set series: %v", err)
-	}
+	mustExec(t, database, `UPDATE books SET series = 'Middle-earth' WHERE id = 1`)
+
 	s := newTestServer(database, dir)
 
 	req := httptest.NewRequest("GET", "/opds/series", nil)
@@ -227,14 +226,11 @@ func TestOPDSSeriesNavPaging(t *testing.T) {
 
 	_ = mustUser(t, database, "alice", db.RoleMember)
 	for i := range opdsDefaultLimit + 5 {
-		id := "sw_" + strconv.Itoa(i)
+		id := i + 3
 		name := "Series " + fmt.Sprintf("%03d", i)
-		if _, err := database.Exec(
-			`INSERT INTO books (id, title, sort_title, series) VALUES (?, ?, ?, ?)`,
-			id, name, name, name,
-		); err != nil {
-			t.Fatalf("insert book: %v", err)
-		}
+		mustExec(t, database, `INSERT INTO books (id, title, sort_title, series) VALUES (?, ?, ?, ?)`,
+			id, name, name, name)
+
 	}
 	s := newTestServer(database, dir)
 
@@ -275,9 +271,8 @@ func TestOPDSTagsNav(t *testing.T) {
 	defer database.Close()
 
 	_ = mustUser(t, database, "alice", db.RoleMember)
-	if _, err := database.Exec(`UPDATE books SET tags = 'fantasy, classics' WHERE id = 'w_1'`); err != nil {
-		t.Fatalf("set tags: %v", err)
-	}
+	mustExec(t, database, `UPDATE books SET tags = 'fantasy, classics' WHERE id = 1`)
+
 	s := newTestServer(database, dir)
 
 	req := httptest.NewRequest("GET", "/opds/tags", nil)
@@ -306,7 +301,7 @@ func TestOPDSBooksFeed(t *testing.T) {
 	defer database.Close()
 
 	_ = mustUser(t, database, "alice", db.RoleMember)
-	if _, err := database.Exec(`
+	mustExec(t, database, `
 		UPDATE books
 		SET description = '<p>A small <strong>adventure</strong>.</p>',
 		    tags = 'fantasy, classics',
@@ -316,10 +311,9 @@ func TestOPDSBooksFeed(t *testing.T) {
 		    language = 'en',
 		    identifiers = 'isbn:978-0-306-40615-7, uuid:550e8400-e29b-41d4-a716-446655440000',
 		    updated_at = 100
-		WHERE id = 'w_1'
-	`); err != nil {
-		t.Fatalf("update book: %v", err)
-	}
+		WHERE id = 1
+	`)
+
 	s := newTestServer(database, dir)
 
 	req := httptest.NewRequest("GET", "/opds/books", nil)
@@ -355,7 +349,7 @@ func TestOPDSBooksFeed(t *testing.T) {
 		`href="http://example.com/download/asset_1"`,
 		`type="application/epub+zip"`,
 		`rel="http://opds-spec.org/image/thumbnail"`,
-		`href="http://example.com/covers/w_1?v=2&amp;variant=thumb"`,
+		`href="http://example.com/covers/1?v=2&amp;variant=thumb"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("books feed missing %q:\n%s", want, body)
@@ -374,7 +368,7 @@ func TestOPDSDeliveryAcceptsAppToken(t *testing.T) {
 	defer database.Close()
 
 	u := mustUser(t, database, "alice", db.RoleMember)
-	created, err := database.CreateAppToken(u.ID, "koreader")
+	created, err := database.CreateAppToken(t.Context(), u.ID, "koreader")
 	if err != nil {
 		t.Fatalf("create app token: %v", err)
 	}
@@ -414,7 +408,7 @@ func TestOPDSDeliveryAcceptsAppToken(t *testing.T) {
 		},
 		{
 			name:        "cover",
-			path:        "/covers/w_1?variant=thumb",
+			path:        "/covers/1?variant=thumb",
 			contentType: covers.ContentTypeJPEG,
 		},
 	} {
@@ -442,22 +436,21 @@ func TestOPDSPaginationBoundaries(t *testing.T) {
 	defer database.Close()
 
 	_ = mustUser(t, database, "alice", db.RoleMember)
-	if _, err := database.Exec(`
+	mustExec(t, database, `
 		INSERT INTO books (id, title, sort_title) VALUES
-			('w_3', 'Boundary One', 'Boundary One'),
-			('w_4', 'Boundary Two', 'Boundary Two'),
-			('w_5', 'Boundary Three', 'Boundary Three');
+			(3, 'Boundary One', 'Boundary One'),
+			(4, 'Boundary Two', 'Boundary Two'),
+			(5, 'Boundary Three', 'Boundary Three');
 		INSERT INTO assets (id, book_id, storage_path, filename, extension) VALUES
-			('asset_3', 'w_3', 'one.epub', 'one.epub', '.epub'),
-			('asset_4', 'w_4', 'two.epub', 'two.epub', '.epub'),
-			('asset_5', 'w_5', 'three.epub', 'three.epub', '.epub');
-		INSERT INTO search (rowid, book_id, title, authors) VALUES
-			(3, 'w_3', 'Boundary One', ''),
-			(4, 'w_4', 'Boundary Two', ''),
-			(5, 'w_5', 'Boundary Three', '');
-	`); err != nil {
-		t.Fatalf("insert paginated books: %v", err)
-	}
+			('asset_3', 3, 'one.epub', 'one.epub', '.epub'),
+			('asset_4', 4, 'two.epub', 'two.epub', '.epub'),
+			('asset_5', 5, 'three.epub', 'three.epub', '.epub');
+		INSERT INTO search (rowid, title, authors) VALUES
+			(3, 'Boundary One', ''),
+			(4, 'Boundary Two', ''),
+			(5, 'Boundary Three', '');
+	`)
+
 	s := newTestServer(database, dir)
 
 	type paginationCase struct {
@@ -711,7 +704,7 @@ func TestOPDSSearchFeed(t *testing.T) {
 		}
 	}
 
-	// "Dune" (w_2) matches by title but has no asset, so it must not appear in a
+	// "Dune" (book 2) matches by title but has no asset, so it must not appear in a
 	// search acquisition feed.
 	req2 := httptest.NewRequest("GET", "/opds/search?q=Dune", nil)
 	req2.SetBasicAuth("alice", "pw")

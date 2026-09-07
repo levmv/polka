@@ -44,9 +44,9 @@ func appTokenDTOs(tokens []db.AppToken) []AppTokenDTO {
 
 func (s *Server) handleAPIAppTokens(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "private, no-store")
-	tokens, err := s.db.ListAppTokens(UserID(r.Context()))
+	tokens, err := db.ListAppTokens(s.db.Read(r.Context()), UserID(r.Context()))
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, appTokenDTOs(tokens))
@@ -60,7 +60,7 @@ func (s *Server) handleAPIAppTokenCreate(w http.ResponseWriter, r *http.Request)
 	}
 
 	name := strings.TrimSpace(req.Name)
-	token, err := s.db.CreateAppToken(UserID(r.Context()), name)
+	token, err := s.db.CreateAppToken(r.Context(), UserID(r.Context()), name)
 	if err != nil {
 		switch {
 		case errors.Is(err, db.ErrTokenNameExists):
@@ -68,7 +68,7 @@ func (s *Server) handleAPIAppTokenCreate(w http.ResponseWriter, r *http.Request)
 		case errors.Is(err, db.ErrInvalidAppTokenInput):
 			http.Error(w, err.Error(), http.StatusBadRequest)
 		default:
-			serverError(w, err)
+			serverError(w, r, err)
 		}
 		return
 	}
@@ -82,12 +82,12 @@ func (s *Server) handleAPIAppTokenDelete(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "Missing token ID", http.StatusBadRequest)
 		return
 	}
-	if err := s.db.RevokeAppTokenByID(UserID(r.Context()), tokenID); err != nil {
+	if err := s.db.RevokeAppTokenByID(r.Context(), UserID(r.Context()), tokenID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			http.Error(w, "Token not found", http.StatusNotFound)
 			return
 		}
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

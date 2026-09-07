@@ -15,7 +15,6 @@ import (
 	"github.com/levmv/polka/internal/covers"
 	"github.com/levmv/polka/internal/db"
 	"github.com/levmv/polka/internal/format"
-	"github.com/levmv/polka/internal/id"
 	"github.com/levmv/polka/internal/storage"
 )
 
@@ -43,7 +42,7 @@ func runRepair(parent context.Context, dataDir string, args []string) (retErr er
 		return err
 	}
 	defer database.Close()
-	root, err := storage.OpenRoot(database.DB, dataDir)
+	root, err := storage.OpenRoot(database.Read(parent), dataDir)
 	if err != nil {
 		return err
 	}
@@ -60,7 +59,7 @@ func runRepair(parent context.Context, dataDir string, args []string) (retErr er
 
 	// Covers live in the app data dir, separate from the books root.
 	dataRoot := storage.NewRoot(dataDir)
-	template, err := storage.OpenBookPathTemplate(database.DB)
+	template, err := storage.OpenBookPathTemplate(database.Read(ctx))
 	if err != nil {
 		return err
 	}
@@ -70,11 +69,11 @@ func runRepair(parent context.Context, dataDir string, args []string) (retErr er
 		return err
 	}
 
-	assets, err := db.AllAssetsWithPrimaryAuthor(database)
+	assets, err := db.AllAssetsWithPrimaryAuthor(database.Read(ctx))
 	if err != nil {
 		return err
 	}
-	bookCovers, err := db.AllBookCovers(database)
+	bookCovers, err := db.AllBookCovers(database.Read(ctx))
 	if err != nil {
 		return err
 	}
@@ -92,7 +91,7 @@ func runRepair(parent context.Context, dataDir string, args []string) (retErr er
 	if err := context.Cause(ctx); err != nil {
 		return err
 	}
-	orphanAuthors, err := db.DeleteOrphanAuthors(database)
+	orphanAuthors, err := db.DeleteOrphanAuthors(database.Write(ctx))
 	if err != nil {
 		return fmt.Errorf("delete orphan authors: %w", err)
 	}
@@ -182,6 +181,7 @@ func repairAssets(ctx context.Context, database *db.DB, root storage.Root, templ
 		VerifiedHashes: make(map[string]struct{}, len(assets)),
 	}
 
+	writer := database.Write(ctx)
 	for _, asset := range assets {
 		if err := context.Cause(ctx); err != nil {
 			return summary, err
@@ -249,7 +249,7 @@ func repairAssets(ctx context.Context, database *db.DB, root storage.Root, templ
 		}
 
 		if asset.StoragePath != canonicalPath {
-			_, err = database.Exec("UPDATE assets SET storage_path = ?, filename = ? WHERE id = ?", canonicalPath, filepath.Base(canonicalPath), asset.ID)
+			_, err = writer.Exec("UPDATE assets SET storage_path = ?, filename = ? WHERE id = ?", canonicalPath, filepath.Base(canonicalPath), asset.ID)
 			if err != nil {
 				fmt.Printf("Failed to update database for %s: %v\n", asset.ID, err)
 				continue
@@ -274,7 +274,7 @@ func repairAssets(ctx context.Context, database *db.DB, root storage.Root, templ
 		}
 		currentBytesTrusted := false
 		if asset.CurrentSHA256 == "" {
-			if _, err := database.Exec("UPDATE assets SET current_sha256 = ?, current_size = ?, updated_at = unixepoch() WHERE id = ?", currentHash, currentSize, asset.ID); err != nil {
+			if _, err := writer.Exec("UPDATE assets SET current_sha256 = ?, current_size = ?, updated_at = unixepoch() WHERE id = ?", currentHash, currentSize, asset.ID); err != nil {
 				fmt.Printf("Failed to backfill current hash for %s: %v\n", asset.ID, err)
 				continue
 			}
@@ -301,7 +301,7 @@ func repairAssets(ctx context.Context, database *db.DB, root storage.Root, templ
 				if capability.CanRead {
 					canRead = 1
 				}
-				if _, err := database.Exec("UPDATE assets SET format = ?, can_read = ?, updated_at = unixepoch() WHERE id = ?", format.FormatKey(capability.Format), canRead, asset.ID); err != nil {
+				if _, err := writer.Exec("UPDATE assets SET format = ?, can_read = ?, updated_at = unixepoch() WHERE id = ?", format.FormatKey(capability.Format), canRead, asset.ID); err != nil {
 					fmt.Printf("Failed to repair format/capability for %s: %v\n", asset.ID, err)
 					continue
 				}
@@ -316,7 +316,7 @@ func repairAssets(ctx context.Context, database *db.DB, root storage.Root, templ
 		if asset.CurrentSHA256 != "" {
 			if !asset.CurrentSize.Valid {
 				if currentBytesTrusted {
-					if _, err := database.Exec("UPDATE assets SET current_size = ?, updated_at = unixepoch() WHERE id = ?", currentSize, asset.ID); err != nil {
+					if _, err := writer.Exec("UPDATE assets SET current_size = ?, updated_at = unixepoch() WHERE id = ?", currentSize, asset.ID); err != nil {
 						fmt.Printf("Failed to backfill current size for %s: %v\n", asset.ID, err)
 						continue
 					}
@@ -327,7 +327,7 @@ func repairAssets(ctx context.Context, database *db.DB, root storage.Root, templ
 				}
 			} else if asset.CurrentSize.Int64 != currentSize {
 				if currentBytesTrusted {
-					if _, err := database.Exec("UPDATE assets SET current_size = ?, updated_at = unixepoch() WHERE id = ?", currentSize, asset.ID); err != nil {
+					if _, err := writer.Exec("UPDATE assets SET current_size = ?, updated_at = unixepoch() WHERE id = ?", currentSize, asset.ID); err != nil {
 						fmt.Printf("Failed to repair current size for %s: %v\n", asset.ID, err)
 						continue
 					}
@@ -339,7 +339,7 @@ func repairAssets(ctx context.Context, database *db.DB, root storage.Root, templ
 			}
 		}
 		if !asset.OriginalSize.Valid && asset.OriginalSHA256 != "" && asset.OriginalSHA256 == currentHash {
-			if _, err := database.Exec("UPDATE assets SET original_size = ?, updated_at = unixepoch() WHERE id = ?", currentSize, asset.ID); err != nil {
+			if _, err := writer.Exec("UPDATE assets SET original_size = ?, updated_at = unixepoch() WHERE id = ?", currentSize, asset.ID); err != nil {
 				fmt.Printf("Failed to backfill original size for %s: %v\n", asset.ID, err)
 				continue
 			}
@@ -360,7 +360,7 @@ type coverRepairResult struct {
 }
 
 func repairCovers(ctx context.Context, database *db.DB, booksRoot, coverRoot storage.Root, books []db.BookCoverRow, verifiedAssetHashes map[string]struct{}) (coverRepairResult, error) {
-	recoverable := newRecoverableCoverIndex(ctx, coverRoot)
+	recoverable := newRecoverableCoverIndex(ctx, database.Read(ctx), coverRoot)
 	summary := coverRepairResult{}
 
 	// Covers are derived presentation data keyed by SQLite state: unlike book
@@ -377,32 +377,35 @@ func repairCovers(ctx context.Context, database *db.DB, booksRoot, coverRoot sto
 		coverRel := covers.OriginalPath(book.ID)
 		coverAbs, err := coverRoot.Resolve(coverRel)
 		if err != nil {
-			fmt.Printf("Invalid cover path for %s (%s): %v\n", book.ID, coverRel, err)
+			fmt.Printf("Invalid cover path for %d (%s): %v\n", book.ID, coverRel, err)
 			continue
 		}
 		expectedOriginals[coverAbs] = true
 		if info, err := os.Stat(coverAbs); err == nil && !info.IsDir() {
 			continue
 		} else if err == nil && info.IsDir() {
-			fmt.Printf("Cover original is a directory: %s (%s)\n", book.ID, coverRel)
+			fmt.Printf("Cover original is a directory: %d (%s)\n", book.ID, coverRel)
 			continue
 		} else if err != nil && !os.IsNotExist(err) {
-			fmt.Printf("Failed to stat cover for %s: %v\n", book.ID, err)
+			fmt.Printf("Failed to stat cover for %d: %v\n", book.ID, err)
 			continue
 		}
 
-		foundAbs := recoverable.find(book.ID)
+		foundAbs, err := recoverable.find(book.ID)
+		if err != nil {
+			return summary, err
+		}
 		if err := context.Cause(ctx); err != nil {
 			return summary, err
 		}
 		if foundAbs != "" {
 			foundRel, err := filepath.Rel(coverRoot.Path, foundAbs)
 			if err != nil {
-				fmt.Printf("Failed to resolve staged cover for %s: %v\n", book.ID, err)
+				fmt.Printf("Failed to resolve staged cover for %d: %v\n", book.ID, err)
 				continue
 			}
 			if err := storage.Move(coverRoot, filepath.ToSlash(foundRel), coverRel); err != nil {
-				fmt.Printf("Failed to restore cover for %s: %v\n", book.ID, err)
+				fmt.Printf("Failed to restore cover for %d: %v\n", book.ID, err)
 				continue
 			}
 			covers.RemoveDerived(coverRoot, book.ID)
@@ -415,7 +418,7 @@ func repairCovers(ctx context.Context, database *db.DB, booksRoot, coverRoot sto
 			if cause := context.Cause(ctx); cause != nil {
 				return summary, cause
 			}
-			fmt.Printf("Failed to extract cover for %s: %v\n", book.ID, err)
+			fmt.Printf("Failed to extract cover for %d: %v\n", book.ID, err)
 			continue
 		}
 		if extracted {
@@ -427,8 +430,8 @@ func repairCovers(ctx context.Context, database *db.DB, booksRoot, coverRoot sto
 			continue
 		}
 
-		if _, err := database.Exec("UPDATE books SET cover_version = 0, updated_at = unixepoch() WHERE id = ?", book.ID); err != nil {
-			fmt.Printf("Failed to clear missing cover for %s: %v\n", book.ID, err)
+		if _, err := database.Write(ctx).Exec("UPDATE books SET cover_version = 0, updated_at = unixepoch() WHERE id = ?", book.ID); err != nil {
+			fmt.Printf("Failed to clear missing cover for %d: %v\n", book.ID, err)
 			continue
 		}
 		delete(expectedOriginals, coverAbs)
@@ -501,7 +504,7 @@ func printRepairSummary(items []repairSummaryItem) {
 }
 
 func restoreCoverFromPrimaryAsset(ctx context.Context, database *db.DB, booksRoot, coverRoot storage.Root, w db.BookCoverRow, verifiedAssetHashes map[string]struct{}) (extracted bool, fallback bool, err error) {
-	asset, ok, err := primaryAssetForCoverRecovery(database, w.ID)
+	asset, ok, err := primaryAssetForCoverRecovery(database.Read(ctx), w.ID)
 	if err != nil {
 		return false, false, err
 	}
@@ -542,12 +545,12 @@ func restoreCoverFromPrimaryAsset(ctx context.Context, database *db.DB, booksRoo
 
 	fallback = bookmeta.ParseOverrides(w.ManualOverrides)["cover"]
 	coverRel := covers.OriginalPath(w.ID)
-	err = storage.Place(coverRoot, coverRel, bytes.NewReader(coverBytes), func() error {
+	err = storage.Place(coverRoot, coverRel, covers.TempLabel(w.ID), bytes.NewReader(coverBytes), func() error {
 		overrides := bookmeta.ParseOverrides(w.ManualOverrides)
 		if fallback {
 			delete(overrides, "cover")
 		}
-		_, err := database.Exec(`
+		_, err := database.Write(ctx).Exec(`
 			UPDATE books
 			SET cover_version = cover_version + 1,
 			    metadata_rev = metadata_rev + 1,
@@ -581,7 +584,7 @@ func validateCoverRecoveryAssetBytes(ctx context.Context, asset coverRecoveryAss
 	return nil
 }
 
-func primaryAssetForCoverRecovery(queryer db.Queryer, bookID string) (coverRecoveryAsset, bool, error) {
+func primaryAssetForCoverRecovery(queryer db.Queryer, bookID int64) (coverRecoveryAsset, bool, error) {
 	var asset coverRecoveryAsset
 	var formatKey string
 	err := queryer.QueryRow(`
@@ -761,34 +764,66 @@ func (idx *recoverableAssetHashIndex) build() error {
 // lexical order and first-wins map insertion make selection deterministic.
 type recoverableCoverIndex struct {
 	ctx    context.Context
+	db     db.Queryer
 	root   storage.Root
-	byBook map[string]string
+	byBook map[int64]string
 	built  bool
 }
 
-func newRecoverableCoverIndex(ctx context.Context, root storage.Root) *recoverableCoverIndex {
-	return &recoverableCoverIndex{ctx: ctx, root: root, byBook: make(map[string]string)}
+func newRecoverableCoverIndex(ctx context.Context, database db.Queryer, root storage.Root) *recoverableCoverIndex {
+	return &recoverableCoverIndex{ctx: ctx, db: database, root: root, byBook: make(map[int64]string)}
 }
 
-func (idx *recoverableCoverIndex) find(bookID string) string {
+func (idx *recoverableCoverIndex) find(bookID int64) (string, error) {
 	if !idx.built {
-		idx.indexDir(idx.root.StagingDir(), stagedCoverBookID)
-		idx.indexDir(idx.root.Abs("covers"), coverDirTempBookID)
+		if err := idx.indexDir(idx.root.StagingDir(), idx.stagedBookID); err != nil {
+			return "", err
+		}
+		if err := idx.indexDir(idx.root.Abs("covers"), func(name string) (int64, error) {
+			id, _ := coverDirTempBookID(name)
+			return id, nil
+		}); err != nil {
+			return "", err
+		}
 		idx.built = true
 	}
-	return idx.byBook[bookID]
+	return idx.byBook[bookID], nil
 }
 
-func (idx *recoverableCoverIndex) indexDir(dir string, parseBookID func(string) (string, bool)) {
-	_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+func (idx *recoverableCoverIndex) stagedBookID(name string) (int64, error) {
+	assetID, ok := stagedCoverAssetID(name)
+	if !ok {
+		return 0, nil
+	}
+	// The row must have survived commit. Uncommitted book IDs may be reused,
+	// so importer temp names carry the independent source asset identity.
+	var bookID int64
+	err := idx.db.QueryRow("SELECT book_id FROM assets WHERE id = ?", assetID).Scan(&bookID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("resolve staged cover asset %s: %w", assetID, err)
+	}
+	return bookID, nil
+}
+
+func (idx *recoverableCoverIndex) indexDir(dir string, resolveBookID func(string) (int64, error)) error {
+	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if cause := context.Cause(idx.ctx); cause != nil {
 			return cause
 		}
-		if err != nil || info.IsDir() {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
 			return nil
 		}
-		id, ok := parseBookID(info.Name())
-		if !ok {
+		id, err := resolveBookID(info.Name())
+		if err != nil {
+			return err
+		}
+		if id == 0 {
 			return nil
 		}
 		if _, exists := idx.byBook[id]; !exists {
@@ -796,45 +831,26 @@ func (idx *recoverableCoverIndex) indexDir(dir string, parseBookID func(string) 
 		}
 		return nil
 	})
+	if os.IsNotExist(err) {
+		return nil
+	}
+	return err
 }
 
-func stagedCoverBookID(name string) (string, bool) {
-	rest, ok := strings.CutPrefix(name, ".tmp-")
+func stagedCoverAssetID(name string) (string, bool) {
+	label, ok := storage.ParseStagedTempName(name)
 	if !ok {
 		return "", false
 	}
-	_, label, ok := strings.Cut(rest, "-")
-	if !ok {
-		return "", false
-	}
-	if !strings.HasPrefix(label, string(id.Book)) || !strings.HasSuffix(label, "-cover") {
-		return "", false
-	}
-	return strings.TrimSuffix(label, "-cover"), true
+	return covers.ParseAssetTempLabel(label)
 }
 
-func coverDirTempBookID(name string) (string, bool) {
-	if rest, ok := strings.CutPrefix(name, ".tmp-"); ok {
-		if _, bookID, ok := strings.Cut(rest, "-"); ok {
-			if strings.HasPrefix(bookID, string(id.Book)) {
-				return bookID, true
-			}
-		}
-		return "", false
-	}
-
-	if !strings.HasPrefix(name, ".writeback-") || !strings.HasSuffix(name, ".tmp") {
-		return "", false
-	}
-	rest := strings.TrimSuffix(strings.TrimPrefix(name, ".writeback-"), ".tmp")
-	label, _, ok := strings.CutLast(rest, "-")
+func coverDirTempBookID(name string) (int64, bool) {
+	label, ok := storage.ParseWritebackTempName(name)
 	if !ok {
-		return "", false
+		return 0, false
 	}
-	if !strings.HasPrefix(label, string(id.Book)) || !strings.HasSuffix(label, "-cover") {
-		return "", false
-	}
-	return strings.TrimSuffix(label, "-cover"), true
+	return covers.ParseTempLabel(label)
 }
 
 func removeStaleStagedCovers(ctx context.Context, root storage.Root) (int, error) {
@@ -860,7 +876,7 @@ func removeStaleStagedCovers(ctx context.Context, root storage.Root) (int, error
 }
 
 func isStagedCoverFileName(name string) bool {
-	_, ok := stagedCoverBookID(name)
+	_, ok := stagedCoverAssetID(name)
 	return ok
 }
 

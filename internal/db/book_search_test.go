@@ -44,40 +44,48 @@ func TestSearchFilterAccessScopeReasons(t *testing.T) {
 
 func TestBookSearchConsumersSelectTheSameBooks(t *testing.T) {
 	database := newTestDB(t)
-	user, err := database.CreateUser("search-reader", "pw", RoleReader)
+	user, err := database.CreateUser(t.Context(), "search-reader", "pw", RoleReader)
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
-	if _, err := database.Exec(`
-		INSERT INTO books (id, title, sort_title, cover_version) VALUES
-			('w1', 'Alpha Needle', 'Alpha Needle', 0),
-			('w2', 'Beta Needle', 'Beta Needle', 1),
-			('w3', 'Gamma', 'Gamma', 0);
+	mustExec(t, database, `
+		INSERT INTO books (id, title, sort_title, cover_version, tags) VALUES
+			(1, 'Alpha Needle', 'Alpha Needle', 0, 'Science fiction'),
+			(2, 'Beta Needle', 'Beta Needle', 1, 'Science'),
+			(3, 'Gamma', 'Gamma', 0, 'Other');
 		INSERT INTO assets (id, book_id, storage_path, filename, extension) VALUES
-			('a1', 'w1', 'a.epub', 'a.epub', '.epub'),
-			('a2', 'w2', 'b.epub', 'b.epub', '.epub'),
-			('a3', 'w3', 'c.epub', 'c.epub', '.epub');
-		INSERT INTO search (book_id, title, authors) VALUES
-			('w1', 'Alpha Needle', ''), ('w2', 'Beta Needle', ''), ('w3', 'Gamma', '');
-	`); err != nil {
-		t.Fatalf("seed: %v", err)
+			('a1', 1, 'a.epub', 'a.epub', '.epub'),
+			('a2', 2, 'b.epub', 'b.epub', '.epub'),
+			('a3', 3, 'c.epub', 'c.epub', '.epub');
+	`)
+
+	if err := database.Transact(t.Context(), func(tx *Tx) error {
+		for _, id := range []int64{1, 2, 3} {
+			if err := UpdateSearchIndex(tx, id); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := database.SetReadingStatus(context.Background(), user.ID, "w2", ReadingStatusFinished, ReadingStatusSourceManual); err != nil {
+	if _, err := database.SetReadingStatus(context.Background(), user.ID, 2, ReadingStatusFinished, ReadingStatusSourceManual); err != nil {
 		t.Fatalf("set status: %v", err)
 	}
 
 	tests := []struct {
 		query string
-		want  []string
+		want  []int64
 	}{
-		{query: "need", want: []string{"w1", "w2"}},
-		{query: "no:cover", want: []string{"w1", "w3"}},
-		{query: "no:cover need", want: []string{"w1"}},
-		{query: "status:finished need", want: []string{"w2"}},
+		{query: "need", want: []int64{1, 2}},
+		{query: "no:cover", want: []int64{1, 3}},
+		{query: "no:cover need", want: []int64{1}},
+		{query: "status:finished need", want: []int64{2}},
+		{query: `tag:"science fiction"`, want: []int64{1}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.query, func(t *testing.T) {
-			books, err := ListBooks(database, FullVisibilityScope(), user.ID, tt.query, SortTitle, 10, 0)
+			books, err := ListBooks(database.Read(t.Context()), FullVisibilityScope(), user.ID, tt.query, SortTitle, 10, 0)
 			if err != nil {
 				t.Fatalf("list books: %v", err)
 			}
@@ -85,11 +93,11 @@ func TestBookSearchConsumersSelectTheSameBooks(t *testing.T) {
 				t.Fatalf("list ids = %v; want %v", got, tt.want)
 			}
 
-			publications, err := SearchOPDSPublications(database, FullVisibilityScope(), user.ID, tt.query, 10, 0)
+			publications, err := SearchOPDSPublications(database.Read(t.Context()), FullVisibilityScope(), user.ID, tt.query, 10, 0)
 			if err != nil {
 				t.Fatalf("search OPDS: %v", err)
 			}
-			opdsIDs := make([]string, 0, len(publications))
+			opdsIDs := make([]int64, 0, len(publications))
 			for _, publication := range publications {
 				opdsIDs = append(opdsIDs, publication.ID)
 			}
@@ -97,16 +105,16 @@ func TestBookSearchConsumersSelectTheSameBooks(t *testing.T) {
 			if !slices.Equal(opdsIDs, tt.want) {
 				t.Fatalf("OPDS ids = %v; want %v", opdsIDs, tt.want)
 			}
-			count, err := CountSearchOPDSPublications(database, FullVisibilityScope(), user.ID, tt.query)
+			count, err := CountSearchOPDSPublications(database.Read(t.Context()), FullVisibilityScope(), user.ID, tt.query)
 			if err != nil || count != len(tt.want) {
 				t.Fatalf("OPDS count = %d, err %v; want %d", count, err, len(tt.want))
 			}
 
-			sequence, err := BookSequenceInList(database, FullVisibilityScope(), user.ID, tt.want[0], tt.query, SortTitle, 10, 10)
+			sequence, err := BookSequenceInList(database.Read(t.Context()), FullVisibilityScope(), user.ID, tt.want[0], tt.query, SortTitle, 10, 10)
 			if err != nil {
 				t.Fatalf("book sequence: %v", err)
 			}
-			sequenceIDs := make([]string, 0, len(sequence.Items))
+			sequenceIDs := make([]int64, 0, len(sequence.Items))
 			for _, item := range sequence.Items {
 				sequenceIDs = append(sequenceIDs, item.ID)
 			}
@@ -119,26 +127,24 @@ func TestBookSearchConsumersSelectTheSameBooks(t *testing.T) {
 
 func TestSearchRelevancePrefersIdentityFields(t *testing.T) {
 	database := newTestDB(t)
-	if _, err := database.Exec(`
+	mustExec(t, database, `
 		INSERT INTO books (id, title, sort_title) VALUES
-			('w_title', 'Needle', 'Needle'),
-			('w_author', 'Other', 'Other'),
-			('w_series', 'Different', 'Different'),
-			('w_description', 'Another', 'Another');
-		INSERT INTO search (book_id, title, authors, series, description) VALUES
-			('w_title', 'Needle', 'Other', '', ''),
-			('w_author', 'Other', 'Needle', '', ''),
-			('w_series', 'Different', 'Someone', 'Needle', ''),
-			('w_description', 'Another', 'Someone', '', 'Needle');
-	`); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
+			(175, 'Needle', 'Needle'),
+			(109, 'Other', 'Other'),
+			(170, 'Different', 'Different'),
+			(123, 'Another', 'Another');
+		INSERT INTO search (rowid, title, authors, series, description) VALUES
+			(175, 'Needle', 'Other', '', ''),
+			(109, 'Other', 'Needle', '', ''),
+			(170, 'Different', 'Someone', 'Needle', ''),
+			(123, 'Another', 'Someone', '', 'Needle');
+	`)
 
-	books, err := ListBooks(database, FullVisibilityScope(), 0, "needle", SortRelevance, 10, 0)
+	books, err := ListBooks(database.Read(t.Context()), FullVisibilityScope(), 0, "needle", SortRelevance, 10, 0)
 	if err != nil {
 		t.Fatalf("search books: %v", err)
 	}
-	want := []string{"w_title", "w_author", "w_series", "w_description"}
+	want := []int64{175, 109, 170, 123}
 	if got := bookIDs(books); !slices.Equal(got, want) {
 		t.Fatalf("relevance order = %v; want %v", got, want)
 	}
@@ -146,34 +152,32 @@ func TestSearchRelevancePrefersIdentityFields(t *testing.T) {
 
 func TestSearchPrefixMatching(t *testing.T) {
 	database := newTestDB(t)
-	if _, err := database.Exec(`
+	mustExec(t, database, `
 		INSERT INTO books (id, title, sort_title) VALUES
-			('w_latin', 'Foundation Base', 'Foundation Base'),
-			('w_han', '地球往事', '地球往事'),
-			('w_kana', 'ねこ物語', 'ねこ物語');
-		INSERT INTO search (book_id, title) VALUES
-			('w_latin', 'Foundation Base'),
-			('w_han', '地球往事'),
-			('w_kana', 'ねこ物語');
-	`); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
+			(146, 'Foundation Base', 'Foundation Base'),
+			(137, '地球往事', '地球往事'),
+			(139, 'ねこ物語', 'ねこ物語');
+		INSERT INTO search (rowid, title) VALUES
+			(146, 'Foundation Base'),
+			(137, '地球往事'),
+			(139, 'ねこ物語');
+	`)
 
 	tests := []struct {
 		name  string
 		query string
-		want  []string
+		want  []int64
 	}{
 		{name: "single Latin character stays exact", query: "f"},
-		{name: "Latin prefix", query: "fo", want: []string{"w_latin"}},
-		{name: "trailing word prefix", query: "foundation ba", want: []string{"w_latin"}},
+		{name: "Latin prefix", query: "fo", want: []int64{146}},
+		{name: "trailing word prefix", query: "foundation ba", want: []int64{146}},
 		{name: "completed phrase stays exact", query: `"foundation ba"`},
-		{name: "single Han character prefix", query: "地", want: []string{"w_han"}},
-		{name: "single kana character prefix", query: "ね", want: []string{"w_kana"}},
+		{name: "single Han character prefix", query: "地", want: []int64{137}},
+		{name: "single kana character prefix", query: "ね", want: []int64{139}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			books, err := ListBooks(database, FullVisibilityScope(), 0, tt.query, SortTitle, 10, 0)
+			books, err := ListBooks(database.Read(t.Context()), FullVisibilityScope(), 0, tt.query, SortTitle, 10, 0)
 			if err != nil {
 				t.Fatalf("search books: %v", err)
 			}
@@ -181,59 +185,5 @@ func TestSearchPrefixMatching(t *testing.T) {
 				t.Fatalf("book IDs = %v; want %v", got, tt.want)
 			}
 		})
-	}
-}
-
-func TestUpdateSearchIndexReplacesContentlessRow(t *testing.T) {
-	database := newTestDB(t)
-
-	if _, err := database.Exec("INSERT INTO books (id, title, sort_title) VALUES ('w_min', 'Minimal Book', 'Minimal Book')"); err != nil {
-		t.Fatalf("insert book: %v", err)
-	}
-
-	tx, err := database.Begin()
-	if err != nil {
-		t.Fatalf("begin: %v", err)
-	}
-	if err := UpdateSearchIndex(tx, "w_min"); err != nil {
-		tx.Rollback()
-		t.Fatalf("UpdateSearchIndex: %v", err)
-	}
-	if err := tx.Commit(); err != nil {
-		t.Fatalf("commit: %v", err)
-	}
-
-	var bookID string
-	if err := database.QueryRow(`SELECT book_id FROM search WHERE search MATCH 'minimal'`).Scan(&bookID); err != nil {
-		t.Fatalf("find indexed book: %v", err)
-	}
-	if bookID != "w_min" {
-		t.Fatalf("indexed book = %q; want w_min", bookID)
-	}
-
-	if _, err := database.Exec("UPDATE books SET title = 'Renamed Book', sort_title = 'Renamed Book' WHERE id = 'w_min'"); err != nil {
-		t.Fatalf("rename book: %v", err)
-	}
-	tx, err = database.Begin()
-	if err != nil {
-		t.Fatalf("begin reindex: %v", err)
-	}
-	if err := UpdateSearchIndex(tx, "w_min"); err != nil {
-		tx.Rollback()
-		t.Fatalf("reindex: %v", err)
-	}
-	if err := tx.Commit(); err != nil {
-		t.Fatalf("commit reindex: %v", err)
-	}
-
-	var oldMatches, newMatches int
-	if err := database.QueryRow(`SELECT count(*) FROM search WHERE search MATCH 'minimal'`).Scan(&oldMatches); err != nil {
-		t.Fatalf("query old title: %v", err)
-	}
-	if err := database.QueryRow(`SELECT count(*) FROM search WHERE search MATCH 'renamed'`).Scan(&newMatches); err != nil {
-		t.Fatalf("query new title: %v", err)
-	}
-	if oldMatches != 0 || newMatches != 1 {
-		t.Fatalf("matches after reindex = old %d, new %d; want 0, 1", oldMatches, newMatches)
 	}
 }

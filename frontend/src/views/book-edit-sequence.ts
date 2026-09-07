@@ -9,7 +9,7 @@ export type BookEditSequenceController = {
     next: () => BookSequenceItem | null;
     update: (dirty: boolean, busy: boolean) => void;
     snapshot: () => BookSequenceWindow | null;
-    targetIndex: (targetID: string) => number;
+    targetIndex: (targetID: number) => number;
     directionForIndex: (targetIndex: number) => SequenceDirection;
     setCurrentIndex: (index: number) => void;
     restore: (previous: BookSequenceWindow | null) => void;
@@ -21,7 +21,7 @@ export function createBookEditSequenceController(opts: {
     uiID: string;
     initialSequence?: BookSequenceWindow | null;
     listContext?: BookListContext | null;
-    currentBookID: () => string;
+    currentBookID: () => number;
     isClosed: () => boolean;
     isDirty: () => boolean;
     isBusy: () => boolean;
@@ -143,7 +143,7 @@ function updateSequenceButton(
 
 function normalizeInitialSequence(
     sequence: BookSequenceWindow | null | undefined,
-    currentID: string,
+    currentID: number,
 ): BookSequenceWindow | null {
     if (!sequence || sequence.items.length === 0) return null;
     let currentIndex = sequence.current_index;

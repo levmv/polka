@@ -21,7 +21,7 @@ const bulkEditMaxIDs = 1000
 // not a generic BookUpdate, so a bulk edit can never accidentally overwrite a
 // field it did not mean to touch.
 type bulkEditRequest struct {
-	IDs        []string        `json:"ids"`
+	IDs        []int64         `json:"ids"`
 	Operations []bulkOperation `json:"operations"`
 }
 
@@ -73,7 +73,7 @@ func (s *Server) handleAPIBulkEdit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ids := dedupStrings(req.IDs)
+	ids := db.DedupBookIDs(req.IDs)
 	if len(ids) == 0 {
 		http.Error(w, "no book ids provided", http.StatusBadRequest)
 		return
@@ -93,32 +93,32 @@ func (s *Server) handleAPIBulkEdit(w http.ResponseWriter, r *http.Request) {
 
 	scope, err := s.visibilityScope(r)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 
-	rows, err := db.BooksForBulkEdit(s.db, scope, ids)
+	rows, err := db.BooksForBulkEdit(s.db.Read(r.Context()), scope, ids)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
-	byID := make(map[string]db.BulkEditRow, len(rows))
+	byID := make(map[int64]db.BulkEditRow, len(rows))
 	for _, row := range rows {
 		byID[row.ID] = row
 	}
 
 	// Authors live in their own table, so the current value each author op
 	// compares against is loaded separately and passed into the plan.
-	authorsByBook, err := db.AuthorsByBookIDs(s.db, ids)
+	authorsByBook, err := db.AuthorsByBookIDs(s.db.Read(r.Context()), ids)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 
 	// Walk ids in request (visible) order so "assign" numbering is stable and the
 	// selection count is well defined. Books no longer visible are skipped.
-	plans := make(map[string]bulkWritePlan)
-	changedIDs := make([]string, 0, len(ids))
+	plans := make(map[int64]bulkWritePlan)
+	changedIDs := make([]int64, 0, len(ids))
 	selected := 0
 	position := 0
 	for _, id := range ids {
@@ -143,13 +143,13 @@ func (s *Server) handleAPIBulkEdit(w http.ResponseWriter, r *http.Request) {
 	if len(changedIDs) > 0 {
 		releaseStorageSlot, err := s.acquireStorageWorkSlot(r.Context())
 		if err != nil {
-			serverError(w, err)
+			serverError(w, r, err)
 			return
 		}
 		defer releaseStorageSlot()
 
-		mutation, err := relayout.MutateBooks(r.Context(), s.db, s.managedRoot(), func(tx *sql.Tx) (relayout.Changed, error) {
-			pathIDs := make([]string, 0, len(changedIDs))
+		mutation, err := relayout.MutateBooks(r.Context(), s.db, s.managedRoot(), func(tx *db.Tx) (relayout.Changed, error) {
+			pathIDs := make([]int64, 0, len(changedIDs))
 			for _, id := range changedIDs {
 				p := plans[id]
 				if _, err := tx.Exec(`
@@ -158,13 +158,13 @@ func (s *Server) handleAPIBulkEdit(w http.ResponseWriter, r *http.Request) {
 						manual_overrides = ?, updated_at = unixepoch()
 					WHERE id = ?
 				`, p.tags, p.series, p.index, p.overrides, id); err != nil {
-					return relayout.Changed{}, fmt.Errorf("bulk update %s: %w", id, err)
+					return relayout.Changed{}, fmt.Errorf("bulk update %d: %w", id, err)
 				}
 				// Re-link authors before reindexing so the search index picks up
 				// the new author names in the same pass.
 				if p.authors != nil {
-					if err := replaceBookAuthors(tx, id, *p.authors); err != nil {
-						return relayout.Changed{}, fmt.Errorf("bulk authors %s: %w", id, err)
+					if err := replaceBookAuthors(r.Context(), tx, id, *p.authors); err != nil {
+						return relayout.Changed{}, fmt.Errorf("bulk authors %d: %w", id, err)
 					}
 				}
 				if p.relayout {
@@ -174,7 +174,7 @@ func (s *Server) handleAPIBulkEdit(w http.ResponseWriter, r *http.Request) {
 			return relayout.Changed{BumpMetadataRev: changedIDs, Relayout: pathIDs}, nil
 		})
 		if err != nil {
-			serverError(w, err)
+			serverError(w, r, err)
 			return
 		}
 		for _, warning := range mutation.Warnings {
@@ -186,14 +186,14 @@ func (s *Server) handleAPIBulkEdit(w http.ResponseWriter, r *http.Request) {
 	// Return summaries only for books that actually changed; unchanged selected
 	// rows already match what the client rendered, so re-sending them would just
 	// make the client rebuild identical DOM.
-	summaryRows, err := db.BookSummaryRowsByIDs(s.db, scope, changedIDs)
+	summaryRows, err := db.BookSummaryRowsByIDs(s.db.Read(r.Context()), scope, changedIDs)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
-	books, err := s.bookSummaryDTOs(orderSummaryRows(changedIDs, summaryRows))
+	books, err := s.bookSummaryDTOs(r.Context(), orderSummaryRows(changedIDs, summaryRows))
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 
@@ -209,12 +209,12 @@ func (s *Server) handleAPIBulkEdit(w http.ResponseWriter, r *http.Request) {
 // bulkTrashRequest is the body of POST /api/books/bulk/trash: the selected books
 // to move to Trash.
 type bulkTrashRequest struct {
-	IDs []string `json:"ids"`
+	IDs []int64 `json:"ids"`
 }
 
 type bulkTrashResponse struct {
-	Trashed int      `json:"trashed"`
-	IDs     []string `json:"ids"`
+	Trashed int     `json:"trashed"`
+	IDs     []int64 `json:"ids"`
 }
 
 // handleAPIBulkTrash soft-deletes (moves to Trash) every selected book the caller
@@ -227,7 +227,7 @@ func (s *Server) handleAPIBulkTrash(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &req) {
 		return
 	}
-	ids := dedupStrings(req.IDs)
+	ids := db.DedupBookIDs(req.IDs)
 	if len(ids) == 0 {
 		http.Error(w, "no book ids provided", http.StatusBadRequest)
 		return
@@ -239,21 +239,21 @@ func (s *Server) handleAPIBulkTrash(w http.ResponseWriter, r *http.Request) {
 
 	scope, err := s.visibilityScope(r)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	// BooksForBulkEdit returns only the live books visible in scope, so trashing
 	// its result never touches an unknown, already-trashed, or hidden book.
-	rows, err := db.BooksForBulkEdit(s.db, scope, ids)
+	rows, err := db.BooksForBulkEdit(s.db.Read(r.Context()), scope, ids)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
-	visible := make(map[string]struct{}, len(rows))
+	visible := make(map[int64]struct{}, len(rows))
 	for _, row := range rows {
 		visible[row.ID] = struct{}{}
 	}
-	trashed := make([]string, 0, len(rows))
+	trashed := make([]int64, 0, len(rows))
 	for _, id := range ids {
 		if _, ok := visible[id]; ok {
 			trashed = append(trashed, id)
@@ -261,15 +261,15 @@ func (s *Server) handleAPIBulkTrash(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(trashed) > 0 {
-		if err := s.db.Transact(r.Context(), func(tx *sql.Tx) error {
+		if err := s.db.Transact(r.Context(), func(tx *db.Tx) error {
 			for _, id := range trashed {
 				if err := db.SoftDeleteBook(tx, id, u.ID); err != nil {
-					return fmt.Errorf("bulk trash %s: %w", id, err)
+					return fmt.Errorf("bulk trash %d: %w", id, err)
 				}
 			}
 			return nil
 		}); err != nil {
-			serverError(w, err)
+			serverError(w, r, err)
 			return
 		}
 	}
@@ -451,24 +451,8 @@ func effectiveIndex(nf sql.NullFloat64) (float64, bool) {
 	return 0, false
 }
 
-func dedupStrings(in []string) []string {
-	seen := make(map[string]struct{}, len(in))
-	out := make([]string, 0, len(in))
-	for _, s := range in {
-		if s == "" {
-			continue
-		}
-		if _, ok := seen[s]; ok {
-			continue
-		}
-		seen[s] = struct{}{}
-		out = append(out, s)
-	}
-	return out
-}
-
-func orderSummaryRows(ids []string, rows []db.BookSummaryRow) []db.BookSummaryRow {
-	byID := make(map[string]db.BookSummaryRow, len(rows))
+func orderSummaryRows(ids []int64, rows []db.BookSummaryRow) []db.BookSummaryRow {
+	byID := make(map[int64]db.BookSummaryRow, len(rows))
 	for _, r := range rows {
 		byID[r.ID] = r
 	}

@@ -40,11 +40,11 @@ export interface SelectionOptions {
     // Patch the rendered rows (and view state) for the returned summaries.
     onApplied(updated: BookSummary[]): void;
     // Drop the given books from the rendered list and view state (bulk trash).
-    onRemoved(ids: string[]): void;
+    onRemoved(ids: number[]): void;
 }
 
 export function createLibrarySelection(opts: SelectionOptions): LibrarySelection {
-    const selected = new Set<string>();
+    const selected = new Set<number>();
     let enabled = false;
     // False while the owning route is suspended: the set is kept, its UI is not.
     let active = true;
@@ -185,14 +185,14 @@ export function createLibrarySelection(opts: SelectionOptions): LibrarySelection
         document.body.classList.toggle('has-selection', showSelection);
 
         for (const card of opts.container.querySelectorAll<HTMLElement>('.book-card')) {
-            const on = selected.has(card.dataset.id || '');
+            const on = selected.has(Number(card.dataset.id));
             card.classList.toggle('selected', on);
             const cb = card.querySelector('.card-select');
             cb?.classList.toggle('checked', on);
             cb?.setAttribute('aria-checked', on ? 'true' : 'false');
         }
         for (const row of opts.container.querySelectorAll<HTMLElement>('.table-row')) {
-            const on = selected.has(row.dataset.id || '');
+            const on = selected.has(Number(row.dataset.id));
             row.classList.toggle('selected', on);
             const cb = row.querySelector<HTMLInputElement>('.table-select-row');
             if (cb) cb.checked = on;
@@ -219,7 +219,7 @@ export function createLibrarySelection(opts: SelectionOptions): LibrarySelection
         }
     }
 
-    function setSelected(id: string, on: boolean): void {
+    function setSelected(id: number, on: boolean): void {
         if (on) selected.add(id);
         else selected.delete(id);
         updateUI();
@@ -253,7 +253,7 @@ export function createLibrarySelection(opts: SelectionOptions): LibrarySelection
             if (!onCheckbox && selected.size === 0) return; // let the cover navigate
             event.preventDefault();
             event.stopPropagation();
-            setSelected(card.dataset.id, !selected.has(card.dataset.id));
+            setSelected(Number(card.dataset.id), !selected.has(Number(card.dataset.id)));
             return;
         }
 
@@ -266,7 +266,7 @@ export function createLibrarySelection(opts: SelectionOptions): LibrarySelection
             if (selected.size === 0) return;
             event.preventDefault();
             event.stopPropagation();
-            setSelected(row.dataset.id, !selected.has(row.dataset.id));
+            setSelected(Number(row.dataset.id), !selected.has(Number(row.dataset.id)));
         }
     };
     opts.container.addEventListener('click', onClick, true);
@@ -278,7 +278,7 @@ export function createLibrarySelection(opts: SelectionOptions): LibrarySelection
         if (!(target instanceof HTMLInputElement)) return;
         if (target.classList.contains('table-select-row')) {
             const row = target.closest<HTMLElement>('.table-row');
-            if (row?.dataset.id) setSelected(row.dataset.id, target.checked);
+            if (row?.dataset.id) setSelected(Number(row.dataset.id), target.checked);
         } else if (target.classList.contains('table-select-all')) {
             const on = target.checked;
             for (const id of opts.getBooks().map((b) => b.id)) {

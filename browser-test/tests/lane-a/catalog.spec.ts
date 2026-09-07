@@ -11,7 +11,7 @@ async function expectImageLoaded(img: Locator): Promise<void> {
 test.describe('Catalog', () => {
   test('Tag links select a whole tag while unquoted search stays broad', async ({ page }) => {
     await page.goto('/');
-    const books: Array<{ id: string; tags: string | null }> = [];
+    const books: Array<{ id: number; tags: string | null }> = [];
     const titles = ['With Cover Book', 'No Cover Book'];
     try {
       for (const [i, title] of titles.entries()) {
@@ -244,7 +244,7 @@ test.describe('Catalog', () => {
       `/api/books?q=${encodeURIComponent('series:"Test Series"')}&sort=series`,
     );
     expect(booksRes.ok()).toBe(true);
-    const seriesBooks = (await booksRes.json()) as Array<{ id: string }>;
+    const seriesBooks = (await booksRes.json()) as Array<{ id: number }>;
     expect(seriesBooks.length).toBe(4);
     const finished = seriesBooks[0].id;
     const finishRes = await page.request.put(

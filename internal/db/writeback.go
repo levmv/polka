@@ -34,7 +34,7 @@ func formatKeyInClause(column string, keys []string) string {
 // metadata write-back.
 type MetadataWritebackAssetRow struct {
 	AssetID       string
-	BookID        string
+	BookID        int64
 	StoragePath   string
 	Format        format.Format
 	CurrentSHA256 string
@@ -45,7 +45,7 @@ type MetadataWritebackAssetRow struct {
 }
 
 type MetadataWritebackSnapshot struct {
-	BookID       string
+	BookID       int64
 	MetadataRev  int64
 	CoverVersion int
 	UpdatedAt    int64
@@ -79,13 +79,12 @@ type MetadataWritebackCounts struct {
 // in user-visible metadata mutation paths.
 // If cover write-back uses metadata_rev instead of a separate asset marker,
 // cover mutation paths must bump this same rev.
-func BumpMetadataRev(execer Execer, bookIDs []string) error {
-	ids := dedupBookIDs(bookIDs)
-	if len(ids) == 0 {
+func BumpMetadataRev(tx *Tx, bookIDs []int64) error {
+	if len(bookIDs) == 0 {
 		return nil
 	}
-	placeholders, args := idPlaceholders(ids)
-	if _, err := execer.Exec(`
+	placeholders, args := idPlaceholders(bookIDs)
+	if _, err := tx.Exec(`
 		UPDATE books
 		SET metadata_rev = metadata_rev + 1,
 		    updated_at = unixepoch()
@@ -123,7 +122,7 @@ type BookWritebackState struct {
 
 // GetBookWritebackState reports the writable/dirty asset counts for one live
 // book. A trashed book reports zero (its detail page 404s anyway).
-func GetBookWritebackState(queryer Queryer, bookID string) (BookWritebackState, error) {
+func GetBookWritebackState(queryer Queryer, bookID int64) (BookWritebackState, error) {
 	var st BookWritebackState
 	err := queryer.QueryRow(`
 		SELECT COUNT(*),
@@ -151,18 +150,16 @@ func GetMetadataWritebackAsset(queryer Queryer, assetID string) (MetadataWriteba
 	`, assetID))
 }
 
-// ListDirtyMetadataWritebackAssets returns writable live assets ready for the
-// future write-back worker or an explicit write-back command.
+// ListDirtyMetadataWritebackAssets returns writable live assets whose embedded
+// metadata is behind the catalog revision.
 func ListDirtyMetadataWritebackAssets(queryer Queryer, scope VisibilityScope, limit int) ([]MetadataWritebackAssetRow, error) {
 	where, args := metadataWritebackDirtyWhere(scope)
 	return listMetadataWritebackAssets(queryer, where, args, limit)
 }
 
-// ListAutomaticMetadataWritebackAssets returns one bounded auto-reconciler
-// batch. Fresh failures stay out until their assets.updated_at failure timestamp
-// reaches failedBefore; clean dirty rows are immediately eligible. The retry
-// state is therefore durable across process restarts without another schema
-// column or loading the whole backlog for in-memory filtering.
+// ListAutomaticMetadataWritebackAssets returns a bounded automatic write-back
+// batch. Failed assets are eligible when assets.updated_at <= failedBefore;
+// dirty assets without a recorded failure are eligible immediately.
 func ListAutomaticMetadataWritebackAssets(queryer Queryer, scope VisibilityScope, failedBefore int64, limit int) ([]MetadataWritebackAssetRow, error) {
 	where := "b.deleted_at IS NULL AND a.writeback_rev < b.metadata_rev AND " + metadataWritebackFormatSQL +
 		" AND (COALESCE(a.writeback_error, '') = '' OR a.updated_at <= ?)"
@@ -187,8 +184,8 @@ func ListAllMetadataWritebackAssets(queryer Queryer, scope VisibilityScope, limi
 
 // ListMetadataWritebackAssetsByBookIDs returns writable live assets for the
 // selected books, regardless of dirty state.
-func ListMetadataWritebackAssetsByBookIDs(queryer Queryer, scope VisibilityScope, bookIDs []string, limit int) ([]MetadataWritebackAssetRow, error) {
-	ids := dedupBookIDs(bookIDs)
+func ListMetadataWritebackAssetsByBookIDs(queryer Queryer, scope VisibilityScope, bookIDs []int64, limit int) ([]MetadataWritebackAssetRow, error) {
+	ids := DedupBookIDs(bookIDs)
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -246,7 +243,7 @@ func scanMetadataWritebackAsset(row rowScanner) (MetadataWritebackAssetRow, erro
 	return asset, nil
 }
 
-func LoadMetadataWritebackSnapshot(queryer Queryer, bookID string) (MetadataWritebackSnapshot, error) {
+func LoadMetadataWritebackSnapshot(queryer Queryer, bookID int64) (MetadataWritebackSnapshot, error) {
 	var snap MetadataWritebackSnapshot
 	var tags string
 	err := queryer.QueryRow(`
@@ -269,7 +266,7 @@ func LoadMetadataWritebackSnapshot(queryer Queryer, bookID string) (MetadataWrit
 	snap.Metadata.Language = bookmeta.NormalizeLanguage(snap.Metadata.Language)
 	snap.Metadata.Tags = bookmeta.ParseTagList(tags)
 
-	authors, err := AuthorsByBookIDs(queryer, []string{snap.BookID})
+	authors, err := AuthorsByBookIDs(queryer, []int64{snap.BookID})
 	if err != nil {
 		return MetadataWritebackSnapshot{}, err
 	}
@@ -362,7 +359,7 @@ func ClearMetadataWritebackAttempt(execer Execer, assetID string) error {
 	return nil
 }
 
-func MarkMetadataWritebackSuccess(tx *sql.Tx, assetID, storagePath, sha256 string, size int64, koReaderHash string, metadataRev int64) error {
+func MarkMetadataWritebackSuccess(tx *Tx, assetID, storagePath, sha256 string, size int64, koReaderHash string, metadataRev int64) error {
 	res, err := tx.Exec(`
 		UPDATE assets
 		SET current_sha256 = ?,

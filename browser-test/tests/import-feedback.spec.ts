@@ -10,7 +10,7 @@ test('Batch failures stay readable and a second drop reports the active upload',
     uploads++;
     if (uploads === 1) {
       await uploadGate;
-      await route.fulfill({ json: { status: 'imported', book: { id: 'test-import', title: 'Good book' } } });
+      await route.fulfill({ json: { status: 'imported', book: { id: 999, title: 'Good book' } } });
     } else {
       await route.fulfill({ status: 422, body: 'Invalid <package> document' });
     }

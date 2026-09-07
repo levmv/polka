@@ -253,10 +253,10 @@ test.describe('Retained library navigation', () => {
     const [sample] = await response.json() as BookSummary[];
     const books = Array.from({ length: 260 }, (_, index) => ({
       ...sample,
-      id: index === 225 ? sample.id : `retained-${index}`,
+      id: index === 225 ? sample.id : 1000000 + index,
       title: `Retained book ${String(index).padStart(3, '0')}`,
     }));
-    await page.route('**/covers/retained-*', (route) => route.fulfill({
+    await page.route('**/covers/1000*', (route) => route.fulfill({
       contentType: 'image/svg+xml',
       body: '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="120"/>',
     }));
@@ -301,7 +301,7 @@ test.describe('Retained library navigation', () => {
     await expect(cards).toHaveCount(260);
     await expect(page.locator('#load-more-container')).toBeHidden();
     const ids = await cards.evaluateAll((elements) => elements.map((el) => el.getAttribute('data-id')));
-    expect(ids).toEqual(books.map((book) => book.id));
+    expect(ids).toEqual(books.map((book) => String(book.id)));
   });
 
   test('A removal reaches the retained view and keeps the old neighbourhood', async ({ page }) => {
@@ -320,7 +320,7 @@ test.describe('Retained library navigation', () => {
     await page.evaluate((id) => {
       document.dispatchEvent(
         new CustomEvent('polka:catalog-changed', {
-          detail: { kind: 'books-removed', ids: [id] },
+          detail: { kind: 'books-removed', ids: [Number(id)] },
         }),
       );
     }, doomedId);

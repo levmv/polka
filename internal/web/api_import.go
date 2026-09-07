@@ -52,12 +52,12 @@ func (s *Server) handleAPIImport(w http.ResponseWriter, r *http.Request) {
 
 	tmpDir := filepath.Join(s.dataDir, "tmp", "uploads")
 	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	tmp, err := os.CreateTemp(tmpDir, "book-*")
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	tmpPath := tmp.Name()
@@ -69,7 +69,7 @@ func (s *Server) handleAPIImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := tmp.Close(); err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 
@@ -77,23 +77,23 @@ func (s *Server) handleAPIImport(w http.ResponseWriter, r *http.Request) {
 	defer renderer.Close()
 
 	root := s.managedRoot()
-	catalogHasBooks, err := db.HasAnyAsset(s.db.DB)
+	catalogHasBooks, err := db.HasAnyAsset(s.db.Read(r.Context()))
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	if err := storage.RequireWritableRoot(root, catalogHasBooks); err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
-	template, err := storage.OpenBookPathTemplate(s.db.DB)
+	template, err := storage.OpenBookPathTemplate(s.db.Read(r.Context()))
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	releaseImport, err := s.acquireStorageWorkSlot(r.Context())
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	defer releaseImport()
@@ -112,19 +112,19 @@ func (s *Server) handleAPIImport(w http.ResponseWriter, r *http.Request) {
 		// Upload is an explicit action on one book, unlike a recurring folder
 		// sweep, so accepting the bytes while leaving the book hidden would read
 		// as a failed upload.
-		if restoreErr := db.RestoreBook(s.db.DB, res.BookID); restoreErr != nil && !errors.Is(restoreErr, sql.ErrNoRows) {
-			serverError(w, restoreErr)
+		if restoreErr := db.RestoreBook(s.db.Write(r.Context()), res.BookID); restoreErr != nil && !errors.Is(restoreErr, sql.ErrNoRows) {
+			serverError(w, r, restoreErr)
 			return
 		}
 		status = "restored"
 	}
 	viewerIsAdmin := s.viewerIsAdmin(r)
-	book, err := s.bookDetailDTO(db.FullVisibilityScope(), UserID(r.Context()), res.BookID, viewerIsAdmin)
+	book, err := s.bookDetailDTO(r.Context(), db.FullVisibilityScope(), UserID(r.Context()), res.BookID, viewerIsAdmin)
 	if errors.Is(err, sql.ErrNoRows) {
-		serverError(w, errors.New("imported book not found"))
+		serverError(w, r, errors.New("imported book not found"))
 		return
 	} else if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 

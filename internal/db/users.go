@@ -109,9 +109,9 @@ func hashPassword(password string) (string, error) {
 
 // CountUsers reports how many accounts exist. Zero means the server has not been
 // bootstrapped yet (the first-run setup path applies).
-func (db *DB) CountUsers() (int, error) {
+func CountUsers(queryer Queryer) (int, error) {
 	var n int
-	if err := db.QueryRow("SELECT COUNT(*) FROM users").Scan(&n); err != nil {
+	if err := queryer.QueryRow("SELECT COUNT(*) FROM users").Scan(&n); err != nil {
 		return 0, fmt.Errorf("count users: %w", err)
 	}
 	return n, nil
@@ -165,8 +165,8 @@ func normalizeUserScope(role, contentScope string, scopeShelfIDs []string) (stri
 
 // CreateUser inserts a new account with the given clear-text password (hashed
 // here). The username is normalized; a collision returns ErrUserExists.
-func (db *DB) CreateUser(username, password, role string) (*User, error) {
-	return db.CreateUserWithAccess(username, password, UserAccess{
+func (db *DB) CreateUser(ctx context.Context, username, password, role string) (*User, error) {
+	return db.CreateUserWithAccess(ctx, username, password, UserAccess{
 		Role:         role,
 		ContentScope: ContentScopeAll,
 	})
@@ -174,17 +174,17 @@ func (db *DB) CreateUser(username, password, role string) (*User, error) {
 
 // CreateUserWithAccess inserts an account, its default personal shelf, and its
 // final shelf scope in one transaction.
-func (db *DB) CreateUserWithAccess(username, password string, access UserAccess) (*User, error) {
-	return db.createUser(username, password, access, false)
+func (db *DB) CreateUserWithAccess(ctx context.Context, username, password string, access UserAccess) (*User, error) {
+	return db.createUser(ctx, username, password, access, false)
 }
 
 // CreateInitialAdmin creates an administrator only while the library has no
 // accounts. The check and insertion share the same write transaction.
-func (db *DB) CreateInitialAdmin(username, password string) (*User, error) {
-	return db.createUser(username, password, UserAccess{Role: RoleAdmin}, true)
+func (db *DB) CreateInitialAdmin(ctx context.Context, username, password string) (*User, error) {
+	return db.createUser(ctx, username, password, UserAccess{Role: RoleAdmin}, true)
 }
 
-func (db *DB) createUser(username, password string, access UserAccess, requireEmpty bool) (*User, error) {
+func (db *DB) createUser(ctx context.Context, username, password string, access UserAccess, requireEmpty bool) (*User, error) {
 	uname := normalizeUsername(username)
 	if uname == "" {
 		return nil, errorWithDetail(ErrInvalidUserInput, "username must not be empty")
@@ -205,7 +205,7 @@ func (db *DB) createUser(username, password string, access UserAccess, requireEm
 	}
 
 	u := &User{Username: uname, PasswordHash: hash, Role: access.Role, ContentScope: contentScope}
-	err = db.Transact(context.Background(), func(tx *sql.Tx) error {
+	err = db.Transact(ctx, func(tx *Tx) error {
 		if requireEmpty {
 			var exists bool
 			if err := tx.QueryRow("SELECT EXISTS(SELECT 1 FROM users)").Scan(&exists); err != nil {
@@ -240,16 +240,16 @@ func (db *DB) createUser(username, password string, access UserAccess, requireEm
 
 // GetUserByUsername looks an account up by its (normalized) username. A missing
 // user returns (nil, nil) so callers can distinguish "not found" from an error.
-func (db *DB) GetUserByUsername(username string) (*User, error) {
-	return scanOptionalUser(db.QueryRow(
+func GetUserByUsername(queryer Queryer, username string) (*User, error) {
+	return scanOptionalUser(queryer.QueryRow(
 		"SELECT "+userColumns+" FROM users WHERE username = ?",
 		normalizeUsername(username),
 	))
 }
 
 // GetUserByID looks an account up by id. A missing user returns (nil, nil).
-func (db *DB) GetUserByID(userID int64) (*User, error) {
-	return scanOptionalUser(db.QueryRow(
+func GetUserByID(queryer Queryer, userID int64) (*User, error) {
+	return scanOptionalUser(queryer.QueryRow(
 		"SELECT "+userColumns+" FROM users WHERE id = ?",
 		userID,
 	))
@@ -275,8 +275,8 @@ func scanUser(row rowScanner) (User, error) {
 }
 
 // ListUsers returns all accounts ordered by username (admin screens / CLI).
-func (db *DB) ListUsers() ([]User, error) {
-	rows, err := db.Query(
+func ListUsers(queryer Queryer) ([]User, error) {
+	rows, err := queryer.Query(
 		"SELECT " + userColumns + " FROM users ORDER BY username",
 	)
 	if err != nil {
@@ -295,7 +295,7 @@ func (db *DB) ListUsers() ([]User, error) {
 	return users, rows.Err()
 }
 
-func (db *DB) UpdateUserAccess(userID int64, access UserAccess) (*User, error) {
+func (db *DB) UpdateUserAccess(ctx context.Context, userID int64, access UserAccess) (*User, error) {
 	if !ValidRole(access.Role) {
 		return nil, errorWithDetail(ErrInvalidUserInput, fmt.Sprintf("invalid role %q", access.Role))
 	}
@@ -304,7 +304,7 @@ func (db *DB) UpdateUserAccess(userID int64, access UserAccess) (*User, error) {
 		return nil, err
 	}
 
-	if err := db.Transact(context.Background(), func(tx *sql.Tx) error {
+	if err := db.Transact(ctx, func(tx *Tx) error {
 		if access.Role != RoleAdmin {
 			if err := guardAdminRemoval(tx, userID); err != nil {
 				return err
@@ -324,10 +324,10 @@ func (db *DB) UpdateUserAccess(userID int64, access UserAccess) (*User, error) {
 	}); err != nil {
 		return nil, err
 	}
-	return db.GetUserByID(userID)
+	return GetUserByID(db.Read(ctx), userID)
 }
 
-func replaceUserScopeShelves(tx *sql.Tx, userID, shelfViewerID int64, contentScope string, scopeShelfIDs []string) error {
+func replaceUserScopeShelves(tx *Tx, userID, shelfViewerID int64, contentScope string, scopeShelfIDs []string) error {
 	if contentScope != ContentScopeShelves {
 		if _, err := tx.Exec(`DELETE FROM user_scope_shelves WHERE user_id = ?`, userID); err != nil {
 			return fmt.Errorf("clear user scope shelves: %w", err)
@@ -403,13 +403,12 @@ func replaceUserScopeShelves(tx *sql.Tx, userID, shelfViewerID int64, contentSco
 }
 
 // SetUserPassword replaces the stored password hash for an account.
-func (db *DB) SetUserPassword(userID int64, password string) error {
+func (db *DB) SetUserPassword(ctx context.Context, userID int64, password string) error {
 	hash, err := hashPassword(password)
 	if err != nil {
 		return err
 	}
-	res, err := db.Exec(
-		"UPDATE users SET password_hash = ?, updated_at = unixepoch() WHERE id = ?",
+	res, err := db.Write(ctx).Exec("UPDATE users SET password_hash = ?, updated_at = unixepoch() WHERE id = ?",
 		hash, userID,
 	)
 	if err != nil {
@@ -422,8 +421,8 @@ func (db *DB) SetUserPassword(userID int64, password string) error {
 }
 
 // DeleteUser removes an account by id.
-func (db *DB) DeleteUser(userID int64) error {
-	return db.Transact(context.Background(), func(tx *sql.Tx) error {
+func (db *DB) DeleteUser(ctx context.Context, userID int64) error {
+	return db.Transact(ctx, func(tx *Tx) error {
 		if err := guardAdminRemoval(tx, userID); err != nil {
 			return err
 		}
@@ -440,7 +439,7 @@ func (db *DB) DeleteUser(userID int64) error {
 
 // guardAdminRemoval must run in the same immediate transaction as the role
 // change or deletion. Non-admin accounts need no special handling.
-func guardAdminRemoval(tx *sql.Tx, userID int64) error {
+func guardAdminRemoval(tx *Tx, userID int64) error {
 	var role string
 	var hasOtherAdmin int
 	err := tx.QueryRow(`
@@ -467,8 +466,8 @@ func guardAdminRemoval(tx *sql.Tx, userID int64) error {
 // That enumeration oracle is accepted deliberately for a household-sized user
 // list: usernames are not treated as secrets, while a dummy bcrypt comparison
 // would add CPU cost to every unknown-user attempt without protecting passwords.
-func (db *DB) Authenticate(username, password string) (*User, error) {
-	u, err := db.GetUserByUsername(username)
+func Authenticate(queryer Queryer, username, password string) (*User, error) {
+	u, err := GetUserByUsername(queryer, username)
 	if err != nil {
 		return nil, err
 	}

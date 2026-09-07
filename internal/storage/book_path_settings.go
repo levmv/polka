@@ -47,7 +47,7 @@ func ValidateBookPathTemplate(template string) error {
 		Series:           "Example Series",
 		SeriesIndex:      "01",
 		AssetID:          "a_example",
-		BookID:           "b_example",
+		BookID:           42,
 		Ext:              "epub",
 		OriginalFilename: "example.epub",
 	})

@@ -10,7 +10,7 @@ func TestBuildSyncItemPinsNewEntitlementShape(t *testing.T) {
 	seriesIndex := 2.5
 	item := BuildSyncItem(Change{
 		AssetID:       "a_book",
-		BookID:        "w_book",
+		BookID:        1,
 		Size:          123,
 		Title:         "A Book",
 		Description:   "Description",

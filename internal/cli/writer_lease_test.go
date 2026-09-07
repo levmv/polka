@@ -12,7 +12,7 @@ import (
 
 func TestCLIWriterLeaseCancelsAndReportsForcedTakeover(t *testing.T) {
 	dataDir := t.TempDir()
-	database, err := ensureLibraryInitialized(dataDir)
+	database, err := ensureLibraryInitialized(t.Context(), dataDir)
 	if err != nil {
 		t.Fatalf("ensureLibraryInitialized: %v", err)
 	}
@@ -46,7 +46,7 @@ func TestCLIWriterLeaseCancelsAndReportsForcedTakeover(t *testing.T) {
 
 func TestCLIWriterLeaseFinishReleasesAndPreservesCommandError(t *testing.T) {
 	dataDir := t.TempDir()
-	database, err := ensureLibraryInitialized(dataDir)
+	database, err := ensureLibraryInitialized(t.Context(), dataDir)
 	if err != nil {
 		t.Fatalf("ensureLibraryInitialized: %v", err)
 	}

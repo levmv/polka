@@ -18,7 +18,10 @@ import (
 	"github.com/levmv/polka/internal/format"
 )
 
-const deliveryConversionTimeout = 2 * time.Minute
+const (
+	deliveryConversionTimeout = 2 * time.Minute
+	deliveryStatusTimeout     = 5 * time.Second
+)
 
 type deliveryTransport interface {
 	Send(ctx context.Context, copy delivery.DeliveryCopy, profile delivery.SMTPProfile) error
@@ -42,7 +45,7 @@ func (s *Server) runDeliveryWorker(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		job, err := s.db.NextQueuedDeliveryJob()
+		job, err := db.NextQueuedDeliveryJob(s.db.Read(ctx))
 		if err != nil {
 			log.Printf("delivery worker: %v", err)
 			if !s.waitForDeliveryWork(ctx, time.Second) {
@@ -97,51 +100,51 @@ func (s *Server) runDeliveryJob(ctx context.Context, jobID string) error {
 		return fmt.Errorf("delivery transport is not configured")
 	}
 
-	job, err := s.db.GetDeliveryJobByID(jobID)
+	job, err := db.GetDeliveryJobByID(s.db.Read(ctx), jobID)
 	if err != nil {
 		return err
 	}
 	if job.AssetID.String == "" {
-		return s.failDeliveryJob(job.ID, deliveryMessageFileMissing)
+		return s.failDeliveryJob(ctx, job.ID, deliveryMessageFileMissing)
 	}
-	cfg, _, err := s.deliveryEmailConfig()
+	cfg, _, err := s.deliveryEmailConfig(ctx)
 	if err != nil {
-		return s.failDeliveryJobWithCause(job.ID, deliveryMessageFailed, "load email settings", err)
+		return s.failDeliveryJobWithCause(ctx, job.ID, deliveryMessageFailed, "load email settings", err)
 	}
 	if !cfg.Configured() {
-		return s.failDeliveryJob(job.ID, deliveryMessageNotConfigured)
+		return s.failDeliveryJob(ctx, job.ID, deliveryMessageNotConfigured)
 	}
-	scope, err := s.db.VisibilityScopeForUser(job.UserID)
+	scope, err := db.VisibilityScopeForUser(s.db.Read(ctx), job.UserID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return s.failDeliveryJob(job.ID, deliveryMessageNoLongerVisible)
+		return s.failDeliveryJob(ctx, job.ID, deliveryMessageNoLongerVisible)
 	}
 	if err != nil {
-		return s.failDeliveryJobWithCause(job.ID, deliveryMessageFailed, "load visibility scope", err)
+		return s.failDeliveryJobWithCause(ctx, job.ID, deliveryMessageFailed, "load visibility scope", err)
 	}
-	allowed, err := db.CanAccessAsset(s.db, scope, job.AssetID.String)
+	allowed, err := db.CanAccessAsset(s.db.Read(ctx), scope, job.AssetID.String)
 	if err != nil {
-		return s.failDeliveryJobWithCause(job.ID, deliveryMessageFailed, "check asset visibility", err)
+		return s.failDeliveryJobWithCause(ctx, job.ID, deliveryMessageFailed, "check asset visibility", err)
 	}
 	if !allowed {
-		return s.failDeliveryJob(job.ID, deliveryMessageNoLongerVisible)
+		return s.failDeliveryJob(ctx, job.ID, deliveryMessageNoLongerVisible)
 	}
 
 	copy, cleanup, err := s.prepareDeliveryCopy(ctx, *job)
 	if err != nil {
 		if ctx.Err() != nil {
-			return s.requeueInterruptedDelivery(job.ID, ctx.Err())
+			return s.requeueInterruptedDelivery(ctx, job.ID, ctx.Err())
 		}
-		return s.failDeliveryJobFromError(job.ID, "prepare file", err)
+		return s.failDeliveryJobFromError(ctx, job.ID, "prepare file", err)
 	}
 	defer cleanup()
 	if err := ctx.Err(); err != nil {
-		return s.requeueInterruptedDelivery(job.ID, err)
+		return s.requeueInterruptedDelivery(ctx, job.ID, err)
 	}
 	if !delivery.FitsAttachmentLimit(copy.Size, delivery.Preset(job.Preset), cfg.AttachmentLimitMB) {
-		return s.failDeliveryJob(job.ID, fmt.Sprintf("File is too large for email delivery (%s, limit %s).", delivery.FormatBytesMB(copy.Size), delivery.FormatBytesMB(delivery.EffectiveLimitBytes(delivery.Preset(job.Preset), cfg.AttachmentLimitMB))))
+		return s.failDeliveryJob(ctx, job.ID, fmt.Sprintf("File is too large for email delivery (%s, limit %s).", delivery.FormatBytesMB(copy.Size), delivery.FormatBytesMB(delivery.EffectiveLimitBytes(delivery.Preset(job.Preset), cfg.AttachmentLimitMB))))
 	}
-	_ = s.db.SetDeliveryJobSize(job.ID, copy.Size)
-	if err := s.db.SetDeliveryJobStatus(job.ID, db.DeliveryStatusSending, ""); err != nil {
+	_ = s.db.SetDeliveryJobSize(ctx, job.ID, copy.Size)
+	if err := s.db.SetDeliveryJobStatus(ctx, job.ID, db.DeliveryStatusSending, ""); err != nil {
 		return err
 	}
 	err = transport.Send(ctx, copy, delivery.SMTPProfile{
@@ -149,17 +152,23 @@ func (s *Server) runDeliveryJob(ctx context.Context, jobID string) error {
 		To:      job.DeviceEmail,
 		Subject: job.Title,
 	})
+	// Sending has an external effect. Persist its outcome even if shutdown
+	// canceled the worker, so an already sent message is not queued again.
+	resultCtx, cancelResult := context.WithTimeout(context.WithoutCancel(ctx), deliveryStatusTimeout)
+	defer cancelResult()
 	if err != nil {
 		if ctx.Err() != nil {
-			return s.failDeliveryJob(job.ID, deliveryMessageSendInterrupted)
+			return s.failDeliveryJob(resultCtx, job.ID, deliveryMessageSendInterrupted)
 		}
-		return s.failDeliveryJobFromError(job.ID, "send", err)
+		return s.failDeliveryJobFromError(resultCtx, job.ID, "send", err)
 	}
-	return s.db.SetDeliveryJobStatus(job.ID, db.DeliveryStatusSent, "")
+	return s.db.SetDeliveryJobStatus(resultCtx, job.ID, db.DeliveryStatusSent, "")
 }
 
-func (s *Server) requeueInterruptedDelivery(jobID string, cause error) error {
-	if err := s.db.SetDeliveryJobStatus(jobID, db.DeliveryStatusQueued, ""); err != nil {
+func (s *Server) requeueInterruptedDelivery(ctx context.Context, jobID string, cause error) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), deliveryStatusTimeout)
+	defer cancel()
+	if err := s.db.SetDeliveryJobStatus(ctx, jobID, db.DeliveryStatusQueued, ""); err != nil {
 		return fmt.Errorf("%w; return delivery to queue: %v", cause, err)
 	}
 	return cause
@@ -194,12 +203,12 @@ func (s *Server) prepareDeliveryCopy(ctx context.Context, job db.DeliveryJob) (d
 	if !converter.CanConvert(asset.Format, target) {
 		return delivery.DeliveryCopy{}, func() {}, newDeliveryPrepError(deliveryMessageConversionMissing, nil)
 	}
-	if err := s.db.SetDeliveryJobStatus(job.ID, db.DeliveryStatusConverting, ""); err != nil {
+	if err := s.db.SetDeliveryJobStatus(ctx, job.ID, db.DeliveryStatusConverting, ""); err != nil {
 		return delivery.DeliveryCopy{}, func() {}, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, deliveryConversionTimeout)
 	defer cancel()
-	convertOpts, err := s.assetConversionOptions(asset)
+	convertOpts, err := s.assetConversionOptions(ctx, asset)
 	if err != nil {
 		return delivery.DeliveryCopy{}, func() {}, newDeliveryPrepError(deliveryMessagePrepareFailed, err)
 	}
@@ -233,7 +242,7 @@ func (s *Server) prepareDeliveryCopy(ctx context.Context, job db.DeliveryJob) (d
 // is stable. The slot is released as soon as the descriptor is open; copying or
 // conversion can then proceed without blocking unrelated storage work.
 func (s *Server) openDeliverySource(ctx context.Context, assetID string) (assetFileRow, *os.File, error) {
-	asset, src, err := s.openDeliverySourceOnce(assetID)
+	asset, src, err := s.openDeliverySourceOnce(ctx, assetID)
 	if !errors.Is(err, os.ErrNotExist) {
 		return asset, src, err
 	}
@@ -243,11 +252,11 @@ func (s *Server) openDeliverySource(ctx context.Context, assetID string) (assetF
 		return assetFileRow{}, nil, slotErr
 	}
 	defer releaseStorageSlot()
-	return s.openDeliverySourceOnce(assetID)
+	return s.openDeliverySourceOnce(ctx, assetID)
 }
 
-func (s *Server) openDeliverySourceOnce(assetID string) (assetFileRow, *os.File, error) {
-	asset, err := s.assetFile(assetID)
+func (s *Server) openDeliverySourceOnce(ctx context.Context, assetID string) (assetFileRow, *os.File, error) {
+	asset, err := s.assetFile(ctx, assetID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return assetFileRow{}, nil, newDeliveryPrepError(deliveryMessageFileMissing, nil)
 	}
@@ -316,26 +325,26 @@ func (s *Server) createDeliveryTempFile(ext string) (*os.File, string, func(), e
 	return tmp, tmpPath, cleanup, nil
 }
 
-func (s *Server) failDeliveryJob(jobID, message string) error {
+func (s *Server) failDeliveryJob(ctx context.Context, jobID, message string) error {
 	if message == "" {
 		message = deliveryMessageFailed
 	}
-	return s.db.SetDeliveryJobStatus(jobID, db.DeliveryStatusFailed, message)
+	return s.db.SetDeliveryJobStatus(ctx, jobID, db.DeliveryStatusFailed, message)
 }
 
-func (s *Server) failDeliveryJobWithCause(jobID, message, action string, err error) error {
+func (s *Server) failDeliveryJobWithCause(ctx context.Context, jobID, message, action string, err error) error {
 	log.Printf("delivery job %s: %s: %v", jobID, action, err)
-	if setErr := s.failDeliveryJob(jobID, message); setErr != nil {
+	if setErr := s.failDeliveryJob(ctx, jobID, message); setErr != nil {
 		return fmt.Errorf("%s: %w; mark delivery failed: %v", action, err, setErr)
 	}
 	return nil
 }
 
-func (s *Server) failDeliveryJobFromError(jobID, action string, err error) error {
+func (s *Server) failDeliveryJobFromError(ctx context.Context, jobID, action string, err error) error {
 	if userErr, ok := errors.AsType[deliveryUserError](err); ok {
-		return s.failDeliveryJobWithCause(jobID, userErr.UserMessage(), action, err)
+		return s.failDeliveryJobWithCause(ctx, jobID, userErr.UserMessage(), action, err)
 	}
-	return s.failDeliveryJobWithCause(jobID, deliveryMessageFailed, action, err)
+	return s.failDeliveryJobWithCause(ctx, jobID, deliveryMessageFailed, action, err)
 }
 
 type deliveryUserError interface {

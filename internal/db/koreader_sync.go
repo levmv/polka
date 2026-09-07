@@ -24,14 +24,14 @@ type KOReaderProgress struct {
 }
 
 // KOReaderHashTarget is the catalog meaning of one provider-owned document
-// hash. An empty BookID means the hash is not known to the catalog. Ambiguous
+// hash. A zero BookID means the hash is not known to the catalog. Ambiguous
 // means matching live assets belong to more than one book; callers may retain
 // the hash-scoped KOSync record, but must not infer access or reading state for
 // an arbitrary book. Multiple matching assets of one live book remain
 // unambiguous; assets in Trash do not define catalog identity.
 type KOReaderHashTarget struct {
 	AssetID   string
-	BookID    string
+	BookID    int64
 	Ambiguous bool
 }
 
@@ -72,17 +72,18 @@ func ResolveKOReaderHash(queryer Queryer, documentHash string) (KOReaderHashTarg
 
 	var target KOReaderHashTarget
 	for rows.Next() {
-		var assetID, bookID string
+		var assetID string
+		var bookID int64
 		if err := rows.Scan(&assetID, &bookID); err != nil {
 			return KOReaderHashTarget{}, fmt.Errorf("scan asset by koreader hash: %w", err)
 		}
-		if target.BookID == "" {
+		if target.BookID == 0 {
 			target.AssetID = assetID
 			target.BookID = bookID
 			continue
 		}
 		target.AssetID = ""
-		target.BookID = ""
+		target.BookID = 0
 		target.Ambiguous = true
 		return target, nil
 	}
@@ -104,7 +105,7 @@ func (db *DB) SaveKOReaderProgressAndAdvanceStatus(
 
 	var saved *KOReaderProgress
 	var change ReadingStatusChange
-	err = db.Transact(ctx, func(tx *sql.Tx) error {
+	err = db.Transact(ctx, func(tx *Tx) error {
 		var err error
 		saved, err = saveKOReaderProgress(tx, progress)
 		if err != nil {
@@ -131,7 +132,7 @@ func normalizeKOReaderProgress(userID int64, progress KOReaderProgress) (KOReade
 	return progress, nil
 }
 
-func saveKOReaderProgress(tx *sql.Tx, progress KOReaderProgress) (*KOReaderProgress, error) {
+func saveKOReaderProgress(tx *Tx, progress KOReaderProgress) (*KOReaderProgress, error) {
 	if _, err := tx.Exec(`
 		INSERT INTO koreader_progress
 			(user_id, document_hash, progress, percentage, device, device_id, updated_at)
@@ -145,14 +146,10 @@ func saveKOReaderProgress(tx *sql.Tx, progress KOReaderProgress) (*KOReaderProgr
 	`, progress.UserID, progress.DocumentHash, progress.Progress, progress.Percentage, progress.Device, progress.DeviceID); err != nil {
 		return nil, fmt.Errorf("save koreader progress: %w", err)
 	}
-	return getKOReaderProgress(tx, progress.UserID, progress.DocumentHash)
+	return GetKOReaderProgress(tx, progress.UserID, progress.DocumentHash)
 }
 
-func (db *DB) GetKOReaderProgress(userID int64, documentHash string) (*KOReaderProgress, error) {
-	return getKOReaderProgress(db, userID, documentHash)
-}
-
-func getKOReaderProgress(queryer Queryer, userID int64, documentHash string) (*KOReaderProgress, error) {
+func GetKOReaderProgress(queryer Queryer, userID int64, documentHash string) (*KOReaderProgress, error) {
 	documentHash = strings.TrimSpace(documentHash)
 	if userID <= 0 {
 		return nil, errorWithDetail(ErrKOReaderInvalidInput, "user id required")

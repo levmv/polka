@@ -31,11 +31,11 @@ func FullVisibilityScope() VisibilityScope {
 	return VisibilityScope{ContentScope: ContentScopeAll}
 }
 
-func (db *DB) VisibilityScopeForUser(userID int64) (VisibilityScope, error) {
+func VisibilityScopeForUser(queryer Queryer, userID int64) (VisibilityScope, error) {
 	if userID <= 0 {
 		return FullVisibilityScope(), nil
 	}
-	u, err := db.GetUserByID(userID)
+	u, err := GetUserByID(queryer, userID)
 	if err != nil {
 		return VisibilityScope{}, err
 	}
@@ -95,7 +95,7 @@ func (s VisibilityScope) BookWhere(bookIDExpr string) (string, []any) {
 			 AND EXISTS (
 				SELECT 1
 				FROM search
-				WHERE search.book_id = ` + bookIDExpr + `
+				WHERE search.rowid = ` + bookIDExpr + `
 				  AND search MATCH scope_shelf.query_match
 			))
 		  )
@@ -136,7 +136,7 @@ func (s VisibilityScope) visibleBooksCTE() string {
 			JOIN shelf_books scope_books ON scope_books.shelf_id = scope_shelf.id
 			WHERE scope_shelf.kind = 'manual'
 			UNION
-			SELECT search.book_id
+			SELECT search.rowid
 			FROM scope_shelves scope_shelf
 			JOIN search ON search MATCH scope_shelf.query_match
 			WHERE scope_shelf.kind = 'query'
@@ -152,7 +152,7 @@ func withClause(withSQL string) string {
 	return "WITH " + withSQL
 }
 
-func CanAccessBook(queryer Queryer, scope VisibilityScope, bookID string) (bool, error) {
+func CanAccessBook(queryer Queryer, scope VisibilityScope, bookID int64) (bool, error) {
 	where, args := scope.AppendBookWhere("b.id = ? AND b.deleted_at IS NULL", "b.id", bookID)
 	var exists int
 	err := queryer.QueryRow(`SELECT 1 FROM books b WHERE `+where+` LIMIT 1`, args...).Scan(&exists)
@@ -165,7 +165,7 @@ func CanAccessBook(queryer Queryer, scope VisibilityScope, bookID string) (bool,
 	return true, nil
 }
 
-func CanAccessTrashedBook(queryer Queryer, scope VisibilityScope, bookID string) (bool, error) {
+func CanAccessTrashedBook(queryer Queryer, scope VisibilityScope, bookID int64) (bool, error) {
 	where, args := scope.AppendBookWhere("b.id = ? AND b.deleted_at IS NOT NULL", "b.id", bookID)
 	var exists int
 	err := queryer.QueryRow(`SELECT 1 FROM books b WHERE `+where+` LIMIT 1`, args...).Scan(&exists)

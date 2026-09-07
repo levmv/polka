@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/levmv/polka/internal/db"
 	"github.com/levmv/polka/internal/storage"
 )
 
@@ -38,7 +39,15 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.MarshalWrite(w, v)
 }
 
-func serverError(w http.ResponseWriter, err error) {
+func serverError(w http.ResponseWriter, r *http.Request, err error) {
+	if r.Context().Err() != nil {
+		return
+	}
+	if errors.Is(err, db.ErrWriterTimeout) {
+		log.Printf("library writer unavailable: %v", err)
+		http.Error(w, "Library is busy; please try again", http.StatusServiceUnavailable)
+		return
+	}
 	// Both a missing books root and an empty root over an existing catalog (the
 	// classic dropped-mount signal from RequireWritableRoot) mean the library is
 	// unreachable, not a server fault: surface them as 503, not 500.

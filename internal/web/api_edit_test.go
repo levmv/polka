@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"testing"
 
 	"github.com/levmv/polka/internal/bookmeta"
@@ -26,8 +27,8 @@ func TestAPIEditFields(t *testing.T) {
 		t.Fatalf("db init: %v", err)
 	}
 
-	bookID := "w_test"
-	database.Exec("INSERT INTO books (id, title, sort_title) VALUES (?, 'Title', 'Title')", bookID)
+	bookID := int64(174)
+	mustExec(t, database, "INSERT INTO books (id, title, sort_title) VALUES (?, 'Title', 'Title')", bookID)
 
 	srv := &Server{
 		db:      database,
@@ -45,7 +46,7 @@ func TestAPIEditFields(t *testing.T) {
 		"date":      &date,
 	})
 
-	req := httptest.NewRequest("PATCH", "/api/books/"+bookID, bytes.NewBuffer(reqBody))
+	req := httptest.NewRequest("PATCH", "/api/books/"+strconv.FormatInt(bookID, 10), bytes.NewBuffer(reqBody))
 	rr := httptest.NewRecorder()
 
 	// Bypass auth by calling handler directly
@@ -60,7 +61,7 @@ func TestAPIEditFields(t *testing.T) {
 	var sortTitle string
 	var metadataRev int
 	var newLang, newPub, newDate sql.NullString
-	err = database.QueryRow("SELECT sort_title, language, publisher, published_date, metadata_rev FROM books WHERE id = ?", bookID).Scan(&sortTitle, &newLang, &newPub, &newDate, &metadataRev)
+	err = database.Read(req.Context()).QueryRow("SELECT sort_title, language, publisher, published_date, metadata_rev FROM books WHERE id = ?", bookID).Scan(&sortTitle, &newLang, &newPub, &newDate, &metadataRev)
 	if err != nil {
 		t.Fatalf("query books: %v", err)
 	}
@@ -76,7 +77,7 @@ func TestAPIEditFields(t *testing.T) {
 	}
 
 	var manualOverrides sql.NullString
-	err = database.QueryRow("SELECT manual_overrides FROM books WHERE id = ?", bookID).Scan(&manualOverrides)
+	err = database.Read(req.Context()).QueryRow("SELECT manual_overrides FROM books WHERE id = ?", bookID).Scan(&manualOverrides)
 	if err != nil {
 		t.Fatalf("query books: %v", err)
 	}
@@ -102,8 +103,8 @@ func TestAPIEditPreservesFields(t *testing.T) {
 	}
 	defer database.Close()
 
-	bookID := "w_test"
-	database.Exec("INSERT INTO books (id, title, sort_title, language, publisher, published_date) VALUES (?, 'Title', 'Title', 'fr', 'Gallimard', '1942')", bookID)
+	bookID := int64(174)
+	mustExec(t, database, "INSERT INTO books (id, title, sort_title, language, publisher, published_date) VALUES (?, 'Title', 'Title', 'fr', 'Gallimard', '1942')", bookID)
 
 	srv := &Server{
 		db:      database,
@@ -114,7 +115,7 @@ func TestAPIEditPreservesFields(t *testing.T) {
 		"title": "New Title",
 	})
 
-	req := httptest.NewRequest("PATCH", "/api/books/"+bookID, bytes.NewBuffer(reqBody))
+	req := httptest.NewRequest("PATCH", "/api/books/"+strconv.FormatInt(bookID, 10), bytes.NewBuffer(reqBody))
 	rr := httptest.NewRecorder()
 
 	srv.handleAPIEditBook(rr, req, bookID)
@@ -124,7 +125,7 @@ func TestAPIEditPreservesFields(t *testing.T) {
 	}
 
 	var newLang, newPub, newDate sql.NullString
-	err = database.QueryRow("SELECT language, publisher, published_date FROM books WHERE id = ?", bookID).Scan(&newLang, &newPub, &newDate)
+	err = database.Read(req.Context()).QueryRow("SELECT language, publisher, published_date FROM books WHERE id = ?", bookID).Scan(&newLang, &newPub, &newDate)
 	if err != nil {
 		t.Fatalf("query books: %v", err)
 	}
@@ -142,20 +143,14 @@ func TestAPIEditPatchMergesStaleFieldsAndClearsNulls(t *testing.T) {
 	}
 	defer database.Close()
 
-	bookID := "w_patch_merge"
-	if _, err := database.Exec(`
+	bookID := int64(164)
+	mustExec(t, database, `
 		INSERT INTO books (
 			id, title, sort_title, series, series_index, language, publisher
 		) VALUES (?, 'Old Title', 'Old Title', 'Old Series', 2, 'fr', 'Old Press')
-	`, bookID); err != nil {
-		t.Fatalf("insert book: %v", err)
-	}
-	if _, err := database.Exec("INSERT INTO authors (id, name, sort_name) VALUES ('au_patch_merge', 'Old Author', 'Author, Old')"); err != nil {
-		t.Fatalf("insert author: %v", err)
-	}
-	if _, err := database.Exec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES (?, 'au_patch_merge', 0)", bookID); err != nil {
-		t.Fatalf("link author: %v", err)
-	}
+	`, bookID)
+	mustExec(t, database, "INSERT INTO authors (id, name, sort_name) VALUES ('au_patch_merge', 'Old Author', 'Author, Old')")
+	mustExec(t, database, "INSERT INTO book_authors (book_id, author_id, author_order) VALUES (?, 'au_patch_merge', 0)", bookID)
 
 	srv := &Server{db: database, dataDir: dataDir}
 	patch := func(body map[string]any) {
@@ -164,7 +159,7 @@ func TestAPIEditPatchMergesStaleFieldsAndClearsNulls(t *testing.T) {
 		if err != nil {
 			t.Fatalf("marshal patch: %v", err)
 		}
-		req := httptest.NewRequest(http.MethodPatch, "/api/books/"+bookID, bytes.NewReader(raw))
+		req := httptest.NewRequest(http.MethodPatch, "/api/books/"+strconv.FormatInt(bookID, 10), bytes.NewReader(raw))
 		rr := httptest.NewRecorder()
 		srv.handleAPIEditBook(rr, req, bookID)
 		if rr.Code != http.StatusOK {
@@ -180,7 +175,7 @@ func TestAPIEditPatchMergesStaleFieldsAndClearsNulls(t *testing.T) {
 
 	var title, sortTitle string
 	var publisher sql.NullString
-	if err := database.QueryRow("SELECT title, sort_title, publisher FROM books WHERE id = ?", bookID).Scan(&title, &sortTitle, &publisher); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT title, sort_title, publisher FROM books WHERE id = ?", bookID).Scan(&title, &sortTitle, &publisher); err != nil {
 		t.Fatalf("query merged book: %v", err)
 	}
 	if title != "New Title" || sortTitle != "New Title" || publisher.String != "New Press" {
@@ -197,7 +192,7 @@ func TestAPIEditPatchMergesStaleFieldsAndClearsNulls(t *testing.T) {
 
 	var series, language sql.NullString
 	var seriesIndex sql.NullFloat64
-	if err := database.QueryRow(`
+	if err := database.Read(t.Context()).QueryRow(`
 		SELECT sort_title, series, series_index, language, publisher
 		FROM books WHERE id = ?
 	`, bookID).Scan(&sortTitle, &series, &seriesIndex, &language, &publisher); err != nil {
@@ -213,7 +208,7 @@ func TestAPIEditPatchMergesStaleFieldsAndClearsNulls(t *testing.T) {
 		t.Fatalf("omitted language = %+v; want preserved fr", language)
 	}
 
-	authors, err := db.AuthorsByBookIDs(database, []string{bookID})
+	authors, err := db.AuthorsByBookIDs(database.Read(t.Context()), []int64{bookID})
 	if err != nil {
 		t.Fatalf("authors: %v", err)
 	}
@@ -222,7 +217,7 @@ func TestAPIEditPatchMergesStaleFieldsAndClearsNulls(t *testing.T) {
 	}
 
 	var rawOverrides string
-	if err := database.QueryRow("SELECT manual_overrides FROM books WHERE id = ?", bookID).Scan(&rawOverrides); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT manual_overrides FROM books WHERE id = ?", bookID).Scan(&rawOverrides); err != nil {
 		t.Fatalf("query overrides: %v", err)
 	}
 	overrides := bookmeta.ParseOverrides(rawOverrides)
@@ -244,12 +239,11 @@ func TestAPIEditExplicitNullRecordsManualClear(t *testing.T) {
 	}
 	defer database.Close()
 
-	bookID := "w_manual_clear"
-	if _, err := database.Exec("INSERT INTO books (id, title, sort_title) VALUES (?, 'Title', 'Title')", bookID); err != nil {
-		t.Fatalf("insert book: %v", err)
-	}
+	bookID := int64(149)
+	mustExec(t, database, "INSERT INTO books (id, title, sort_title) VALUES (?, 'Title', 'Title')", bookID)
+
 	srv := &Server{db: database, dataDir: dataDir}
-	req := httptest.NewRequest(http.MethodPatch, "/api/books/"+bookID, bytes.NewBufferString(`{"description":null}`))
+	req := httptest.NewRequest(http.MethodPatch, "/api/books/"+strconv.FormatInt(bookID, 10), bytes.NewBufferString(`{"description":null}`))
 	rr := httptest.NewRecorder()
 	srv.handleAPIEditBook(rr, req, bookID)
 	if rr.Code != http.StatusOK {
@@ -258,7 +252,7 @@ func TestAPIEditExplicitNullRecordsManualClear(t *testing.T) {
 
 	var rawOverrides string
 	var metadataRev int
-	if err := database.QueryRow("SELECT manual_overrides, metadata_rev FROM books WHERE id = ?", bookID).Scan(&rawOverrides, &metadataRev); err != nil {
+	if err := database.Read(req.Context()).QueryRow("SELECT manual_overrides, metadata_rev FROM books WHERE id = ?", bookID).Scan(&rawOverrides, &metadataRev); err != nil {
 		t.Fatalf("query book: %v", err)
 	}
 	if !bookmeta.ParseOverrides(rawOverrides)["description"] {
@@ -277,12 +271,11 @@ func TestAPIEditRejectsNullTitle(t *testing.T) {
 	}
 	defer database.Close()
 
-	bookID := "w_null_title"
-	if _, err := database.Exec("INSERT INTO books (id, title, sort_title) VALUES (?, 'Title', 'Title')", bookID); err != nil {
-		t.Fatalf("insert book: %v", err)
-	}
+	bookID := int64(159)
+	mustExec(t, database, "INSERT INTO books (id, title, sort_title) VALUES (?, 'Title', 'Title')", bookID)
+
 	srv := &Server{db: database, dataDir: dataDir}
-	req := httptest.NewRequest(http.MethodPatch, "/api/books/"+bookID, bytes.NewBufferString(`{"title":null}`))
+	req := httptest.NewRequest(http.MethodPatch, "/api/books/"+strconv.FormatInt(bookID, 10), bytes.NewBufferString(`{"title":null}`))
 	rr := httptest.NewRecorder()
 	srv.handleAPIEditBook(rr, req, bookID)
 	if rr.Code != http.StatusBadRequest {
@@ -324,18 +317,15 @@ func TestAPIEditSortTitleBehavior(t *testing.T) {
 			}
 			defer database.Close()
 
-			const bookID = "w_sort"
-			if _, err := database.Exec(
-				"INSERT INTO books (id, title, sort_title, tags) VALUES (?, ?, ?, 'old')",
-				bookID, tt.initialTitle, tt.initialSort,
-			); err != nil {
-				t.Fatalf("insert book: %v", err)
-			}
+			const bookID = 171
+			mustExec(t, database, "INSERT INTO books (id, title, sort_title, tags) VALUES (?, ?, ?, 'old')",
+				bookID, tt.initialTitle, tt.initialSort)
+
 			reqBody, err := json.Marshal(tt.patch)
 			if err != nil {
 				t.Fatalf("marshal patch: %v", err)
 			}
-			req := httptest.NewRequest(http.MethodPatch, "/api/books/"+bookID, bytes.NewReader(reqBody))
+			req := httptest.NewRequest(http.MethodPatch, "/api/books/"+strconv.FormatInt(bookID, 10), bytes.NewReader(reqBody))
 			rr := httptest.NewRecorder()
 			(&Server{db: database, dataDir: dataDir}).handleAPIEditBook(rr, req, bookID)
 			if rr.Code != http.StatusOK {
@@ -343,7 +333,7 @@ func TestAPIEditSortTitleBehavior(t *testing.T) {
 			}
 
 			var title, sortTitle string
-			if err := database.QueryRow("SELECT title, sort_title FROM books WHERE id = ?", bookID).Scan(&title, &sortTitle); err != nil {
+			if err := database.Read(req.Context()).QueryRow("SELECT title, sort_title FROM books WHERE id = ?", bookID).Scan(&title, &sortTitle); err != nil {
 				t.Fatalf("query book: %v", err)
 			}
 			if title != tt.wantTitle || sortTitle != tt.wantSortTitle {
@@ -361,15 +351,15 @@ func TestAPIEditAuthorsKeepCommasInsideNames(t *testing.T) {
 	}
 	defer database.Close()
 
-	bookID := "w_author_commas"
-	database.Exec("INSERT INTO books (id, title, sort_title) VALUES (?, 'Book', 'Book')", bookID)
+	bookID := int64(110)
+	mustExec(t, database, "INSERT INTO books (id, title, sort_title) VALUES (?, 'Book', 'Book')", bookID)
 
 	srv := &Server{db: database, dataDir: dataDir}
 	reqBody, _ := json.Marshal(map[string]any{
 		"title":   "Book",
 		"authors": "Le Guin, Ursula K.; New Coauthor & Research && Development",
 	})
-	req := httptest.NewRequest("PATCH", "/api/books/"+bookID, bytes.NewBuffer(reqBody))
+	req := httptest.NewRequest("PATCH", "/api/books/"+strconv.FormatInt(bookID, 10), bytes.NewBuffer(reqBody))
 	rr := httptest.NewRecorder()
 	srv.handleAPIEditBook(rr, req, bookID)
 
@@ -392,14 +382,14 @@ func TestAPIEditAuthorsKeepCommasInsideNames(t *testing.T) {
 	// A later edit that omits authors must preserve the structured names. In
 	// particular, the comma inside the first name is not a list delimiter.
 	reqBody, _ = json.Marshal(map[string]any{"title": "Updated Book"})
-	req = httptest.NewRequest("PATCH", "/api/books/"+bookID, bytes.NewBuffer(reqBody))
+	req = httptest.NewRequest("PATCH", "/api/books/"+strconv.FormatInt(bookID, 10), bytes.NewBuffer(reqBody))
 	rr = httptest.NewRecorder()
 	srv.handleAPIEditBook(rr, req, bookID)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("title-only edit: expected status 200, got %d: %s", rr.Code, rr.Body.String())
 	}
 
-	rows, err := database.Query(`
+	rows, err := database.Read(req.Context()).Query(`
 		SELECT a.name
 		FROM book_authors ba
 		JOIN authors a ON a.id = ba.author_id
@@ -434,7 +424,7 @@ func TestAPIEditAuthorsKeepCommasInsideNames(t *testing.T) {
 	}
 
 	var primaryAuthorSort string
-	if err := database.QueryRow("SELECT primary_author_sort FROM books WHERE id = ?", bookID).Scan(&primaryAuthorSort); err != nil {
+	if err := database.Read(req.Context()).QueryRow("SELECT primary_author_sort FROM books WHERE id = ?", bookID).Scan(&primaryAuthorSort); err != nil {
 		t.Fatalf("query primary_author_sort: %v", err)
 	}
 	if primaryAuthorSort != "Le Guin, Ursula K." {
@@ -471,7 +461,7 @@ func TestAPIEditRelayoutKeepsDBConsistent(t *testing.T) {
 	}
 	defer database.Close()
 
-	bookID := "w_relayout"
+	bookID := int64(166)
 	assetID := "as_relayout"
 	authorName := "Jane Doe"
 	authorSort := bookmeta.AuthorSort(authorName)
@@ -486,18 +476,17 @@ func TestAPIEditRelayoutKeepsDBConsistent(t *testing.T) {
 	if err := os.WriteFile(absOld, []byte("epub-bytes"), 0o644); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
-
-	database.Exec("INSERT INTO books (id, title, sort_title) VALUES (?, ?, ?)", bookID, oldTitle, oldTitle)
-	database.Exec("INSERT INTO assets (id, book_id, storage_path, filename, extension, original_sha256, current_sha256) VALUES (?, ?, ?, ?, ?, ?, ?)",
+	mustExec(t, database, "INSERT INTO books (id, title, sort_title) VALUES (?, ?, ?)", bookID, oldTitle, oldTitle)
+	mustExec(t, database, "INSERT INTO assets (id, book_id, storage_path, filename, extension, original_sha256, current_sha256) VALUES (?, ?, ?, ?, ?, ?, ?)",
 		assetID, bookID, oldPath, filepath.Base(oldPath), ext, "deadbeef", "deadbeef")
-	database.Exec("INSERT INTO authors (id, name, sort_name) VALUES ('au_relayout', ?, ?)", authorName, authorSort)
-	database.Exec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES (?, 'au_relayout', 0)", bookID)
+	mustExec(t, database, "INSERT INTO authors (id, name, sort_name) VALUES ('au_relayout', ?, ?)", authorName, authorSort)
+	mustExec(t, database, "INSERT INTO book_authors (book_id, author_id, author_order) VALUES (?, 'au_relayout', 0)", bookID)
 
 	srv := &Server{db: database, dataDir: dataDir}
 
 	newTitle := "Brand New Title"
 	reqBody, _ := json.Marshal(map[string]any{"title": newTitle})
-	req := httptest.NewRequest("PATCH", "/api/books/"+bookID, bytes.NewBuffer(reqBody))
+	req := httptest.NewRequest("PATCH", "/api/books/"+strconv.FormatInt(bookID, 10), bytes.NewBuffer(reqBody))
 	rr := httptest.NewRecorder()
 	srv.handleAPIEditBook(rr, req, bookID)
 
@@ -506,7 +495,7 @@ func TestAPIEditRelayoutKeepsDBConsistent(t *testing.T) {
 	}
 
 	var sp string
-	if err := database.QueryRow("SELECT storage_path FROM assets WHERE id = ?", assetID).Scan(&sp); err != nil {
+	if err := database.Read(req.Context()).QueryRow("SELECT storage_path FROM assets WHERE id = ?", assetID).Scan(&sp); err != nil {
 		t.Fatalf("query storage_path: %v", err)
 	}
 
@@ -535,21 +524,21 @@ func TestAPIEditMetadataOnlyDoesNotRequireStorage(t *testing.T) {
 	}
 	defer database.Close()
 
-	bookID := "w_metadata_only"
+	bookID := int64(150)
 	assetID := "as_metadata_only"
 	storagePath := defaultStoragePath(t, "Stored Title", "Jane Doe", bookmeta.AuthorSort("Jane Doe"), assetID, ".epub")
-	database.Exec("INSERT INTO books (id, title, sort_title) VALUES (?, 'Stored Title', 'Stored Title')", bookID)
-	database.Exec("INSERT INTO assets (id, book_id, storage_path, filename, extension, format) VALUES (?, ?, ?, ?, '.epub', 'epub')",
+	mustExec(t, database, "INSERT INTO books (id, title, sort_title) VALUES (?, 'Stored Title', 'Stored Title')", bookID)
+	mustExec(t, database, "INSERT INTO assets (id, book_id, storage_path, filename, extension, format) VALUES (?, ?, ?, ?, '.epub', 'epub')",
 		assetID, bookID, storagePath, filepath.Base(storagePath))
-	database.Exec("INSERT INTO authors (id, name, sort_name) VALUES ('au_metadata_only', 'Jane Doe', ?)", bookmeta.AuthorSort("Jane Doe"))
-	database.Exec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES (?, 'au_metadata_only', 0)", bookID)
+	mustExec(t, database, "INSERT INTO authors (id, name, sort_name) VALUES ('au_metadata_only', 'Jane Doe', ?)", bookmeta.AuthorSort("Jane Doe"))
+	mustExec(t, database, "INSERT INTO book_authors (book_id, author_id, author_order) VALUES (?, 'au_metadata_only', 0)", bookID)
 
 	srv := &Server{db: database, dataDir: dataDir}
 	reqBody, _ := json.Marshal(map[string]any{
 		"title":       "Stored Title",
 		"description": "Small note",
 	})
-	req := httptest.NewRequest("PATCH", "/api/books/"+bookID, bytes.NewBuffer(reqBody))
+	req := httptest.NewRequest("PATCH", "/api/books/"+strconv.FormatInt(bookID, 10), bytes.NewBuffer(reqBody))
 	rr := httptest.NewRecorder()
 	srv.handleAPIEditBook(rr, req, bookID)
 
@@ -558,13 +547,13 @@ func TestAPIEditMetadataOnlyDoesNotRequireStorage(t *testing.T) {
 	}
 
 	var desc sql.NullString
-	if err := database.QueryRow("SELECT description FROM books WHERE id = ?", bookID).Scan(&desc); err != nil {
+	if err := database.Read(req.Context()).QueryRow("SELECT description FROM books WHERE id = ?", bookID).Scan(&desc); err != nil {
 		t.Fatalf("query description: %v", err)
 	}
 	if desc.String != "Small note" {
 		t.Fatalf("description = %q; want Small note", desc.String)
 	}
-	counts, err := db.CountDirtyMetadataWritebackAssets(database, db.FullVisibilityScope())
+	counts, err := db.CountDirtyMetadataWritebackAssets(database.Read(req.Context()), db.FullVisibilityScope())
 	if err != nil {
 		t.Fatalf("dirty writeback count: %v", err)
 	}
@@ -586,8 +575,8 @@ func TestAPIEditPatchRoute(t *testing.T) {
 	}
 	defer database.Close()
 
-	bookID := "w_patch"
-	database.Exec("INSERT INTO books (id, title, sort_title) VALUES (?, 'Title', 'Title')", bookID)
+	bookID := int64(163)
+	mustExec(t, database, "INSERT INTO books (id, title, sort_title) VALUES (?, 'Title', 'Title')", bookID)
 	member := mustUser(t, database, "member", db.RoleMember)
 
 	srv := &Server{db: database, dataDir: dataDir}
@@ -597,7 +586,7 @@ func TestAPIEditPatchRoute(t *testing.T) {
 	}
 
 	reqBody, _ := json.Marshal(map[string]any{"title": "Patched Title"})
-	req := httptest.NewRequest("PATCH", "/api/books/"+bookID, bytes.NewBuffer(reqBody))
+	req := httptest.NewRequest("PATCH", "/api/books/"+strconv.FormatInt(bookID, 10), bytes.NewBuffer(reqBody))
 	req = req.WithContext(withUserID(req.Context(), member.ID))
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
@@ -607,13 +596,13 @@ func TestAPIEditPatchRoute(t *testing.T) {
 	}
 
 	var title string
-	database.QueryRow("SELECT title FROM books WHERE id = ?", bookID).Scan(&title)
+	database.Read(req.Context()).QueryRow("SELECT title FROM books WHERE id = ?", bookID).Scan(&title)
 	if title != "Patched Title" {
 		t.Errorf("title not updated via PATCH route: %q", title)
 	}
 
 	for _, method := range []string{http.MethodPut, http.MethodPost} {
-		req := httptest.NewRequest(method, "/api/books/"+bookID, bytes.NewBufferString(`{"title":"Legacy write"}`))
+		req := httptest.NewRequest(method, "/api/books/"+strconv.FormatInt(bookID, 10), bytes.NewBufferString(`{"title":"Legacy write"}`))
 		req = req.WithContext(withUserID(req.Context(), member.ID))
 		rr := httptest.NewRecorder()
 		mux.ServeHTTP(rr, req)

@@ -15,8 +15,8 @@ type SeriesDTO struct {
 	FinishedCount int    `json:"finished_count"`
 	// The book whose cover stands for the series on the Series page; the cover
 	// route generates a placeholder when that book has no stored cover.
-	CoverBookID  string `json:"cover_book_id"`
-	CoverVersion int    `json:"cover_version"`
+	CoverBookID  int64 `json:"cover_book_id"`
+	CoverVersion int   `json:"cover_version"`
 }
 
 type SeriesPageDTO struct {
@@ -27,7 +27,7 @@ type SeriesPageDTO struct {
 func (s *Server) handleAPISeries(w http.ResponseWriter, r *http.Request) {
 	scope, err := s.visibilityScope(r)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 	pageSize, err := collectionPageSize(r)
@@ -41,9 +41,9 @@ func (s *Server) handleAPISeries(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid cursor", http.StatusBadRequest)
 		return
 	}
-	rows, err := db.ListSeriesCardsPage(s.db, scope, UserID(r.Context()), q, cursor.Primary, pageSize+1)
+	rows, err := db.ListSeriesCardsPage(s.db.Read(r.Context()), scope, UserID(r.Context()), q, cursor.Primary, pageSize+1)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, r, err)
 		return
 	}
 

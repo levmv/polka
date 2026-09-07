@@ -1688,11 +1688,11 @@ func TestImportGroupElectsReadablePrimary(t *testing.T) {
 </package>`))
 		return docxPath, epubPath
 	}
-	assertPrimaryEPUB := func(t *testing.T, database *db.DB, bookID string) {
+	assertPrimaryEPUB := func(t *testing.T, database *db.DB, bookID int64) {
 		t.Helper()
 		var extension string
 		var canRead int
-		if err := database.QueryRow(`
+		if err := database.Read(t.Context()).QueryRow(`
 			SELECT extension, can_read
 			FROM assets
 			WHERE book_id = ? AND is_primary = 1
@@ -1728,7 +1728,7 @@ func TestImportGroupElectsReadablePrimary(t *testing.T) {
 			t.Fatalf("add-format ImportGroup: %v", err)
 		}
 		if result.BookID != initial.BookID {
-			t.Fatalf("book ID = %q; want existing %q", result.BookID, initial.BookID)
+			t.Fatalf("book ID = %d; want existing %d", result.BookID, initial.BookID)
 		}
 		assertPrimaryEPUB(t, database, result.BookID)
 	})
@@ -1813,7 +1813,7 @@ func TestImportGroupStoresEarliestSourceModTimeAsAddedAt(t *testing.T) {
 	after := time.Now().Unix()
 
 	var createdAt, addedAt int64
-	if err := database.QueryRow("SELECT created_at, added_at FROM books WHERE id = ?", result.BookID).Scan(&createdAt, &addedAt); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT created_at, added_at FROM books WHERE id = ?", result.BookID).Scan(&createdAt, &addedAt); err != nil {
 		t.Fatalf("query book timestamps: %v", err)
 	}
 	if addedAt != earlier.Unix() {
@@ -1854,16 +1854,16 @@ func TestImportGroupRestoresTrashedBookOnlyWhenAddingAsset(t *testing.T) {
 </package>`))
 		return docxPath, epubPath
 	}
-	trashBook := func(t *testing.T, database *db.DB, bookID string) {
+	trashBook := func(t *testing.T, database *db.DB, bookID int64) {
 		t.Helper()
-		if _, err := database.Exec("UPDATE books SET deleted_at = unixepoch() WHERE id = ?", bookID); err != nil {
+		if _, err := database.Write(t.Context()).Exec("UPDATE books SET deleted_at = unixepoch() WHERE id = ?", bookID); err != nil {
 			t.Fatalf("trash book: %v", err)
 		}
 	}
-	assertTrashed := func(t *testing.T, database *db.DB, bookID string, want bool) {
+	assertTrashed := func(t *testing.T, database *db.DB, bookID int64, want bool) {
 		t.Helper()
 		var got bool
-		if err := database.QueryRow("SELECT deleted_at IS NOT NULL FROM books WHERE id = ?", bookID).Scan(&got); err != nil {
+		if err := database.Read(t.Context()).QueryRow("SELECT deleted_at IS NOT NULL FROM books WHERE id = ?", bookID).Scan(&got); err != nil {
 			t.Fatalf("query book trash state: %v", err)
 		}
 		if got != want {
@@ -1907,7 +1907,7 @@ func TestImportGroupRestoresTrashedBookOnlyWhenAddingAsset(t *testing.T) {
 			t.Fatalf("mixed ImportGroup: %v", err)
 		}
 		if mixed.BookID != initial.BookID {
-			t.Fatalf("book ID = %q; want existing %q", mixed.BookID, initial.BookID)
+			t.Fatalf("book ID = %d; want existing %d", mixed.BookID, initial.BookID)
 		}
 		if !mixed.Restored {
 			t.Fatal("mixed import did not report the restored book")
@@ -1918,7 +1918,7 @@ func TestImportGroupRestoresTrashedBookOnlyWhenAddingAsset(t *testing.T) {
 		assertTrashed(t, database, initial.BookID, false)
 
 		var assets int
-		if err := database.QueryRow("SELECT COUNT(*) FROM assets WHERE book_id = ?", initial.BookID).Scan(&assets); err != nil {
+		if err := database.Read(t.Context()).QueryRow("SELECT COUNT(*) FROM assets WHERE book_id = ?", initial.BookID).Scan(&assets); err != nil {
 			t.Fatalf("count assets: %v", err)
 		}
 		if assets != 2 {
@@ -1937,7 +1937,7 @@ func TestImportGroupRestoresTrashedBookOnlyWhenAddingAsset(t *testing.T) {
 				t.Fatalf("repeat results = %+v; want live duplicates", again.Results)
 			}
 		}
-		if err := database.QueryRow("SELECT COUNT(*) FROM assets WHERE book_id = ?", initial.BookID).Scan(&assets); err != nil {
+		if err := database.Read(t.Context()).QueryRow("SELECT COUNT(*) FROM assets WHERE book_id = ?", initial.BookID).Scan(&assets); err != nil {
 			t.Fatalf("count repeated assets: %v", err)
 		}
 		if assets != 2 {
@@ -2004,7 +2004,7 @@ func TestPersistStoresBookMetadata(t *testing.T) {
 		language, identifiers    string
 	}
 	var got storedMetadata
-	if err := database.QueryRow(`
+	if err := database.Read(t.Context()).QueryRow(`
 		SELECT title, sort_title, series, series_index, description, tags,
 		       cover_version, publisher, published_date,
 		       language, identifiers
@@ -2034,7 +2034,7 @@ func TestPersistStoresBookMetadata(t *testing.T) {
 		t.Fatalf("stored book metadata = %+v; want %+v", got, want)
 	}
 
-	rows, err := database.Query(`
+	rows, err := database.Read(t.Context()).Query(`
 		SELECT a.name, a.sort_name, COALESCE(ba.role, '')
 		FROM book_authors ba
 		JOIN authors a ON a.id = ba.author_id
@@ -2098,7 +2098,7 @@ func TestPersistStoresAssetHashesAndCover(t *testing.T) {
 	var formatKey string
 	var originalSize, currentSize int64
 	var isPrimary, canRead int
-	if err := database.QueryRow(`
+	if err := database.Read(t.Context()).QueryRow(`
 			SELECT original_sha256, current_sha256, original_size, current_size, storage_path, format, is_primary, can_read
 			FROM assets
 			WHERE id = ?
@@ -2121,7 +2121,7 @@ func TestPersistStoresAssetHashesAndCover(t *testing.T) {
 		t.Fatalf("format = %q; want %q", formatKey, format.FormatKey(plan.Format))
 	}
 	var primaryAuthorSort string
-	if err := database.QueryRow("SELECT primary_author_sort FROM books WHERE id = ?", res.BookID).Scan(&primaryAuthorSort); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT primary_author_sort FROM books WHERE id = ?", res.BookID).Scan(&primaryAuthorSort); err != nil {
 		t.Fatalf("query primary_author_sort: %v", err)
 	}
 	if primaryAuthorSort != plan.Authors[0].SortName {
@@ -2192,7 +2192,7 @@ func TestPersistRejectsChangedSource(t *testing.T) {
 					t.Fatalf("Persist = %v; want changed source error", err)
 				}
 				var books, assets int
-				if err := database.QueryRow("SELECT (SELECT COUNT(*) FROM books), (SELECT COUNT(*) FROM assets)").Scan(&books, &assets); err != nil {
+				if err := database.Read(t.Context()).QueryRow("SELECT (SELECT COUNT(*) FROM books), (SELECT COUNT(*) FROM assets)").Scan(&books, &assets); err != nil {
 					t.Fatal(err)
 				}
 				if books != wantCount || assets != wantCount {
@@ -2203,7 +2203,7 @@ func TestPersistRejectsChangedSource(t *testing.T) {
 						t.Fatalf("changed source was placed: %v", err)
 					}
 					var hash string
-					if err := database.QueryRow("SELECT current_sha256 FROM assets").Scan(&hash); err != nil || hash != plan.SourceSHA256 {
+					if err := database.Read(t.Context()).QueryRow("SELECT current_sha256 FROM assets").Scan(&hash); err != nil || hash != plan.SourceSHA256 {
 						t.Fatalf("current hash = %q, %v; want original fingerprint", hash, err)
 					}
 				}
@@ -2253,10 +2253,10 @@ func TestPersistCanceledContextRollsBackAndCleansStaging(t *testing.T) {
 	}
 
 	var books, assets int
-	if err := database.QueryRow("SELECT COUNT(*) FROM books").Scan(&books); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT COUNT(*) FROM books").Scan(&books); err != nil {
 		t.Fatalf("count books: %v", err)
 	}
-	if err := database.QueryRow("SELECT COUNT(*) FROM assets").Scan(&assets); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT COUNT(*) FROM assets").Scan(&assets); err != nil {
 		t.Fatalf("count assets: %v", err)
 	}
 	if books != 0 || assets != 0 {
@@ -2293,7 +2293,7 @@ func TestCanceledPreparationReturnsContextCause(t *testing.T) {
 			return err
 		},
 		"probe": func() error {
-			_, err := ProbeSource(ctx, database, Source{Path: srcPath})
+			_, err := ProbeSource(ctx, database.Read(ctx), Source{Path: srcPath})
 			return err
 		},
 	}
@@ -2348,7 +2348,7 @@ func TestDuplicateImportRestoreUpdatesCurrentHash(t *testing.T) {
 	if err := os.WriteFile(managedPath, rewrittenBytes, 0o644); err != nil {
 		t.Fatalf("rewrite managed file: %v", err)
 	}
-	if _, err := database.Exec(`
+	if _, err := database.Write(t.Context()).Exec(`
 		UPDATE assets
 		SET current_sha256 = ?, current_size = ?, koreader_hash = 'stale-rewritten-hash', updated_at = unixepoch()
 		WHERE id = ?
@@ -2374,7 +2374,7 @@ func TestDuplicateImportRestoreUpdatesCurrentHash(t *testing.T) {
 
 	var originalDBHash, currentDBHash, koReaderHash string
 	var originalDBSize, currentDBSize int64
-	if err := database.QueryRow(`
+	if err := database.Read(t.Context()).QueryRow(`
 		SELECT original_sha256, current_sha256, original_size, current_size,
 		       COALESCE(koreader_hash, '')
 		FROM assets

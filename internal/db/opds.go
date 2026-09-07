@@ -6,7 +6,7 @@ import (
 )
 
 type OPDSPublicationRow struct {
-	ID            string
+	ID            int64
 	Title         string
 	Description   sql.NullString
 	Tags          sql.NullString
@@ -86,9 +86,8 @@ func ListRecentOPDSPublications(queryer Queryer, scope VisibilityScope, limit, o
 		FROM %s
 		WHERE b.deleted_at IS NULL
 		  AND EXISTS (SELECT 1 FROM assets a WHERE a.book_id = b.id)
-		-- IDs are time-sortable to milliseconds. Use the descending ID inside
-		-- SQLite's one-second added_at bucket so incremental OPDS consumers see
-		-- the newest acquisition first even during a fast batch import.
+		-- Increasing IDs preserve insertion order within SQLite's one-second
+		-- added_at bucket, including fast batch imports.
 		ORDER BY b.added_at DESC, b.id DESC
 		LIMIT ? OFFSET ?
 	`, withClause(withSQL), opdsPublicationColumns, fromSQL), args...)
