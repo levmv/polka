@@ -43,7 +43,7 @@ type writebackRetryResultDTO struct {
 // (route role), synchronous, and mode-agnostic like the CLI — the mode governs
 // UI affordances, not an explicit operator action.
 func (s *Server) handleAPIBookWriteback(w http.ResponseWriter, r *http.Request) {
-	bookID, validID := pathBookID(w, r, "id")
+	bookID, validID := pathID(w, r, "id")
 	if !validID {
 		return
 	}

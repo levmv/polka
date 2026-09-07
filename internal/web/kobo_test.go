@@ -20,18 +20,18 @@ import (
 	"github.com/levmv/polka/internal/db"
 )
 
-func seedKoboWebBook(t *testing.T, database *db.DB, dir string, bookID int64, assetID string, title string) {
+func seedKoboWebBook(t *testing.T, database *db.DB, dir string, bookID, assetID int64, title string) {
 	t.Helper()
-	storagePath := filepath.ToSlash(filepath.Join("Kobo", strconv.FormatInt(bookID, 10), assetID+".epub"))
+	storagePath := filepath.ToSlash(filepath.Join("Kobo", strconv.FormatInt(bookID, 10), strconv.FormatInt(assetID, 10)+".epub"))
 	mustExec(t, database, `
 		INSERT INTO books (id, title, sort_title, language, publisher)
 		VALUES (?, ?, ?, 'en', 'Polka Press')
 	`, bookID, title, title)
 	mustExec(t, database, `
 		INSERT INTO assets
-		    (id, book_id, storage_path, filename, extension, format, is_primary, current_size)
-		VALUES (?, ?, ?, ?, '.epub', 'epub', 1, 1024)
-	`, assetID, bookID, storagePath, assetID+".epub")
+		    (id, book_id, storage_path, filename, extension, format, is_primary, current_size, original_sha256, current_sha256)
+		VALUES (?, ?, ?, ?, '.epub', 'epub', 1, 1024, randomblob(32), randomblob(32))
+	`, assetID, bookID, storagePath, strconv.FormatInt(assetID, 10)+".epub")
 
 	fullPath := filepath.Join(dir, filepath.FromSlash(storagePath))
 	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
@@ -50,8 +50,8 @@ func TestKoboNativeLibraryRoutesAndRevocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	seedKoboWebBook(t, database, dir, 143, "a_kobo", "Kobo Book")
-	seedKoboWebBook(t, database, dir, 162, "a_outside", "Outside")
+	seedKoboWebBook(t, database, dir, 143, 2, "Kobo Book")
+	seedKoboWebBook(t, database, dir, 162, 3, "Outside")
 	if err := database.AddBookToShelf(t.Context(), shelf.ID, user.ID, 143); err != nil {
 		t.Fatal(err)
 	}
@@ -129,25 +129,25 @@ func TestKoboNativeLibraryRoutesAndRevocation(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, basePath+"/v1/library/a_kobo/metadata", nil))
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, basePath+"/v1/library/2/metadata", nil))
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"Title":"Kobo Book"`) {
 		t.Fatalf("metadata = %d %s", w.Code, w.Body.String())
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, basePath+"/v1/library/a_outside/metadata", nil))
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, basePath+"/v1/library/3/metadata", nil))
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("outside metadata status = %d", w.Code)
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, basePath+"/a_kobo/300/450/false/image.jpg", nil))
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, basePath+"/2/300/450/false/image.jpg", nil))
 	if w.Code != http.StatusOK || !strings.HasPrefix(w.Header().Get("Content-Type"), "image/") {
 		t.Fatalf("cover = %d %q; body: %s", w.Code, w.Header().Get("Content-Type"), w.Body.String())
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, basePath+"/download/a_kobo/kepub", nil))
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, basePath+"/download/2/kepub", nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("download = %d; body: %s", w.Code, w.Body.String())
 	}
@@ -206,7 +206,7 @@ func TestKoboSyncPageHonorsByteBoundaryWithoutSkippingCursor(t *testing.T) {
 	changes := make([]db.KoboChange, 30)
 	for i := range changes {
 		changes[i] = db.KoboChange{
-			AssetID:       "a_" + strings.Repeat("x", i+1),
+			AssetID:       int64(i + 1),
 			Title:         "Book",
 			Description:   strings.Repeat("large description ", 5000),
 			Revision:      int64(i + 1),
@@ -235,8 +235,8 @@ func TestKoboSyncPageHonorsByteBoundaryWithoutSkippingCursor(t *testing.T) {
 
 func TestKoboSyncPageDoesNotContinueAfterReturningEverything(t *testing.T) {
 	changes := []db.KoboChange{
-		{AssetID: "a_one", Revision: 1, FirstRevision: 1, Present: true},
-		{AssetID: "a_two", Revision: 2, FirstRevision: 2, Present: true},
+		{AssetID: 1, Revision: 1, FirstRevision: 1, Present: true},
+		{AssetID: 2, Revision: 2, FirstRevision: 2, Present: true},
 	}
 	body, cursor, more, err := marshalKoboSyncPage(changes, 0, "https://books.test/kobo/token", 2, false)
 	if err != nil {
@@ -249,7 +249,7 @@ func TestKoboSyncPageDoesNotContinueAfterReturningEverything(t *testing.T) {
 
 func TestKoboSyncPageTreatsUnseenChangedItemAsNew(t *testing.T) {
 	changes := []db.KoboChange{{
-		AssetID:       "a_later",
+		AssetID:       1,
 		Revision:      4,
 		FirstRevision: 2,
 		Present:       true,
@@ -276,14 +276,14 @@ func TestKoboMetadataRequiresCurrentUserScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	seedKoboWebBook(t, database, dir, 168, "a_scoped_kobo", "Scoped Kobo")
+	seedKoboWebBook(t, database, dir, 168, 2, "Scoped Kobo")
 	if err := database.AddBookToShelf(t.Context(), shelf.ID, curator.ID, 168); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := database.UpdateUserAccess(t.Context(), reader.ID, db.UserAccess{
 		Role:         db.RoleReader,
 		ContentScope: db.ContentScopeShelves,
-		ShelfIDs:     []string{shelf.ID},
+		ShelfIDs:     []int64{shelf.ID},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -297,7 +297,7 @@ func TestKoboMetadataRequiresCurrentUserScope(t *testing.T) {
 
 	s := newTestServer(database, dir)
 	handler := testRoutes(t, s)
-	path := "/kobo/" + url.PathEscape(connection.Token) + "/v1/library/a_scoped_kobo/metadata"
+	path := "/kobo/" + url.PathEscape(connection.Token) + "/v1/library/2/metadata"
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
 	if w.Code != http.StatusOK {

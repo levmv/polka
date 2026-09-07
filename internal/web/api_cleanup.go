@@ -45,7 +45,7 @@ type PossibleDuplicatesCategory struct {
 
 type Cleanup struct {
 	MissingCover       CleanupCategory            `json:"missing_cover"`
-	UnknownAuthor      CleanupCategory            `json:"unknown_author"`
+	MissingAuthor      CleanupCategory            `json:"missing_author"`
 	NoTags             CleanupCategory            `json:"no_tags"`
 	NoDescription      CleanupCategory            `json:"no_description"`
 	PossibleDuplicates PossibleDuplicatesCategory `json:"possible_duplicates"`
@@ -73,7 +73,7 @@ func (s *Server) handleAPICleanup(w http.ResponseWriter, r *http.Request) {
 
 	var cleanup Cleanup
 	cleanup.MissingCover.Count = counts.MissingCover
-	cleanup.UnknownAuthor.Count = counts.UnknownAuthor
+	cleanup.MissingAuthor.Count = counts.MissingAuthor
 	cleanup.NoTags.Count = counts.NoTags
 	cleanup.NoDescription.Count = counts.NoDescription
 

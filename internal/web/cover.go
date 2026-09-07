@@ -17,17 +17,19 @@ import (
 )
 
 func (s *Server) handleCover(w http.ResponseWriter, r *http.Request) {
-	bookID, validID := pathBookID(w, r, "id")
+	bookID, validID := pathID(w, r, "id")
 	if !validID {
 		return
 	}
+	s.serveCover(w, r, bookID)
+}
+
+func (s *Server) serveCover(w http.ResponseWriter, r *http.Request, bookID int64) {
 	if !s.requireCoverAccess(w, r, bookID) {
 		return
 	}
 
-	// Cover reads are intentionally filesystem-only. The API already checked
-	// SQLite and emitted has_cover/cover_version; cover_version is only a
-	// browser cache-busting query token and is ignored here.
+	// cover_version only refreshes browser caches; disk reads use the current file.
 	variant, err := coverVariantFromRequest(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -82,7 +84,7 @@ func (s *Server) handleCover(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) requireCoverAccess(w http.ResponseWriter, r *http.Request, bookID int64) bool {
-	_, ok := requireAccess(s, w, r, bookID, func(q db.Queryer, scope db.VisibilityScope, bookID int64) (bool, error) {
+	_, ok := s.requireAccess(w, r, bookID, func(q db.Queryer, scope db.VisibilityScope, bookID int64) (bool, error) {
 		allowed, err := db.CanAccessBook(q, scope, bookID)
 		if err != nil || allowed || !db.RoleAtLeast(contextUser(r.Context()).Role, db.RoleMember) {
 			return allowed, err

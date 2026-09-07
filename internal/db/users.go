@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/levmv/polka/internal/id"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -30,7 +29,7 @@ type User struct {
 type UserAccess struct {
 	Role          string
 	ContentScope  string
-	ShelfIDs      []string
+	ShelfIDs      []int64
 	ShelfViewerID int64
 }
 
@@ -150,7 +149,7 @@ func validContentScope(scope string) bool {
 	return scope == ContentScopeAll || scope == ContentScopeShelves
 }
 
-func normalizeUserScope(role, contentScope string, scopeShelfIDs []string) (string, []string, error) {
+func normalizeUserScope(role, contentScope string, scopeShelfIDs []int64) (string, []int64, error) {
 	if role != RoleReader {
 		return ContentScopeAll, nil, nil
 	}
@@ -222,8 +221,8 @@ func (db *DB) createUser(ctx context.Context, username, password string, access 
 			return fmt.Errorf("insert user: %w", err)
 		}
 		if _, err := tx.Exec(
-			`INSERT INTO shelves (id, name, kind, owner_id, visibility, position) VALUES (?, ?, ?, ?, ?, 0)`,
-			id.New(id.Shelf), "Want to read", ShelfManual, u.ID, ShelfPersonal,
+			`INSERT INTO shelves (name, kind, owner_id, visibility, position) VALUES (?, ?, ?, ?, 0)`,
+			"Want to read", ShelfManual, u.ID, ShelfPersonal,
 		); err != nil {
 			return fmt.Errorf("create default shelf: %w", err)
 		}
@@ -327,7 +326,7 @@ func (db *DB) UpdateUserAccess(ctx context.Context, userID int64, access UserAcc
 	return GetUserByID(db.Read(ctx), userID)
 }
 
-func replaceUserScopeShelves(tx *Tx, userID, shelfViewerID int64, contentScope string, scopeShelfIDs []string) error {
+func replaceUserScopeShelves(tx *Tx, userID, shelfViewerID int64, contentScope string, scopeShelfIDs []int64) error {
 	if contentScope != ContentScopeShelves {
 		if _, err := tx.Exec(`DELETE FROM user_scope_shelves WHERE user_id = ?`, userID); err != nil {
 			return fmt.Errorf("clear user scope shelves: %w", err)
@@ -335,13 +334,13 @@ func replaceUserScopeShelves(tx *Tx, userID, shelfViewerID int64, contentScope s
 		return nil
 	}
 
-	existingScopeShelves := map[string]struct{}{}
+	existingScopeShelves := map[int64]struct{}{}
 	rows, err := tx.Query(`SELECT shelf_id FROM user_scope_shelves WHERE user_id = ?`, userID)
 	if err != nil {
 		return fmt.Errorf("list existing scope shelves: %w", err)
 	}
 	for rows.Next() {
-		var shelfID string
+		var shelfID int64
 		if err := rows.Scan(&shelfID); err != nil {
 			rows.Close()
 			return fmt.Errorf("scan existing scope shelf: %w", err)
@@ -357,11 +356,10 @@ func replaceUserScopeShelves(tx *Tx, userID, shelfViewerID int64, contentScope s
 	if _, err := tx.Exec(`DELETE FROM user_scope_shelves WHERE user_id = ?`, userID); err != nil {
 		return fmt.Errorf("clear user scope shelves: %w", err)
 	}
-	seenShelves := make(map[string]struct{}, len(scopeShelfIDs))
+	seenShelves := make(map[int64]struct{}, len(scopeShelfIDs))
 	for _, shelfID := range scopeShelfIDs {
-		shelfID = strings.TrimSpace(shelfID)
-		if shelfID == "" {
-			continue
+		if shelfID <= 0 {
+			return ErrShelfNotFound
 		}
 		if _, ok := seenShelves[shelfID]; ok {
 			continue

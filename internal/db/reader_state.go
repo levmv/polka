@@ -14,7 +14,7 @@ var (
 
 type ReaderState struct {
 	UserID     int64
-	AssetID    string
+	AssetID    int64
 	BookID     int64
 	Progress   float64
 	Locator    ReaderLocator
@@ -24,12 +24,12 @@ type ReaderState struct {
 
 type ContinueReadingRow struct {
 	BookSummaryRow
-	AssetID    string
+	AssetID    int64
 	Progress   float64
 	LastReadAt int64
 }
 
-func GetReaderState(queryer Queryer, userID int64, assetID string) (*ReaderState, error) {
+func GetReaderState(queryer Queryer, userID, assetID int64) (*ReaderState, error) {
 	if userID <= 0 {
 		return nil, ErrUserIDRequired
 	}
@@ -61,7 +61,7 @@ func GetReaderState(queryer Queryer, userID int64, assetID string) (*ReaderState
 
 func (db *DB) TouchReaderStateAndAdvanceStatus(
 	ctx context.Context,
-	userID int64, assetID string,
+	userID, assetID int64,
 	source ReadingStatusSource,
 ) (*ReaderState, ReadingStatusChange, error) {
 	var state *ReaderState
@@ -84,7 +84,7 @@ func (db *DB) TouchReaderStateAndAdvanceStatus(
 	return state, change, nil
 }
 
-func touchReaderState(tx *Tx, userID int64, assetID string) (*ReaderState, error) {
+func touchReaderState(tx *Tx, userID, assetID int64) (*ReaderState, error) {
 	if _, err := GetReaderState(tx, userID, assetID); err != nil {
 		return nil, err
 	}
@@ -102,7 +102,7 @@ func touchReaderState(tx *Tx, userID int64, assetID string) (*ReaderState, error
 
 func (db *DB) SaveReaderStateAndAdvanceStatus(
 	ctx context.Context,
-	userID int64, assetID string,
+	userID, assetID int64,
 	progress float64,
 	locator ReaderLocator,
 	source ReadingStatusSource,
@@ -139,7 +139,7 @@ func validateReaderPosition(progress float64, locator ReaderLocator) (ReaderLoca
 	return normalized, nil
 }
 
-func saveReaderState(tx *Tx, userID int64, assetID string, progress float64, locator ReaderLocator) (*ReaderState, error) {
+func saveReaderState(tx *Tx, userID, assetID int64, progress float64, locator ReaderLocator) (*ReaderState, error) {
 	if _, err := GetReaderState(tx, userID, assetID); err != nil {
 		return nil, err
 	}
@@ -157,7 +157,7 @@ func saveReaderState(tx *Tx, userID int64, assetID string, progress float64, loc
 	return GetReaderState(tx, userID, assetID)
 }
 
-func (db *DB) ResetReaderState(ctx context.Context, userID int64, assetID string) error {
+func (db *DB) ResetReaderState(ctx context.Context, userID, assetID int64) error {
 	if _, err := GetReaderState(db.Read(ctx), userID, assetID); err != nil {
 		return err
 	}

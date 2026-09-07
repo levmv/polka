@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"strings"
 	"unicode/utf8"
-
-	"github.com/levmv/polka/internal/id"
 )
 
 var (
@@ -30,9 +28,9 @@ const annotationColumns = `id, user_id, asset_id, kind, cfi, quote,
 	context_before, context_after, note, color, created_at, updated_at`
 
 type Annotation struct {
-	ID            string
+	ID            int64
 	UserID        int64
-	AssetID       string
+	AssetID       int64
 	Kind          string
 	CFI           string
 	Quote         string
@@ -58,7 +56,7 @@ type AnnotationNoteUpdate struct {
 	Note string
 }
 
-func ListAnnotations(queryer Queryer, userID int64, assetID string) ([]Annotation, error) {
+func ListAnnotations(queryer Queryer, userID, assetID int64) ([]Annotation, error) {
 	if userID <= 0 {
 		return nil, ErrUserIDRequired
 	}
@@ -90,7 +88,7 @@ func ListAnnotations(queryer Queryer, userID int64, assetID string) ([]Annotatio
 	return out, nil
 }
 
-func (db *DB) CreateAnnotation(ctx context.Context, userID int64, assetID string, input AnnotationCreate) (Annotation, error) {
+func (db *DB) CreateAnnotation(ctx context.Context, userID, assetID int64, input AnnotationCreate) (Annotation, error) {
 	if userID <= 0 {
 		return Annotation{}, ErrUserIDRequired
 	}
@@ -101,45 +99,31 @@ func (db *DB) CreateAnnotation(ctx context.Context, userID int64, assetID string
 	if err != nil {
 		return Annotation{}, err
 	}
-	ann.ID = id.New(id.Annotation)
-
-	if _, err := db.Write(ctx).Exec(`
-		INSERT INTO user_annotations
-			(id, user_id, asset_id, kind, cfi, quote, context_before, context_after, note, color, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
-		ON CONFLICT(user_id, asset_id, kind, cfi) DO UPDATE SET
-			quote = excluded.quote,
-			context_before = excluded.context_before,
-			context_after = excluded.context_after,
-			note = CASE
-				WHEN excluded.note = '' THEN user_annotations.note
-				ELSE excluded.note
-			END,
-			color = excluded.color,
-			updated_at = unixepoch()
-	`, ann.ID, ann.UserID, ann.AssetID, ann.Kind, ann.CFI, ann.Quote, ann.ContextBefore, ann.ContextAfter, ann.Note, ann.Color); err != nil {
-		return Annotation{}, fmt.Errorf("create annotation: %w", err)
-	}
-	return GetAnnotationByAnchor(db.Read(ctx), userID, assetID, ann.Kind, ann.CFI)
-}
-
-func GetAnnotationByAnchor(queryer Queryer, userID int64, assetID, kind, cfi string) (Annotation, error) {
-	var ann Annotation
-	err := scanAnnotation(queryer.QueryRow(`
-		SELECT `+annotationColumns+`
-		FROM user_annotations
-		WHERE user_id = ? AND asset_id = ? AND kind = ? AND cfi = ?
-	`, userID, assetID, kind, cfi), &ann)
-	if errors.Is(err, sql.ErrNoRows) {
-		return Annotation{}, ErrAnnotationNotFound
-	}
+	err = db.Transact(ctx, func(tx *Tx) error {
+		return scanAnnotation(tx.QueryRow(`
+			INSERT INTO user_annotations
+				(user_id, asset_id, kind, cfi, quote, context_before, context_after, note, color)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(user_id, asset_id, kind, cfi) DO UPDATE SET
+				quote = excluded.quote,
+				context_before = excluded.context_before,
+				context_after = excluded.context_after,
+				note = CASE
+					WHEN excluded.note = '' THEN user_annotations.note
+					ELSE excluded.note
+				END,
+				color = excluded.color,
+				updated_at = unixepoch()
+			RETURNING `+annotationColumns,
+			ann.UserID, ann.AssetID, ann.Kind, ann.CFI, ann.Quote, ann.ContextBefore, ann.ContextAfter, ann.Note, ann.Color), &ann)
+	})
 	if err != nil {
-		return Annotation{}, fmt.Errorf("get annotation: %w", err)
+		return Annotation{}, fmt.Errorf("create annotation: %w", err)
 	}
 	return ann, nil
 }
 
-func (db *DB) UpdateAnnotationNote(ctx context.Context, userID int64, assetID, annotationID string, input AnnotationNoteUpdate) (Annotation, error) {
+func (db *DB) UpdateAnnotationNote(ctx context.Context, userID, assetID, annotationID int64, input AnnotationNoteUpdate) (Annotation, error) {
 	if userID <= 0 {
 		return Annotation{}, ErrUserIDRequired
 	}
@@ -157,7 +141,7 @@ func (db *DB) UpdateAnnotationNote(ctx context.Context, userID int64, assetID, a
 	return GetAnnotationByID(db.Read(ctx), userID, assetID, annotationID)
 }
 
-func GetAnnotationByID(queryer Queryer, userID int64, assetID, annotationID string) (Annotation, error) {
+func GetAnnotationByID(queryer Queryer, userID, assetID, annotationID int64) (Annotation, error) {
 	var ann Annotation
 	err := scanAnnotation(queryer.QueryRow(`
 		SELECT `+annotationColumns+`
@@ -173,7 +157,7 @@ func GetAnnotationByID(queryer Queryer, userID int64, assetID, annotationID stri
 	return ann, nil
 }
 
-func (db *DB) DeleteAnnotation(ctx context.Context, userID int64, assetID, annotationID string) error {
+func (db *DB) DeleteAnnotation(ctx context.Context, userID, assetID, annotationID int64) error {
 	if userID <= 0 {
 		return ErrUserIDRequired
 	}
@@ -214,7 +198,7 @@ func scanAnnotation(scanner rowScanner, ann *Annotation) error {
 	return nil
 }
 
-func normalizeAnnotation(userID int64, assetID string, input AnnotationCreate) (Annotation, error) {
+func normalizeAnnotation(userID, assetID int64, input AnnotationCreate) (Annotation, error) {
 	kind := strings.TrimSpace(input.Kind)
 	if kind == "" {
 		kind = AnnotationKindHighlight

@@ -5,7 +5,7 @@ package kobo
 
 import (
 	"crypto/sha1"
-	"net/url"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -20,7 +20,7 @@ const (
 var seriesUUIDNamespace = uuid.MustParse("e528a6d9-824d-4d47-a7e4-cbf4c58b2159")
 
 type Publication struct {
-	AssetID       string
+	AssetID       int64
 	BookID        int64
 	Size          int64
 	Title         string
@@ -144,23 +144,25 @@ func BuildSyncItem(change Change, afterRevision int64, baseURL string) SyncItem 
 
 func BuildEntitlement(change Change) Entitlement {
 	modifiedAt := max(change.ChangedAt, change.ModifiedAt)
+	assetID := strconv.FormatInt(change.AssetID, 10)
 	return Entitlement{
 		Accessibility:       "Full",
 		ActivePeriod:        ActivePeriod{From: timestamp(change.AddedAt)},
 		Created:             timestamp(change.AddedAt),
-		CrossRevisionID:     change.AssetID,
-		ID:                  change.AssetID,
+		CrossRevisionID:     assetID,
+		ID:                  assetID,
 		IsRemoved:           !change.Present,
 		IsHiddenFromArchive: false,
 		IsLocked:            false,
 		LastModified:        timestamp(modifiedAt),
 		OriginCategory:      "Imported",
-		RevisionID:          change.AssetID,
+		RevisionID:          assetID,
 		Status:              "Active",
 	}
 }
 
 func BuildMetadata(publication Publication, baseURL string) Metadata {
+	assetID := strconv.FormatInt(publication.AssetID, 10)
 	language := strings.TrimSpace(publication.Language)
 	if language == "" {
 		language = "en"
@@ -172,18 +174,18 @@ func BuildMetadata(publication Publication, baseURL string) Metadata {
 	}
 	metadata := Metadata{
 		Categories:              []string{importedCategoryID},
-		CoverImageID:            publication.AssetID,
-		CrossRevisionID:         publication.AssetID,
+		CoverImageID:            assetID,
+		CrossRevisionID:         assetID,
 		CurrentDisplayPrice:     Money{CurrencyCode: "USD", TotalAmount: 0},
 		CurrentLoveDisplayPrice: Money{TotalAmount: 0},
 		Description:             boundedDescription(publication.Description),
 		DownloadURLs: []DownloadURL{{
 			Format:   "KEPUB",
 			Size:     publication.Size,
-			URL:      strings.TrimRight(baseURL, "/") + "/download/" + url.PathEscape(publication.AssetID) + "/kepub",
+			URL:      strings.TrimRight(baseURL, "/") + "/download/" + assetID + "/kepub",
 			Platform: "Generic",
 		}},
-		EntitlementID:          publication.AssetID,
+		EntitlementID:          assetID,
 		ExternalIDs:            []string{},
 		Genre:                  importedCategoryID,
 		IsEligibleForKoboLove:  false,
@@ -194,9 +196,9 @@ func BuildMetadata(publication Publication, baseURL string) Metadata {
 		PhoneticPronunciations: map[string]string{},
 		PublicationDate:        publicationTimestamp(publication.PublishedDate, publication.AddedAt),
 		Publisher:              Publisher{Imprint: "", Name: publication.Publisher},
-		RevisionID:             publication.AssetID,
+		RevisionID:             assetID,
 		Title:                  publication.Title,
-		WorkID:                 publication.AssetID,
+		WorkID:                 assetID,
 		Contributors:           contributors,
 		ContributorRoles:       roles,
 	}

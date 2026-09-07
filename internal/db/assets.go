@@ -9,7 +9,7 @@ import (
 )
 
 type AssetRow struct {
-	ID               string
+	ID               int64
 	Extension        string
 	Format           format.Format
 	StoragePath      string
@@ -23,22 +23,25 @@ type AssetRow struct {
 }
 
 type PrimaryAssetRow struct {
-	AssetRow
-	Filename      string
+	ID            int64
+	BookID        int64
 	Title         string
-	CurrentSHA256 string
+	Extension     string
+	Format        format.Format
+	CanRead       bool
+	CurrentSHA256 []byte
 }
 
 type AssetWithAuthorRow struct {
-	ID               string
+	ID               int64
 	BookID           int64
 	StoragePath      string
 	OriginalFilename string
 	Extension        string
 	Format           format.Format
 	CanRead          bool
-	OriginalSHA256   string
-	CurrentSHA256    string
+	OriginalSHA256   []byte
+	CurrentSHA256    []byte
 	OriginalSize     sql.NullInt64
 	CurrentSize      sql.NullInt64
 	Title            string
@@ -51,7 +54,7 @@ type AssetWithAuthorRow struct {
 
 // RecordAssetRestore keeps write-back acknowledgement only when restoring the
 // exact bytes it described. Original import identity is never changed.
-func RecordAssetRestore(database Execer, assetID, sha256 string, size int64) error {
+func RecordAssetRestore(database Execer, assetID int64, sha256 []byte, size int64) error {
 	_, err := database.Exec(`
 		UPDATE assets
 		SET writeback_rev = CASE WHEN current_sha256 = ? THEN writeback_rev ELSE 0 END,
@@ -68,7 +71,7 @@ func RecordAssetRestore(database Execer, assetID, sha256 string, size int64) err
 // candidate exists. If every asset is unreadable, the existing primary remains
 // the least surprising download/default-format choice.
 func EnsureReadablePrimaryAsset(tx *Tx, bookID int64) error {
-	var selectedID string
+	var selectedID int64
 	err := tx.QueryRow(`
 		SELECT id
 		FROM assets
@@ -108,7 +111,7 @@ func AssetsByBookIDs(queryer Queryer, bookIDs []int64) ([]AssetRow, error) {
 	placeholders, args := idPlaceholders(bookIDs)
 
 	query := `
-				SELECT a.book_id, a.id, a.extension, a.format, a.storage_path, COALESCE(a.original_filename, ''), a.is_primary, a.can_read,
+				SELECT a.book_id, a.id, a.extension, a.format, a.storage_path, a.original_filename, a.is_primary, a.can_read,
 				       COALESCE(a.current_size, a.original_size, 0)
 			FROM assets a
 			WHERE a.book_id IN (` + placeholders + `)
@@ -126,7 +129,7 @@ func AssetsByBookIDs(queryer Queryer, bookIDs []int64) ([]AssetRow, error) {
 // large-library scale instead of expanding one host parameter per book.
 func AssetsForTrashedBooks(queryer Queryer) ([]AssetRow, error) {
 	rows, err := queryer.Query(`
-		SELECT a.book_id, a.id, a.extension, a.format, a.storage_path, COALESCE(a.original_filename, ''), a.is_primary, a.can_read,
+		SELECT a.book_id, a.id, a.extension, a.format, a.storage_path, a.original_filename, a.is_primary, a.can_read,
 		       COALESCE(a.current_size, a.original_size, 0)
 		FROM assets a
 		JOIN books b ON b.id = a.book_id
@@ -164,34 +167,30 @@ func scanAssetRows(rows *sql.Rows, operation string) ([]AssetRow, error) {
 func PrimaryAssetForBook(queryer Queryer, scope VisibilityScope, bookID int64) (PrimaryAssetRow, error) {
 	var a PrimaryAssetRow
 	var formatKey string
-	var isPrimary, canRead int
 	where, args := scope.AppendBookWhere("b.id = ? AND b.deleted_at IS NULL AND a.is_primary = 1", "b.id", bookID)
 	err := queryer.QueryRow(`
-			SELECT b.id, b.title, a.id, a.extension, a.format, a.storage_path, a.filename, a.is_primary, a.can_read,
-			       COALESCE(a.current_sha256, '')
+			SELECT b.id, b.title, a.id, a.extension, a.format, a.can_read, a.current_sha256
 			FROM books b
 			JOIN assets a ON a.book_id = b.id
 			WHERE `+where+`
 			LIMIT 1
-	`, args...).Scan(&a.BookID, &a.Title, &a.ID, &a.Extension, &formatKey, &a.StoragePath, &a.Filename, &isPrimary, &canRead, &a.CurrentSHA256)
+	`, args...).Scan(&a.BookID, &a.Title, &a.ID, &a.Extension, &formatKey, &a.CanRead, &a.CurrentSHA256)
 	if err != nil {
 		return PrimaryAssetRow{}, err
 	}
 	a.Format = format.FormatFromKey(formatKey)
-	a.IsPrimary = isPrimary == 1
-	a.CanRead = canRead == 1
 	return a, nil
 }
 
 func AllAssetsWithPrimaryAuthor(queryer Queryer) ([]AssetWithAuthorRow, error) {
 	rows, err := queryer.Query(`
-		SELECT a.id, a.book_id, a.storage_path, COALESCE(a.original_filename, ''), a.extension, COALESCE(a.format, ''), COALESCE(a.can_read, 0),
-		       COALESCE(a.original_sha256, ''), COALESCE(a.current_sha256, ''),
+		SELECT a.id, a.book_id, a.storage_path, a.original_filename, a.extension, a.format, a.can_read,
+		       a.original_sha256, a.current_sha256,
 		       a.original_size, a.current_size,
-		       b.title, COALESCE(b.sort_title, ''), COALESCE(b.series, ''),
+		       b.title, b.sort_title, COALESCE(b.series, ''),
 		       CASE WHEN b.series_index IS NULL THEN '' ELSE CAST(b.series_index AS TEXT) END,
-		       (SELECT name FROM authors WHERE id = (SELECT author_id FROM book_authors WHERE book_id = b.id ORDER BY author_order ASC, rowid ASC LIMIT 1)) as author_name,
-		       (SELECT sort_name FROM authors WHERE id = (SELECT author_id FROM book_authors WHERE book_id = b.id ORDER BY author_order ASC, rowid ASC LIMIT 1)) as author_sort_name
+		       COALESCE((SELECT name FROM authors WHERE id = (SELECT author_id FROM book_authors WHERE book_id = b.id ORDER BY author_order ASC, rowid ASC LIMIT 1)), ''),
+		       COALESCE((SELECT sort_name FROM authors WHERE id = (SELECT author_id FROM book_authors WHERE book_id = b.id ORDER BY author_order ASC, rowid ASC LIMIT 1)), '')
 		FROM assets a
 		JOIN books b ON a.book_id = b.id
 		ORDER BY a.id

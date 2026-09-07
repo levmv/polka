@@ -3,7 +3,9 @@ package cli
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -19,10 +21,10 @@ import (
 )
 
 type coverRecoveryAsset struct {
-	ID            string
+	ID            int64
 	StoragePath   string
 	Format        format.Format
-	CurrentSHA256 string
+	CurrentSHA256 []byte
 	CurrentSize   sql.NullInt64
 }
 
@@ -110,7 +112,6 @@ func runRepair(parent context.Context, dataDir string, args []string) (retErr er
 		{"Original sizes:", assetRepair.OriginalSizeBackfilled},
 		{"Size mismatches:", assetRepair.SizeMismatches},
 		{"Unrecoverable:", assetRepair.Missing},
-		{"Hash backfills:", assetRepair.HashBackfilled},
 		{"Hash mismatches:", assetRepair.HashMismatches},
 		{"Formats:", assetRepair.Formats},
 		{"Reader capabilities:", assetRepair.ReaderCapabilities},
@@ -158,11 +159,10 @@ type assetRepairResult struct {
 	OriginalSizeBackfilled int
 	SizeMismatches         int
 	Missing                int
-	HashBackfilled         int
 	HashMismatches         int
 	Formats                int
 	ReaderCapabilities     int
-	VerifiedHashes         map[string]struct{}
+	VerifiedHashes         map[int64]struct{}
 }
 
 func repairAssets(ctx context.Context, database *db.DB, root storage.Root, template string, assets []db.AssetWithAuthorRow) (assetRepairResult, error) {
@@ -176,9 +176,9 @@ func repairAssets(ctx context.Context, database *db.DB, root storage.Root, templ
 		}
 	}
 	recoverableByHash := newRecoverableAssetHashIndex(ctx, root, referencedPaths)
-	recoverableByTag := newRecoverableAssetTagIndex(ctx, root)
+	recoverableByName := newRecoverableAssetNameIndex(ctx, root, referencedPaths)
 	summary := assetRepairResult{
-		VerifiedHashes: make(map[string]struct{}, len(assets)),
+		VerifiedHashes: make(map[int64]struct{}, len(assets)),
 	}
 
 	writer := database.Write(ctx)
@@ -193,21 +193,24 @@ func repairAssets(ctx context.Context, database *db.DB, root storage.Root, templ
 		var foundAbsPath string
 		actualFileAbsPath, pathErr := root.Resolve(asset.StoragePath)
 		if pathErr != nil {
-			fmt.Printf("Invalid database path: %s (%s): %v\n", asset.ID, asset.StoragePath, pathErr)
+			fmt.Printf("Invalid database path: %d (%s): %v\n", asset.ID, asset.StoragePath, pathErr)
 			summary.InvalidPaths++
 		} else if _, err := os.Stat(actualFileAbsPath); err == nil {
 			foundAbsPath = actualFileAbsPath
 		}
 		if foundAbsPath == "" {
-			foundAbsPath = recoverableByTag.find(asset.ID)
+			foundAbsPath, err = recoverableByName.find(asset.ID, asset.CurrentSHA256)
+			if err != nil {
+				return summary, err
+			}
 		}
 		if err := context.Cause(ctx); err != nil {
 			return summary, err
 		}
 		recoveredByHash := false
-		if foundAbsPath == "" && asset.CurrentSHA256 != "" {
+		if foundAbsPath == "" {
 			if match, err := recoverableByHash.find(asset.CurrentSHA256); err != nil {
-				fmt.Printf("Failed to scan orphans for %s: %v\n", asset.ID, err)
+				fmt.Printf("Failed to scan orphans for %d: %v\n", asset.ID, err)
 			} else if match != "" {
 				foundAbsPath = match
 				recoveredByHash = true
@@ -215,7 +218,7 @@ func repairAssets(ctx context.Context, database *db.DB, root storage.Root, templ
 		}
 
 		if foundAbsPath == "" {
-			fmt.Printf("Missing/unrecoverable: %s\n", asset.ID)
+			fmt.Printf("Missing/unrecoverable: %d\n", asset.ID)
 			summary.Missing++
 			continue
 		}
@@ -225,7 +228,7 @@ func repairAssets(ctx context.Context, database *db.DB, root storage.Root, templ
 
 		foundRelPath, err := filepath.Rel(root.Path, foundAbsPath)
 		if err != nil {
-			fmt.Printf("Failed to resolve found path for %s: %v\n", asset.ID, err)
+			fmt.Printf("Failed to resolve found path for %d: %v\n", asset.ID, err)
 			continue
 		}
 		// Compare and Move both want slash-separated relative paths (canonical
@@ -233,9 +236,26 @@ func repairAssets(ctx context.Context, database *db.DB, root storage.Root, templ
 		// mis-compares and Move fails Root.Resolve's backslash validation.
 		foundRelPath = filepath.ToSlash(foundRelPath)
 
+		currentHash, currentSize, err := fileSHA256AndSizeContext(ctx, foundAbsPath)
+		if err != nil {
+			if cause := context.Cause(ctx); cause != nil {
+				return summary, cause
+			}
+			fmt.Printf("Failed to hash %d: %v\n", asset.ID, err)
+			continue
+		}
+		if !bytes.Equal(asset.CurrentSHA256, currentHash) {
+			fmt.Printf("Hash mismatch: %d (%s)\n", asset.ID, foundRelPath)
+			summary.HashMismatches++
+			if asset.CurrentSize.Valid && asset.CurrentSize.Int64 != currentSize {
+				summary.SizeMismatches++
+			}
+			continue
+		}
+
 		if foundRelPath != canonicalPath {
 			if err := storage.Move(root, foundRelPath, canonicalPath); err != nil {
-				fmt.Printf("Failed to move %s: %v\n", asset.ID, err)
+				fmt.Printf("Failed to move %d: %v\n", asset.ID, err)
 				continue
 			}
 			summary.Relocated++
@@ -251,7 +271,7 @@ func repairAssets(ctx context.Context, database *db.DB, root storage.Root, templ
 		if asset.StoragePath != canonicalPath {
 			_, err = writer.Exec("UPDATE assets SET storage_path = ?, filename = ? WHERE id = ?", canonicalPath, filepath.Base(canonicalPath), asset.ID)
 			if err != nil {
-				fmt.Printf("Failed to update database for %s: %v\n", asset.ID, err)
+				fmt.Printf("Failed to update database for %d: %v\n", asset.ID, err)
 				continue
 			}
 			if foundRelPath == canonicalPath {
@@ -261,86 +281,37 @@ func repairAssets(ctx context.Context, database *db.DB, root storage.Root, templ
 
 		finalAbsPath, err := root.Resolve(canonicalPath)
 		if err != nil {
-			fmt.Printf("Invalid canonical path for %s (%s): %v\n", asset.ID, canonicalPath, err)
+			fmt.Printf("Invalid canonical path for %d (%s): %v\n", asset.ID, canonicalPath, err)
 			continue
 		}
-		currentHash, currentSize, err := fileSHA256AndSizeContext(ctx, finalAbsPath)
+		if !asset.CurrentSize.Valid || asset.CurrentSize.Int64 != currentSize {
+			if _, err := writer.Exec("UPDATE assets SET current_size = ?, updated_at = unixepoch() WHERE id = ?", currentSize, asset.ID); err != nil {
+				fmt.Printf("Failed to repair current size for %d: %v\n", asset.ID, err)
+				continue
+			}
+			summary.SizeBackfilled++
+		}
+		summary.VerifiedHashes[asset.ID] = struct{}{}
+		capability, err := detectAssetReaderCapability(canonicalPath, finalAbsPath)
 		if err != nil {
-			if cause := context.Cause(ctx); cause != nil {
-				return summary, cause
-			}
-			fmt.Printf("Failed to hash %s: %v\n", asset.ID, err)
+			fmt.Printf("Failed to recompute reader capability for %d: %v\n", asset.ID, err)
 			continue
 		}
-		currentBytesTrusted := false
-		if asset.CurrentSHA256 == "" {
-			if _, err := writer.Exec("UPDATE assets SET current_sha256 = ?, current_size = ?, updated_at = unixepoch() WHERE id = ?", currentHash, currentSize, asset.ID); err != nil {
-				fmt.Printf("Failed to backfill current hash for %s: %v\n", asset.ID, err)
+		if capability.Format != asset.Format || capability.CanRead != asset.CanRead {
+			if _, err := writer.Exec("UPDATE assets SET format = ?, can_read = ?, updated_at = unixepoch() WHERE id = ?", format.FormatKey(capability.Format), capability.CanRead, asset.ID); err != nil {
+				fmt.Printf("Failed to repair format/capability for %d: %v\n", asset.ID, err)
 				continue
 			}
-			currentBytesTrusted = true
-			summary.HashBackfilled++
-			if !asset.CurrentSize.Valid || asset.CurrentSize.Int64 != currentSize {
-				summary.SizeBackfilled++
+			if capability.Format != asset.Format {
+				summary.Formats++
 			}
-		} else if asset.CurrentSHA256 != currentHash {
-			fmt.Printf("Hash mismatch: %s (%s)\n", asset.ID, canonicalPath)
-			summary.HashMismatches++
-		} else {
-			currentBytesTrusted = true
-		}
-		if currentBytesTrusted {
-			summary.VerifiedHashes[asset.ID] = struct{}{}
-			capability, err := detectAssetReaderCapability(canonicalPath, finalAbsPath)
-			if err != nil {
-				fmt.Printf("Failed to recompute reader capability for %s: %v\n", asset.ID, err)
-				continue
-			}
-			if capability.Format != asset.Format || capability.CanRead != asset.CanRead {
-				canRead := 0
-				if capability.CanRead {
-					canRead = 1
-				}
-				if _, err := writer.Exec("UPDATE assets SET format = ?, can_read = ?, updated_at = unixepoch() WHERE id = ?", format.FormatKey(capability.Format), canRead, asset.ID); err != nil {
-					fmt.Printf("Failed to repair format/capability for %s: %v\n", asset.ID, err)
-					continue
-				}
-				if capability.Format != asset.Format {
-					summary.Formats++
-				}
-				if capability.CanRead != asset.CanRead {
-					summary.ReaderCapabilities++
-				}
+			if capability.CanRead != asset.CanRead {
+				summary.ReaderCapabilities++
 			}
 		}
-		if asset.CurrentSHA256 != "" {
-			if !asset.CurrentSize.Valid {
-				if currentBytesTrusted {
-					if _, err := writer.Exec("UPDATE assets SET current_size = ?, updated_at = unixepoch() WHERE id = ?", currentSize, asset.ID); err != nil {
-						fmt.Printf("Failed to backfill current size for %s: %v\n", asset.ID, err)
-						continue
-					}
-					summary.SizeBackfilled++
-				} else {
-					fmt.Printf("Missing current size with hash mismatch: %s (%s)\n", asset.ID, canonicalPath)
-					summary.SizeMismatches++
-				}
-			} else if asset.CurrentSize.Int64 != currentSize {
-				if currentBytesTrusted {
-					if _, err := writer.Exec("UPDATE assets SET current_size = ?, updated_at = unixepoch() WHERE id = ?", currentSize, asset.ID); err != nil {
-						fmt.Printf("Failed to repair current size for %s: %v\n", asset.ID, err)
-						continue
-					}
-					summary.SizeBackfilled++
-				} else {
-					fmt.Printf("Size mismatch: %s (%s)\n", asset.ID, canonicalPath)
-					summary.SizeMismatches++
-				}
-			}
-		}
-		if !asset.OriginalSize.Valid && asset.OriginalSHA256 != "" && asset.OriginalSHA256 == currentHash {
+		if !asset.OriginalSize.Valid && bytes.Equal(asset.OriginalSHA256, currentHash) {
 			if _, err := writer.Exec("UPDATE assets SET original_size = ?, updated_at = unixepoch() WHERE id = ?", currentSize, asset.ID); err != nil {
-				fmt.Printf("Failed to backfill original size for %s: %v\n", asset.ID, err)
+				fmt.Printf("Failed to backfill original size for %d: %v\n", asset.ID, err)
 				continue
 			}
 			summary.OriginalSizeBackfilled++
@@ -359,7 +330,7 @@ type coverRepairResult struct {
 	StagedRemoved          int
 }
 
-func repairCovers(ctx context.Context, database *db.DB, booksRoot, coverRoot storage.Root, books []db.BookCoverRow, verifiedAssetHashes map[string]struct{}) (coverRepairResult, error) {
+func repairCovers(ctx context.Context, database *db.DB, booksRoot, coverRoot storage.Root, books []db.BookCoverRow, verifiedAssetHashes map[int64]struct{}) (coverRepairResult, error) {
 	recoverable := newRecoverableCoverIndex(ctx, database.Read(ctx), coverRoot)
 	summary := coverRepairResult{}
 
@@ -503,7 +474,7 @@ func printRepairSummary(items []repairSummaryItem) {
 	}
 }
 
-func restoreCoverFromPrimaryAsset(ctx context.Context, database *db.DB, booksRoot, coverRoot storage.Root, w db.BookCoverRow, verifiedAssetHashes map[string]struct{}) (extracted bool, fallback bool, err error) {
+func restoreCoverFromPrimaryAsset(ctx context.Context, database *db.DB, booksRoot, coverRoot storage.Root, w db.BookCoverRow, verifiedAssetHashes map[int64]struct{}) (extracted bool, fallback bool, err error) {
 	asset, ok, err := primaryAssetForCoverRecovery(database.Read(ctx), w.ID)
 	if err != nil {
 		return false, false, err
@@ -534,7 +505,7 @@ func restoreCoverFromPrimaryAsset(ctx context.Context, database *db.DB, booksRoo
 	}
 	coverBytes, _, err := format.ExtractCover(f, stat.Size(), asset.Format)
 	if err != nil {
-		return false, false, fmt.Errorf("%s (%s): %w", asset.ID, asset.StoragePath, err)
+		return false, false, fmt.Errorf("%d (%s): %w", asset.ID, asset.StoragePath, err)
 	}
 	if len(coverBytes) == 0 {
 		return false, false, nil
@@ -569,17 +540,17 @@ func restoreCoverFromPrimaryAsset(ctx context.Context, database *db.DB, booksRoo
 
 func validateCoverRecoveryAssetBytes(ctx context.Context, asset coverRecoveryAsset, absPath string, size int64, hashAlreadyVerified bool) error {
 	if asset.CurrentSize.Valid && asset.CurrentSize.Int64 != size {
-		return fmt.Errorf("%s (%s): primary asset size mismatch, db %d, disk %d", asset.ID, asset.StoragePath, asset.CurrentSize.Int64, size)
+		return fmt.Errorf("%d (%s): primary asset size mismatch, db %d, disk %d", asset.ID, asset.StoragePath, asset.CurrentSize.Int64, size)
 	}
-	if asset.CurrentSHA256 == "" || hashAlreadyVerified {
+	if hashAlreadyVerified {
 		return nil
 	}
 	got, err := fileSHA256Context(ctx, absPath)
 	if err != nil {
 		return err
 	}
-	if got != asset.CurrentSHA256 {
-		return fmt.Errorf("%s (%s): primary asset hash mismatch, db %s, disk %s", asset.ID, asset.StoragePath, asset.CurrentSHA256, got)
+	if !bytes.Equal(got, asset.CurrentSHA256) {
+		return fmt.Errorf("%d (%s): primary asset hash mismatch, db %x, disk %x", asset.ID, asset.StoragePath, asset.CurrentSHA256, got)
 	}
 	return nil
 }
@@ -588,7 +559,7 @@ func primaryAssetForCoverRecovery(queryer db.Queryer, bookID int64) (coverRecove
 	var asset coverRecoveryAsset
 	var formatKey string
 	err := queryer.QueryRow(`
-		SELECT id, storage_path, COALESCE(format, ''), COALESCE(current_sha256, ''), current_size
+		SELECT id, storage_path, COALESCE(format, ''), current_sha256, current_size
 		FROM assets
 		WHERE book_id = ? AND is_primary = 1
 		LIMIT 1
@@ -603,53 +574,106 @@ func primaryAssetForCoverRecovery(queryer db.Queryer, bookID int64) (coverRecove
 	return asset, true, nil
 }
 
-// recoverableAssetTagIndex maps each asset-id tag (`[asset_id]`, embedded in a
-// managed filename) to the on-disk path carrying it. It is built once by a
-// single walk of the books tree and staging on first lookup, so recovering N
-// missing assets costs one tree walk instead of N (each old
-// findRecoverableAsset call walked the whole books + staging tree). Managed
-// content is walked first with first-wins, so it stays preferred over a staged
-// temp carrying the same tag.
-type recoverableAssetTagIndex struct {
-	ctx   context.Context
-	root  storage.Root
-	byTag map[string]string
-	built bool
+// recoverableAssetNameIndex indexes managed [a<ID>] tags and import hashes.
+// Names select candidates; only matching bytes may be moved into a missing path.
+type recoverableAssetNameIndex struct {
+	ctx          context.Context
+	root         storage.Root
+	referenced   map[string]bool
+	byTag        map[string][]string
+	bySourceHash map[[sha256.Size]byte][]string
+	built        bool
+	buildErr     error
 }
 
-func newRecoverableAssetTagIndex(ctx context.Context, root storage.Root) *recoverableAssetTagIndex {
-	return &recoverableAssetTagIndex{ctx: ctx, root: root, byTag: make(map[string]string)}
+func newRecoverableAssetNameIndex(ctx context.Context, root storage.Root, referenced map[string]bool) *recoverableAssetNameIndex {
+	return &recoverableAssetNameIndex{
+		ctx: ctx, root: root, referenced: referenced,
+		byTag:        make(map[string][]string),
+		bySourceHash: make(map[[sha256.Size]byte][]string),
+	}
 }
 
-func (idx *recoverableAssetTagIndex) find(assetID string) string {
+func (idx *recoverableAssetNameIndex) find(assetID int64, wantSHA256 []byte) (string, error) {
 	if !idx.built {
-		idx.build()
+		idx.buildErr = idx.build()
 		idx.built = true
 	}
-	return idx.byTag["["+assetID+"]"]
+	if idx.buildErr != nil {
+		return "", idx.buildErr
+	}
+	candidates := idx.byTag[storage.AssetTag(assetID)]
+	if path, err := matchingAssetFile(idx.ctx, candidates, wantSHA256, idx.referenced); path != "" || err != nil {
+		return path, err
+	}
+	return matchingAssetFile(idx.ctx, idx.bySourceHash[[sha256.Size]byte(wantSHA256)], wantSHA256, idx.referenced)
 }
 
-func (idx *recoverableAssetTagIndex) build() {
+func (idx *recoverableAssetNameIndex) build() error {
 	visit := func(path string, info os.FileInfo, err error) error {
 		if cause := context.Cause(idx.ctx); cause != nil {
 			return cause
 		}
-		if err != nil || info.IsDir() {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() || idx.referenced[path] {
 			return nil
 		}
 		for _, tag := range bracketTags(info.Name()) {
-			if _, seen := idx.byTag[tag]; !seen {
-				idx.byTag[tag] = path
-			}
+			idx.byTag[tag] = append(idx.byTag[tag], path)
 		}
 		return nil
 	}
-	_ = storage.WalkBooks(idx.root, visit)
-	_ = filepath.Walk(idx.root.StagingDir(), visit)
+	if err := storage.WalkBooks(idx.root, visit); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	err := filepath.Walk(idx.root.StagingDir(), func(path string, info os.FileInfo, err error) error {
+		if err := visit(path, info, err); err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+		label, ok := storage.ParseStagedTempName(info.Name())
+		if !ok {
+			return nil
+		}
+		encoded, _, _ := strings.Cut(label, ".")
+		sum, err := hex.DecodeString(encoded)
+		if err == nil && len(sum) == sha256.Size {
+			key := [sha256.Size]byte(sum)
+			idx.bySourceHash[key] = append(idx.bySourceHash[key], path)
+		}
+		return nil
+	})
+	if os.IsNotExist(err) {
+		return nil
+	}
+	return err
+}
+
+func matchingAssetFile(ctx context.Context, candidates []string, wantSHA256 []byte, referenced map[string]bool) (string, error) {
+	for _, path := range candidates {
+		if err := context.Cause(ctx); err != nil {
+			return "", err
+		}
+		if referenced[path] {
+			continue
+		}
+		got, err := fileSHA256Context(ctx, path)
+		if cause := context.Cause(ctx); cause != nil {
+			return "", cause
+		}
+		if err == nil && bytes.Equal(got, wantSHA256) {
+			return path, nil
+		}
+	}
+	return "", nil
 }
 
 // bracketTags returns the `[...]` segments (brackets included) in a filename,
-// e.g. "Title [as_1].epub" -> ["[as_1]"]. Managed filenames carry the asset id
+// e.g. "Title [a12].epub" -> ["[a12]"]. Managed filenames carry the asset id
 // this way, so it is the index key.
 func bracketTags(name string) []string {
 	var tags []string
@@ -673,7 +697,7 @@ type recoverableAssetHashIndex struct {
 	ctx        context.Context
 	root       storage.Root
 	referenced map[string]bool
-	bySHA256   map[string][]string
+	bySHA256   map[[sha256.Size]byte][]string
 	built      bool
 	buildErr   error
 }
@@ -683,14 +707,11 @@ func newRecoverableAssetHashIndex(ctx context.Context, root storage.Root, refere
 		ctx:        ctx,
 		root:       root,
 		referenced: referenced,
-		bySHA256:   make(map[string][]string),
+		bySHA256:   make(map[[sha256.Size]byte][]string),
 	}
 }
 
-func (idx *recoverableAssetHashIndex) find(wantSHA256 string) (string, error) {
-	if wantSHA256 == "" {
-		return "", nil
-	}
+func (idx *recoverableAssetHashIndex) find(wantSHA256 []byte) (string, error) {
 	if !idx.built {
 		idx.buildErr = idx.build()
 		idx.built = true
@@ -699,36 +720,7 @@ func (idx *recoverableAssetHashIndex) find(wantSHA256 string) (string, error) {
 		return "", idx.buildErr
 	}
 
-	candidates := idx.bySHA256[wantSHA256]
-	for len(candidates) > 0 {
-		if err := context.Cause(idx.ctx); err != nil {
-			return "", err
-		}
-		path := candidates[0]
-		candidates = candidates[1:]
-		idx.bySHA256[wantSHA256] = candidates
-		if idx.referenced[path] {
-			continue
-		}
-		info, err := os.Stat(path)
-		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			return "", err
-		}
-		if info.IsDir() {
-			continue
-		}
-		got, err := fileSHA256Context(idx.ctx, path)
-		if err != nil {
-			continue
-		}
-		if got == wantSHA256 {
-			return path, nil
-		}
-	}
-	return "", nil
+	return matchingAssetFile(idx.ctx, idx.bySHA256[[sha256.Size]byte(wantSHA256)], wantSHA256, idx.referenced)
 }
 
 func (idx *recoverableAssetHashIndex) build() error {
@@ -752,7 +744,8 @@ func (idx *recoverableAssetHashIndex) build() error {
 		if err != nil {
 			return nil
 		}
-		idx.bySHA256[got] = append(idx.bySHA256[got], path)
+		key := [sha256.Size]byte(got)
+		idx.bySHA256[key] = append(idx.bySHA256[key], path)
 		return nil
 	})
 }
@@ -791,19 +784,17 @@ func (idx *recoverableCoverIndex) find(bookID int64) (string, error) {
 }
 
 func (idx *recoverableCoverIndex) stagedBookID(name string) (int64, error) {
-	assetID, ok := stagedCoverAssetID(name)
+	sourceHash, ok := stagedCoverSourceHash(name)
 	if !ok {
 		return 0, nil
 	}
-	// The row must have survived commit. Uncommitted book IDs may be reused,
-	// so importer temp names carry the independent source asset identity.
 	var bookID int64
-	err := idx.db.QueryRow("SELECT book_id FROM assets WHERE id = ?", assetID).Scan(&bookID)
+	err := idx.db.QueryRow("SELECT book_id FROM assets WHERE original_sha256 = ?", sourceHash).Scan(&bookID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, nil
 	}
 	if err != nil {
-		return 0, fmt.Errorf("resolve staged cover asset %s: %w", assetID, err)
+		return 0, fmt.Errorf("resolve staged cover source %x: %w", sourceHash, err)
 	}
 	return bookID, nil
 }
@@ -837,12 +828,12 @@ func (idx *recoverableCoverIndex) indexDir(dir string, resolveBookID func(string
 	return err
 }
 
-func stagedCoverAssetID(name string) (string, bool) {
+func stagedCoverSourceHash(name string) ([]byte, bool) {
 	label, ok := storage.ParseStagedTempName(name)
 	if !ok {
-		return "", false
+		return nil, false
 	}
-	return covers.ParseAssetTempLabel(label)
+	return covers.ParseImportTempLabel(label)
 }
 
 func coverDirTempBookID(name string) (int64, bool) {
@@ -876,7 +867,7 @@ func removeStaleStagedCovers(ctx context.Context, root storage.Root) (int, error
 }
 
 func isStagedCoverFileName(name string) bool {
-	_, ok := stagedCoverAssetID(name)
+	_, ok := stagedCoverSourceHash(name)
 	return ok
 }
 

@@ -110,7 +110,7 @@ test.describe('Catalog', () => {
       if (!res.ok) throw new Error(await res.text());
       return await res.json();
     });
-    await page.goto(`/?shelf=${encodeURIComponent(shelf.id)}`);
+    await page.goto(`/?shelf=${shelf.id}`);
 
     await expect(page.locator('.library-empty-state h2')).toHaveText('Shelf is empty');
     await expect(page.locator('.library-empty-state')).toContainText('No books are on this shelf.');
@@ -132,14 +132,14 @@ test.describe('Catalog', () => {
     const detailRes = await page.request.get(`/api/books/${encodeURIComponent(bookId)}`);
     expect(detailRes.ok()).toBe(true);
     const detail = (await detailRes.json()) as {
-      assets: Array<{ id: string; can_read: boolean; is_primary: boolean }>;
+      assets: Array<{ id: number; can_read: boolean; is_primary: boolean }>;
     };
     const readableAsset =
       detail.assets.find((asset) => asset.is_primary && asset.can_read) ??
       detail.assets.find((asset) => asset.can_read);
     if (!readableAsset) throw new Error('missing readable asset');
     const positionRes = await page.request.put(
-      `/api/reader/assets/${encodeURIComponent(readableAsset.id)}/state`,
+      `/api/reader/assets/${readableAsset.id}/state`,
       { data: { progress: 0.42, locator: { engine: 'browser-test', fraction: 0.42 } } },
     );
     expect(positionRes.ok()).toBe(true);
@@ -225,7 +225,7 @@ test.describe('Catalog', () => {
     const tiles = page.locator('.cleanup-tile');
     await expect(tiles).toHaveCount(4);
     await expect(tiles.filter({ hasText: 'Missing cover' })).toBeVisible();
-    await expect(tiles.filter({ hasText: 'Unknown author' })).toBeVisible();
+    await expect(tiles.filter({ hasText: 'Missing author' })).toBeVisible();
     await expect(tiles.filter({ hasText: 'No tags' })).toBeVisible();
     await expect(tiles.filter({ hasText: 'No description' })).toBeVisible();
 
@@ -342,7 +342,7 @@ test.describe('Catalog', () => {
       if (!shelfRes.ok) throw new Error(await shelfRes.text());
       const shelf = await shelfRes.json();
 
-      const addRes = await fetch(`/api/shelves/${encodeURIComponent(shelf.id)}/books/${encodeURIComponent(book.id)}`, {
+      const addRes = await fetch(`/api/shelves/${shelf.id}/books/${encodeURIComponent(book.id)}`, {
         method: 'PUT',
       });
       if (!addRes.ok) throw new Error(await addRes.text());
@@ -350,7 +350,7 @@ test.describe('Catalog', () => {
     });
 
     try {
-      await page.goto(`/?shelf=${encodeURIComponent(setup.shelfId)}`);
+      await page.goto(`/?shelf=${setup.shelfId}`);
       const shelfLink = page.locator('#shelf-nav .shelf-nav-item', { hasText: setup.shelfName });
       await expect(shelfLink).toHaveClass(/active/);
       await expect(page.locator('#nav-library')).not.toHaveClass(/active/);
@@ -359,14 +359,14 @@ test.describe('Catalog', () => {
       await page.evaluate(() => ((window as typeof window & { __polkaNavMarker?: string }).__polkaNavMarker = 'same-doc'));
       await page.locator('.book-card', { hasText: setup.title }).locator('.book-title-link').click();
       await page.waitForURL(
-        (url) => url.pathname.startsWith('/book/') && url.searchParams.get('shelf') === setup.shelfId,
+        (url) => url.pathname.startsWith('/book/') && url.searchParams.get('shelf') === String(setup.shelfId),
       );
       await expect(page.locator('.detail-title')).toHaveText(setup.title);
       await expect(shelfLink).toHaveClass(/active/);
       await expect(page.locator('#nav-library')).not.toHaveClass(/active/);
 
       await page.locator('.back-link a').click();
-      await page.waitForURL((url) => url.pathname === '/' && url.searchParams.get('shelf') === setup.shelfId);
+      await page.waitForURL((url) => url.pathname === '/' && url.searchParams.get('shelf') === String(setup.shelfId));
       await expect(page.locator('.book-card', { hasText: setup.title })).toBeVisible();
       await expect(shelfLink).toHaveClass(/active/);
       await expect(page.locator('#nav-library')).not.toHaveClass(/active/);
@@ -380,7 +380,7 @@ test.describe('Catalog', () => {
       );
     } finally {
       await page.evaluate(async (shelfId) => {
-        await fetch(`/api/shelves/${encodeURIComponent(shelfId)}`, { method: 'DELETE' });
+        await fetch(`/api/shelves/${shelfId}`, { method: 'DELETE' });
       }, setup.shelfId);
     }
   });

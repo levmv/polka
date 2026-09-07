@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/levmv/polka/internal/db"
@@ -52,7 +53,7 @@ func bookTags(t *testing.T, database *db.DB, id int64) string {
 func setBookAuthors(t *testing.T, database *db.DB, id int64, authors string) {
 	t.Helper()
 	if err := database.Transact(context.Background(), func(tx *db.Tx) error {
-		return replaceBookAuthors(t.Context(), tx, id, authors)
+		return replaceBookAuthors(tx, id, authors)
 	}); err != nil {
 		t.Fatalf("set authors %d: %v", id, err)
 	}
@@ -327,7 +328,7 @@ func TestBulkTrashMovesSelectedToTrash(t *testing.T) {
 	}
 }
 
-func shelfBookIDs(t *testing.T, database *db.DB, shelfID string) []int64 {
+func shelfBookIDs(t *testing.T, database *db.DB, shelfID int64) []int64 {
 	t.Helper()
 	rows, err := database.Read(t.Context()).Query("SELECT book_id FROM shelf_books WHERE shelf_id = ? ORDER BY position", shelfID)
 	if err != nil {
@@ -360,7 +361,7 @@ func TestBulkShelfAddAndRemove(t *testing.T) {
 
 	call := func(userID int64, op string, ids ...int64) *httptest.ResponseRecorder {
 		req := jsonRequest(t, s, userID, http.MethodPost,
-			"/api/shelves/"+shelf.ID+"/books/bulk", map[string]any{"ids": ids, "op": op})
+			"/api/shelves/"+strconv.FormatInt(shelf.ID, 10)+"/books/bulk", map[string]any{"ids": ids, "op": op})
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, req)
 		return w

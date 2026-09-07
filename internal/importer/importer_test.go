@@ -7,7 +7,6 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
-	"encoding/hex"
 	"errors"
 	"image"
 	"image/color"
@@ -489,8 +488,8 @@ func TestResolveUsesOriginalNameForUploadFallbacks(t *testing.T) {
 	if plan.Format != format.FormatFB2 {
 		t.Fatalf("Format = %v; want FormatFB2", plan.Format)
 	}
-	if len(plan.Authors) != 1 || plan.Authors[0].Name != "Unknown Author" {
-		t.Fatalf("Authors = %+v; want Unknown Author fallback", plan.Authors)
+	if len(plan.Authors) != 0 {
+		t.Fatalf("Authors = %+v; want no authors", plan.Authors)
 	}
 }
 
@@ -641,8 +640,8 @@ func TestResolveMOBIFamilyUsesFilenameFallbacks(t *testing.T) {
 			if plan.Title != wantTitle {
 				t.Fatalf("Title = %q; want %q", plan.Title, wantTitle)
 			}
-			if len(plan.Authors) != 1 || plan.Authors[0].Name != "Unknown Author" {
-				t.Fatalf("Authors = %+v; want Unknown Author fallback", plan.Authors)
+			if len(plan.Authors) != 0 {
+				t.Fatalf("Authors = %+v; want no authors", plan.Authors)
 			}
 		})
 	}
@@ -680,8 +679,8 @@ func TestResolvePalmDOCMetadata(t *testing.T) {
 			if plan.Title != tt.title {
 				t.Fatalf("Title = %q; want %q", plan.Title, tt.title)
 			}
-			if len(plan.Authors) != 1 || plan.Authors[0].Name != "Unknown Author" {
-				t.Fatalf("Authors = %+v; want Unknown Author fallback", plan.Authors)
+			if len(plan.Authors) != 0 {
+				t.Fatalf("Authors = %+v; want no authors", plan.Authors)
 			}
 		})
 	}
@@ -689,16 +688,16 @@ func TestResolvePalmDOCMetadata(t *testing.T) {
 
 func TestResolveComicArchivesUseAvailableCapabilities(t *testing.T) {
 	for _, tt := range []struct {
-		name       string
-		data       []byte
-		wantFormat format.Format
-		canRead    bool
-		hasCover   bool
-		wantTitle  string
-		wantAuthor string
+		name        string
+		data        []byte
+		wantFormat  format.Format
+		canRead     bool
+		hasCover    bool
+		wantTitle   string
+		wantAuthors []string
 	}{
-		{name: "Rar Comic.cbr", data: testRAR4Bytes(), wantFormat: format.FormatCBR, canRead: true, hasCover: true, wantTitle: "Rar Comic", wantAuthor: "Unknown Author"},
-		{name: "Seven Zip Comic.cb7", data: testfixture.CB7(), wantFormat: format.FormatCB7, canRead: true, hasCover: true, wantTitle: "CB7 Fixture", wantAuthor: "Fixture Author"},
+		{name: "Rar Comic.cbr", data: testRAR4Bytes(), wantFormat: format.FormatCBR, canRead: true, hasCover: true, wantTitle: "Rar Comic"},
+		{name: "Seven Zip Comic.cb7", data: testfixture.CB7(), wantFormat: format.FormatCB7, canRead: true, hasCover: true, wantTitle: "CB7 Fixture", wantAuthors: []string{"Fixture Author"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -730,8 +729,12 @@ func TestResolveComicArchivesUseAvailableCapabilities(t *testing.T) {
 			if plan.Title != tt.wantTitle {
 				t.Fatalf("Title = %q; want %q", plan.Title, tt.wantTitle)
 			}
-			if len(plan.Authors) != 1 || plan.Authors[0].Name != tt.wantAuthor {
-				t.Fatalf("Authors = %+v; want %q", plan.Authors, tt.wantAuthor)
+			var names []string
+			for _, a := range plan.Authors {
+				names = append(names, a.Name)
+			}
+			if !slices.Equal(names, tt.wantAuthors) {
+				t.Fatalf("Authors = %q; want %q", names, tt.wantAuthors)
 			}
 		})
 	}
@@ -777,8 +780,8 @@ func TestResolveTextFormatsUseFilenameFallbacks(t *testing.T) {
 			if plan.Title != wantTitle {
 				t.Fatalf("Title = %q; want %q", plan.Title, wantTitle)
 			}
-			if len(plan.Authors) != 1 || plan.Authors[0].Name != "Unknown Author" {
-				t.Fatalf("Authors = %+v; want Unknown Author fallback", plan.Authors)
+			if len(plan.Authors) != 0 {
+				t.Fatalf("Authors = %+v; want no authors", plan.Authors)
 			}
 		})
 	}
@@ -815,7 +818,7 @@ func TestResolveParsedMetadataDispatch(t *testing.T) {
 		name            string
 		wantFormat      format.Format
 		wantTitle       string
-		wantAuthor      string
+		wantAuthors     []string
 		wantAuthorSort  string
 		wantLanguage    string
 		wantPublisher   string
@@ -826,7 +829,7 @@ func TestResolveParsedMetadataDispatch(t *testing.T) {
 			name:           "archive.txtz",
 			wantFormat:     format.FormatTXTZ,
 			wantTitle:      "Archived Text",
-			wantAuthor:     "Archive Author",
+			wantAuthors:    []string{"Archive Author"},
 			wantAuthorSort: "Author, Archive",
 			write: func(t *testing.T, path string) {
 				writeCBZ(t, path, map[string][]byte{
@@ -845,7 +848,7 @@ func TestResolveParsedMetadataDispatch(t *testing.T) {
 			name:           "archive.htmlz",
 			wantFormat:     format.FormatHTMLZ,
 			wantTitle:      "Archived HTML",
-			wantAuthor:     "HTML Author",
+			wantAuthors:    []string{"HTML Author"},
 			wantAuthorSort: "Author, HTML",
 			write: func(t *testing.T, path string) {
 				writeCBZ(t, path, map[string][]byte{
@@ -864,7 +867,7 @@ func TestResolveParsedMetadataDispatch(t *testing.T) {
 			name:           "Document Book.docx",
 			wantFormat:     format.FormatDOCX,
 			wantTitle:      "Document Book",
-			wantAuthor:     "Doc Author",
+			wantAuthors:    []string{"Doc Author"},
 			wantAuthorSort: "Author, Doc",
 			wantLanguage:   "en",
 			wantPublisher:  "Doc Press",
@@ -874,7 +877,7 @@ func TestResolveParsedMetadataDispatch(t *testing.T) {
 			name:           "Macro Document.docm",
 			wantFormat:     format.FormatDOCM,
 			wantTitle:      "Document Book",
-			wantAuthor:     "Doc Author",
+			wantAuthors:    []string{"Doc Author"},
 			wantAuthorSort: "Author, Doc",
 			wantLanguage:   "en",
 			wantPublisher:  "Doc Press",
@@ -884,7 +887,7 @@ func TestResolveParsedMetadataDispatch(t *testing.T) {
 			name:           "ODT Book.odt",
 			wantFormat:     format.FormatODT,
 			wantTitle:      "ODT Book",
-			wantAuthor:     "ODT Author",
+			wantAuthors:    []string{"ODT Author"},
 			wantAuthorSort: "Author, ODT",
 			wantLanguage:   "en",
 			write:          writeTestODT,
@@ -893,7 +896,7 @@ func TestResolveParsedMetadataDispatch(t *testing.T) {
 			name:            "RTF Book.rtf",
 			wantFormat:      format.FormatRTF,
 			wantTitle:       "RTF Book",
-			wantAuthor:      "RTF Author",
+			wantAuthors:     []string{"RTF Author"},
 			wantAuthorSort:  "Author, RTF",
 			wantPublisher:   "RTF Press",
 			wantDescription: "RTF subject",
@@ -907,7 +910,6 @@ func TestResolveParsedMetadataDispatch(t *testing.T) {
 			name:       "manual.chm",
 			wantFormat: format.FormatCHM,
 			wantTitle:  "Oracle PL/SQL by Example, Third Edition",
-			wantAuthor: "Unknown Author",
 			write: func(t *testing.T, path string) {
 				if err := os.WriteFile(path, testCHMBytesWithTitle("Oracle PL/SQL by Example, Third Edition"), 0o644); err != nil {
 					t.Fatalf("write source: %v", err)
@@ -936,8 +938,12 @@ func TestResolveParsedMetadataDispatch(t *testing.T) {
 			if plan.Title != tt.wantTitle {
 				t.Fatalf("Title = %q; want %q", plan.Title, tt.wantTitle)
 			}
-			if len(plan.Authors) != 1 || plan.Authors[0].Name != tt.wantAuthor {
-				t.Fatalf("Authors = %+v; want %s", plan.Authors, tt.wantAuthor)
+			var names []string
+			for _, a := range plan.Authors {
+				names = append(names, a.Name)
+			}
+			if !slices.Equal(names, tt.wantAuthors) {
+				t.Fatalf("Authors = %q; want %q", names, tt.wantAuthors)
 			}
 			if tt.wantAuthorSort != "" && plan.Authors[0].SortName != tt.wantAuthorSort {
 				t.Fatalf("Author sort = %q; want %q", plan.Authors[0].SortName, tt.wantAuthorSort)
@@ -1137,8 +1143,8 @@ func TestResolveCHMUsesFilenameFallbacks(t *testing.T) {
 	if plan.Title != "Technical Manual" {
 		t.Fatalf("Title = %q; want filename fallback", plan.Title)
 	}
-	if len(plan.Authors) != 1 || plan.Authors[0].Name != "Unknown Author" {
-		t.Fatalf("Authors = %+v; want Unknown Author fallback", plan.Authors)
+	if len(plan.Authors) != 0 {
+		t.Fatalf("Authors = %+v; want no authors", plan.Authors)
 	}
 }
 
@@ -1183,8 +1189,8 @@ func TestResolveIgnoresUnsignaledDelimitedFilename(t *testing.T) {
 	if plan.Title != "One -- Two -- Three -- Four" {
 		t.Fatalf("Title = %q; want plain filename fallback", plan.Title)
 	}
-	if len(plan.Authors) != 1 || plan.Authors[0].Name != "Unknown Author" {
-		t.Fatalf("Authors = %+v; want Unknown Author fallback", plan.Authors)
+	if len(plan.Authors) != 0 {
+		t.Fatalf("Authors = %+v; want no authors", plan.Authors)
 	}
 }
 
@@ -1396,8 +1402,8 @@ func TestResolveRecoversForbiddenEPUBOPFControl(t *testing.T) {
 	if plan.Title != "Invalid OPF" {
 		t.Fatalf("Title = %q; want recovered OPF title", plan.Title)
 	}
-	if len(plan.Authors) != 1 || plan.Authors[0].Name != "Unknown Author" {
-		t.Fatalf("Authors = %+v; want Unknown Author fallback", plan.Authors)
+	if len(plan.Authors) != 0 {
+		t.Fatalf("Authors = %+v; want no authors", plan.Authors)
 	}
 }
 
@@ -1734,6 +1740,80 @@ func TestImportGroupElectsReadablePrimary(t *testing.T) {
 	})
 }
 
+func TestImportGroupDeduplicatesSourceCopies(t *testing.T) {
+	for _, existing := range []bool{false, true} {
+		name := "new book"
+		if existing {
+			name = "adding to existing book"
+		}
+		t.Run(name, func(t *testing.T) {
+			dataDir := t.TempDir()
+			database, err := db.InitPath(filepath.Join(dataDir, "library.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer database.Close()
+			root := storage.NewRoot(filepath.Join(dataDir, "books"))
+			if err := storage.EnsureLayout(root); err != nil {
+				t.Fatal(err)
+			}
+			var sources []Source
+			for i, name := range []string{"Book.txt", "Book.md", "Book - copy.md"} {
+				content := "A short synthetic book.\n"
+				if i > 0 {
+					content = "# Book\n\nA short synthetic book.\n"
+				}
+				path := filepath.Join(dataDir, name)
+				if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				sources = append(sources, Source{Path: path})
+			}
+			if existing {
+				if _, err := Import(t.Context(), database, root, sources[0], nil, Options{}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			group, err := ImportGroup(t.Context(), database, root, sources, nil, Options{})
+			if err != nil {
+				t.Fatalf("ImportGroup: %v", err)
+			}
+			if len(group.Results) != 3 || group.Results[1].Status != StatusImported || group.Results[2].Status != StatusDuplicate || group.Results[1].AssetID != group.Results[2].AssetID {
+				t.Fatalf("results = %+v; want one markdown asset shared by both copies", group.Results)
+			}
+			for i, result := range group.Results {
+				want, err := os.ReadFile(sources[i].Path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				got, err := os.ReadFile(root.Abs(result.StoragePath))
+				if err != nil || !bytes.Equal(got, want) {
+					t.Fatalf("managed source %d = %q, %v; want %q", i, got, err, want)
+				}
+			}
+			again, err := ImportGroup(t.Context(), database, root, sources, nil, Options{})
+			if err != nil {
+				t.Fatalf("repeat ImportGroup: %v", err)
+			}
+			for _, result := range again.Results {
+				if result.Status != StatusDuplicate || result.BookID != group.BookID {
+					t.Fatalf("repeat results = %+v; want duplicates of the same book", again.Results)
+				}
+			}
+			var books, assets int
+			if err := database.Read(t.Context()).QueryRow("SELECT (SELECT COUNT(*) FROM books), (SELECT COUNT(*) FROM assets)").Scan(&books, &assets); err != nil {
+				t.Fatal(err)
+			}
+			if books != 1 || assets != 2 {
+				t.Fatalf("books/assets = %d/%d; want 1/2", books, assets)
+			}
+			if entries, err := os.ReadDir(root.StagingDir()); err != nil || len(entries) != 0 {
+				t.Fatalf("staging = %v, %v; want empty", entries, err)
+			}
+		})
+	}
+}
+
 func TestAddedAtForSources(t *testing.T) {
 	now := time.Date(2026, time.September, 1, 12, 0, 0, 0, time.UTC)
 	earlier := time.Date(2012, time.March, 4, 5, 6, 7, 0, time.UTC)
@@ -1967,7 +2047,7 @@ func TestPersistStoresBookMetadata(t *testing.T) {
 	plan := Plan{
 		Source:       Source{Path: sourcePath},
 		Size:         int64(len(source)),
-		SourceSHA256: hex.EncodeToString(sum[:]),
+		SourceSHA256: sum[:],
 		Format:       format.FormatFB2,
 		Extension:    ".fb2",
 		CanRead:      true,
@@ -2093,8 +2173,9 @@ func TestPersistStoresAssetHashesAndCover(t *testing.T) {
 	}
 
 	sum := sha256.Sum256(srcBytes)
-	wantHash := hex.EncodeToString(sum[:])
-	var originalHash, currentHash, storagePath string
+	wantHash := sum[:]
+	var originalHash, currentHash []byte
+	var storagePath string
 	var formatKey string
 	var originalSize, currentSize int64
 	var isPrimary, canRead int
@@ -2105,8 +2186,8 @@ func TestPersistStoresAssetHashesAndCover(t *testing.T) {
 		`, res.AssetID).Scan(&originalHash, &currentHash, &originalSize, &currentSize, &storagePath, &formatKey, &isPrimary, &canRead); err != nil {
 		t.Fatalf("query asset: %v", err)
 	}
-	if originalHash != wantHash || currentHash != wantHash {
-		t.Fatalf("hashes = original %q current %q; want %q", originalHash, currentHash, wantHash)
+	if !bytes.Equal(originalHash, wantHash) || !bytes.Equal(currentHash, wantHash) {
+		t.Fatalf("hashes = original %x current %x; want %x", originalHash, currentHash, wantHash)
 	}
 	if originalSize != int64(len(srcBytes)) || currentSize != int64(len(srcBytes)) {
 		t.Fatalf("sizes = original %d current %d; want %d", originalSize, currentSize, len(srcBytes))
@@ -2124,8 +2205,12 @@ func TestPersistStoresAssetHashesAndCover(t *testing.T) {
 	if err := database.Read(t.Context()).QueryRow("SELECT primary_author_sort FROM books WHERE id = ?", res.BookID).Scan(&primaryAuthorSort); err != nil {
 		t.Fatalf("query primary_author_sort: %v", err)
 	}
-	if primaryAuthorSort != plan.Authors[0].SortName {
-		t.Fatalf("primary_author_sort = %q; want %q", primaryAuthorSort, plan.Authors[0].SortName)
+	wantAuthorSort := ""
+	if len(plan.Authors) > 0 {
+		wantAuthorSort = plan.Authors[0].SortName
+	}
+	if primaryAuthorSort != wantAuthorSort {
+		t.Fatalf("primary_author_sort = %q; want %q", primaryAuthorSort, wantAuthorSort)
 	}
 	if _, err := os.Stat(filepath.Join(dataDir, storagePath)); err != nil {
 		t.Fatalf("stored asset missing: %v", err)
@@ -2146,83 +2231,85 @@ func TestPersistStoresAssetHashesAndCover(t *testing.T) {
 }
 
 func TestPersistRejectsChangedSource(t *testing.T) {
-	for _, restore := range []bool{false, true} {
-		for _, changed := range []string{"short", "another source", "a source that grew during import"} {
-			name := "import/"
-			if restore {
-				name = "restore/"
+	for _, tt := range []struct {
+		name, changed string
+		restore       bool
+	}{
+		{"import/shrunk", "short", false},
+		{"import/same size", "another source", false},
+		{"import/grew", "a source that grew during import", false},
+		{"restore/changed", "another source", true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dataDir := t.TempDir()
+			database, err := db.InitPath(filepath.Join(dataDir, "library.db"))
+			if err != nil {
+				t.Fatal(err)
 			}
-			t.Run(name+changed, func(t *testing.T) {
-				dataDir := t.TempDir()
-				database, err := db.InitPath(filepath.Join(dataDir, "library.db"))
-				if err != nil {
-					t.Fatal(err)
-				}
-				defer database.Close()
-				root := storage.NewRoot(filepath.Join(dataDir, "books"))
-				if err := storage.EnsureLayout(root); err != nil {
-					t.Fatal(err)
-				}
-				const original = "initial source"
-				srcPath := filepath.Join(dataDir, "source.txt")
-				if err := os.WriteFile(srcPath, []byte(original), 0o644); err != nil {
-					t.Fatal(err)
-				}
-				plan, err := Resolve(context.Background(), Source{Path: srcPath}, nil)
-				if err != nil {
-					t.Fatal(err)
-				}
-				wantCount := 0
-				var missingPath string
-				if restore {
-					result, err := Persist(context.Background(), database, root, plan, Options{})
-					if err != nil {
-						t.Fatal(err)
-					}
-					missingPath = root.Abs(result.StoragePath)
-					if err := os.Remove(missingPath); err != nil {
-						t.Fatal(err)
-					}
-					wantCount = 1
-				}
-				if err := os.WriteFile(srcPath, []byte(changed), 0o644); err != nil {
-					t.Fatal(err)
-				}
-				if _, err := Persist(context.Background(), database, root, plan, Options{}); err == nil || !strings.Contains(err.Error(), "source changed during import") {
-					t.Fatalf("Persist = %v; want changed source error", err)
-				}
-				var books, assets int
-				if err := database.Read(t.Context()).QueryRow("SELECT (SELECT COUNT(*) FROM books), (SELECT COUNT(*) FROM assets)").Scan(&books, &assets); err != nil {
-					t.Fatal(err)
-				}
-				if books != wantCount || assets != wantCount {
-					t.Fatalf("books/assets = %d/%d; want %d/%d", books, assets, wantCount, wantCount)
-				}
-				if restore {
-					if _, err := os.Stat(missingPath); !os.IsNotExist(err) {
-						t.Fatalf("changed source was placed: %v", err)
-					}
-					var hash string
-					if err := database.Read(t.Context()).QueryRow("SELECT current_sha256 FROM assets").Scan(&hash); err != nil || hash != plan.SourceSHA256 {
-						t.Fatalf("current hash = %q, %v; want original fingerprint", hash, err)
-					}
-				}
-				entries, err := os.ReadDir(root.StagingDir())
-				if err != nil || len(entries) != 0 {
-					t.Fatalf("staging = %v, %v; want empty", entries, err)
-				}
-				if err := os.WriteFile(srcPath, []byte(original), 0o644); err != nil {
-					t.Fatal(err)
-				}
+			defer database.Close()
+			root := storage.NewRoot(filepath.Join(dataDir, "books"))
+			if err := storage.EnsureLayout(root); err != nil {
+				t.Fatal(err)
+			}
+			const original = "initial source"
+			srcPath := filepath.Join(dataDir, "source.txt")
+			if err := os.WriteFile(srcPath, []byte(original), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			plan, err := Resolve(context.Background(), Source{Path: srcPath}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantCount := 0
+			var missingPath string
+			if tt.restore {
 				result, err := Persist(context.Background(), database, root, plan, Options{})
 				if err != nil {
-					t.Fatalf("retry stable source: %v", err)
+					t.Fatal(err)
 				}
-				if data, err := os.ReadFile(root.Abs(result.StoragePath)); err != nil || string(data) != original {
-					t.Fatalf("retry bytes = %q, %v; want original source", data, err)
+				missingPath = root.Abs(result.StoragePath)
+				if err := os.Remove(missingPath); err != nil {
+					t.Fatal(err)
 				}
-			})
-		}
+				wantCount = 1
+			}
+			if err := os.WriteFile(srcPath, []byte(tt.changed), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Persist(context.Background(), database, root, plan, Options{}); err == nil || !strings.Contains(err.Error(), "source changed during import") {
+				t.Fatalf("Persist = %v; want changed source error", err)
+			}
+			var books, assets int
+			if err := database.Read(t.Context()).QueryRow("SELECT (SELECT COUNT(*) FROM books), (SELECT COUNT(*) FROM assets)").Scan(&books, &assets); err != nil {
+				t.Fatal(err)
+			}
+			if books != wantCount || assets != wantCount {
+				t.Fatalf("books/assets = %d/%d; want %d/%d", books, assets, wantCount, wantCount)
+			}
+			if tt.restore {
+				if _, err := os.Stat(missingPath); !os.IsNotExist(err) {
+					t.Fatalf("changed source was placed: %v", err)
+				}
+				var hash []byte
+				if err := database.Read(t.Context()).QueryRow("SELECT current_sha256 FROM assets").Scan(&hash); err != nil || !bytes.Equal(hash, plan.SourceSHA256) {
+					t.Fatalf("current hash = %x, %v; want original fingerprint", hash, err)
+				}
+			}
+			entries, err := os.ReadDir(root.StagingDir())
+			if err != nil || len(entries) != 0 {
+				t.Fatalf("staging = %v, %v; want empty", entries, err)
+			}
+			if err := os.WriteFile(srcPath, []byte(original), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			result, err := Persist(context.Background(), database, root, plan, Options{})
+			if err != nil {
+				t.Fatalf("retry stable source: %v", err)
+			}
+			if data, err := os.ReadFile(root.Abs(result.StoragePath)); err != nil || string(data) != original {
+				t.Fatalf("retry bytes = %q, %v; want original source", data, err)
+			}
+		})
 	}
 }
 
@@ -2331,7 +2418,7 @@ func TestDuplicateImportRestoreUpdatesCurrentHash(t *testing.T) {
 		t.Fatalf("read source: %v", err)
 	}
 	originalSum := sha256.Sum256(originalBytes)
-	originalHash := hex.EncodeToString(originalSum[:])
+	originalHash := originalSum[:]
 
 	res, err := Import(context.Background(), database, root, Source{Path: srcPath}, nil, Options{})
 	if err != nil {
@@ -2344,7 +2431,7 @@ func TestDuplicateImportRestoreUpdatesCurrentHash(t *testing.T) {
 	managedPath := filepath.Join(dataDir, res.StoragePath)
 	rewrittenBytes := []byte("future write-back bytes")
 	rewrittenSum := sha256.Sum256(rewrittenBytes)
-	rewrittenHash := hex.EncodeToString(rewrittenSum[:])
+	rewrittenHash := rewrittenSum[:]
 	if err := os.WriteFile(managedPath, rewrittenBytes, 0o644); err != nil {
 		t.Fatalf("rewrite managed file: %v", err)
 	}
@@ -2372,7 +2459,8 @@ func TestDuplicateImportRestoreUpdatesCurrentHash(t *testing.T) {
 		t.Fatalf("restored bytes = %q; want original source bytes", got)
 	}
 
-	var originalDBHash, currentDBHash, koReaderHash string
+	var originalDBHash, currentDBHash []byte
+	var koReaderHash string
 	var originalDBSize, currentDBSize int64
 	if err := database.Read(t.Context()).QueryRow(`
 		SELECT original_sha256, current_sha256, original_size, current_size,
@@ -2382,8 +2470,8 @@ func TestDuplicateImportRestoreUpdatesCurrentHash(t *testing.T) {
 	`, res.AssetID).Scan(&originalDBHash, &currentDBHash, &originalDBSize, &currentDBSize, &koReaderHash); err != nil {
 		t.Fatalf("query hashes: %v", err)
 	}
-	if originalDBHash != originalHash || currentDBHash != originalHash {
-		t.Fatalf("hashes = original %q current %q; want %q", originalDBHash, currentDBHash, originalHash)
+	if !bytes.Equal(originalDBHash, originalHash) || !bytes.Equal(currentDBHash, originalHash) {
+		t.Fatalf("hashes = original %x current %x; want %x", originalDBHash, currentDBHash, originalHash)
 	}
 	if originalDBSize != int64(len(originalBytes)) || currentDBSize != int64(len(originalBytes)) {
 		t.Fatalf("sizes = original %d current %d; want %d", originalDBSize, currentDBSize, len(originalBytes))

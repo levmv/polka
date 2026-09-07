@@ -1,15 +1,15 @@
 import { expect, type Locator, type Page, test } from './fixtures';
 
-async function createQueryShelf(page: Page, name: string, query: string): Promise<string> {
+async function createQueryShelf(page: Page, name: string, query: string): Promise<number> {
   const response = await page.request.post('/api/shelves', {
     data: { name, kind: 'query', query, shared: true },
   });
   expect(response.ok()).toBe(true);
-  return ((await response.json()) as { id: string }).id;
+  return ((await response.json()) as { id: number }).id;
 }
 
-async function deleteShelf(page: Page, id: string): Promise<void> {
-  const response = await page.request.delete(`/api/shelves/${encodeURIComponent(id)}`);
+async function deleteShelf(page: Page, id: number): Promise<void> {
+  const response = await page.request.delete(`/api/shelves/${id}`);
   expect(response.status()).toBe(204);
 }
 

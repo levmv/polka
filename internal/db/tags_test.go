@@ -75,16 +75,16 @@ func TestListTagsVisibility(t *testing.T) {
 			(5, 'Query trashed', 'Query trashed', 'Archived', 1);
 		INSERT INTO search (rowid, title, tags) SELECT  id, title, tags FROM books;
 		INSERT INTO shelves (id, name, kind, owner_id, visibility, query, query_match) VALUES
-			('manual', 'Manual', 'manual', 2, 'shared', NULL, NULL),
-			('query', 'Query', 'query', 2, 'shared', 'title:Query', ?),
-			('curator_personal', 'Curator personal', 'manual', 2, 'personal', NULL, NULL),
-			('own_manual', 'Own manual', 'manual', 1, 'personal', NULL, NULL),
-			('own_query', 'Own query', 'query', 1, 'personal', 'title:Hidden', ?),
-			('empty_query', 'Empty query', 'query', 2, 'shared', '', '');
+			(1, 'Manual', 'manual', 2, 'shared', NULL, NULL),
+			(2, 'Query', 'query', 2, 'shared', 'title:Query', ?),
+			(3, 'Curator personal', 'manual', 2, 'personal', NULL, NULL),
+			(4, 'Own manual', 'manual', 1, 'personal', NULL, NULL),
+			(5, 'Own query', 'query', 1, 'personal', 'title:Hidden', ?),
+			(6, 'Empty query', 'query', 2, 'shared', '', '');
 		INSERT INTO shelf_books (shelf_id, book_id) VALUES
-			('manual', 1), ('manual', 3), ('manual', 5),
-			('curator_personal', 4), ('own_manual', 4);
-		INSERT INTO user_scope_shelves (user_id, shelf_id) VALUES (2, 'curator_personal');
+			(1, 1), (1, 3), (1, 5),
+			(3, 4), (4, 4);
+		INSERT INTO user_scope_shelves (user_id, shelf_id) VALUES (2, 3);
 	`, ParseQuery("title:Query"), ParseQuery("title:Hidden"))
 
 	manual := []string{"Adventure", "Fantasy", "Shared"}
@@ -92,23 +92,23 @@ func TestListTagsVisibility(t *testing.T) {
 	mixed := []string{"Adventure", "Fantasy", "İstanbul", "Science fiction", "Shared", "Классика"}
 	for _, tt := range []struct {
 		name    string
-		shelves []string
+		shelves []int64
 		q       string
 		limit   int
 		want    []string
 	}{
 		{"no grants", nil, "", 0, nil},
-		{"manual", []string{"manual"}, "", 0, manual},
-		{"query", []string{"query"}, "", 0, query},
-		{"mixed overlapping", []string{"manual", "query", "own_manual", "own_query"}, "", 0, mixed},
-		{"ASCII filter", []string{"manual", "query"}, "ISTAN", 20, []string{"İstanbul"}},
-		{"Cyrillic filter", []string{"manual", "query"}, "КЛАСС", 20, []string{"Классика"}},
-		{"hidden match", []string{"manual", "query"}, "Hidden", 20, nil},
-		{"limit after sorting", []string{"manual", "query"}, "", 2, mixed[:2]},
-		{"own manual", []string{"own_manual"}, "", 0, nil},
-		{"own query", []string{"own_query"}, "", 0, nil},
-		{"curator personal", []string{"curator_personal"}, "", 0, []string{"Hİdden", "Классика тайная"}},
-		{"empty query", []string{"empty_query"}, "", 0, nil},
+		{"manual", []int64{1}, "", 0, manual},
+		{"query", []int64{2}, "", 0, query},
+		{"mixed overlapping", []int64{1, 2, 4, 5}, "", 0, mixed},
+		{"ASCII filter", []int64{1, 2}, "ISTAN", 20, []string{"İstanbul"}},
+		{"Cyrillic filter", []int64{1, 2}, "КЛАСС", 20, []string{"Классика"}},
+		{"hidden match", []int64{1, 2}, "Hidden", 20, nil},
+		{"limit after sorting", []int64{1, 2}, "", 2, mixed[:2]},
+		{"own manual", []int64{4}, "", 0, nil},
+		{"own query", []int64{5}, "", 0, nil},
+		{"curator personal", []int64{3}, "", 0, []string{"Hİdden", "Классика тайная"}},
+		{"empty query", []int64{6}, "", 0, nil},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			// Seed even ineligible grants to exercise the read-side access boundary.

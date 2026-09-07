@@ -341,7 +341,7 @@ export async function createUser(payload: {
     password: string;
     role: UserAccount['role'];
     content_scope?: UserAccount['content_scope'];
-    scope_shelf_ids?: string[];
+    scope_shelf_ids?: number[];
 }): Promise<UserAccount> {
     return await fetchJSON<UserAccount>(
         '/api/users',
@@ -355,11 +355,11 @@ export async function updateUserAccess(
     payload: {
         role: UserAccount['role'];
         content_scope: UserAccount['content_scope'];
-        scope_shelf_ids: string[];
+        scope_shelf_ids: number[];
     },
 ): Promise<UserAccount> {
     return await fetchJSON<UserAccount>(
-        `/api/users/${encodeURIComponent(userId)}`,
+        `/api/users/${userId}`,
         'Failed to update user access',
         jsonBody('PATCH', payload),
     );
@@ -367,14 +367,14 @@ export async function updateUserAccess(
 
 export async function updateUserPassword(userId: number, password: string): Promise<void> {
     await apiFetch(
-        `/api/users/${encodeURIComponent(userId)}/password`,
+        `/api/users/${userId}/password`,
         'Failed to update password',
         jsonBody('POST', { password }),
     );
 }
 
 export async function deleteUser(userId: number): Promise<void> {
-    await apiFetch(`/api/users/${encodeURIComponent(userId)}`, 'Failed to remove user', {
+    await apiFetch(`/api/users/${userId}`, 'Failed to remove user', {
         method: 'DELETE',
     });
 }
@@ -521,18 +521,18 @@ export async function createDeliveryDevice(payload: {
 }
 
 export async function updateDeliveryDevice(
-    deviceId: string,
+    deviceId: number,
     payload: Partial<Pick<DeliveryDevice, 'name' | 'email' | 'preset' | 'is_default'>>,
 ): Promise<DeliveryDevice> {
     return await fetchJSON<DeliveryDevice>(
-        `/api/devices/${encodeURIComponent(deviceId)}`,
+        `/api/devices/${deviceId}`,
         'Failed to update device',
         jsonBody('PATCH', payload),
     );
 }
 
-export async function deleteDeliveryDevice(deviceId: string): Promise<void> {
-    await apiFetch(`/api/devices/${encodeURIComponent(deviceId)}`, 'Failed to delete device', {
+export async function deleteDeliveryDevice(deviceId: number): Promise<void> {
+    await apiFetch(`/api/devices/${deviceId}`, 'Failed to delete device', {
         method: 'DELETE',
     });
 }
@@ -547,8 +547,8 @@ export async function fetchSendOptions(bookId: number): Promise<SendOptions> {
 
 export async function createDelivery(payload: {
     book_id: number;
-    device_id?: string;
-    asset_id?: string;
+    device_id?: number;
+    asset_id?: number;
     target?: string;
 }): Promise<DeliveryJob> {
     return await fetchJSON<DeliveryJob>(
@@ -558,9 +558,9 @@ export async function createDelivery(payload: {
     );
 }
 
-export async function fetchDeliveryJob(jobId: string): Promise<DeliveryJob> {
+export async function fetchDeliveryJob(jobId: number): Promise<DeliveryJob> {
     return await fetchJSON<DeliveryJob>(
-        `/api/deliveries/${encodeURIComponent(jobId)}`,
+        `/api/deliveries/${jobId}`,
         'Failed to fetch delivery status',
     );
 }
@@ -581,15 +581,13 @@ export async function createAppToken(name: string): Promise<AppToken> {
     );
 }
 
-export async function revokeAppToken(tokenId: string): Promise<void> {
-    await apiFetch(
-        `/api/app-tokens/${encodeURIComponent(tokenId)}`,
-        'Failed to revoke app password',
-        { method: 'DELETE' },
-    );
+export async function revokeAppToken(tokenId: number): Promise<void> {
+    await apiFetch(`/api/app-tokens/${tokenId}`, 'Failed to revoke app password', {
+        method: 'DELETE',
+    });
 }
 
-export async function createKoboConnection(shelfId: string): Promise<KoboConnection> {
+export async function createKoboConnection(shelfId: number): Promise<KoboConnection> {
     return await fetchJSON<KoboConnection>(
         '/api/kobo-connection',
         'Failed to create Kobo connection',
@@ -611,7 +609,7 @@ export async function fetchBooks(
     sort: string = '',
     limit?: number,
     offset?: number,
-    shelfId?: string,
+    shelfId = 0,
     signal?: AbortSignal,
 ): Promise<BookSummary[]> {
     let url = '/api/books';
@@ -620,7 +618,7 @@ export async function fetchBooks(
     if (sort) params.set('sort', sort);
     if (limit != null) params.set('limit', String(limit));
     if (offset != null) params.set('offset', String(offset));
-    if (shelfId) params.set('shelf', shelfId);
+    if (shelfId !== 0) params.set('shelf', String(shelfId));
 
     if (params.toString()) {
         url += `?${params.toString()}`;
@@ -682,7 +680,7 @@ export async function createShelf(payload: {
 }
 
 export async function updateShelf(
-    shelfId: string,
+    shelfId: number,
     payload: {
         name?: string;
         query?: string;
@@ -690,14 +688,14 @@ export async function updateShelf(
     },
 ): Promise<Shelf> {
     return await fetchJSON<Shelf>(
-        `/api/shelves/${encodeURIComponent(shelfId)}`,
+        `/api/shelves/${shelfId}`,
         'Failed to update shelf',
         jsonBody('PATCH', payload),
     );
 }
 
-export async function deleteShelf(shelfId: string): Promise<void> {
-    await apiFetch(`/api/shelves/${encodeURIComponent(shelfId)}`, 'Failed to delete shelf', {
+export async function deleteShelf(shelfId: number): Promise<void> {
+    await apiFetch(`/api/shelves/${shelfId}`, 'Failed to delete shelf', {
         method: 'DELETE',
     });
 }
@@ -709,24 +707,16 @@ export async function fetchBookShelves(bookId: number): Promise<BookShelfMembers
     );
 }
 
-export async function addBookToShelf(shelfId: string, bookId: number): Promise<void> {
-    await apiFetch(
-        `/api/shelves/${encodeURIComponent(shelfId)}/books/${bookId}`,
-        'Failed to add book to shelf',
-        {
-            method: 'PUT',
-        },
-    );
+export async function addBookToShelf(shelfId: number, bookId: number): Promise<void> {
+    await apiFetch(`/api/shelves/${shelfId}/books/${bookId}`, 'Failed to add book to shelf', {
+        method: 'PUT',
+    });
 }
 
-export async function removeBookFromShelf(shelfId: string, bookId: number): Promise<void> {
-    await apiFetch(
-        `/api/shelves/${encodeURIComponent(shelfId)}/books/${bookId}`,
-        'Failed to remove book from shelf',
-        {
-            method: 'DELETE',
-        },
-    );
+export async function removeBookFromShelf(shelfId: number, bookId: number): Promise<void> {
+    await apiFetch(`/api/shelves/${shelfId}/books/${bookId}`, 'Failed to remove book from shelf', {
+        method: 'DELETE',
+    });
 }
 
 export async function fetchBook(bookId: number, signal?: AbortSignal): Promise<Book> {
@@ -794,22 +784,22 @@ export async function emptyTrash(): Promise<{ purged: number }> {
     });
 }
 
-export async function fetchReaderState(assetId: string): Promise<ReaderState> {
+export async function fetchReaderState(assetId: number): Promise<ReaderState> {
     return await fetchJSON<ReaderState>(
-        `/api/reader/assets/${encodeURIComponent(assetId)}/state`,
+        `/api/reader/assets/${assetId}/state`,
         'Failed to fetch reader state',
     );
 }
 
 export async function sendReadingActivity(
-    assetId: string,
+    assetId: number,
     sessionId: string,
     segment: number,
     checkpoint?: { elapsed_ms: number; last_activity_ms: number; finished: boolean },
     keepalive = false,
 ): Promise<{ active: boolean; counted_ms: number }> {
     return await requestAttempt(
-        `/api/reader/assets/${encodeURIComponent(assetId)}/activity`,
+        `/api/reader/assets/${assetId}/activity`,
         {
             ...jsonBody(checkpoint ? 'PUT' : 'POST', {
                 session_id: sessionId,
@@ -840,7 +830,7 @@ export async function setReadingStatus(
 
 export async function undoReadingStatus(
     bookId: number,
-    eventId: string,
+    eventId: number,
 ): Promise<ReadingStatusState> {
     return await fetchJSON<ReadingStatusState>(
         `/api/books/${bookId}/reading-status/undo`,
@@ -850,42 +840,40 @@ export async function undoReadingStatus(
 }
 
 export async function saveReaderState(
-    assetId: string,
+    assetId: number,
     payload: { progress: number; locator: ReaderLocator },
     options: { keepalive?: boolean } = {},
 ): Promise<ReaderState> {
     return await fetchJSON<ReaderState>(
-        `/api/reader/assets/${encodeURIComponent(assetId)}/state`,
+        `/api/reader/assets/${assetId}/state`,
         'Failed to save reader state',
         { ...jsonBody('PUT', payload), keepalive: options.keepalive },
     );
 }
 
-export async function resetReaderState(assetId: string): Promise<void> {
-    await apiFetch(
-        `/api/reader/assets/${encodeURIComponent(assetId)}/state`,
-        'Failed to reset reader state',
-        { method: 'DELETE' },
-    );
+export async function resetReaderState(assetId: number): Promise<void> {
+    await apiFetch(`/api/reader/assets/${assetId}/state`, 'Failed to reset reader state', {
+        method: 'DELETE',
+    });
 }
 
-export async function touchReaderState(assetId: string): Promise<ReaderState> {
+export async function touchReaderState(assetId: number): Promise<ReaderState> {
     return await fetchJSON<ReaderState>(
-        `/api/reader/assets/${encodeURIComponent(assetId)}/touch`,
+        `/api/reader/assets/${assetId}/touch`,
         'Failed to touch reader state',
         { method: 'POST' },
     );
 }
 
-export async function fetchAnnotations(assetId: string): Promise<Annotation[]> {
+export async function fetchAnnotations(assetId: number): Promise<Annotation[]> {
     return await fetchJSON<Annotation[]>(
-        `/api/reader/assets/${encodeURIComponent(assetId)}/annotations`,
+        `/api/reader/assets/${assetId}/annotations`,
         'Failed to fetch annotations',
     );
 }
 
 export async function createAnnotation(
-    assetId: string,
+    assetId: number,
     payload: {
         kind?: Annotation['kind'];
         cfi: string;
@@ -897,27 +885,27 @@ export async function createAnnotation(
     },
 ): Promise<Annotation> {
     return await fetchJSON<Annotation>(
-        `/api/reader/assets/${encodeURIComponent(assetId)}/annotations`,
+        `/api/reader/assets/${assetId}/annotations`,
         'Failed to create annotation',
         jsonBody('POST', payload),
     );
 }
 
 export async function updateAnnotationNote(
-    assetId: string,
-    annotationId: string,
+    assetId: number,
+    annotationId: number,
     note: string,
 ): Promise<Annotation> {
     return await fetchJSON<Annotation>(
-        `/api/reader/assets/${encodeURIComponent(assetId)}/annotations/${encodeURIComponent(annotationId)}`,
+        `/api/reader/assets/${assetId}/annotations/${annotationId}`,
         'Failed to update annotation',
         jsonBody('PATCH', { note }),
     );
 }
 
-export async function deleteAnnotation(assetId: string, annotationId: string): Promise<void> {
+export async function deleteAnnotation(assetId: number, annotationId: number): Promise<void> {
     await apiFetch(
-        `/api/reader/assets/${encodeURIComponent(assetId)}/annotations/${encodeURIComponent(annotationId)}`,
+        `/api/reader/assets/${assetId}/annotations/${annotationId}`,
         'Failed to delete annotation',
         { method: 'DELETE' },
     );
@@ -995,12 +983,12 @@ export async function bulkWritebackBooks(ids: number[]): Promise<BulkWritebackRe
 // server returns how many memberships actually changed (skipping already-present
 // adds and absent removes).
 export async function bulkShelfBooks(
-    shelfId: string,
+    shelfId: number,
     ids: number[],
     op: BulkShelfOp,
 ): Promise<BulkShelfResult> {
     return await fetchJSON<BulkShelfResult>(
-        `/api/shelves/${encodeURIComponent(shelfId)}/books/bulk`,
+        `/api/shelves/${shelfId}/books/bulk`,
         'Shelf update failed',
         jsonBody('POST', { ids, op }),
     );

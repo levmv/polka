@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"net/http"
@@ -44,14 +45,15 @@ func TestMixedStorageMutationBurstStaysConsistent(t *testing.T) {
 	if err := os.WriteFile(newPath, fb2, 0o644); err != nil {
 		t.Fatalf("write writable fixture: %v", err)
 	}
+	fileHash := sha256.Sum256(fb2)
 	mustExec(t, database, `
 		UPDATE assets SET
 			storage_path = 'Tolkien/The_Hobbit/a_1.fb2',
 			filename = 'a_1.fb2', extension = '.fb2', format = 'fb2',
-			original_sha256 = NULL, current_sha256 = NULL,
-			original_size = NULL, current_size = NULL
-		WHERE id = 'asset_1'
-	`)
+			original_sha256 = ?, current_sha256 = ?,
+			original_size = ?, current_size = ?
+		WHERE id = 1
+	`, fileHash[:], fileHash[:], len(fb2), len(fb2))
 
 	queue := workslot.New()
 	s := &Server{

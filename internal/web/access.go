@@ -29,11 +29,11 @@ func (s *Server) visibilityScope(r *http.Request) (db.VisibilityScope, error) {
 	return db.VisibilityScopeForUser(s.db.Read(r.Context()), UserID(r.Context()))
 }
 
-func requireAccess[T any](s *Server,
+func (s *Server) requireAccess(
 	w http.ResponseWriter,
 	r *http.Request,
-	resourceID T,
-	canAccess func(db.Queryer, db.VisibilityScope, T) (bool, error),
+	resourceID int64,
+	canAccess func(db.Queryer, db.VisibilityScope, int64) (bool, error),
 ) (db.VisibilityScope, bool) {
 	scope, err := s.visibilityScope(r)
 	if err != nil {
@@ -57,21 +57,35 @@ func requireAccess[T any](s *Server,
 }
 
 func (s *Server) requireBookAccess(w http.ResponseWriter, r *http.Request, bookID int64) (db.VisibilityScope, bool) {
-	return requireAccess(s, w, r, bookID, db.CanAccessBook)
+	return s.requireAccess(w, r, bookID, db.CanAccessBook)
 }
 
 func (s *Server) requireTrashedBookAccess(w http.ResponseWriter, r *http.Request, bookID int64) (db.VisibilityScope, bool) {
-	return requireAccess(s, w, r, bookID, db.CanAccessTrashedBook)
+	return s.requireAccess(w, r, bookID, db.CanAccessTrashedBook)
 }
 
-func (s *Server) requireAssetAccess(w http.ResponseWriter, r *http.Request, assetID string) (db.VisibilityScope, bool) {
-	return requireAccess(s, w, r, assetID, db.CanAccessAsset)
+func (s *Server) requireAssetAccess(w http.ResponseWriter, r *http.Request, assetID int64) (db.VisibilityScope, bool) {
+	return s.requireAccess(w, r, assetID, db.CanAccessAsset)
 }
 
-func pathBookID(w http.ResponseWriter, r *http.Request, name string) (int64, bool) {
+func pathID(w http.ResponseWriter, r *http.Request, name string) (int64, bool) {
 	id, err := strconv.ParseInt(r.PathValue(name), 10, 64)
 	if err != nil || id <= 0 {
 		http.NotFound(w, r)
+		return 0, false
+	}
+	return id, true
+}
+
+// queryID accepts an omitted filter and rejects malformed identifiers.
+func queryID(w http.ResponseWriter, r *http.Request, name string) (int64, bool) {
+	raw := r.URL.Query().Get(name)
+	if raw == "" {
+		return 0, true
+	}
+	id, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || id <= 0 {
+		http.Error(w, "Invalid "+name+" ID", http.StatusBadRequest)
 		return 0, false
 	}
 	return id, true

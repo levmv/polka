@@ -14,15 +14,15 @@ func TestListOPDSPublicationsReturnsOnlyLiveBooksWithAssets(t *testing.T) {
 
 	}
 
-	mustExec("INSERT INTO authors (id, name, sort_name) VALUES ('a1', 'Author One', 'Author One')")
+	mustExec("INSERT INTO authors (id, name, sort_name) VALUES (1, 'Author One', 'Author One')")
 	mustExec("INSERT INTO books (id, title, sort_title, description, tags, publisher, published_date, language, identifiers, updated_at) VALUES (1, 'B Title', 'B Title', 'Desc', 'one, two', 'Press', '2024-05-01', 'en', 'isbn:978-0-306-40615-7', 10)")
-	mustExec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES (1, 'a1', 0)")
-	mustExec("INSERT INTO assets (id, book_id, storage_path, filename, extension) VALUES ('asset1', 1, 'b.epub', 'b.epub', '.epub')")
+	mustExec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES (1, 1, 0)")
+	mustExec("INSERT INTO assets (id, book_id, storage_path, filename, extension, original_sha256, current_sha256) VALUES (1, 1, 'b.epub', 'b.epub', '.epub', randomblob(32), randomblob(32))")
 	mustExec("INSERT INTO books (id, title, sort_title, updated_at) VALUES (2, 'The A Book', 'A Book, The', 11)")
-	mustExec("INSERT INTO assets (id, book_id, storage_path, filename, extension) VALUES ('asset2', 2, 'a.epub', 'a.epub', '.epub')")
+	mustExec("INSERT INTO assets (id, book_id, storage_path, filename, extension, original_sha256, current_sha256) VALUES (2, 2, 'a.epub', 'a.epub', '.epub', randomblob(32), randomblob(32))")
 	mustExec("INSERT INTO books (id, title, sort_title) VALUES (158, 'No Asset', 'No Asset')")
 	mustExec("INSERT INTO books (id, title, sort_title, deleted_at) VALUES (122, 'Deleted', 'Deleted', 20)")
-	mustExec("INSERT INTO assets (id, book_id, storage_path, filename, extension) VALUES ('asset_deleted', 122, 'd.epub', 'd.epub', '.epub')")
+	mustExec("INSERT INTO assets (id, book_id, storage_path, filename, extension, original_sha256, current_sha256) VALUES (3, 122, 'd.epub', 'd.epub', '.epub', randomblob(32), randomblob(32))")
 
 	rows, err := ListOPDSPublications(database.Read(t.Context()), FullVisibilityScope(), 10, 0)
 	if err != nil {
@@ -78,9 +78,9 @@ func TestListRecentOPDSPublicationsIsNewestFirstWithinOneSecond(t *testing.T) {
 		INSERT INTO books (id, title, sort_title, added_at) VALUES
 			(101, 'Earlier', 'Earlier', 100),
 			(102, 'Later', 'Later', 100);
-		INSERT INTO assets (id, book_id, storage_path, filename, extension) VALUES
-			('a_earlier', 101, 'earlier.epub', 'earlier.epub', '.epub'),
-			('a_later', 102, 'later.epub', 'later.epub', '.epub');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, original_sha256, current_sha256) VALUES
+			(1, 101, 'earlier.epub', 'earlier.epub', '.epub', randomblob(32), randomblob(32)),
+			(2, 102, 'later.epub', 'later.epub', '.epub', randomblob(32), randomblob(32));
 	`)
 
 	first, err := ListRecentOPDSPublications(database.Read(t.Context()), FullVisibilityScope(), 1, 0)
@@ -109,9 +109,9 @@ func TestSearchOPDSPublicationsSupportsPerUserStatusFilters(t *testing.T) {
 		INSERT INTO books (id, title, sort_title) VALUES
 			(1, 'Alpha Needle', 'Alpha Needle'),
 			(2, 'Beta Needle', 'Beta Needle');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension) VALUES
-			('a1', 1, 'a.epub', 'a.epub', '.epub'),
-			('a2', 2, 'b.epub', 'b.epub', '.epub');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, original_sha256, current_sha256) VALUES
+			(1, 1, 'a.epub', 'a.epub', '.epub', randomblob(32), randomblob(32)),
+			(2, 2, 'b.epub', 'b.epub', '.epub', randomblob(32), randomblob(32));
 		INSERT INTO search (rowid, title) VALUES
 			(1, 'Alpha Needle'), (2, 'Beta Needle');
 	`)
@@ -140,8 +140,8 @@ func TestManualShelfOPDSPublicationsRespectContentScope(t *testing.T) {
 	for _, statement := range []string{
 		"INSERT INTO books (id, title, sort_title) VALUES (11, 'Allowed', 'Allowed')",
 		"INSERT INTO books (id, title, sort_title) VALUES (13, 'Outside', 'Outside')",
-		"INSERT INTO assets (id, book_id, storage_path, filename, extension) VALUES ('asset_allowed', 11, 'allowed.epub', 'allowed.epub', '.epub')",
-		"INSERT INTO assets (id, book_id, storage_path, filename, extension) VALUES ('asset_outside', 13, 'outside.epub', 'outside.epub', '.epub')",
+		"INSERT INTO assets (id, book_id, storage_path, filename, extension, original_sha256, current_sha256) VALUES (1, 11, 'allowed.epub', 'allowed.epub', '.epub', randomblob(32), randomblob(32))",
+		"INSERT INTO assets (id, book_id, storage_path, filename, extension, original_sha256, current_sha256) VALUES (2, 13, 'outside.epub', 'outside.epub', '.epub', randomblob(32), randomblob(32))",
 	} {
 		mustExec(t, database, statement)
 
@@ -166,7 +166,7 @@ func TestManualShelfOPDSPublicationsRespectContentScope(t *testing.T) {
 	if _, err := database.UpdateUserAccess(t.Context(), reader.ID, UserAccess{
 		Role:         RoleReader,
 		ContentScope: ContentScopeShelves,
-		ShelfIDs:     []string{accessShelf.ID},
+		ShelfIDs:     []int64{accessShelf.ID},
 	}); err != nil {
 		t.Fatalf("scope reader: %v", err)
 	}

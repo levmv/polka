@@ -7,13 +7,10 @@ package relayout
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
 
-	"github.com/levmv/polka/internal/bookmeta"
 	"github.com/levmv/polka/internal/db"
 	"github.com/levmv/polka/internal/storage"
 )
@@ -45,12 +42,8 @@ func Book(ctx context.Context, database *db.DB, root storage.Root, bookID int64)
 	}
 
 	primaryAuthor, primaryAuthorSort, err := db.PrimaryAuthor(database.Read(ctx), bookID)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	if err != nil {
 		return 0, fmt.Errorf("primary author: %w", err)
-	}
-	if primaryAuthor == "" {
-		primaryAuthor = "Unknown Author"
-		primaryAuthorSort = bookmeta.AuthorSort("Unknown Author")
 	}
 
 	assets, err := db.AssetsByBookIDs(database.Read(ctx), []int64{bookID})
@@ -92,14 +85,14 @@ func Book(ctx context.Context, database *db.DB, root storage.Root, bookID int64)
 		}
 		if err := storage.Move(root, a.StoragePath, newPath); err != nil {
 			// File still at the old path the DB points at — no divergence.
-			return moved, fmt.Errorf("move %s: %w", a.ID, err)
+			return moved, fmt.Errorf("move %d: %w", a.ID, err)
 		}
 		if _, err := database.Write(ctx).Exec("UPDATE assets SET storage_path = ?, filename = ? WHERE id = ?", newPath, filepath.Base(newPath), a.ID); err != nil {
 			// Compensate: move the file back so the DB (old path) stays valid.
 			if backErr := storage.Move(root, newPath, a.StoragePath); backErr != nil {
-				return moved, fmt.Errorf("update storage_path %s failed and rollback move also failed (DB/disk diverged, run `polka repair`): update=%v rollback=%w", a.ID, err, backErr)
+				return moved, fmt.Errorf("update storage_path %d failed and rollback move also failed (DB/disk diverged, run `polka repair`): update=%v rollback=%w", a.ID, err, backErr)
 			}
-			return moved, fmt.Errorf("update storage_path %s: %w", a.ID, err)
+			return moved, fmt.Errorf("update storage_path %d: %w", a.ID, err)
 		}
 		moved++
 	}

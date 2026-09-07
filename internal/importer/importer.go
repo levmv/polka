@@ -11,7 +11,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -25,7 +24,6 @@ import (
 	"github.com/levmv/polka/internal/covers"
 	"github.com/levmv/polka/internal/db"
 	"github.com/levmv/polka/internal/format"
-	"github.com/levmv/polka/internal/id"
 	"github.com/levmv/polka/internal/pdfcover"
 	"github.com/levmv/polka/internal/storage"
 )
@@ -56,7 +54,7 @@ type Result struct {
 	BookID      int64
 	BookTrashed bool
 	Title       string
-	AssetID     string
+	AssetID     int64
 	Authors     []string
 	Format      string
 	StoragePath string
@@ -105,7 +103,7 @@ func (o Options) coverRoot(booksRoot storage.Root) storage.Root {
 type Plan struct {
 	Source       Source
 	Size         int64
-	SourceSHA256 string
+	SourceSHA256 []byte
 	Format       format.Format
 	Extension    string
 	CanRead      bool
@@ -121,7 +119,7 @@ type Plan struct {
 type sourceInfo struct {
 	Source
 	Size         int64
-	SourceSHA256 string
+	SourceSHA256 []byte
 	Format       format.Format
 	Extension    string
 	CanRead      bool
@@ -137,12 +135,6 @@ type storedBook struct {
 	primaryAuthor     string
 	primaryAuthorSort string
 	authors           []string
-}
-
-type preparedAsset struct {
-	result Result
-	staged storage.StagedFile
-	info   sourceInfo
 }
 
 type stagedResult struct {
@@ -219,7 +211,7 @@ func Import(ctx context.Context, database *db.DB, root storage.Root, src Source,
 	if existing, found, err := findDuplicate(database.Read(ctx), info.SourceSHA256); err != nil {
 		return Result{}, err
 	} else if found {
-		if err := restoreDuplicateAsset(ctx, database.Write(ctx), root, info, &existing); err != nil {
+		if err := restoreDuplicateAsset(ctx, database, root, info, existing); err != nil {
 			return Result{}, err
 		}
 		return existing, nil
@@ -244,6 +236,8 @@ func ImportGroup(ctx context.Context, database *db.DB, root storage.Root, source
 
 	infos := make([]sourceInfo, 0, len(sources))
 	results := make([]Result, len(sources))
+	sourceHashes := make(map[[sha256.Size]byte]int, len(sources))
+	repeatedSources := make(map[int]int)
 	var newIndexes []int
 	var existingBookID int64
 
@@ -256,11 +250,17 @@ func ImportGroup(ctx context.Context, database *db.DB, root storage.Root, source
 			return GroupResult{}, err
 		}
 		infos = append(infos, info)
+		hash := [sha256.Size]byte(info.SourceSHA256)
+		if first, found := sourceHashes[hash]; found {
+			repeatedSources[i] = first
+			continue
+		}
+		sourceHashes[hash] = i
 
 		if existing, found, err := findDuplicate(database.Read(ctx), info.SourceSHA256); err != nil {
 			return GroupResult{}, err
 		} else if found {
-			if err := restoreDuplicateAsset(ctx, database.Write(ctx), root, info, &existing); err != nil {
+			if err := restoreDuplicateAsset(ctx, database, root, info, existing); err != nil {
 				return GroupResult{}, err
 			}
 			results[i] = existing
@@ -274,20 +274,29 @@ func ImportGroup(ctx context.Context, database *db.DB, root storage.Root, source
 		}
 	}
 
-	if len(newIndexes) == 0 {
-		return GroupResult{BookID: existingBookID, Results: results}, nil
+	var group GroupResult
+	var err error
+	switch {
+	case len(newIndexes) == 0:
+		group = GroupResult{BookID: existingBookID, Results: results}
+	case existingBookID != 0:
+		group, err = addAssetsToExistingBook(ctx, database, root, existingBookID, infos, newIndexes, results, opts)
+	default:
+		plan, resolveErr := resolveFromInfo(ctx, infos[newIndexes[0]], renderer)
+		if resolveErr != nil {
+			return GroupResult{}, resolveErr
+		}
+		plan.AddedAt = addedAtForSources(plan.Metadata.CalibreTimestamp, infos, time.Now())
+		group, err = persistNewBookGroup(ctx, database, root, plan, infos, newIndexes, results, opts)
 	}
-
-	if existingBookID != 0 {
-		return addAssetsToExistingBook(ctx, database, root, existingBookID, infos, newIndexes, results, opts)
-	}
-
-	plan, err := resolveFromInfo(ctx, infos[newIndexes[0]], renderer)
 	if err != nil {
 		return GroupResult{}, err
 	}
-	plan.AddedAt = addedAtForSources(plan.Metadata.CalibreTimestamp, infos, time.Now())
-	return persistNewBookGroup(ctx, database, root, plan, infos, newIndexes, results, opts)
+	for i, first := range repeatedSources {
+		group.Results[i] = group.Results[first]
+		group.Results[i].Status = StatusDuplicate
+	}
+	return group, nil
 }
 
 // Resolve reads metadata and cover data from a source without writing the DB or
@@ -328,15 +337,14 @@ func Persist(ctx context.Context, database *db.DB, root storage.Root, plan Plan,
 	if existing, found, err := findDuplicate(database.Read(ctx), plan.SourceSHA256); err != nil {
 		return Result{}, err
 	} else if found {
-		if err := restoreDuplicateAsset(ctx, database.Write(ctx), root, planSourceInfo(plan), &existing); err != nil {
+		if err := restoreDuplicateAsset(ctx, database, root, planSourceInfo(plan), existing); err != nil {
 			return Result{}, err
 		}
 		existing.Warnings = plan.Warnings
 		return existing, nil
 	}
 
-	assetID := id.New(id.Asset)
-	assetStage, err := stageSource(ctx, root, assetID, planSourceInfo(plan))
+	assetStage, err := stageSource(ctx, root, planSourceInfo(plan))
 	if err != nil {
 		return Result{}, err
 	}
@@ -350,9 +358,7 @@ func Persist(ctx context.Context, database *db.DB, root storage.Root, plan Plan,
 	var coverStage storage.StagedFile
 	hasCover := false
 	if len(plan.CoverBytes) > 0 {
-		// A rolled-back INSERT may reuse its book ID. The asset identity lets
-		// repair associate a crash-left cover only with a committed import.
-		coverStage, err = stageBytes(ctx, coverRoot, covers.AssetTempLabel(assetID), plan.CoverBytes)
+		coverStage, err = stageBytes(ctx, coverRoot, covers.ImportTempLabel(plan.SourceSHA256), plan.CoverBytes)
 		if err != nil {
 			return Result{}, err
 		}
@@ -369,11 +375,11 @@ func Persist(ctx context.Context, database *db.DB, root storage.Root, plan Plan,
 	if existing, found, err := findDuplicate(tx, plan.SourceSHA256); err != nil {
 		return Result{}, err
 	} else if found {
-		if err := restoreDuplicateAsset(ctx, tx, root, planSourceInfo(plan), &existing); err != nil {
+		if err := tx.Rollback(); err != nil {
 			return Result{}, err
 		}
-		if err := tx.Commit(); err != nil {
-			return Result{}, fmt.Errorf("commit duplicate restore: %w", err)
+		if err := restoreDuplicateAsset(ctx, database, root, planSourceInfo(plan), existing); err != nil {
+			return Result{}, err
 		}
 		existing.Warnings = plan.Warnings
 		return existing, nil
@@ -385,7 +391,7 @@ func Persist(ctx context.Context, database *db.DB, root storage.Root, plan Plan,
 	}
 	bookID := book.id
 
-	asset, err := insertAsset(tx, root, opts.PathTemplate, book, planSourceInfo(plan), assetID, true, assetStage)
+	result, err := insertAsset(tx, root, opts.PathTemplate, book, planSourceInfo(plan), true)
 	if err != nil {
 		return Result{}, err
 	}
@@ -399,7 +405,7 @@ func Persist(ctx context.Context, database *db.DB, root storage.Root, plan Plan,
 	}
 	committed = true
 
-	finals := []stagedResult{{staged: asset.staged, relPath: asset.result.StoragePath}}
+	finals := []stagedResult{{staged: assetStage, relPath: result.StoragePath}}
 	if err := finalizeStaged(root, finals); err != nil {
 		return Result{}, fmt.Errorf("place files: %w", err)
 	}
@@ -410,7 +416,6 @@ func Persist(ctx context.Context, database *db.DB, root storage.Root, plan Plan,
 		}
 	}
 
-	result := asset.result
 	result.Title = book.title
 	result.Authors = book.authors
 	result.Warnings = plan.Warnings
@@ -431,8 +436,7 @@ func persistNewBookGroup(ctx context.Context, database *db.DB, root storage.Root
 	var coverStage storage.StagedFile
 	hasCover := false
 	if len(plan.CoverBytes) > 0 {
-		coverAssetID := assets[newIndexes[0]].result.AssetID
-		coverStage, err = stageBytes(ctx, coverRoot, covers.AssetTempLabel(coverAssetID), plan.CoverBytes)
+		coverStage, err = stageBytes(ctx, coverRoot, covers.ImportTempLabel(infos[newIndexes[0]].SourceSHA256), plan.CoverBytes)
 		if err != nil {
 			return GroupResult{}, err
 		}
@@ -446,18 +450,8 @@ func persistNewBookGroup(ctx context.Context, database *db.DB, root storage.Root
 	}
 	defer tx.Rollback()
 
-	newIndexes, existingBookID, err := refreshGroupDuplicates(ctx, tx, root, infos, newIndexes, results, 0)
-	if err != nil {
+	if err := checkNewGroupSources(tx, infos, newIndexes); err != nil {
 		return GroupResult{}, err
-	}
-	if existingBookID != 0 {
-		return GroupResult{}, fmt.Errorf("group source became duplicate of existing book %d during import; retry import", existingBookID)
-	}
-	if len(newIndexes) == 0 {
-		if err := tx.Commit(); err != nil {
-			return GroupResult{}, fmt.Errorf("commit duplicate restore: %w", err)
-		}
-		return GroupResult{BookID: existingBookID, Results: results}, nil
 	}
 
 	book, err := insertBook(tx, plan)
@@ -469,12 +463,12 @@ func persistNewBookGroup(ctx context.Context, database *db.DB, root storage.Root
 	finals := make([]stagedResult, 0, len(newIndexes)+1)
 	for _, idx := range newIndexes {
 		asset := assets[idx]
-		asset, err := insertAsset(tx, root, opts.PathTemplate, book, asset.info, asset.result.AssetID, len(finals) == 0, asset.staged)
+		saved, err := insertAsset(tx, root, opts.PathTemplate, book, infos[idx], len(finals) == 0)
 		if err != nil {
 			return GroupResult{}, err
 		}
-		results[idx] = asset.result
-		finals = append(finals, stagedResult{staged: asset.staged, relPath: asset.result.StoragePath})
+		results[idx] = saved
+		finals = append(finals, stagedResult{staged: asset, relPath: saved.StoragePath})
 	}
 	if err := db.EnsureReadablePrimaryAsset(tx, bookID); err != nil {
 		return GroupResult{}, fmt.Errorf("choose primary asset: %w", err)
@@ -524,18 +518,8 @@ func addAssetsToExistingBook(ctx context.Context, database *db.DB, root storage.
 	}
 	defer tx.Rollback()
 
-	newIndexes, existingBookID, err := refreshGroupDuplicates(ctx, tx, root, infos, newIndexes, results, bookID)
-	if err != nil {
+	if err := checkNewGroupSources(tx, infos, newIndexes); err != nil {
 		return GroupResult{}, err
-	}
-	if existingBookID != 0 && existingBookID != bookID {
-		return GroupResult{}, fmt.Errorf("group source became duplicate of another book %d during import; retry import", existingBookID)
-	}
-	if len(newIndexes) == 0 {
-		if err := tx.Commit(); err != nil {
-			return GroupResult{}, fmt.Errorf("commit duplicate restore: %w", err)
-		}
-		return GroupResult{BookID: bookID, Results: results}, nil
 	}
 
 	var title, sortTitle, series, seriesIndex string
@@ -562,12 +546,8 @@ func addAssetsToExistingBook(ctx context.Context, database *db.DB, root storage.
 		}
 	}
 	primaryAuthor, primaryAuthorSort, err := db.PrimaryAuthor(tx, bookID)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	if err != nil {
 		return GroupResult{}, fmt.Errorf("primary author: %w", err)
-	}
-	if primaryAuthor == "" {
-		primaryAuthor = "Unknown Author"
-		primaryAuthorSort = bookmeta.AuthorSort("Unknown Author")
 	}
 
 	hasPrimary, err := bookHasPrimaryAsset(tx, bookID)
@@ -587,12 +567,12 @@ func addAssetsToExistingBook(ctx context.Context, database *db.DB, root storage.
 	for _, idx := range newIndexes {
 		asset := assets[idx]
 		makePrimary := !hasPrimary && len(finals) == 0
-		asset, err := insertAsset(tx, root, opts.PathTemplate, book, asset.info, asset.result.AssetID, makePrimary, asset.staged)
+		saved, err := insertAsset(tx, root, opts.PathTemplate, book, infos[idx], makePrimary)
 		if err != nil {
 			return GroupResult{}, err
 		}
-		results[idx] = asset.result
-		finals = append(finals, stagedResult{staged: asset.staged, relPath: asset.result.StoragePath})
+		results[idx] = saved
+		finals = append(finals, stagedResult{staged: asset, relPath: saved.StoragePath})
 	}
 	if err := db.EnsureReadablePrimaryAsset(tx, bookID); err != nil {
 		return GroupResult{}, fmt.Errorf("choose primary asset: %w", err)
@@ -634,17 +614,14 @@ func insertBook(tx *db.Tx, plan Plan) (storedBook, error) {
 		addedAt = sql.NullInt64{Int64: plan.AddedAt.Unix(), Valid: true}
 	}
 
-	result, err := tx.Exec(`
+	var bookID int64
+	err := tx.QueryRow(`
 			INSERT INTO books (title, sort_title, series, series_index, description, tags, cover_version, publisher, published_date, language, identifiers, added_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, unixepoch()))
-		`, plan.Title, plan.SortTitle, meta.Series, meta.SeriesIndex, meta.Description, strings.Join(meta.Tags, ", "), coverVersion, meta.Publisher, meta.Date, language, meta.Identifier, addedAt)
+			RETURNING id
+		`, plan.Title, plan.SortTitle, meta.Series, meta.SeriesIndex, meta.Description, strings.Join(meta.Tags, ", "), coverVersion, meta.Publisher, meta.Date, language, meta.Identifier, addedAt).Scan(&bookID)
 	if err != nil {
 		return storedBook{}, fmt.Errorf("insert book: %w", err)
-	}
-
-	bookID, err := result.LastInsertId()
-	if err != nil {
-		return storedBook{}, fmt.Errorf("read inserted book ID: %w", err)
 	}
 
 	// Resolve authors before laying out the file: reusing an existing author
@@ -670,7 +647,19 @@ func insertBook(tx *db.Tx, plan Plan) (storedBook, error) {
 	}, nil
 }
 
-func insertAsset(tx *db.Tx, root storage.Root, template string, book storedBook, info sourceInfo, assetID string, isPrimary bool, staged storage.StagedFile) (preparedAsset, error) {
+func insertAsset(tx *db.Tx, root storage.Root, template string, book storedBook, info sourceInfo, isPrimary bool) (Result, error) {
+	// The path includes the assigned ID. Both the insert and path update must
+	// commit together so readers never see the provisional empty path.
+	var assetID int64
+	err := tx.QueryRow(`
+		INSERT INTO assets (book_id, storage_path, filename, original_filename, extension, format, is_primary, can_read, original_sha256, current_sha256, original_size, current_size)
+		VALUES (?, '', '', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		RETURNING id
+	`, book.id, filepath.Base(info.sourceName()), info.Extension, format.FormatKey(info.Format), isPrimary, info.CanRead, info.SourceSHA256, info.SourceSHA256, info.Size, info.Size).Scan(&assetID)
+	if err != nil {
+		return Result{}, fmt.Errorf("insert asset: %w", err)
+	}
+
 	cPath, err := storage.BookPath(template, storage.BookPathData{
 		Title:            book.title,
 		SortTitle:        book.sortTitle,
@@ -684,52 +673,35 @@ func insertAsset(tx *db.Tx, root storage.Root, template string, book storedBook,
 		OriginalFilename: filepath.Base(info.sourceName()),
 	})
 	if err != nil {
-		return preparedAsset{}, err
+		return Result{}, err
 	}
-	var existingAsset string
+	var existingAsset int64
 	err = tx.QueryRow("SELECT id FROM assets WHERE storage_path = ? LIMIT 1", cPath).Scan(&existingAsset)
 	if err == nil {
-		return preparedAsset{}, fmt.Errorf("storage path collision: %s already belongs to %s", cPath, existingAsset)
+		return Result{}, fmt.Errorf("storage path collision: %s already belongs to %d", cPath, existingAsset)
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
-		return preparedAsset{}, fmt.Errorf("check storage path collision: %w", err)
+		return Result{}, fmt.Errorf("check storage path collision: %w", err)
 	}
 	dstPath, err := root.Resolve(cPath)
 	if err != nil {
-		return preparedAsset{}, err
+		return Result{}, err
 	}
 	if _, err := os.Stat(dstPath); err == nil {
-		return preparedAsset{}, fmt.Errorf("storage path collision: destination exists on disk: %s", cPath)
+		return Result{}, fmt.Errorf("storage path collision: destination exists on disk: %s", cPath)
 	} else if !os.IsNotExist(err) {
-		return preparedAsset{}, fmt.Errorf("check storage destination: %w", err)
+		return Result{}, fmt.Errorf("check storage destination: %w", err)
 	}
-	primary := 0
-	if isPrimary {
-		primary = 1
-	}
-
-	canRead := 0
-	if info.CanRead {
-		canRead = 1
-	}
-	_, err = tx.Exec(`
-			INSERT INTO assets (id, book_id, storage_path, filename, original_filename, extension, format, is_primary, can_read, original_sha256, current_sha256, original_size, current_size)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-			`, assetID, book.id, cPath, filepath.Base(cPath), filepath.Base(info.sourceName()), info.Extension, format.FormatKey(info.Format), primary, canRead, info.SourceSHA256, info.SourceSHA256, info.Size, info.Size)
-	if err != nil {
-		return preparedAsset{}, fmt.Errorf("insert asset: %w", err)
+	if _, err := tx.Exec("UPDATE assets SET storage_path = ?, filename = ? WHERE id = ?", cPath, filepath.Base(cPath), assetID); err != nil {
+		return Result{}, fmt.Errorf("set asset path: %w", err)
 	}
 
-	return preparedAsset{
-		result: Result{
-			Status:      StatusImported,
-			BookID:      book.id,
-			AssetID:     assetID,
-			Format:      format.FormatLabel(info.Format),
-			StoragePath: cPath,
-		},
-		staged: staged,
-		info:   info,
+	return Result{
+		Status:      StatusImported,
+		BookID:      book.id,
+		AssetID:     assetID,
+		Format:      format.FormatLabel(info.Format),
+		StoragePath: cPath,
 	}, nil
 }
 
@@ -763,8 +735,8 @@ func planSourceInfo(plan Plan) sourceInfo {
 	}
 }
 
-func stageAssets(ctx context.Context, root storage.Root, infos []sourceInfo, indexes []int) (map[int]preparedAsset, []storage.StagedFile, error) {
-	assets := make(map[int]preparedAsset, len(indexes))
+func stageAssets(ctx context.Context, root storage.Root, infos []sourceInfo, indexes []int) (map[int]storage.StagedFile, []storage.StagedFile, error) {
+	assets := make(map[int]storage.StagedFile, len(indexes))
 	staged := make([]storage.StagedFile, 0, len(indexes))
 	cleanup := true
 	defer func() {
@@ -779,28 +751,19 @@ func stageAssets(ctx context.Context, root storage.Root, infos []sourceInfo, ind
 		if err := importContextError(ctx); err != nil {
 			return nil, nil, err
 		}
-		assetID := id.New(id.Asset)
-		stagedFile, err := stageSource(ctx, root, assetID, infos[idx])
+		stagedFile, err := stageSource(ctx, root, infos[idx])
 		if err != nil {
 			return nil, nil, err
 		}
 		staged = append(staged, stagedFile)
-		assets[idx] = preparedAsset{
-			result: Result{
-				Status:  StatusImported,
-				AssetID: assetID,
-				Format:  format.FormatLabel(infos[idx].Format),
-			},
-			staged: stagedFile,
-			info:   infos[idx],
-		}
+		assets[idx] = stagedFile
 	}
 
 	cleanup = false
 	return assets, staged, nil
 }
 
-func stageSource(ctx context.Context, root storage.Root, assetID string, info sourceInfo) (storage.StagedFile, error) {
+func stageSource(ctx context.Context, root storage.Root, info sourceInfo) (storage.StagedFile, error) {
 	f, err := os.Open(info.Path)
 	if err != nil {
 		return storage.StagedFile{}, fmt.Errorf("open file: %w", err)
@@ -811,11 +774,11 @@ func stageSource(ctx context.Context, root storage.Root, assetID string, info so
 	// must fail rather than keep staging indefinitely. Hash the bytes we copy.
 	source := &io.LimitedReader{R: contextReader{ctx: ctx, r: f}, N: info.Size + 1}
 	h := sha256.New()
-	staged, err := storage.Stage(root, fmt.Sprintf("[%s]%s", assetID, info.Extension), io.TeeReader(source, h))
+	staged, err := storage.Stage(root, fmt.Sprintf("%x%s", info.SourceSHA256, info.Extension), io.TeeReader(source, h))
 	if err != nil {
 		return storage.StagedFile{}, err
 	}
-	if source.N != 1 || hex.EncodeToString(h.Sum(nil)) != info.SourceSHA256 {
+	if source.N != 1 || !bytes.Equal(h.Sum(nil), info.SourceSHA256) {
 		staged.Cleanup()
 		return storage.StagedFile{}, fmt.Errorf("source changed during import: %s; retry when the file is stable", info.sourceName())
 	}
@@ -826,43 +789,21 @@ func stageBytes(ctx context.Context, root storage.Root, label string, data []byt
 	return storage.Stage(root, label, contextReader{ctx: ctx, r: bytes.NewReader(data)})
 }
 
-func refreshGroupDuplicates(ctx context.Context, tx *db.Tx, root storage.Root, infos []sourceInfo, indexes []int, results []Result, targetBookID int64) ([]int, int64, error) {
-	refreshed := make([]int, 0, len(indexes))
-	existingBookID := int64(0)
+func checkNewGroupSources(tx *db.Tx, infos []sourceInfo, indexes []int) error {
 	for _, idx := range indexes {
-		if err := importContextError(ctx); err != nil {
-			return nil, 0, err
-		}
 		existing, found, err := findDuplicate(tx, infos[idx].SourceSHA256)
 		if err != nil {
-			return nil, 0, err
+			return err
 		}
-		if !found {
-			refreshed = append(refreshed, idx)
-			continue
-		}
-		if err := restoreDuplicateAsset(ctx, tx, root, infos[idx], &existing); err != nil {
-			return nil, 0, err
-		}
-		results[idx] = existing
-		if targetBookID != 0 {
-			if existing.BookID != 0 && existing.BookID != targetBookID {
-				return nil, existing.BookID, nil
-			}
-			continue
-		}
-		if existingBookID == 0 {
-			existingBookID = existing.BookID
-		} else if existing.BookID != 0 && existing.BookID != existingBookID {
-			return nil, 0, fmt.Errorf("group sources already belong to different books (%d and %d)", existingBookID, existing.BookID)
+		if found {
+			return fmt.Errorf("group source %s became duplicate of book %d during import; retry import", infos[idx].sourceName(), existing.BookID)
 		}
 	}
-	return refreshed, existingBookID, nil
+	return nil
 }
 
-// finalizeStaged deliberately has no context: once SQLite commits paths that
-// name staged files, cancellation must not interrupt the short DB/filesystem
-// convergence step.
+// finalizeStaged finishes placement after commit even if the caller canceled.
+// A placement error leaves the remaining staged files available to repair.
 func finalizeStaged(root storage.Root, files []stagedResult) error {
 	for _, f := range files {
 		if err := f.staged.Finalize(root, f.relPath); err != nil {
@@ -1016,9 +957,6 @@ func resolveFromInfo(ctx context.Context, info sourceInfo, renderer *pdfcover.Re
 	}
 
 	authors := meta.Authors
-	if len(authors) == 0 {
-		authors = []bookmeta.AuthorMeta{{Name: "Unknown Author"}}
-	}
 
 	for i := range authors {
 		if authors[i].SortName == "" {
@@ -1179,7 +1117,7 @@ func fingerprintSource(ctx context.Context, src Source) (sourceInfo, error) {
 	if _, err := io.Copy(h, contextSource); err != nil {
 		return sourceInfo{}, fmt.Errorf("hash file: %w", err)
 	}
-	fileHash := hex.EncodeToString(h.Sum(nil))
+	fileHash := h.Sum(nil)
 
 	kind := format.DetectFormat(src.sourceName(), contextSource, stat.Size())
 	if err := importContextError(ctx); err != nil {
@@ -1198,8 +1136,9 @@ func fingerprintSource(ctx context.Context, src Source) (sourceInfo, error) {
 	}, nil
 }
 
-func findDuplicate(database db.Queryer, fileHash string) (Result, bool, error) {
-	var assetID, storagePath string
+func findDuplicate(database db.Queryer, fileHash []byte) (Result, bool, error) {
+	var assetID int64
+	var storagePath string
 	var bookID int64
 	var bookTrashed bool
 	err := database.QueryRow(`
@@ -1218,41 +1157,40 @@ func findDuplicate(database db.Queryer, fileHash string) (Result, bool, error) {
 	return Result{}, false, fmt.Errorf("check duplicate: %w", err)
 }
 
-func restoreDuplicateAsset(ctx context.Context, database db.Execer, root storage.Root, info sourceInfo, existing *Result) error {
+func restoreDuplicateAsset(ctx context.Context, database *db.DB, root storage.Root, info sourceInfo, existing Result) error {
 	if existing.StoragePath == "" {
 		return nil
 	}
 	absPath, err := root.Resolve(existing.StoragePath)
 	if err != nil {
-		return fmt.Errorf("resolve duplicate asset %s (%s): %w", existing.AssetID, existing.StoragePath, err)
+		return fmt.Errorf("resolve duplicate asset %d (%s): %w", existing.AssetID, existing.StoragePath, err)
 	}
 	if stat, err := os.Stat(absPath); err == nil {
 		if stat.IsDir() {
-			return fmt.Errorf("restore duplicate asset %s: destination is a directory: %s", existing.AssetID, existing.StoragePath)
+			return fmt.Errorf("restore duplicate asset %d: destination is a directory: %s", existing.AssetID, existing.StoragePath)
 		}
 		return nil
 	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("stat duplicate asset %s (%s): %w", existing.AssetID, existing.StoragePath, err)
+		return fmt.Errorf("stat duplicate asset %d (%s): %w", existing.AssetID, existing.StoragePath, err)
 	}
 
-	staged, err := stageSource(ctx, root, existing.AssetID, info)
+	staged, err := stageSource(ctx, root, info)
 	if err != nil {
 		return fmt.Errorf("stage duplicate source: %w", err)
 	}
-	if err := db.RecordAssetRestore(database, existing.AssetID, info.SourceSHA256, info.Size); err != nil {
+	if err := db.RecordAssetRestore(database.Write(ctx), existing.AssetID, info.SourceSHA256, info.Size); err != nil {
 		staged.Cleanup()
-		return fmt.Errorf("update restored duplicate asset %s: %w", existing.AssetID, err)
+		return fmt.Errorf("update restored duplicate asset %d: %w", existing.AssetID, err)
 	}
 	// Keep the complete staged copy for repair if placement fails after the DB update.
 	if err := staged.Finalize(root, existing.StoragePath); err != nil {
-		return fmt.Errorf("restore duplicate asset %s (%s): %w", existing.AssetID, existing.StoragePath, err)
+		return fmt.Errorf("restore duplicate asset %d (%s): %w", existing.AssetID, existing.StoragePath, err)
 	}
 	return nil
 }
 
-// IsSupportedBook is the folder import extension filter. Some accepted
-// extensions are currently opaque imports: they store the original file with
-// filename/Unknown Author fallback metadata until a real parser exists.
+// IsSupportedBook is the folder import extension filter. Formats without a
+// metadata reader use the filename as their title.
 func IsSupportedBook(name string) bool {
 	return format.KnownBookExtension(format.BookExtension(name))
 }

@@ -8,7 +8,7 @@ func TestAuthorSort(t *testing.T) {
 		want string
 	}{
 		{"Isaac Asimov", "Asimov, Isaac"},
-		{"Unknown Author", "Unknown Author"},
+		{"Unknown Author", "Author, Unknown"},
 		{"Михаил Булгаков", "Булгаков, Михаил"},
 		{"Cher", "Cher"},
 		{"Asimov, Isaac", "Asimov, Isaac"},

@@ -33,7 +33,7 @@ func StagingRelPath(label string) string {
 
 func WritebackTempRelPath(finalRelPath, label string) string {
 	dir := path.Dir(finalRelPath)
-	base := ".writeback-" + safeTempLabel(label) + "-" + randHex(8) + ".tmp"
+	base := ".writeback-" + label + "-" + randHex(8) + ".tmp"
 	if dir == "." {
 		return base
 	}
@@ -111,28 +111,9 @@ func randHex(n int) string {
 	return hex.EncodeToString(b)
 }
 
-func safeTempLabel(s string) string {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return "asset"
-	}
-	var b strings.Builder
-	for _, r := range s {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
-			b.WriteRune(r)
-		case r == '-', r == '_':
-			b.WriteRune(r)
-		default:
-			b.WriteByte('_')
-		}
-	}
-	return b.String()
-}
-
 // Stage copies one source into the root-level staging area before the caller
-// opens its database transaction. Label should include stable identity such as
-// asset_id, so repair can recover a committed DB row if final rename fails.
+// opens its database transaction. Import labels carry the original source hash
+// so repair can recover a committed row if final placement fails.
 func Stage(root Root, label string, src io.Reader) (StagedFile, error) {
 	if label == "" {
 		return StagedFile{}, fmt.Errorf("empty staging label")

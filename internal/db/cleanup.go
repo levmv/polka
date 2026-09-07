@@ -4,7 +4,7 @@ import "fmt"
 
 type CleanupCounts struct {
 	MissingCover  int
-	UnknownAuthor int
+	MissingAuthor int
 	NoTags        int
 	NoDescription int
 }
@@ -15,7 +15,7 @@ func GetCleanupCounts(queryer Queryer, scope VisibilityScope) (CleanupCounts, er
 	if counts.MissingCover, err = countBooksByCondition(queryer, scope, noCoverCondition); err != nil {
 		return counts, err
 	}
-	if counts.UnknownAuthor, err = countBooksByCondition(queryer, scope, noAuthorCondition); err != nil {
+	if counts.MissingAuthor, err = countBooksByCondition(queryer, scope, noAuthorCondition); err != nil {
 		return counts, err
 	}
 	if counts.NoTags, err = countBooksByCondition(queryer, scope, noTagsCondition); err != nil {

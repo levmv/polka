@@ -8,7 +8,7 @@ import (
 
 func TestSeriesQueries(t *testing.T) {
 	database := newTestDB(t)
-	mustExec(t, database, "INSERT INTO authors (id, name, sort_name) VALUES ('a1', 'Isaac Asimov', 'Asimov, Isaac')")
+	mustExec(t, database, "INSERT INTO authors (id, name, sort_name) VALUES (1, 'Isaac Asimov', 'Asimov, Isaac')")
 	mustExec(t, database, "INSERT INTO books (id, title, sort_title, series, series_index) VALUES (2, 'Second', 'Second', 'Foundation', 2)")
 	mustExec(t, database, "INSERT INTO books (id, title, sort_title, series, series_index) VALUES (1, 'First', 'First', 'Foundation', 1)")
 	mustExec(t, database, "INSERT INTO books (id, title, sort_title, series, series_index) VALUES (3, 'No Number', 'No Number', 'Foundation', NULL)")
@@ -17,7 +17,7 @@ func TestSeriesQueries(t *testing.T) {
 	mustExec(t, database, "INSERT INTO books (id, title, sort_title, series, series_index) VALUES (4, 'Other', 'Other', 'Other Series', 1)")
 	mustExec(t, database, "INSERT INTO books (id, title, sort_title, series, series_index, deleted_at) VALUES (5, 'Deleted', 'Deleted', 'Foundation', 3, unixepoch())")
 	for _, id := range []int64{1, 2, 3, 4, 5, 6, 7} {
-		mustExec(t, database, "INSERT INTO book_authors (book_id, author_id, author_order) VALUES (?, 'a1', 0)", id)
+		mustExec(t, database, "INSERT INTO book_authors (book_id, author_id, author_order) VALUES (?, 1, 0)", id)
 	}
 
 	series, err := ListSeriesCountsPage(database.Read(t.Context()), FullVisibilityScope(), "", "", 10)
@@ -77,7 +77,7 @@ func TestSeriesCardsPage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create other user: %v", err)
 	}
-	mustExec(t, database, "INSERT INTO authors (id, name, sort_name) VALUES ('a1', 'Isaac Asimov', 'Asimov, Isaac')")
+	mustExec(t, database, "INSERT INTO authors (id, name, sort_name) VALUES (1, 'Isaac Asimov', 'Asimov, Isaac')")
 	// Volume 1 has no cover, so volume 2 represents the series.
 	mustExec(t, database, "INSERT INTO books (id, title, sort_title, series, series_index, cover_version) VALUES (1, 'First', 'First', 'Foundation', 1, 0)")
 	mustExec(t, database, "INSERT INTO books (id, title, sort_title, series, series_index, cover_version) VALUES (2, 'Second', 'Second', 'Foundation', 2, 3)")
@@ -87,7 +87,7 @@ func TestSeriesCardsPage(t *testing.T) {
 	mustExec(t, database, "INSERT INTO books (id, title, sort_title, series, series_index, cover_version) VALUES (5, 'Only', 'Only', 'Other Series', 1, 0)")
 
 	for _, id := range []int64{1, 2, 3, 4} {
-		mustExec(t, database, "INSERT INTO book_authors (book_id, author_id, author_order) VALUES (?, 'a1', 0)", id)
+		mustExec(t, database, "INSERT INTO book_authors (book_id, author_id, author_order) VALUES (?, 1, 0)", id)
 	}
 
 	ctx := context.Background()
@@ -129,7 +129,7 @@ func TestSeriesCardsPage(t *testing.T) {
 			t.Fatalf("add %d to shelf: %v", bookID, err)
 		}
 	}
-	if _, err := database.UpdateUserAccess(t.Context(), scoped.ID, UserAccess{Role: RoleReader, ContentScope: ContentScopeShelves, ShelfIDs: []string{shelf.ID}}); err != nil {
+	if _, err := database.UpdateUserAccess(t.Context(), scoped.ID, UserAccess{Role: RoleReader, ContentScope: ContentScopeShelves, ShelfIDs: []int64{shelf.ID}}); err != nil {
 		t.Fatalf("scope user: %v", err)
 	}
 	if _, err := database.SetReadingStatus(ctx, scoped.ID, 3, ReadingStatusFinished, ReadingStatusSourceManual); err != nil {

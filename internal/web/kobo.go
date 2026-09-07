@@ -226,7 +226,6 @@ func (s *Server) handleKoboCover(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	r.SetPathValue("id", strconv.FormatInt(publication.BookID, 10))
 	height, _ := strconv.Atoi(r.PathValue("height"))
 	query := r.URL.Query()
 	if height > 0 && height <= 500 {
@@ -235,7 +234,7 @@ func (s *Server) handleKoboCover(w http.ResponseWriter, r *http.Request) {
 		query.Set("variant", "display")
 	}
 	r.URL.RawQuery = query.Encode()
-	s.handleCover(w, r)
+	s.serveCover(w, r, publication.BookID)
 }
 
 func (s *Server) handleKoboDownload(w http.ResponseWriter, r *http.Request) {
@@ -247,7 +246,6 @@ func (s *Server) handleKoboDownload(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	r.SetPathValue("id", publication.AssetID)
 	switch format.FormatFromKey(publication.Format) {
 	case format.FormatKEPUB:
 		s.handleDownload(w, r)
@@ -262,8 +260,11 @@ func (s *Server) handleKoboDownload(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) requireKoboPublication(w http.ResponseWriter, r *http.Request) (*db.KoboPublication, bool) {
 	connectionID := koboConnectionID(r.Context())
-	assetID := r.PathValue("id")
-	if connectionID == "" || assetID == "" {
+	assetID, validID := pathID(w, r, "id")
+	if !validID {
+		return nil, false
+	}
+	if connectionID == 0 {
 		http.NotFound(w, r)
 		return nil, false
 	}

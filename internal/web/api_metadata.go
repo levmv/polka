@@ -30,7 +30,7 @@ type MetadataCandidateDTO struct {
 }
 
 func (s *Server) handleAPIMetadataCandidates(w http.ResponseWriter, r *http.Request) {
-	bookID, validID := pathBookID(w, r, "id")
+	bookID, validID := pathID(w, r, "id")
 	if !validID {
 		return
 	}

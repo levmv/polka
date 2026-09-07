@@ -3,7 +3,6 @@ package web
 import (
 	"errors"
 	"net/http"
-	"strings"
 
 	"github.com/levmv/polka/internal/db"
 )
@@ -18,7 +17,7 @@ type readingStatusRequest struct {
 }
 
 type readingStatusUndoRequest struct {
-	EventID string `json:"event_id"`
+	EventID int64 `json:"event_id"`
 }
 
 func readingStatusDTO(state db.ReadingStatusState) ReadingStatusDTO {
@@ -26,7 +25,7 @@ func readingStatusDTO(state db.ReadingStatusState) ReadingStatusDTO {
 }
 
 func (s *Server) handleAPIReadingStatusSave(w http.ResponseWriter, r *http.Request) {
-	bookID, validID := pathBookID(w, r, "id")
+	bookID, validID := pathID(w, r, "id")
 	if !validID {
 		return
 	}
@@ -45,7 +44,7 @@ func (s *Server) handleAPIReadingStatusSave(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *Server) handleAPIReadingStatusUndo(w http.ResponseWriter, r *http.Request) {
-	bookID, validID := pathBookID(w, r, "id")
+	bookID, validID := pathID(w, r, "id")
 	if !validID {
 		return
 	}
@@ -56,8 +55,8 @@ func (s *Server) handleAPIReadingStatusUndo(w http.ResponseWriter, r *http.Reque
 	if !readJSON(w, r, &req) {
 		return
 	}
-	if strings.TrimSpace(req.EventID) == "" {
-		http.Error(w, "Missing event_id", http.StatusBadRequest)
+	if req.EventID <= 0 {
+		http.Error(w, "Invalid event_id", http.StatusBadRequest)
 		return
 	}
 	change, err := s.db.UndoAutomaticReadingStatus(r.Context(), UserID(r.Context()), bookID, req.EventID)

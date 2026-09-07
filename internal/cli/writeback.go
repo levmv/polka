@@ -21,7 +21,7 @@ func runLibraryWriteback(parent context.Context, dataDir string, args []string) 
 	}
 	bookIDs := make([]int64, 0, fs.NArg())
 	for _, raw := range fs.Args() {
-		bookID, err := parseBookID(raw)
+		bookID, err := parseID(raw, "book")
 		if err != nil {
 			return err
 		}
@@ -73,7 +73,7 @@ func runLibraryWriteback(parent context.Context, dataDir string, args []string) 
 	}
 	for _, result := range summary.Results {
 		if result.Status == writeback.StatusFailed {
-			fmt.Fprintf(os.Stderr, "Failed %s (%s): %s\n", result.AssetID, result.StoragePath, result.Error)
+			fmt.Fprintf(os.Stderr, "Failed %d (%s): %s\n", result.AssetID, result.StoragePath, result.Error)
 		}
 	}
 	fmt.Printf("Metadata write-back: %d written, %d unchanged, %d skipped, %d failed.\n",

@@ -20,8 +20,8 @@ func TestReadingStatusLifecycleHistoryAndIsolation(t *testing.T) {
 	}
 	mustExec(t, database, `
 		INSERT INTO books (id, title, sort_title) VALUES (1, 'Book', 'Book');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, koreader_hash)
-		VALUES ('a1', 1, 'book.epub', 'book.epub', '.epub', 'hash1');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, koreader_hash, original_sha256, current_sha256)
+		VALUES (1, 1, 'book.epub', 'book.epub', '.epub', 'hash1', randomblob(32), randomblob(32));
 	`)
 
 	state, err := GetReadingStatus(database.Read(t.Context()), alice.ID, 1)
@@ -29,21 +29,21 @@ func TestReadingStatusLifecycleHistoryAndIsolation(t *testing.T) {
 		t.Fatalf("default status = %+v, err %v", state, err)
 	}
 
-	_, opened, err := database.TouchReaderStateAndAdvanceStatus(context.Background(), alice.ID, "a1", ReadingStatusSourceWebReader)
+	_, opened, err := database.TouchReaderStateAndAdvanceStatus(context.Background(), alice.ID, 1, ReadingStatusSourceWebReader)
 	if err != nil || !opened.Changed || opened.State.Status != ReadingStatusReading {
 		t.Fatalf("opened status = %+v, err %v", opened, err)
 	}
 	_, again, err := database.SaveReaderStateAndAdvanceStatus(
-		context.Background(), alice.ID, "a1", 0.5, EmptyReaderLocator(), ReadingStatusSourceWebReader,
+		context.Background(), alice.ID, 1, 0.5, EmptyReaderLocator(), ReadingStatusSourceWebReader,
 	)
 	if err != nil || again.Changed || again.State.Status != ReadingStatusReading {
 		t.Fatalf("repeated reading update = %+v, err %v", again, err)
 	}
 
 	_, finished, err := database.SaveReaderStateAndAdvanceStatus(
-		context.Background(), alice.ID, "a1", ReaderFinishedProgress, EmptyReaderLocator(), ReadingStatusSourceWebReader,
+		context.Background(), alice.ID, 1, ReaderFinishedProgress, EmptyReaderLocator(), ReadingStatusSourceWebReader,
 	)
-	if err != nil || !finished.Changed || finished.State.Status != ReadingStatusFinished || finished.EventID == "" {
+	if err != nil || !finished.Changed || finished.State.Status != ReadingStatusFinished || finished.EventID == 0 {
 		t.Fatalf("finished status = %+v, err %v", finished, err)
 	}
 	restored, err := database.UndoAutomaticReadingStatus(context.Background(), alice.ID, 1, finished.EventID)
@@ -69,7 +69,7 @@ func TestReadingStatusLifecycleHistoryAndIsolation(t *testing.T) {
 		SELECT to_status, reverted_at
 		FROM user_book_reading_events
 		WHERE user_id = ? AND book_id = ?
-		ORDER BY seq ASC
+		ORDER BY id ASC
 	`, alice.ID, 1)
 	if err != nil {
 		t.Fatalf("query history: %v", err)
@@ -116,8 +116,8 @@ func TestAutomaticReadingStatusKeepsExplicitTerminalStates(t *testing.T) {
 	}
 	mustExec(t, database, `
 		INSERT INTO books (id, title, sort_title) VALUES (1, 'Book', 'Book');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, koreader_hash)
-		VALUES ('a1', 1, 'book.epub', 'book.epub', '.epub', 'known');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, koreader_hash, original_sha256, current_sha256)
+		VALUES (1, 1, 'book.epub', 'book.epub', '.epub', 'known', randomblob(32), randomblob(32));
 	`)
 
 	if _, err := database.SetReadingStatus(context.Background(), user.ID, 1, ReadingStatusDropped, ReadingStatusSourceManual); err != nil {

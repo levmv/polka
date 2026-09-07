@@ -102,7 +102,7 @@ Fields:
 
 Examples:
   polka storage template preview '%s'
-  polka storage template preview '{author_bucket}/{author_sort}/{series}/{series_index|Standalone} - {title} [{asset_id}]{dot_ext}'
+  polka storage template preview '{author_bucket}/{author_sort}/{series}/{series_index|Standalone} - {title} [a{asset_id}]{dot_ext}'
 `, storage.DefaultBookPathTemplate)
 }
 
@@ -227,7 +227,7 @@ type storageTemplatePlan struct {
 }
 
 type storageTemplateChange struct {
-	AssetID string
+	AssetID int64
 	OldPath string
 	NewPath string
 }
@@ -246,7 +246,7 @@ func buildStorageTemplatePlan(queryer db.Queryer, template string) (storageTempl
 	for _, a := range assets {
 		rel, err := storage.BookPath(template, assetBookPathData(a))
 		if err != nil {
-			plan.RenderErrors = append(plan.RenderErrors, fmt.Sprintf("%s: %v", a.ID, err))
+			plan.RenderErrors = append(plan.RenderErrors, fmt.Sprintf("%d: %v", a.ID, err))
 			continue
 		}
 		candidates = append(candidates, storage.BookPathCandidate{AssetID: a.ID, Path: rel})
@@ -276,7 +276,7 @@ func printStorageTemplatePlan(plan storageTemplatePlan) {
 				fmt.Printf("  ... %d more\n", len(plan.Changes)-i)
 				break
 			}
-			fmt.Printf("  - %s: %s -> %s\n", c.AssetID, c.OldPath, c.NewPath)
+			fmt.Printf("  - %d: %s -> %s\n", c.AssetID, c.OldPath, c.NewPath)
 		}
 	}
 
@@ -285,7 +285,7 @@ func printStorageTemplatePlan(plan storageTemplatePlan) {
 		fmt.Println("Path collisions:")
 		for _, c := range plan.Collisions {
 			fmt.Printf("  - %s\n", c.Path)
-			fmt.Printf("    assets: %s\n", strings.Join(c.AssetIDs, ", "))
+			fmt.Printf("    assets: %v\n", c.AssetIDs)
 		}
 	}
 
@@ -360,16 +360,16 @@ func applyStorageTemplateMoves(ctx context.Context, database *db.DB, root storag
 		}
 		oldPath, err := root.Resolve(c.OldPath)
 		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("%s: invalid source path %s: %v", c.AssetID, c.OldPath, err))
+			warnings = append(warnings, fmt.Sprintf("%d: invalid source path %s: %v", c.AssetID, c.OldPath, err))
 			continue
 		}
 		if _, err := os.Stat(oldPath); err != nil {
-			warnings = append(warnings, fmt.Sprintf("%s: source missing at %s", c.AssetID, c.OldPath))
+			warnings = append(warnings, fmt.Sprintf("%d: source missing at %s", c.AssetID, c.OldPath))
 			continue
 		}
-		stageRel := storage.StagingRelPath(fmt.Sprintf("[%s]-%s", c.AssetID, filepath.Base(c.OldPath)))
+		stageRel := storage.StagingRelPath(storage.AssetTag(c.AssetID) + "-" + filepath.Base(c.OldPath))
 		if err := storage.Move(root, c.OldPath, stageRel); err != nil {
-			warnings = append(warnings, fmt.Sprintf("%s: stage %s: %v", c.AssetID, c.OldPath, err))
+			warnings = append(warnings, fmt.Sprintf("%d: stage %s: %v", c.AssetID, c.OldPath, err))
 			continue
 		}
 		staged = append(staged, stagedChange{storageTemplateChange: c, StagedPath: stageRel})
@@ -381,17 +381,17 @@ func applyStorageTemplateMoves(ctx context.Context, database *db.DB, root storag
 		}
 		if err := storage.Move(root, c.StagedPath, c.NewPath); err != nil {
 			if backErr := storage.Move(root, c.StagedPath, c.OldPath); backErr != nil {
-				warnings = append(warnings, fmt.Sprintf("%s: move to %s failed (%v), rollback to %s also failed (%v); run `polka repair`", c.AssetID, c.NewPath, err, c.OldPath, backErr))
+				warnings = append(warnings, fmt.Sprintf("%d: move to %s failed (%v), rollback to %s also failed (%v); run `polka repair`", c.AssetID, c.NewPath, err, c.OldPath, backErr))
 			} else {
-				warnings = append(warnings, fmt.Sprintf("%s: move to %s failed: %v", c.AssetID, c.NewPath, err))
+				warnings = append(warnings, fmt.Sprintf("%d: move to %s failed: %v", c.AssetID, c.NewPath, err))
 			}
 			continue
 		}
 		if _, err := database.Write(ctx).Exec("UPDATE assets SET storage_path = ?, filename = ?, updated_at = unixepoch() WHERE id = ?", c.NewPath, filepath.Base(c.NewPath), c.AssetID); err != nil {
 			if backErr := storage.Move(root, c.NewPath, c.OldPath); backErr != nil {
-				warnings = append(warnings, fmt.Sprintf("%s: update DB failed (%v), rollback to %s also failed (%v); run `polka repair`", c.AssetID, err, c.OldPath, backErr))
+				warnings = append(warnings, fmt.Sprintf("%d: update DB failed (%v), rollback to %s also failed (%v); run `polka repair`", c.AssetID, err, c.OldPath, backErr))
 			} else {
-				warnings = append(warnings, fmt.Sprintf("%s: update DB failed: %v", c.AssetID, err))
+				warnings = append(warnings, fmt.Sprintf("%d: update DB failed: %v", c.AssetID, err))
 			}
 		}
 	}

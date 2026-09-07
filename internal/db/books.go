@@ -61,7 +61,7 @@ const (
 		ORDER BY ba.author_order ASC, ba.rowid ASC)), '') AS authors`
 
 	// subPrimaryAuthorName is a scalar subquery for the name of a book's primary
-	// (lowest author_order) author, for duplicate / unknown-author detection.
+	// (lowest author_order) author, for duplicate detection.
 	subPrimaryAuthorName = `(SELECT a.name FROM book_authors ba
 		JOIN authors a ON ba.author_id = a.id
 		WHERE ba.book_id = b.id
@@ -70,7 +70,7 @@ const (
 	noCoverCondition       = `b.cover_version <= 0`
 	noTagsCondition        = `b.tags IS NULL OR b.tags = ''`
 	noDescriptionCondition = `b.description IS NULL OR b.description = ''`
-	noAuthorCondition      = subPrimaryAuthorName + ` = 'Unknown Author'`
+	noAuthorCondition      = `NOT EXISTS (SELECT 1 FROM book_authors ba WHERE ba.book_id = b.id)`
 	noSeriesCondition      = `b.series IS NULL OR TRIM(b.series) = ''`
 )
 
@@ -247,7 +247,7 @@ func BookSequenceInList(queryer Queryer, scope VisibilityScope, userID int64, bo
 	)
 }
 
-func BookSequenceInManualShelf(queryer Queryer, scope VisibilityScope, bookID int64, shelfID string, sort BookSort, before, after int) (BookSequenceWindow, error) {
+func BookSequenceInManualShelf(queryer Queryer, scope VisibilityScope, bookID int64, shelfID int64, sort BookSort, before, after int) (BookSequenceWindow, error) {
 	withSQL, fromSQL, args := scope.joinVisibleBooks("shelf_books sb JOIN books b ON b.id = sb.book_id")
 	args = append(args, shelfID)
 	return queryBookSequenceWindow(
@@ -345,7 +345,7 @@ func ListBooks(queryer Queryer, scope VisibilityScope, userID int64, q string, s
 	return books, nil
 }
 
-func ListBooksInManualShelf(queryer Queryer, scope VisibilityScope, shelfID string, sort BookSort, limit, offset int) ([]BookSummaryRow, error) {
+func ListBooksInManualShelf(queryer Queryer, scope VisibilityScope, shelfID int64, sort BookSort, limit, offset int) ([]BookSummaryRow, error) {
 	withSQL, fromSQL, args := scope.joinVisibleBooks("shelf_books sb JOIN books b ON b.id = sb.book_id")
 	args = append(args, shelfID, limit, offset)
 	queryStr := fmt.Sprintf(`

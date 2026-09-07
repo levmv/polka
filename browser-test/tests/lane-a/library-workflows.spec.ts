@@ -87,7 +87,7 @@ test.describe('Library workflows', () => {
         const asset = book.assets.find((a: any) =>
           ['.epub', '.fb2', '.pdf'].includes(a.extension),
         );
-        const save = await fetch(`/api/reader/assets/${encodeURIComponent(asset.id)}/state`, {
+        const save = await fetch(`/api/reader/assets/${asset.id}/state`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -206,7 +206,7 @@ test.describe('Library workflows', () => {
     const layoutRow = settings.locator('.settings-row', { hasText: 'File layout' });
     await expect(layoutRow).toBeVisible();
     await expect(layoutRow.locator('input')).toHaveValue(
-        '{author_bucket}/{author_sort}/{title} [{asset_id}]{dot_ext}',
+        '{author_bucket}/{author_sort}/{title} [a{asset_id}]{dot_ext}',
     );
     await expect(layoutRow.locator('.settings-note')).toContainText('CLI');
 

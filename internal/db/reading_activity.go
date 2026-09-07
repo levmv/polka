@@ -29,7 +29,7 @@ type ReadingActivityResult struct {
 
 type readingSession struct {
 	ID               int64
-	AssetID          string
+	AssetID          int64
 	TimeZone         string
 	Segment          int64
 	SegmentStartedAt int64
@@ -62,7 +62,7 @@ func decodeReadingSourceID(id string) ([]byte, error) {
 
 // StartWebReadingSession starts or resumes the user's sole active web session.
 // Repeating a segment's start is idempotent, including after closure or takeover.
-func (db *DB) StartWebReadingSession(ctx context.Context, userID int64, assetID, sourceID string, segment int64, now time.Time) (ReadingActivityResult, error) {
+func (db *DB) StartWebReadingSession(ctx context.Context, userID, assetID int64, sourceID string, segment int64, now time.Time) (ReadingActivityResult, error) {
 	rawID, err := decodeReadingSourceID(sourceID)
 	if err != nil || segment < 0 {
 		return ReadingActivityResult{}, ErrInvalidReaderInput
@@ -140,7 +140,7 @@ func (s *readingSession) result(now int64) ReadingActivityResult {
 // CheckpointWebReadingSession records cumulative time within a visible segment.
 // Retries and reordered checkpoints cannot count time twice. Old segments are
 // ignored; if their final report was lost, unreported time remains uncounted.
-func (db *DB) CheckpointWebReadingSession(ctx context.Context, userID int64, assetID, sourceID string, checkpoint ReadingActivityCheckpoint, now time.Time) (ReadingActivityResult, error) {
+func (db *DB) CheckpointWebReadingSession(ctx context.Context, userID, assetID int64, sourceID string, checkpoint ReadingActivityCheckpoint, now time.Time) (ReadingActivityResult, error) {
 	rawID, err := decodeReadingSourceID(sourceID)
 	if err != nil || checkpoint.Segment < 0 || checkpoint.ElapsedMS < 0 ||
 		checkpoint.LastActivityMS < 0 || checkpoint.LastActivityMS > checkpoint.ElapsedMS {

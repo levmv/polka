@@ -9,8 +9,8 @@ import (
 )
 
 type KoboConnectionDTO struct {
-	ID         string `json:"id"`
-	ShelfID    string `json:"shelf_id"`
+	ID         int64  `json:"id"`
+	ShelfID    int64  `json:"shelf_id"`
 	ShelfName  string `json:"shelf_name"`
 	SetupURL   string `json:"setup_url"`
 	CreatedAt  int64  `json:"created_at"`
@@ -19,7 +19,7 @@ type KoboConnectionDTO struct {
 }
 
 type koboConnectionCreateRequest struct {
-	ShelfID string `json:"shelf_id"`
+	ShelfID int64 `json:"shelf_id"`
 }
 
 func koboConnectionDTO(r *http.Request, connection *db.KoboConnection) KoboConnectionDTO {
@@ -57,7 +57,7 @@ func (s *Server) handleAPIKoboConnectionCreate(w http.ResponseWriter, r *http.Re
 	if !readJSON(w, r, &req) {
 		return
 	}
-	if req.ShelfID == "" {
+	if req.ShelfID <= 0 {
 		http.Error(w, "Shelf is required", http.StatusBadRequest)
 		return
 	}

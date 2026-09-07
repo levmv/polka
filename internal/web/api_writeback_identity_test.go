@@ -33,11 +33,11 @@ func TestMergeEditedBookAutoWritebackUpdatesEveryFile(t *testing.T) {
 		t.Fatalf("merged writeback state = %+v, %v; want both files dirty", state, err)
 	}
 	runIdentityAutoWriteback(t, s, 2)
-	for _, assetID := range []string{a.AssetID, b.AssetID} {
+	for _, assetID := range []int64{a.AssetID, b.AssetID} {
 		data := readWritebackIdentityAsset(t, s, assetID)
 		meta, err := format.ExtractFB2MetadataFromXMLBytes(data)
 		if err != nil || meta.Publisher != "" {
-			t.Fatalf("asset %s metadata = %+v, %v; want survivor's empty publisher", assetID, meta, err)
+			t.Fatalf("asset %d metadata = %+v, %v; want survivor's empty publisher", assetID, meta, err)
 		}
 	}
 }
@@ -127,7 +127,7 @@ func writebackIdentityJSON(t *testing.T, s *Server, handler http.Handler, userID
 	}
 }
 
-func readWritebackIdentityAsset(t *testing.T, s *Server, assetID string) []byte {
+func readWritebackIdentityAsset(t *testing.T, s *Server, assetID int64) []byte {
 	t.Helper()
 	row, err := db.GetMetadataWritebackAsset(s.db.Read(t.Context()), assetID)
 	if err != nil {

@@ -131,7 +131,7 @@ func TestImportJSONSingleFile(t *testing.T) {
 		t.Fatalf("items = %d, want 1", len(report.Items))
 	}
 	item := report.Items[0]
-	if item.Status != "imported" || item.AssetID == "" || item.BookID == 0 {
+	if item.Status != "imported" || item.AssetID == 0 || item.BookID == 0 {
 		t.Fatalf("item status/ids = %+v", item)
 	}
 	if item.Title != "JSON Import" || item.Format != "epub" {

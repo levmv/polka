@@ -28,7 +28,7 @@ func TestBulkWritebackAdmissionStatus(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			database, dataDir := setupTestDB(t)
 			defer database.Close()
-			mustExec(t, database, "UPDATE assets SET format = 'epub' WHERE id = 'asset_1'")
+			mustExec(t, database, "UPDATE assets SET format = 'epub' WHERE id = 1")
 
 			background := newTaskGroup(context.Background())
 			defer background.Stop()
@@ -65,8 +65,8 @@ func TestBookWritebackDTOGating(t *testing.T) {
 	s := &Server{db: database, dataDir: dataDir}
 
 	mustExec(t, database, "INSERT INTO books (id, title, sort_title) VALUES (3,'Book','Book')")
-	mustExec(t, database, "INSERT INTO assets (id, book_id, storage_path, filename, extension, format) "+
-		"VALUES ('a1','3','B/Book [a1].epub','Book.epub','.epub','epub')")
+	mustExec(t, database, "INSERT INTO assets (id, book_id, storage_path, filename, extension, format, original_sha256, current_sha256) "+
+		"VALUES (2,3,'B/Book [a2].epub','Book.epub','.epub','epub', randomblob(32), randomblob(32))")
 
 	writebackDTO := func(bookID int64) BookWritebackDTO {
 		t.Helper()
@@ -112,8 +112,8 @@ func TestBookWritebackDTOGating(t *testing.T) {
 		t.Fatalf("SaveMode manual: %v", err)
 	}
 	mustExec(t, database, "INSERT INTO books (id, title, sort_title) VALUES (4,'Paper','Paper')")
-	mustExec(t, database, "INSERT INTO assets (id, book_id, storage_path, filename, extension, format) "+
-		"VALUES ('a2','4','P/Paper [a2].pdf','Paper.pdf','.pdf','pdf')")
+	mustExec(t, database, "INSERT INTO assets (id, book_id, storage_path, filename, extension, format, original_sha256, current_sha256) "+
+		"VALUES (3,4,'P/Paper [a3].pdf','Paper.pdf','.pdf','pdf', randomblob(32), randomblob(32))")
 	if wb := writebackDTO(4); wb.Available || wb.Dirty {
 		t.Fatalf("pdf-only admin = %+v; want neither available nor dirty", wb)
 	}

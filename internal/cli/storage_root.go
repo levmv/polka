@@ -94,7 +94,7 @@ func runStorageRootSet(parent context.Context, dataDir string, args []string) (r
 }
 
 type storageRootAsset struct {
-	ID   string
+	ID   int64
 	Path string
 }
 
@@ -148,18 +148,18 @@ func storageRootMissingFiles(ctx context.Context, root storage.Root, assets []st
 		}
 		abs, err := root.Resolve(asset.Path)
 		if err != nil {
-			missing = append(missing, fmt.Sprintf("%s: invalid path %s: %v", asset.ID, asset.Path, err))
+			missing = append(missing, fmt.Sprintf("%d: invalid path %s: %v", asset.ID, asset.Path, err))
 			continue
 		}
 		info, err := os.Stat(abs)
 		switch {
 		case err == nil && info.IsDir():
-			missing = append(missing, fmt.Sprintf("%s: %s is a directory", asset.ID, asset.Path))
+			missing = append(missing, fmt.Sprintf("%d: %s is a directory", asset.ID, asset.Path))
 		case err == nil:
 		case errors.Is(err, os.ErrNotExist):
-			missing = append(missing, fmt.Sprintf("%s: %s", asset.ID, asset.Path))
+			missing = append(missing, fmt.Sprintf("%d: %s", asset.ID, asset.Path))
 		default:
-			missing = append(missing, fmt.Sprintf("%s: %s: %v", asset.ID, asset.Path, err))
+			missing = append(missing, fmt.Sprintf("%d: %s: %v", asset.ID, asset.Path, err))
 		}
 	}
 	return missing, nil

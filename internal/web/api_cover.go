@@ -104,7 +104,7 @@ func (s *Server) storeCoverAndReturnBook(w http.ResponseWriter, r *http.Request,
 }
 
 func (s *Server) handleAPICoverUpload(w http.ResponseWriter, r *http.Request) {
-	bookID, validID := pathBookID(w, r, "id")
+	bookID, validID := pathID(w, r, "id")
 	if !validID {
 		return
 	}
@@ -138,7 +138,7 @@ func (s *Server) handleAPICoverUpload(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAPIGeneratedCoverPreview(w http.ResponseWriter, r *http.Request) {
-	bookID, validID := pathBookID(w, r, "id")
+	bookID, validID := pathID(w, r, "id")
 	if !validID {
 		return
 	}
@@ -170,7 +170,7 @@ func (s *Server) handleAPIGeneratedCoverPreview(w http.ResponseWriter, r *http.R
 }
 
 func (s *Server) handleAPICoverURL(w http.ResponseWriter, r *http.Request) {
-	bookID, validID := pathBookID(w, r, "id")
+	bookID, validID := pathID(w, r, "id")
 	if !validID {
 		return
 	}

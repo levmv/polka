@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/levmv/polka/internal/db"
@@ -35,7 +36,7 @@ func TestAPIShelvesManualAndQuery(t *testing.T) {
 		t.Fatalf("manual shelf = %+v", manual)
 	}
 
-	req = httptest.NewRequest("PUT", "/api/shelves/"+manual.ID+"/books/1", nil)
+	req = httptest.NewRequest("PUT", "/api/shelves/"+strconv.FormatInt(manual.ID, 10)+"/books/1", nil)
 	addSessionCookie(t, s, req, u.ID)
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -43,7 +44,7 @@ func TestAPIShelvesManualAndQuery(t *testing.T) {
 		t.Fatalf("add book status = %d, body: %s", w.Code, w.Body.String())
 	}
 
-	req = httptest.NewRequest("GET", "/api/books?shelf="+manual.ID, nil)
+	req = httptest.NewRequest("GET", "/api/books?shelf="+strconv.FormatInt(manual.ID, 10), nil)
 	addSessionCookie(t, s, req, u.ID)
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -86,7 +87,7 @@ func TestAPIShelvesManualAndQuery(t *testing.T) {
 		t.Fatalf("decode query shelf: %v", err)
 	}
 
-	req = httptest.NewRequest("GET", "/api/books?shelf="+query.ID, nil)
+	req = httptest.NewRequest("GET", "/api/books?shelf="+strconv.FormatInt(query.ID, 10), nil)
 	addSessionCookie(t, s, req, u.ID)
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -126,7 +127,7 @@ func TestAPIShelfUpdateQueryAndVisibility(t *testing.T) {
 	handler := testRoutes(t, s)
 
 	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, otherAdmin.ID, http.MethodPatch, "/api/shelves/"+queryShelf.ID, map[string]any{
+	handler.ServeHTTP(w, jsonRequest(t, s, otherAdmin.ID, http.MethodPatch, "/api/shelves/"+strconv.FormatInt(queryShelf.ID, 10), map[string]any{
 		"shared": false,
 	}))
 	if w.Code != http.StatusForbidden {
@@ -134,19 +135,19 @@ func TestAPIShelfUpdateQueryAndVisibility(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, otherAdmin.ID, http.MethodDelete, "/api/shelves/"+deleteShelf.ID, nil))
+	handler.ServeHTTP(w, jsonRequest(t, s, otherAdmin.ID, http.MethodDelete, "/api/shelves/"+strconv.FormatInt(deleteShelf.ID, 10), nil))
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("non-owner delete status = %d, want %d; body: %s", w.Code, http.StatusForbidden, w.Body.String())
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, admin.ID, http.MethodDelete, "/api/shelves/"+deleteShelf.ID, nil))
+	handler.ServeHTTP(w, jsonRequest(t, s, admin.ID, http.MethodDelete, "/api/shelves/"+strconv.FormatInt(deleteShelf.ID, 10), nil))
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("owner delete status = %d, want %d; body: %s", w.Code, http.StatusNoContent, w.Body.String())
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, admin.ID, http.MethodPatch, "/api/shelves/"+queryShelf.ID, map[string]any{
+	handler.ServeHTTP(w, jsonRequest(t, s, admin.ID, http.MethodPatch, "/api/shelves/"+strconv.FormatInt(queryShelf.ID, 10), map[string]any{
 		"name":   "Dune search",
 		"query":  "Dune",
 		"shared": false,
@@ -163,7 +164,7 @@ func TestAPIShelfUpdateQueryAndVisibility(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, admin.ID, http.MethodGet, "/api/books?shelf="+queryShelf.ID, nil))
+	handler.ServeHTTP(w, jsonRequest(t, s, admin.ID, http.MethodGet, "/api/books?shelf="+strconv.FormatInt(queryShelf.ID, 10), nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("updated query books status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
 	}
@@ -176,7 +177,7 @@ func TestAPIShelfUpdateQueryAndVisibility(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, reader.ID, http.MethodPatch, "/api/shelves/"+privateShelf.ID, map[string]any{
+	handler.ServeHTTP(w, jsonRequest(t, s, reader.ID, http.MethodPatch, "/api/shelves/"+strconv.FormatInt(privateShelf.ID, 10), map[string]any{
 		"name":   "Shared mine",
 		"shared": true,
 	}))
@@ -200,7 +201,7 @@ func TestReaderCannotMutateSharedShelfOrAddOutOfScopeBook(t *testing.T) {
 	if _, err := database.UpdateUserAccess(t.Context(), reader.ID, db.UserAccess{
 		Role:         db.RoleReader,
 		ContentScope: db.ContentScopeShelves,
-		ShelfIDs:     []string{scopeShelf.ID},
+		ShelfIDs:     []int64{scopeShelf.ID},
 	}); err != nil {
 		t.Fatalf("scope reader: %v", err)
 	}
@@ -218,11 +219,11 @@ func TestReaderCannotMutateSharedShelfOrAddOutOfScopeBook(t *testing.T) {
 		body   any
 		want   int
 	}{
-		{http.MethodPatch, "/api/shelves/" + scopeShelf.ID, map[string]string{"name": "Renamed"}, http.StatusForbidden},
-		{http.MethodDelete, "/api/shelves/" + scopeShelf.ID, nil, http.StatusForbidden},
-		{http.MethodPut, "/api/shelves/" + scopeShelf.ID + "/books/1", nil, http.StatusForbidden},
-		{http.MethodPut, "/api/shelves/" + privateShelf.ID + "/books/1", nil, http.StatusNoContent},
-		{http.MethodPut, "/api/shelves/" + privateShelf.ID + "/books/2", nil, http.StatusNotFound},
+		{http.MethodPatch, "/api/shelves/" + strconv.FormatInt(scopeShelf.ID, 10), map[string]string{"name": "Renamed"}, http.StatusForbidden},
+		{http.MethodDelete, "/api/shelves/" + strconv.FormatInt(scopeShelf.ID, 10), nil, http.StatusForbidden},
+		{http.MethodPut, "/api/shelves/" + strconv.FormatInt(scopeShelf.ID, 10) + "/books/1", nil, http.StatusForbidden},
+		{http.MethodPut, "/api/shelves/" + strconv.FormatInt(privateShelf.ID, 10) + "/books/1", nil, http.StatusNoContent},
+		{http.MethodPut, "/api/shelves/" + strconv.FormatInt(privateShelf.ID, 10) + "/books/2", nil, http.StatusNotFound},
 	} {
 		req := jsonRequest(t, s, reader.ID, tc.method, tc.path, tc.body)
 		w := httptest.NewRecorder()
@@ -289,7 +290,7 @@ func TestAPIShelvesSharedCreationAndScopedVisibility(t *testing.T) {
 	if _, err := database.UpdateUserAccess(t.Context(), reader.ID, db.UserAccess{
 		Role:         db.RoleReader,
 		ContentScope: db.ContentScopeShelves,
-		ShelfIDs:     []string{kids.ID},
+		ShelfIDs:     []int64{kids.ID},
 	}); err != nil {
 		t.Fatalf("scope reader: %v", err)
 	}
@@ -319,14 +320,14 @@ func TestAPIShelvesSharedCreationAndScopedVisibility(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, reader.ID, http.MethodGet, "/api/books?shelf="+other.ID, nil))
+	handler.ServeHTTP(w, jsonRequest(t, s, reader.ID, http.MethodGet, "/api/books?shelf="+strconv.FormatInt(other.ID, 10), nil))
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("unassigned shelf books status = %d, want %d; body: %s", w.Code, http.StatusNotFound, w.Body.String())
 	}
 }
 
-func shelfDTOIDs(shelves []ShelfDTO) []string {
-	ids := make([]string, 0, len(shelves))
+func shelfDTOIDs(shelves []ShelfDTO) []int64 {
+	ids := make([]int64, 0, len(shelves))
 	for _, shelf := range shelves {
 		ids = append(ids, shelf.ID)
 	}

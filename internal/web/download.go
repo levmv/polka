@@ -20,9 +20,8 @@ import (
 )
 
 func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
-	assetID := r.PathValue("id")
-	if assetID == "" {
-		http.Error(w, "Missing asset ID", http.StatusBadRequest)
+	assetID, validID := pathID(w, r, "id")
+	if !validID {
 		return
 	}
 	if _, ok := s.requireAssetAccess(w, r, assetID); !ok {
@@ -61,7 +60,7 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 	// should not re-read samples and open a redundant SQLite write transaction.
 	if asset.KOReaderHash == "" {
 		if hash, err := koreader.PartialMD5File(fullPath); err == nil {
-			_ = db.SetAssetKOReaderHash(s.db.Write(r.Context()), assetID, hash)
+			_ = s.db.CacheAssetKOReaderHash(r.Context(), assetID, asset.CurrentSHA256, hash)
 		}
 	}
 
@@ -69,9 +68,8 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDownloadAs(w http.ResponseWriter, r *http.Request) {
-	assetID := r.PathValue("id")
-	if assetID == "" {
-		http.Error(w, "Missing asset ID", http.StatusBadRequest)
+	assetID, validID := pathID(w, r, "id")
+	if !validID {
 		return
 	}
 	target := converter.NormalizeTarget(r.PathValue("target"))
@@ -186,7 +184,7 @@ type assetFileRow struct {
 	Extension     string
 	Format        format.Format
 	CanRead       bool
-	CurrentSHA256 string
+	CurrentSHA256 []byte
 	KOReaderHash  string
 	Title         string
 	SortTitle     string
@@ -200,13 +198,13 @@ type assetFileRow struct {
 	Tags          string
 }
 
-func (s *Server) assetFile(ctx context.Context, assetID string) (assetFileRow, error) {
+func (s *Server) assetFile(ctx context.Context, assetID int64) (assetFileRow, error) {
 	var a assetFileRow
 	var formatKey string
 	var canRead int
 	err := s.db.Read(ctx).QueryRow(`
 		SELECT a.storage_path, a.book_id, a.filename, a.extension, a.format, a.can_read,
-		       COALESCE(a.current_sha256, ''),
+		       a.current_sha256,
 		       COALESCE(a.koreader_hash, ''),
 		       b.title, b.sort_title, COALESCE(b.language, ''),
 		       COALESCE(b.description, ''), COALESCE(b.publisher, ''),

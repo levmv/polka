@@ -191,10 +191,10 @@ func (s *Server) handleOPDSShelves(w http.ResponseWriter, r *http.Request) {
 			summary = "Saved search"
 		}
 		entries = append(entries, opds.NavEntry{
-			ID:       "urn:polka:opds:shelf:" + shelf.ID,
+			ID:       "urn:polka:opds:shelf:" + strconv.FormatInt(shelf.ID, 10),
 			Title:    shelf.Name,
 			Summary:  summary,
-			Href:     absoluteURL(r, "/opds/shelves/"+shelf.ID, nil),
+			Href:     absoluteURL(r, "/opds/shelves/"+strconv.FormatInt(shelf.ID, 10), nil),
 			LinkType: opds.AcquisitionFeedType,
 		})
 	}
@@ -203,13 +203,17 @@ func (s *Server) handleOPDSShelves(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleOPDSShelf(w http.ResponseWriter, r *http.Request) {
+	shelfID, validID := pathID(w, r, "id")
+	if !validID {
+		return
+	}
 	queryer := s.db.Read(r.Context())
 	limit, offset, ok := parseOPDSPagination(w, r)
 	if !ok {
 		return
 	}
 	userID := UserID(r.Context())
-	shelf, err := db.GetShelfForUser(queryer, r.PathValue("id"), userID)
+	shelf, err := db.GetShelfForUser(queryer, shelfID, userID)
 	if errors.Is(err, db.ErrShelfNotFound) {
 		http.Error(w, "Shelf not found", http.StatusNotFound)
 		return
@@ -242,9 +246,9 @@ func (s *Server) handleOPDSShelf(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	path := "/opds/shelves/" + shelf.ID
+	path := "/opds/shelves/" + strconv.FormatInt(shelf.ID, 10)
 	s.writeOPDSPagedAcquisition(w, r, opdsAcquisitionPage{
-		ID:    "urn:polka:opds:shelf:" + shelf.ID,
+		ID:    "urn:polka:opds:shelf:" + strconv.FormatInt(shelf.ID, 10),
 		Title: shelf.Name,
 		Path:  path,
 	}, rows, total, limit, offset)
@@ -514,7 +518,7 @@ func opdsAssetLinks(r *http.Request, assets []db.AssetRow) []opds.Link {
 	for _, a := range assets {
 		links = append(links, opds.Link{
 			Rel:   opds.AcquisitionRel,
-			Href:  absoluteURL(r, "/download/"+url.PathEscape(a.ID), nil),
+			Href:  absoluteURL(r, "/download/"+strconv.FormatInt(a.ID, 10), nil),
 			Type:  format.MediaTypeForExtension(a.Extension),
 			Title: strings.TrimPrefix(strings.ToUpper(a.Extension), "."),
 		})
@@ -530,10 +534,10 @@ func opdsCoverLinks(r *http.Request, bookID int64, coverVersion int) []opds.Link
 	thumbQ := cloneValues(q)
 	thumbQ.Set("variant", "thumb")
 
-	escapedID := strconv.FormatInt(bookID, 10)
+	coverPath := "/covers/" + strconv.FormatInt(bookID, 10)
 	return []opds.Link{
-		{Rel: opds.ImageRel, Href: absoluteURL(r, "/covers/"+escapedID, q), Type: "image/jpeg"},
-		{Rel: opds.ThumbnailRel, Href: absoluteURL(r, "/covers/"+escapedID, thumbQ), Type: "image/jpeg"},
+		{Rel: opds.ImageRel, Href: absoluteURL(r, coverPath, q), Type: "image/jpeg"},
+		{Rel: opds.ThumbnailRel, Href: absoluteURL(r, coverPath, thumbQ), Type: "image/jpeg"},
 	}
 }
 

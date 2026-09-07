@@ -1,5 +1,5 @@
 import { deleteShelf, fetchCurrentUser, fetchShelves } from './api';
-import { readBookListContextFromLocation } from './book-list-context';
+import { parseShelfID, readBookListContextFromLocation } from './book-list-context';
 import { errorMessage } from './errors';
 import { icon } from './icons';
 import { createMenu, type ManagedMenu, type MenuItem } from './menu';
@@ -68,8 +68,8 @@ export function initSidebarShelves(): void {
     load();
 }
 
-function currentShelfID(): string {
-    return new URLSearchParams(window.location.search).get('shelf') || '';
+function currentShelfID(): number {
+    return parseShelfID(new URLSearchParams(window.location.search).get('shelf'));
 }
 
 export function syncSidebarShelfActive(): void {
@@ -81,8 +81,8 @@ export function syncSidebarShelfActive(): void {
 
     document.querySelectorAll<HTMLAnchorElement>('#shelf-nav .shelf-nav-item').forEach((item) => {
         const url = new URL(item.href, window.location.href);
-        const shelfID = url.searchParams.get('shelf') || '';
-        const active = currentShelf !== '' && shelfID === currentShelf;
+        const shelfID = parseShelfID(url.searchParams.get('shelf'));
+        const active = currentShelf !== 0 && shelfID === currentShelf;
         item.classList.toggle('active', active);
         activeShelf = activeShelf || active;
     });
@@ -90,12 +90,11 @@ export function syncSidebarShelfActive(): void {
     document.getElementById('nav-library')?.classList.toggle('active', isLibrary && !activeShelf);
 }
 
-function activeShelfID(path: string): string {
+function activeShelfID(path: string): number {
     if (path === '/' || path === '/index.html') return currentShelfID();
-    if (!path.startsWith('/book/')) return '';
+    if (!path.startsWith('/book/')) return 0;
 
-    const context = readBookListContextFromLocation();
-    return context?.source === 'library' ? context.shelf || '' : '';
+    return readBookListContextFromLocation()?.shelf ?? 0;
 }
 
 function renderShelves(
@@ -123,7 +122,7 @@ function renderShelfRow(
     li.className = 'shelf-nav-row';
 
     const a = document.createElement('a');
-    a.href = `/?shelf=${encodeURIComponent(shelf.id)}`;
+    a.href = `/?shelf=${shelf.id}`;
     a.className = 'nav-item shelf-nav-item';
 
     const marker = document.createElement('span');

@@ -1,18 +1,16 @@
 package db
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"slices"
 	"strings"
 	"time"
-
-	"github.com/levmv/polka/internal/id"
 )
 
 const KoboSyncPageLimit = 100
@@ -23,9 +21,9 @@ var (
 )
 
 type KoboConnection struct {
-	ID         string
+	ID         int64
 	UserID     int64
-	ShelfID    string
+	ShelfID    int64
 	ShelfName  string
 	Token      string
 	Revision   int64
@@ -38,7 +36,7 @@ type KoboConnection struct {
 // Kobo DTO mapper. Fingerprint is deliberately omitted from API output; it only
 // decides when the durable projection needs a new revision.
 type KoboPublication struct {
-	AssetID       string
+	AssetID       int64
 	BookID        int64
 	Format        string
 	Size          int64
@@ -64,28 +62,27 @@ type KoboChange struct {
 
 type koboCandidate struct {
 	KoboPublication
-	Fingerprint string
+	Fingerprint []byte
 }
 
 // ReplaceKoboConnection creates a fresh URL credential for one selected shelf.
 // Replacing instead of editing makes both revocation and a shelf change atomic:
 // the old token and its projection disappear in the same transaction.
-func (db *DB) ReplaceKoboConnection(ctx context.Context, userID int64, shelfID string) (*KoboConnection, error) {
+func (db *DB) ReplaceKoboConnection(ctx context.Context, userID, shelfID int64) (*KoboConnection, error) {
 	shelf, err := GetShelfForUser(db.Read(ctx), shelfID, userID)
 	if err != nil {
 		return nil, err
 	}
 	token := newDeviceToken()
-	connectionID := id.New(id.KoboConnection)
 
 	err = db.Transact(ctx, func(tx *Tx) error {
 		if _, err := tx.Exec("DELETE FROM kobo_connections WHERE user_id = ?", userID); err != nil {
 			return fmt.Errorf("replace kobo connection: %w", err)
 		}
 		if _, err := tx.Exec(`
-			INSERT INTO kobo_connections (id, user_id, shelf_id, token)
-			VALUES (?, ?, ?, ?)
-		`, connectionID, userID, shelf.ID, token); err != nil {
+			INSERT INTO kobo_connections (user_id, shelf_id, token)
+			VALUES (?, ?, ?)
+		`, userID, shelf.ID, token); err != nil {
 			return fmt.Errorf("insert kobo connection: %w", err)
 		}
 		return nil
@@ -172,7 +169,7 @@ func (db *DB) KoboConnectionByToken(ctx context.Context, token string) (*KoboCon
 // SyncKoboConnection reconciles the selected shelf and reads one stable revision
 // page in the same transaction. A retry with the same cursor therefore returns
 // the same logical page unless real source data changed in between.
-func (db *DB) SyncKoboConnection(ctx context.Context, connectionID string, after int64, limit int) ([]KoboChange, int64, bool, error) {
+func (db *DB) SyncKoboConnection(ctx context.Context, connectionID, after int64, limit int) ([]KoboChange, int64, bool, error) {
 	if after < 0 || limit < 1 || limit > KoboSyncPageLimit {
 		return nil, 0, false, ErrKoboInvalidCursor
 	}
@@ -201,7 +198,7 @@ func (db *DB) SyncKoboConnection(ctx context.Context, connectionID string, after
 	return changes, currentRevision, more, nil
 }
 
-func loadKoboSyncState(tx *Tx, connectionID string) (*KoboConnection, *Shelf, VisibilityScope, error) {
+func loadKoboSyncState(tx *Tx, connectionID int64) (*KoboConnection, *Shelf, VisibilityScope, error) {
 	var connection KoboConnection
 	var shelf Shelf
 	var kind, role, contentScope string
@@ -239,10 +236,10 @@ func loadKoboSyncState(tx *Tx, connectionID string) (*KoboConnection, *Shelf, Vi
 
 func reconcileKoboItems(tx *Tx, connection *KoboConnection, shelf *Shelf, scope VisibilityScope) (int64, error) {
 	type existingItem struct {
-		Fingerprint string
+		Fingerprint []byte
 		Present     bool
 	}
-	existing := make(map[string]existingItem)
+	existing := make(map[int64]existingItem)
 	rows, err := tx.Query(`
 		SELECT asset_id, fingerprint, present
 		FROM kobo_items
@@ -252,7 +249,8 @@ func reconcileKoboItems(tx *Tx, connection *KoboConnection, shelf *Shelf, scope 
 		return 0, fmt.Errorf("list current kobo items: %w", err)
 	}
 	for rows.Next() {
-		var assetID, fingerprint string
+		var assetID int64
+		var fingerprint []byte
 		var present bool
 		if err := rows.Scan(&assetID, &fingerprint, &present); err != nil {
 			rows.Close()
@@ -267,9 +265,6 @@ func reconcileKoboItems(tx *Tx, connection *KoboConnection, shelf *Shelf, scope 
 		return 0, fmt.Errorf("iterate current kobo items: %w", err)
 	}
 
-	// A repeat sync normally has one projection row per current candidate. That
-	// gives the candidate slice a free, accurate capacity hint and avoids its
-	// repeated growth. A brand-new connection still starts naturally at zero.
 	candidates, err := listKoboCandidates(tx, connection.UserID, shelf, scope, len(existing))
 	if err != nil {
 		return 0, err
@@ -278,12 +273,9 @@ func reconcileKoboItems(tx *Tx, connection *KoboConnection, shelf *Shelf, scope 
 	revision := connection.Revision
 	for _, candidate := range candidates {
 		old, found := existing[candidate.AssetID]
-		// Once a current candidate has consumed its previous projection row,
-		// anything left in existing is either an old tombstone or a removal.
-		// This keeps one map instead of duplicating every selected asset ID in a
-		// second desired set during each reconciliation.
+		// Rows left after processing all candidates are removals or tombstones.
 		delete(existing, candidate.AssetID)
-		if found && old.Present && old.Fingerprint == candidate.Fingerprint {
+		if found && old.Present && bytes.Equal(old.Fingerprint, candidate.Fingerprint) {
 			continue
 		}
 		revision++
@@ -306,7 +298,7 @@ func reconcileKoboItems(tx *Tx, connection *KoboConnection, shelf *Shelf, scope 
 		}
 	}
 
-	var removals []string
+	var removals []int64
 	for assetID, item := range existing {
 		if item.Present {
 			removals = append(removals, assetID)
@@ -435,11 +427,12 @@ func scanKoboCandidate(row rowScanner) (koboCandidate, error) {
 		return candidate, fmt.Errorf("encode kobo fingerprint: %w", err)
 	}
 	fingerprint := sha256.Sum256(fingerprintInput)
-	candidate.Fingerprint = hex.EncodeToString(fingerprint[:])
+	// Keep 128 bits for equality checks in the Kobo change feed.
+	candidate.Fingerprint = fingerprint[:16]
 	return candidate, nil
 }
 
-func listKoboChanges(tx *Tx, connectionID string, after int64, limit int) ([]KoboChange, bool, error) {
+func listKoboChanges(tx *Tx, connectionID, after int64, limit int) ([]KoboChange, bool, error) {
 	rows, err := tx.Query(`
 		SELECT ki.asset_id, ki.book_id, COALESCE(a.format, ''),
 		       COALESCE(a.current_size, a.original_size, 0),
@@ -501,7 +494,7 @@ func listKoboChanges(tx *Tx, connectionID string, after int64, limit int) ([]Kob
 // KoboPublicationForAsset verifies the last reconciled projection and live
 // bytes. HTTP handlers separately enforce the owner's current visibility scope;
 // shelf additions/removals become projection changes at the next library sync.
-func KoboPublicationForAsset(queryer Queryer, connectionID, assetID string) (*KoboPublication, error) {
+func KoboPublicationForAsset(queryer Queryer, connectionID, assetID int64) (*KoboPublication, error) {
 	row := queryer.QueryRow(`
 		SELECT ki.asset_id, ki.book_id, a.format,
 		       COALESCE(a.current_size, a.original_size, 0),

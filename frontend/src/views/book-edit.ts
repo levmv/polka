@@ -931,7 +931,7 @@ function renderEditForm(b: Book, uiID: string): string {
                                 <div class="form-group" data-edit-field="authors">
                                     <label class="form-label">Authors<span class="field-hint"> — semicolon separated</span></label>
                                     <div class="sort-input-wrap">
-                                        <input type="text" name="authors" value="${escapeHtml(formatAuthorsForEdit(b.authors_list))}" required class="form-input" title="Use ; between authors. Calibre-style & also works; use && for a literal &.">
+                                        <input type="text" name="authors" value="${escapeHtml(formatAuthorsForEdit(b.authors_list))}" class="form-input" title="Use ; between authors. Calibre-style & also works; use && for a literal &.">
                                         <button type="button" id="author-sort-reveal-${uiID}" class="sort-reveal" aria-expanded="false" aria-controls="author-sort-editor-${uiID}">Sort</button>
                                     </div>
                                 </div>
@@ -1184,24 +1184,16 @@ function flashSaved(uiID: string, onDone?: () => void): number {
     }, 2000);
 }
 
-function splitAuthors(s: string): string[] {
-    return parseAuthorList(s);
-}
-
-// maybeOfferAuthorConvergence runs after a per-book author edit saved. When the
-// edit was an unambiguous single rename (one name left the list, one arrived) and
-// the old name is still credited on other books, it offers to rename those too —
-// the opinionated "found N other books by «old», rename them to «new»?" path,
-// applied through the shared global-rename endpoint. Anything ambiguous (a
-// reorder, an add/remove, multiple changes) is left as a plain per-book edit.
+// After saving a single author rename, offer to apply it to other books that
+// credit the same name. Additions, removals, and ambiguous edits stay local.
 async function maybeOfferAuthorConvergence(
     b: Book,
     prevAuthors: string,
     nextAuthors: string,
     uiID: string = String(b.id),
 ) {
-    const oldTokens = splitAuthors(prevAuthors);
-    const newTokens = splitAuthors(nextAuthors);
+    const oldTokens = parseAuthorList(prevAuthors);
+    const newTokens = parseAuthorList(nextAuthors);
     const removed = oldTokens.filter(
         (a) => !newTokens.some((n) => n.toLowerCase() === a.toLowerCase()),
     );
@@ -1218,8 +1210,7 @@ async function maybeOfferAuthorConvergence(
     } catch {
         return; // a missing count just means no prompt — never block the edit
     }
-    // This book already moved to the new name, so a remaining count is "other
-    // books". Nothing left crediting the old name → nothing to converge.
+    // The saved book no longer credits oldName, so the count covers other books.
     if (!info || info.book_count < 1) return;
 
     const n = info.book_count;

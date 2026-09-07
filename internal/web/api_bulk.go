@@ -150,6 +150,7 @@ func (s *Server) handleAPIBulkEdit(w http.ResponseWriter, r *http.Request) {
 
 		mutation, err := relayout.MutateBooks(r.Context(), s.db, s.managedRoot(), func(tx *db.Tx) (relayout.Changed, error) {
 			pathIDs := make([]int64, 0, len(changedIDs))
+			authorsChanged := false
 			for _, id := range changedIDs {
 				p := plans[id]
 				if _, err := tx.Exec(`
@@ -163,12 +164,18 @@ func (s *Server) handleAPIBulkEdit(w http.ResponseWriter, r *http.Request) {
 				// Re-link authors before reindexing so the search index picks up
 				// the new author names in the same pass.
 				if p.authors != nil {
-					if err := replaceBookAuthors(r.Context(), tx, id, *p.authors); err != nil {
+					if err := replaceBookAuthors(tx, id, *p.authors); err != nil {
 						return relayout.Changed{}, fmt.Errorf("bulk authors %d: %w", id, err)
 					}
+					authorsChanged = true
 				}
 				if p.relayout {
 					pathIDs = append(pathIDs, id)
+				}
+			}
+			if authorsChanged {
+				if _, err := db.DeleteOrphanAuthors(tx); err != nil {
+					return relayout.Changed{}, err
 				}
 			}
 			return relayout.Changed{BumpMetadataRev: changedIDs, Relayout: pathIDs}, nil
@@ -295,7 +302,6 @@ func resolveBulkPlan(row db.BulkEditRow, curAuthors string, ops []bulkOperation,
 		case "tags":
 			newTags = bookmeta.ApplyTagMode(newTags, bookmeta.TagMode(op.Mode), op.Values)
 		case "authors":
-			// Only "set" (replace) — authors are required, so there is no clear.
 			newAuthors = bookmeta.FormatAuthorList(bookmeta.ParseAuthorList(op.Authors))
 		case "series":
 			switch op.Mode {

@@ -8,23 +8,27 @@ export interface BookListContext {
     source: 'library';
     q?: string;
     sort?: string;
-    shelf?: string;
+    shelf: number;
     offset?: number;
 }
 
 const CONTEXT_SOURCE_PARAM = 'from';
 
+export function parseShelfID(raw: string | null): number {
+    const id = Number(raw);
+    return Number.isSafeInteger(id) && id > 0 ? id : 0;
+}
+
 export function libraryBookListContext(
     query: string,
     sort: string,
-    shelf?: string,
+    shelf = 0,
     offset = 0,
 ): BookListContext {
-    const context: BookListContext = { source: 'library' };
+    const context: BookListContext = { source: 'library', shelf };
     const q = query.trim();
     if (q) context.q = q;
     if (sort) context.sort = sort;
-    if (shelf) context.shelf = shelf;
     if (offset > 0) context.offset = offset;
     return context;
 }
@@ -64,7 +68,7 @@ function writeContextParams(params: URLSearchParams, context: BookListContext): 
 function writeListParams(params: URLSearchParams, context: BookListContext): void {
     if (context.q) params.set('q', context.q);
     if (context.sort) params.set('sort', context.sort);
-    if (context.shelf) params.set('shelf', context.shelf);
+    if (context.shelf) params.set('shelf', String(context.shelf));
     if (context.offset) params.set('offset', String(context.offset));
 }
 
@@ -77,7 +81,7 @@ function readLibraryContextParams(params: URLSearchParams): BookListContext {
     return libraryBookListContext(
         params.get('q') || '',
         params.get('sort') || '',
-        params.get('shelf') || '',
+        parseShelfID(params.get('shelf')),
         parseLibraryOffset(params.get('offset')),
     );
 }

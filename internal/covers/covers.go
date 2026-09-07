@@ -10,6 +10,8 @@ package covers
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"image"
@@ -22,7 +24,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/levmv/polka/internal/id"
 	"github.com/levmv/polka/internal/imagecodec"
 	"github.com/levmv/polka/internal/storage"
 )
@@ -82,7 +83,7 @@ func OriginalPath(bookID int64) string {
 }
 
 // TempLabel lets repair identify an original awaiting final placement.
-// Import stages by source asset ID until its book ID has committed.
+// Import stages by source hash until its book ID has committed.
 func TempLabel(bookID int64) string {
 	return "book-" + strconv.FormatInt(bookID, 10) + "-cover"
 }
@@ -100,14 +101,18 @@ func ParseTempLabel(label string) (int64, bool) {
 	return bookID, err == nil && bookID > 0
 }
 
-// AssetTempLabel identifies an import's cover before its book ID is committed.
-func AssetTempLabel(assetID string) string {
-	return assetID + "-cover"
+// ImportTempLabel ties a staged cover to the imported source before IDs exist.
+func ImportTempLabel(sourceSHA256 []byte) string {
+	return hex.EncodeToString(sourceSHA256) + "-cover"
 }
 
-func ParseAssetTempLabel(label string) (string, bool) {
-	assetID, ok := strings.CutSuffix(label, "-cover")
-	return assetID, ok && strings.HasPrefix(assetID, string(id.Asset)) && len(assetID) > len(id.Asset)
+func ParseImportTempLabel(label string) ([]byte, bool) {
+	encoded, ok := strings.CutSuffix(label, "-cover")
+	if !ok {
+		return nil, false
+	}
+	sum, err := hex.DecodeString(encoded)
+	return sum, err == nil && len(sum) == sha256.Size
 }
 
 // CachePath deliberately does not include cover_version. cover_version is only

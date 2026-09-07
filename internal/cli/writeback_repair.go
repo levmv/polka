@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -21,7 +22,7 @@ type writebackRepairSummary struct {
 func writebackAttemptReports(attempts []db.MetadataWritebackAttemptRow) []string {
 	reports := make([]string, 0, len(attempts))
 	for _, attempt := range attempts {
-		reports = append(reports, fmt.Sprintf("%s: rev %d final=%s temp=%s", attempt.AssetID, attempt.MetadataRev, attempt.StoragePath, attempt.TempPath))
+		reports = append(reports, fmt.Sprintf("%d: rev %d final=%s temp=%s", attempt.AssetID, attempt.MetadataRev, attempt.StoragePath, attempt.TempPath))
 	}
 	return reports
 }
@@ -51,7 +52,7 @@ func repairMetadataWritebackAttempts(ctx context.Context, database *db.DB, root 
 			if cause := context.Cause(ctx); cause != nil {
 				return summary, cause
 			}
-			fmt.Printf("Failed to repair write-back attempt for %s: %v\n", attempt.AssetID, err)
+			fmt.Printf("Failed to repair write-back attempt for %d: %v\n", attempt.AssetID, err)
 			summary.Errors++
 			continue
 		}
@@ -141,7 +142,7 @@ func markWritebackAttemptSuccess(ctx context.Context, database *db.DB, attempt d
 	})
 }
 
-func pathMatchesWritebackAttempt(ctx context.Context, root storage.Root, relPath, wantHash string, wantSize int64) (bool, error) {
+func pathMatchesWritebackAttempt(ctx context.Context, root storage.Root, relPath string, wantHash []byte, wantSize int64) (bool, error) {
 	absPath, err := root.Resolve(relPath)
 	if err != nil {
 		return false, nil
@@ -163,7 +164,7 @@ func pathMatchesWritebackAttempt(ctx context.Context, root storage.Root, relPath
 	if err != nil {
 		return false, fmt.Errorf("hash %s: %w", relPath, err)
 	}
-	return gotSize == wantSize && gotHash == wantHash, nil
+	return gotSize == wantSize && bytes.Equal(gotHash, wantHash), nil
 }
 
 func removeWritebackAttemptTemp(root storage.Root, relPath string) error {

@@ -14,15 +14,15 @@ func seedTrashFixture(t *testing.T, d *DB) {
 	t.Helper()
 	stmts := []string{
 		`INSERT INTO users (id, username, password_hash, role) VALUES (1,'alice','x','admin')`,
-		`INSERT INTO authors (id, name, sort_name) VALUES ('a1','Frank Herbert','Herbert, Frank')`,
+		`INSERT INTO authors (id, name, sort_name) VALUES (1,'Frank Herbert','Herbert, Frank')`,
 		`INSERT INTO books (id, title, sort_title) VALUES (1,'Dune','Dune')`,
 		`INSERT INTO books (id, title, sort_title) VALUES (2,'Hyperion','Hyperion')`,
-		`INSERT INTO book_authors (book_id, author_id, author_order) VALUES (1,'a1',0)`,
+		`INSERT INTO book_authors (book_id, author_id, author_order) VALUES (1,1,0)`,
 		`INSERT INTO search (rowid, title, authors) VALUES (1,'Dune','Frank Herbert')`,
 		`INSERT INTO search (rowid, title, authors) VALUES (2,'Hyperion','')`,
-		`INSERT INTO assets (id, book_id, storage_path, filename, extension) VALUES ('as1',1,'H/Dune/as1.epub','as1.epub','.epub')`,
-		`INSERT INTO shelves (id, name, kind, owner_id, visibility) VALUES ('s1','Faves','manual',1,'shared')`,
-		`INSERT INTO shelf_books (shelf_id, book_id) VALUES ('s1',1)`,
+		`INSERT INTO assets (id, book_id, storage_path, filename, extension, original_sha256, current_sha256) VALUES (1,1,'H/Dune/as1.epub','as1.epub','.epub', randomblob(32), randomblob(32))`,
+		`INSERT INTO shelves (id, name, kind, owner_id, visibility) VALUES (1,'Faves','manual',1,'shared')`,
+		`INSERT INTO shelf_books (shelf_id, book_id) VALUES (1,1)`,
 	}
 	for _, q := range stmts {
 		mustExec(t, d, q)
@@ -55,7 +55,7 @@ func TestSoftDeleteHidesBookEverywhere(t *testing.T) {
 	if got := mustListBooks(t, d, "Dune"); len(got) != 0 {
 		t.Fatalf("after delete, search 'Dune' = %d, want 0", len(got))
 	}
-	shelf, err := ListBooksInManualShelf(d.Read(t.Context()), FullVisibilityScope(), "s1", SortRelevance, 50, 0)
+	shelf, err := ListBooksInManualShelf(d.Read(t.Context()), FullVisibilityScope(), 1, SortRelevance, 50, 0)
 	if err != nil {
 		t.Fatalf("list shelf: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestPurgeRemovesRowsAndRefusesLiveBook(t *testing.T) {
 	assertCount(t, d, 0, "SELECT count(*) FROM assets WHERE book_id=1")
 	assertCount(t, d, 0, "SELECT count(*) FROM search WHERE rowid=1")
 	assertCount(t, d, 0, "SELECT count(*) FROM shelf_books WHERE book_id=1")
-	assertCount(t, d, 0, "SELECT count(*) FROM authors WHERE id='a1'")
+	assertCount(t, d, 0, "SELECT count(*) FROM authors WHERE id=1")
 
 	if trashed, _ := ListTrashedBooks(d.Read(t.Context()), FullVisibilityScope()); len(trashed) != 0 {
 		t.Fatalf("after purge, trashed = %d, want 0", len(trashed))

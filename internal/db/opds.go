@@ -102,7 +102,7 @@ func ListRecentOPDSPublications(queryer Queryer, scope VisibilityScope, limit, o
 // shelf in its explicit shelf order. The caller owns shelf visibility; this
 // query independently intersects the books with the user's content scope so a
 // personal shelf can never widen a shelf-scoped reader's library.
-func ListManualShelfOPDSPublications(queryer Queryer, scope VisibilityScope, shelfID string, limit, offset int) ([]OPDSPublicationRow, error) {
+func ListManualShelfOPDSPublications(queryer Queryer, scope VisibilityScope, shelfID int64, limit, offset int) ([]OPDSPublicationRow, error) {
 	withSQL, fromSQL, args := scope.joinVisibleBooks("shelf_books sb JOIN books b ON b.id = sb.book_id")
 	args = append(args, shelfID, limit, offset)
 	rows, err := queryer.Query(fmt.Sprintf(`
@@ -122,7 +122,7 @@ func ListManualShelfOPDSPublications(queryer Queryer, scope VisibilityScope, she
 	return scanOPDSPublications(rows)
 }
 
-func CountManualShelfOPDSPublications(queryer Queryer, scope VisibilityScope, shelfID string) (int, error) {
+func CountManualShelfOPDSPublications(queryer Queryer, scope VisibilityScope, shelfID int64) (int, error) {
 	withSQL, fromSQL, args := scope.joinVisibleBooks("shelf_books sb JOIN books b ON b.id = sb.book_id")
 	args = append(args, shelfID)
 	var count int

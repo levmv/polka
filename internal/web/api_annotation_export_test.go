@@ -18,11 +18,11 @@ func TestAPIAnnotationExportIsStandaloneEscapedAndUserScoped(t *testing.T) {
 	bob := mustUser(t, database, "bob-export", db.RoleMember)
 	mustExec(t, database, `
 		UPDATE books SET title = 'A/B: <Book>' WHERE id = 1;
-		UPDATE authors SET name = 'Writer & <script>Co</script>' WHERE id = 'a_1';
-		UPDATE assets SET format = 'epub', can_read = 1, is_primary = 1 WHERE id = 'asset_1';
+		UPDATE authors SET name = 'Writer & <script>Co</script>' WHERE id = 1;
+		UPDATE assets SET format = 'epub', can_read = 1, is_primary = 1 WHERE id = 1;
 	`)
 
-	ann, err := database.CreateAnnotation(t.Context(), alice.ID, "asset_1", db.AnnotationCreate{
+	ann, err := database.CreateAnnotation(t.Context(), alice.ID, 1, db.AnnotationCreate{
 		CFI:   `epubcfi(/6/2[<bad>])`,
 		Quote: `Quoted </mark><script>alert("quote")</script>`,
 		Note:  `<img src=x onerror="alert('note')">`,
@@ -39,7 +39,7 @@ func TestAPIAnnotationExportIsStandaloneEscapedAndUserScoped(t *testing.T) {
 	handler := testRoutes(t, s)
 
 	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodGet, "/api/reader/assets/asset_1/annotations/export", nil))
+	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodGet, "/api/reader/assets/1/annotations/export", nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("export status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
 	}
@@ -80,7 +80,7 @@ func TestAPIAnnotationExportIsStandaloneEscapedAndUserScoped(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodGet, "/api/reader/assets/asset_1/annotations/export?format=markdown", nil))
+	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodGet, "/api/reader/assets/1/annotations/export?format=markdown", nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("Markdown export status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
 	}
@@ -112,13 +112,13 @@ func TestAPIAnnotationExportIsStandaloneEscapedAndUserScoped(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodGet, "/api/reader/assets/asset_1/annotations/export?format=pdf", nil))
+	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodGet, "/api/reader/assets/1/annotations/export?format=pdf", nil))
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("unsupported export format status = %d, want %d", w.Code, http.StatusBadRequest)
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, bob.ID, http.MethodGet, "/api/reader/assets/asset_1/annotations/export", nil))
+	handler.ServeHTTP(w, jsonRequest(t, s, bob.ID, http.MethodGet, "/api/reader/assets/1/annotations/export", nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("second user export status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
 	}
@@ -133,7 +133,7 @@ func TestAPIAnnotationExportIsStandaloneEscapedAndUserScoped(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/reader/assets/asset_1/annotations/export", nil))
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/reader/assets/1/annotations/export", nil))
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated export status = %d, want %d", w.Code, http.StatusUnauthorized)
 	}

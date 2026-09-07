@@ -10,10 +10,14 @@ import (
 	"github.com/levmv/polka/internal/bookmeta"
 )
 
-// DefaultBookPathTemplate is the layout of a book file within the managed books
-// root. The root *is* the books tree, so rendered paths are relative to the root
-// itself (bucket directories sit directly under it).
-const DefaultBookPathTemplate = "{author_bucket}/{author_sort}/{title} [{asset_id}]{dot_ext}"
+// DefaultBookPathTemplate is the layout relative to the managed books root.
+// Its [a<ID>] tag (see AssetTag) is a recovery hint; custom layouts may omit it.
+const DefaultBookPathTemplate = "{author_bucket}/{author_sort}/{title} [a{asset_id}]{dot_ext}"
+
+// AssetTag identifies recovery candidates by name; their bytes still need checking.
+func AssetTag(assetID int64) string {
+	return "[a" + strconv.FormatInt(assetID, 10) + "]"
+}
 
 type BookPathData struct {
 	Title            string
@@ -22,20 +26,20 @@ type BookPathData struct {
 	AuthorSort       string
 	Series           string
 	SeriesIndex      string
-	AssetID          string
+	AssetID          int64
 	BookID           int64
 	Ext              string
 	OriginalFilename string
 }
 
 type BookPathCandidate struct {
-	AssetID string
+	AssetID int64
 	Path    string
 }
 
 type BookPathCollision struct {
 	Path     string
-	AssetIDs []string
+	AssetIDs []int64
 }
 
 func RenderBookPathTemplate(template string, data BookPathData) (string, error) {
@@ -70,7 +74,7 @@ func RenderBookPathTemplate(template string, data BookPathData) (string, error) 
 }
 
 func DetectBookPathCollisions(candidates []BookPathCandidate) []BookPathCollision {
-	byPath := make(map[string][]string)
+	byPath := make(map[string][]int64)
 	for _, c := range candidates {
 		rel := strings.TrimSpace(c.Path)
 		if rel == "" {
@@ -89,7 +93,7 @@ func DetectBookPathCollisions(candidates []BookPathCandidate) []BookPathCollisio
 
 	collisions := make([]BookPathCollision, 0, len(paths))
 	for _, rel := range paths {
-		ids := append([]string(nil), byPath[rel]...)
+		ids := append([]int64(nil), byPath[rel]...)
 		slices.Sort(ids)
 		collisions = append(collisions, BookPathCollision{
 			Path:     rel,
@@ -176,12 +180,13 @@ func (d BookPathData) bookPathField(name string, useDefault bool) (string, bool)
 		}
 		return effectiveAuthorSort(d.AuthorSort, d.Author), true
 	case "author_bucket":
+		// Choose the bucket before substituting a folder label for an absent author.
 		v := strings.TrimSpace(d.AuthorSort)
 		if v == "" && !useDefault {
 			return "", true
 		}
 		if v == "" {
-			v = effectiveAuthorSort(d.AuthorSort, d.Author)
+			v = bookmeta.AuthorSort(d.Author)
 		}
 		return authorBucket(v), true
 	case "series":
@@ -198,7 +203,7 @@ func (d BookPathData) bookPathField(name string, useDefault bool) (string, bool)
 		}
 		return authorBucket(v), true
 	case "asset_id":
-		return strings.TrimSpace(d.AssetID), true
+		return strconv.FormatInt(d.AssetID, 10), true
 	case "book_id":
 		return strconv.FormatInt(d.BookID, 10), true
 	case "original_filename":
@@ -227,15 +232,10 @@ func effectiveAuthorSort(authorSort, author string) string {
 	if v := strings.TrimSpace(authorSort); v != "" {
 		return v
 	}
-	author = strings.TrimSpace(author)
-	if author == "" || author == "Unknown" || author == "Unknown Author" {
-		return "Unknown Author"
+	if v := bookmeta.AuthorSort(author); v != "" {
+		return v
 	}
-	sort := bookmeta.AuthorSort(author)
-	if sort == "" {
-		return "Unknown Author"
-	}
-	return sort
+	return "Unknown Author"
 }
 
 func normalizedExt(ext string) string {

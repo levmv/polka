@@ -5,17 +5,16 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
-	"strconv"
 
 	"github.com/levmv/polka/internal/db"
 )
 
 type UserDTO struct {
-	ID            int64    `json:"id"`
-	Username      string   `json:"username"`
-	Role          string   `json:"role"`
-	ContentScope  string   `json:"content_scope"`
-	ScopeShelfIDs []string `json:"scope_shelf_ids,omitempty"`
+	ID            int64   `json:"id"`
+	Username      string  `json:"username"`
+	Role          string  `json:"role"`
+	ContentScope  string  `json:"content_scope"`
+	ScopeShelfIDs []int64 `json:"scope_shelf_ids,omitempty"`
 	// SharedShelfNames are the shared shelves this user owns; deleting the user
 	// removes them for the whole household, so the delete UI warns with them.
 	SharedShelfNames []string `json:"shared_shelf_names,omitempty"`
@@ -35,11 +34,11 @@ func meDTO(u db.User) MeDTO {
 }
 
 type userCreateRequest struct {
-	Username      string   `json:"username"`
-	Password      string   `json:"password"`
-	Role          string   `json:"role"`
-	ContentScope  string   `json:"content_scope"`
-	ScopeShelfIDs []string `json:"scope_shelf_ids"`
+	Username      string  `json:"username"`
+	Password      string  `json:"password"`
+	Role          string  `json:"role"`
+	ContentScope  string  `json:"content_scope"`
+	ScopeShelfIDs []int64 `json:"scope_shelf_ids"`
 }
 
 type userPasswordRequest struct {
@@ -47,9 +46,9 @@ type userPasswordRequest struct {
 }
 
 type userAccessRequest struct {
-	Role          string   `json:"role"`
-	ContentScope  string   `json:"content_scope"`
-	ScopeShelfIDs []string `json:"scope_shelf_ids"`
+	Role          string  `json:"role"`
+	ContentScope  string  `json:"content_scope"`
+	ScopeShelfIDs []int64 `json:"scope_shelf_ids"`
 }
 
 func (s *Server) userDTO(ctx context.Context, u db.User) (UserDTO, error) {
@@ -191,7 +190,7 @@ func (s *Server) handleAPIUserCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAPIUserUpdate(w http.ResponseWriter, r *http.Request) {
-	userID, ok := userIDFromPath(w, r)
+	userID, ok := pathID(w, r, "id")
 	if !ok {
 		return
 	}
@@ -250,7 +249,7 @@ func (s *Server) handleAPIUserUpdate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAPIUserDelete(w http.ResponseWriter, r *http.Request) {
-	userID, ok := userIDFromPath(w, r)
+	userID, ok := pathID(w, r, "id")
 	if !ok {
 		return
 	}
@@ -271,7 +270,7 @@ func (s *Server) handleAPIUserDelete(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAPIUserPassword(w http.ResponseWriter, r *http.Request) {
 	current := contextUser(r.Context())
 
-	userID, ok := userIDFromPath(w, r)
+	userID, ok := pathID(w, r, "id")
 	if !ok {
 		return
 	}
@@ -297,10 +296,8 @@ func (s *Server) handleAPIUserPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Password changes revoke browser sessions but leave independently managed
-	// app tokens (OPDS/kosync) active. Whether an admin reset should revoke those
-	// tokens too remains a deliberate product decision; do not change this
-	// asymmetry as incidental cleanup.
+	// Password changes revoke browser sessions. Device credentials stay active
+	// until explicitly revoked.
 	currentSID := ""
 	if c, err := r.Cookie(sessionCookieName); err == nil {
 		currentSID = c.Value
@@ -316,13 +313,4 @@ func (s *Server) handleAPIUserPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
-}
-
-func userIDFromPath(w http.ResponseWriter, r *http.Request) (int64, bool) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil || id <= 0 {
-		http.Error(w, "Invalid user id", http.StatusBadRequest)
-		return 0, false
-	}
-	return id, true
 }

@@ -105,7 +105,7 @@ func (s *Service) RunOnce(ctx context.Context) (Summary, error) {
 			appendResult(&summary, result)
 		}
 		if err != nil {
-			return summary, fmt.Errorf("write back asset %s: %w", row.AssetID, err)
+			return summary, fmt.Errorf("write back asset %d: %w", row.AssetID, err)
 		}
 	}
 	return summary, nil

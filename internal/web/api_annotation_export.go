@@ -210,7 +210,10 @@ func (s *Server) handleAPIAnnotationExport(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	assetID := r.PathValue("id")
+	assetID, validID := pathID(w, r, "id")
+	if !validID {
+		return
+	}
 	if _, ok := s.requireAssetAccess(w, r, assetID); !ok {
 		return
 	}

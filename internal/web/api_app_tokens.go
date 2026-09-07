@@ -10,7 +10,7 @@ import (
 )
 
 type AppTokenDTO struct {
-	ID         string `json:"id"`
+	ID         int64  `json:"id"`
 	Name       string `json:"name"`
 	Token      string `json:"token"`
 	CreatedAt  int64  `json:"created_at"`
@@ -77,9 +77,8 @@ func (s *Server) handleAPIAppTokenCreate(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleAPIAppTokenDelete(w http.ResponseWriter, r *http.Request) {
-	tokenID := r.PathValue("id")
-	if tokenID == "" {
-		http.Error(w, "Missing token ID", http.StatusBadRequest)
+	tokenID, validID := pathID(w, r, "id")
+	if !validID {
 		return
 	}
 	if err := s.db.RevokeAppTokenByID(r.Context(), UserID(r.Context()), tokenID); err != nil {

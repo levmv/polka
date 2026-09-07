@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"os"
 	"path/filepath"
 	"testing"
@@ -19,11 +20,12 @@ func TestRecoverableCoverIndex(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { database.Close() })
+	sourceHash := sha256.Sum256([]byte("source bytes"))
 	if _, err := database.Write(t.Context()).Exec(`
 		INSERT INTO books(id, title, sort_title) VALUES (1, 'One', 'One');
-		INSERT INTO assets(id, book_id, storage_path, filename, extension)
-		VALUES ('a_one', 1, 'one.epub', 'one.epub', '.epub');
-	`); err != nil {
+		INSERT INTO assets(id, book_id, storage_path, filename, extension, original_sha256, current_sha256)
+		VALUES (1, 1, 'one.epub', 'one.epub', '.epub', ?, ?);
+	`, sourceHash[:], sourceHash[:]); err != nil {
 		t.Fatal(err)
 	}
 	staging := root.StagingDir()
@@ -35,7 +37,7 @@ func TestRecoverableCoverIndex(t *testing.T) {
 		t.Fatalf("mkdir covers: %v", err)
 	}
 
-	if _, err := storage.Stage(root, covers.AssetTempLabel("a_one"), bytes.NewBufferString("staged cover")); err != nil {
+	if _, err := storage.Stage(root, covers.ImportTempLabel(sourceHash[:]), bytes.NewBufferString("staged cover")); err != nil {
 		t.Fatal(err)
 	}
 	stagedEntries, err := os.ReadDir(staging)
@@ -114,11 +116,12 @@ func TestRepairImportCoverDoesNotFollowRolledBackBookID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.Exec(`INSERT INTO assets(id, book_id, storage_path, filename, extension)
-		VALUES ('a_aborted', ?, 'aborted.epub', 'aborted.epub', '.epub')`, abortedID); err != nil {
+	abortedHash := sha256.Sum256([]byte("aborted source bytes"))
+	if _, err := tx.Exec(`INSERT INTO assets(id, book_id, storage_path, filename, extension, original_sha256, current_sha256)
+		VALUES (1, ?, 'aborted.epub', 'aborted.epub', '.epub', ?, ?)`, abortedID, abortedHash[:], abortedHash[:]); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := storage.Stage(root, covers.AssetTempLabel("a_aborted"), bytes.NewBufferString("aborted cover")); err != nil {
+	if _, err := storage.Stage(root, covers.ImportTempLabel(abortedHash[:]), bytes.NewBufferString("aborted cover")); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Rollback(); err != nil {

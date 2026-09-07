@@ -30,23 +30,21 @@ type KOReaderProgress struct {
 // an arbitrary book. Multiple matching assets of one live book remain
 // unambiguous; assets in Trash do not define catalog identity.
 type KOReaderHashTarget struct {
-	AssetID   string
+	AssetID   int64
 	BookID    int64
 	Ambiguous bool
 }
 
-func SetAssetKOReaderHash(execer Execer, assetID, hash string) error {
-	assetID = strings.TrimSpace(assetID)
-	hash = strings.TrimSpace(hash)
-	if assetID == "" || hash == "" {
-		return nil
-	}
-	res, err := execer.Exec("UPDATE assets SET koreader_hash = ? WHERE id = ?", hash, assetID)
+// CacheAssetKOReaderHash uses a short writer deadline for download bookkeeping.
+// It ignores hashes computed for a concurrently replaced file.
+func (db *DB) CacheAssetKOReaderHash(ctx context.Context, assetID int64, currentSHA256 []byte, hash string) error {
+	_, err := db.ExecBestEffort(ctx, `
+		UPDATE assets SET koreader_hash = ?
+		WHERE id = ? AND current_sha256 = ?
+		  AND (koreader_hash IS NULL OR koreader_hash = '')
+	`, hash, assetID, currentSHA256)
 	if err != nil {
-		return fmt.Errorf("set asset koreader hash: %w", err)
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return sql.ErrNoRows
+		return fmt.Errorf("cache asset koreader hash: %w", err)
 	}
 	return nil
 }
@@ -72,7 +70,7 @@ func ResolveKOReaderHash(queryer Queryer, documentHash string) (KOReaderHashTarg
 
 	var target KOReaderHashTarget
 	for rows.Next() {
-		var assetID string
+		var assetID int64
 		var bookID int64
 		if err := rows.Scan(&assetID, &bookID); err != nil {
 			return KOReaderHashTarget{}, fmt.Errorf("scan asset by koreader hash: %w", err)
@@ -82,7 +80,7 @@ func ResolveKOReaderHash(queryer Queryer, documentHash string) (KOReaderHashTarg
 			target.BookID = bookID
 			continue
 		}
-		target.AssetID = ""
+		target.AssetID = 0
 		target.BookID = 0
 		target.Ambiguous = true
 		return target, nil

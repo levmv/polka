@@ -1,7 +1,9 @@
 package web
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"path/filepath"
 	"testing"
 	"time"
@@ -65,15 +67,13 @@ func TestSessionStorePersistsAcrossDBReopen(t *testing.T) {
 		t.Fatalf("lookup = (%d, %v), want (%d, true)", uid, ok, u.ID)
 	}
 
-	var storedHash string
+	var storedHash []byte
 	if err := reopened.Read(t.Context()).QueryRow("SELECT token_hash FROM sessions").Scan(&storedHash); err != nil {
 		t.Fatalf("query session hash: %v", err)
 	}
-	if storedHash == sid {
-		t.Fatal("raw session token was stored in SQLite")
-	}
-	if want := sessionTokenHash(sid); storedHash != want {
-		t.Fatalf("stored hash = %q, want %q", storedHash, want)
+	wantHash := sha256.Sum256([]byte(sid))
+	if !bytes.Equal(storedHash, wantHash[:]) {
+		t.Fatalf("stored hash = %x, want %x", storedHash, wantHash)
 	}
 }
 

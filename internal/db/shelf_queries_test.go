@@ -6,9 +6,9 @@ func TestShelvesVisibilityAndMembership(t *testing.T) {
 	database := newTestDB(t)
 	mustExec(t, database, "INSERT INTO books (id, title, sort_title, added_at) VALUES (1, 'One', 'One', 1)")
 	mustExec(t, database, "INSERT INTO books (id, title, sort_title, added_at) VALUES (2, 'Two', 'Two', 2)")
-	mustExec(t, database, "INSERT INTO authors (id, name, sort_name) VALUES ('a1', 'Author', 'Author')")
-	mustExec(t, database, "INSERT INTO book_authors (book_id, author_id, author_order) VALUES (1, 'a1', 0)")
-	mustExec(t, database, "INSERT INTO book_authors (book_id, author_id, author_order) VALUES (2, 'a1', 0)")
+	mustExec(t, database, "INSERT INTO authors (id, name, sort_name) VALUES (1, 'Author', 'Author')")
+	mustExec(t, database, "INSERT INTO book_authors (book_id, author_id, author_order) VALUES (1, 1, 0)")
+	mustExec(t, database, "INSERT INTO book_authors (book_id, author_id, author_order) VALUES (2, 1, 0)")
 
 	user, err := database.CreateUser(t.Context(), "alice", "pw", RoleMember)
 	if err != nil {
@@ -32,7 +32,7 @@ func TestShelvesVisibilityAndMembership(t *testing.T) {
 		t.Fatalf("ListShelves shared: %v", err)
 	}
 	if len(visibleSharedOnly) != 1 || visibleSharedOnly[0].ID != shared.ID {
-		t.Fatalf("shared-only shelves = %+v, want only %s", visibleSharedOnly, shared.ID)
+		t.Fatalf("shared-only shelves = %+v, want only %d", visibleSharedOnly, shared.ID)
 	}
 
 	visibleToUser, err := ListShelves(database.Read(t.Context()), user.ID)

@@ -5,19 +5,9 @@ import (
 	"unicode"
 )
 
-// Book files live under a managed, human-readable layout:
-//
-//	<bucket>/<author sort>/<title> [<asset id>].<ext>
-//
-// This file is the source of truth for that layout. Keep the path stable by
-// including only durable file identity fields: primary author, title, asset_id,
-// and extension. Series, tags, dates, ISBNs, publishers, language, and covers
-// are metadata and must not move files on disk.
-//
-// The books root *is* the books tree, so the returned path is relative to the
-// root itself (bucket directories sit directly under it). It is stored in
-// assets.storage_path after the file physically exists there, and HTTP handlers
-// resolve it from the database at request time rather than caching it.
+// The default book layout groups files by author and includes the numeric asset
+// ID in each filename. SQLite stores the current path relative to the books
+// root; readers resolve it when opening the file.
 
 // sanitizePathSegment removes filesystem-unsafe characters but preserves unicode.
 func sanitizePathSegment(s string) string {
@@ -48,7 +38,7 @@ func sanitizePathSegment(s string) string {
 // authorBucket returns the top-level bucket directory for an author sort key.
 func authorBucket(author string) string {
 	author = strings.TrimSpace(author)
-	if author == "" || author == "Unknown" || author == "Unknown Author" {
+	if author == "" {
 		return "_Unknown"
 	}
 

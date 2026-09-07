@@ -28,7 +28,7 @@ func TestUpdateUserAccessScopeShelfVisibility(t *testing.T) {
 	if _, err := database.UpdateUserAccess(t.Context(), reader.ID, UserAccess{
 		Role:         RoleReader,
 		ContentScope: ContentScopeShelves,
-		ShelfIDs:     []string{curatorPrivate.ID},
+		ShelfIDs:     []int64{curatorPrivate.ID},
 	}); !errors.Is(err, ErrScopeShelfNotVisible) {
 		t.Fatalf("scope private shelf without viewer err = %v, want ErrScopeShelfNotVisible", err)
 	}
@@ -36,7 +36,7 @@ func TestUpdateUserAccessScopeShelfVisibility(t *testing.T) {
 	if _, err := database.UpdateUserAccess(t.Context(), reader.ID, UserAccess{
 		Role:          RoleReader,
 		ContentScope:  ContentScopeShelves,
-		ShelfIDs:      []string{curatorPrivate.ID},
+		ShelfIDs:      []int64{curatorPrivate.ID},
 		ShelfViewerID: curator.ID,
 	}); err != nil {
 		t.Fatalf("scope curator private shelf: %v", err)
@@ -45,7 +45,7 @@ func TestUpdateUserAccessScopeShelfVisibility(t *testing.T) {
 	if _, err := database.UpdateUserAccess(t.Context(), reader.ID, UserAccess{
 		Role:          RoleReader,
 		ContentScope:  ContentScopeShelves,
-		ShelfIDs:      []string{readerPrivate.ID},
+		ShelfIDs:      []int64{readerPrivate.ID},
 		ShelfViewerID: curator.ID,
 	}); !errors.Is(err, ErrScopeShelfNotVisible) {
 		t.Fatalf("scope reader private shelf err = %v, want ErrScopeShelfNotVisible", err)
@@ -79,7 +79,7 @@ func TestQueryShelfAccessRequiresCompleteFTSQuery(t *testing.T) {
 	if mixed.QueryMatch != "" || status.QueryMatch != "" {
 		t.Fatalf("unsafe query matches = mixed:%q status:%q; want empty", mixed.QueryMatch, status.QueryMatch)
 	}
-	if _, err := database.UpdateUserAccess(t.Context(), reader.ID, UserAccess{Role: RoleReader, ContentScope: ContentScopeShelves, ShelfIDs: []string{safe.ID}}); err != nil {
+	if _, err := database.UpdateUserAccess(t.Context(), reader.ID, UserAccess{Role: RoleReader, ContentScope: ContentScopeShelves, ShelfIDs: []int64{safe.ID}}); err != nil {
 		t.Fatalf("assign FTS scope shelf: %v", err)
 	}
 	for _, test := range []struct {
@@ -91,7 +91,7 @@ func TestQueryShelfAccessRequiresCompleteFTSQuery(t *testing.T) {
 		{name: "reading status", shelf: status, reason: statusScopeShelfReason},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := database.UpdateUserAccess(t.Context(), reader.ID, UserAccess{Role: RoleReader, ContentScope: ContentScopeShelves, ShelfIDs: []string{test.shelf.ID}})
+			_, err := database.UpdateUserAccess(t.Context(), reader.ID, UserAccess{Role: RoleReader, ContentScope: ContentScopeShelves, ShelfIDs: []int64{test.shelf.ID}})
 			if !errors.Is(err, ErrScopeShelfNotEligible) {
 				t.Fatalf("assign scope shelf err = %v; want ErrScopeShelfNotEligible", err)
 			}
@@ -105,7 +105,7 @@ func TestQueryShelfAccessRequiresCompleteFTSQuery(t *testing.T) {
 		t.Fatalf("load preserved scope: %v", err)
 	}
 	if len(assigned) != 1 || assigned[0] != safe.ID {
-		t.Fatalf("scope after rejected update = %v; want [%s]", assigned, safe.ID)
+		t.Fatalf("scope after rejected update = %v; want [%d]", assigned, safe.ID)
 	}
 
 	if _, err := database.UpdateShelf(t.Context(), safe.ID, owner.ID, safe.Name, "tag:kids status:unread", safe.Visibility); err != nil {
@@ -114,7 +114,7 @@ func TestQueryShelfAccessRequiresCompleteFTSQuery(t *testing.T) {
 	if _, err := database.UpdateUserAccess(t.Context(), reader.ID, UserAccess{
 		Role:         RoleReader,
 		ContentScope: ContentScopeShelves,
-		ShelfIDs:     []string{safe.ID},
+		ShelfIDs:     []int64{safe.ID},
 	}); !errors.Is(err, ErrScopeShelfNotEligible) {
 		t.Fatalf("retain newly ineligible scope shelf err = %v; want ErrScopeShelfNotEligible", err)
 	}
@@ -157,7 +157,7 @@ func TestUpdateUserAccessPreservesExistingHiddenScopeShelf(t *testing.T) {
 	if _, err := database.UpdateUserAccess(t.Context(), reader.ID, UserAccess{
 		Role:          RoleReader,
 		ContentScope:  ContentScopeShelves,
-		ShelfIDs:      []string{hidden.ID},
+		ShelfIDs:      []int64{hidden.ID},
 		ShelfViewerID: firstCurator.ID,
 	}); err != nil {
 		t.Fatalf("set hidden scope shelf: %v", err)
@@ -165,7 +165,7 @@ func TestUpdateUserAccessPreservesExistingHiddenScopeShelf(t *testing.T) {
 	if _, err := database.UpdateUserAccess(t.Context(), reader.ID, UserAccess{
 		Role:          RoleReader,
 		ContentScope:  ContentScopeShelves,
-		ShelfIDs:      []string{hidden.ID},
+		ShelfIDs:      []int64{hidden.ID},
 		ShelfViewerID: secondCurator.ID,
 	}); err != nil {
 		t.Fatalf("preserve hidden scope shelf: %v", err)
@@ -173,7 +173,7 @@ func TestUpdateUserAccessPreservesExistingHiddenScopeShelf(t *testing.T) {
 	if _, err := database.UpdateUserAccess(t.Context(), reader.ID, UserAccess{
 		Role:          RoleReader,
 		ContentScope:  ContentScopeShelves,
-		ShelfIDs:      []string{hidden.ID, otherHidden.ID},
+		ShelfIDs:      []int64{hidden.ID, otherHidden.ID},
 		ShelfViewerID: secondCurator.ID,
 	}); !errors.Is(err, ErrScopeShelfNotVisible) {
 		t.Fatalf("add new hidden scope shelf err = %v, want ErrScopeShelfNotVisible", err)
@@ -192,7 +192,7 @@ func TestUpdateUserAccessShelfScopeIsReaderOnly(t *testing.T) {
 		t.Fatalf("create shelf: %v", err)
 	}
 
-	updated, err := database.UpdateUserAccess(t.Context(), member.ID, UserAccess{Role: RoleMember, ContentScope: ContentScopeShelves, ShelfIDs: []string{shelf.ID}})
+	updated, err := database.UpdateUserAccess(t.Context(), member.ID, UserAccess{Role: RoleMember, ContentScope: ContentScopeShelves, ShelfIDs: []int64{shelf.ID}})
 	if err != nil {
 		t.Fatalf("update member access: %v", err)
 	}
@@ -261,7 +261,7 @@ func TestListShelvesForScopedUser(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create private shelf: %v", err)
 	}
-	if _, err := database.UpdateUserAccess(t.Context(), reader.ID, UserAccess{Role: RoleReader, ContentScope: ContentScopeShelves, ShelfIDs: []string{kids.ID}}); err != nil {
+	if _, err := database.UpdateUserAccess(t.Context(), reader.ID, UserAccess{Role: RoleReader, ContentScope: ContentScopeShelves, ShelfIDs: []int64{kids.ID}}); err != nil {
 		t.Fatalf("scope reader: %v", err)
 	}
 

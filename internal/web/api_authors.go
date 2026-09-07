@@ -80,7 +80,7 @@ func (s *Server) handleAPIAuthorList(w http.ResponseWriter, r *http.Request) {
 		page.NextCursor = encodeCollectionCursor(collectionCursor{
 			Kind:    "authors",
 			Primary: last.SortName,
-			Tie:     last.ID,
+			Tie:     last.Name,
 		})
 	}
 	writeJSON(w, http.StatusOK, page)

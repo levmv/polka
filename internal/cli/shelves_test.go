@@ -2,6 +2,7 @@ package cli
 
 import (
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/levmv/polka/internal/db"
@@ -23,8 +24,8 @@ func TestShelfCLISharedManualShelf(t *testing.T) {
 		t.Fatalf("create admin: %v", err)
 	}
 	database.Write(t.Context()).Exec("INSERT INTO books (id, title, sort_title) VALUES (1, 'Title', 'Title')")
-	database.Write(t.Context()).Exec("INSERT INTO authors (id, name, sort_name) VALUES ('a_1', 'Author', 'Author')")
-	database.Write(t.Context()).Exec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES (1, 'a_1', 0)")
+	database.Write(t.Context()).Exec("INSERT INTO authors (id, name, sort_name) VALUES (1, 'Author', 'Author')")
+	database.Write(t.Context()).Exec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES (1, 1, 0)")
 	database.Close()
 
 	if err := runLibraryShelves(t.Context(), dataDir, []string{"create", "Favorites"}); err != nil {
@@ -36,16 +37,16 @@ func TestShelfCLISharedManualShelf(t *testing.T) {
 		t.Fatalf("reopen db: %v", err)
 	}
 
-	var shelfID string
+	var shelfID int64
 	if err := database.Read(t.Context()).QueryRow("SELECT id FROM shelves WHERE name = 'Favorites' AND visibility = 'shared'").Scan(&shelfID); err != nil {
 		t.Fatalf("query shelf: %v", err)
 	}
 	database.Close()
 
-	if err := runLibraryShelves(t.Context(), dataDir, []string{"add-book", shelfID, "1"}); err != nil {
+	if err := runLibraryShelves(t.Context(), dataDir, []string{"add-book", strconv.FormatInt(shelfID, 10), "1"}); err != nil {
 		t.Fatalf("shelf add-book: %v", err)
 	}
-	if err := runLibraryShelves(t.Context(), dataDir, []string{"books", shelfID}); err != nil {
+	if err := runLibraryShelves(t.Context(), dataDir, []string{"books", strconv.FormatInt(shelfID, 10)}); err != nil {
 		t.Fatalf("shelf books: %v", err)
 	}
 

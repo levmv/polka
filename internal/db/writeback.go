@@ -33,11 +33,11 @@ func formatKeyInClause(column string, keys []string) string {
 // MetadataWritebackAssetRow is one writable asset considered for embedded
 // metadata write-back.
 type MetadataWritebackAssetRow struct {
-	AssetID       string
+	AssetID       int64
 	BookID        int64
 	StoragePath   string
 	Format        format.Format
-	CurrentSHA256 string
+	CurrentSHA256 []byte
 	CurrentSize   sql.NullInt64
 	MetadataRev   int64
 	WritebackRev  int64
@@ -53,11 +53,11 @@ type MetadataWritebackSnapshot struct {
 }
 
 type MetadataWritebackAttempt struct {
-	AssetID      string
+	AssetID      int64
 	MetadataRev  int64
 	StoragePath  string
 	TempPath     string
-	SHA256       string
+	SHA256       []byte
 	Size         int64
 	KOReaderHash string
 }
@@ -74,11 +74,8 @@ type MetadataWritebackCounts struct {
 	Failed int
 }
 
-// BumpMetadataRev marks books as needing their current metadata snapshot written
-// to writable assets. It also touches updated_at because the bump happens only
-// in user-visible metadata mutation paths.
-// If cover write-back uses metadata_rev instead of a separate asset marker,
-// cover mutation paths must bump this same rev.
+// BumpMetadataRev marks books' writable assets as needing metadata write-back
+// and touches updated_at. Text metadata and cover changes share this revision.
 func BumpMetadataRev(tx *Tx, bookIDs []int64) error {
 	if len(bookIDs) == 0 {
 		return nil
@@ -139,10 +136,10 @@ func GetBookWritebackState(queryer Queryer, bookID int64) (BookWritebackState, e
 
 // GetMetadataWritebackAsset loads the current writable write-back projection for
 // one live asset. It is the freshness check before a physical write attempt.
-func GetMetadataWritebackAsset(queryer Queryer, assetID string) (MetadataWritebackAssetRow, error) {
+func GetMetadataWritebackAsset(queryer Queryer, assetID int64) (MetadataWritebackAssetRow, error) {
 	return scanMetadataWritebackAsset(queryer.QueryRow(`
 		SELECT a.id, a.book_id, a.storage_path, a.format,
-		       COALESCE(a.current_sha256, ''), a.current_size,
+		       a.current_sha256, a.current_size,
 		       b.metadata_rev, a.writeback_rev, COALESCE(a.writeback_error, '')
 		FROM assets a
 		JOIN books b ON b.id = a.book_id
@@ -204,7 +201,7 @@ func listMetadataWritebackAssets(queryer Queryer, where string, args []any, limi
 
 	rows, err := queryer.Query(`
 		SELECT a.id, a.book_id, a.storage_path, a.format,
-		       COALESCE(a.current_sha256, ''), a.current_size,
+		       a.current_sha256, a.current_size,
 		       b.metadata_rev, a.writeback_rev, COALESCE(a.writeback_error, '')
 		FROM assets a
 		JOIN books b ON b.id = a.book_id
@@ -303,7 +300,7 @@ func UpsertMetadataWritebackAttempt(execer Execer, attempt MetadataWritebackAtte
 	return nil
 }
 
-func LoadMetadataWritebackAttempt(queryer Queryer, assetID string) (MetadataWritebackAttempt, bool, error) {
+func LoadMetadataWritebackAttempt(queryer Queryer, assetID int64) (MetadataWritebackAttempt, bool, error) {
 	var attempt MetadataWritebackAttempt
 	err := queryer.QueryRow(`
 		SELECT asset_id, metadata_rev, storage_path, temp_path, sha256, size, COALESCE(koreader_hash, '')
@@ -352,14 +349,14 @@ func ListMetadataWritebackAttempts(queryer Queryer) ([]MetadataWritebackAttemptR
 	return attempts, nil
 }
 
-func ClearMetadataWritebackAttempt(execer Execer, assetID string) error {
+func ClearMetadataWritebackAttempt(execer Execer, assetID int64) error {
 	if _, err := execer.Exec("DELETE FROM metadata_writeback_attempts WHERE asset_id = ?", assetID); err != nil {
 		return fmt.Errorf("clear metadata writeback attempt: %w", err)
 	}
 	return nil
 }
 
-func MarkMetadataWritebackSuccess(tx *Tx, assetID, storagePath, sha256 string, size int64, koReaderHash string, metadataRev int64) error {
+func MarkMetadataWritebackSuccess(tx *Tx, assetID int64, storagePath string, sha256 []byte, size int64, koReaderHash string, metadataRev int64) error {
 	res, err := tx.Exec(`
 		UPDATE assets
 		SET current_sha256 = ?,
@@ -382,7 +379,7 @@ func MarkMetadataWritebackSuccess(tx *Tx, assetID, storagePath, sha256 string, s
 	return nil
 }
 
-func MarkMetadataWritebackError(execer Execer, assetID string, writeErr error) error {
+func MarkMetadataWritebackError(execer Execer, assetID int64, writeErr error) error {
 	msg := strings.TrimSpace(fmt.Sprint(writeErr))
 	if msg == "" {
 		msg = "metadata writeback failed"

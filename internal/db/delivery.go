@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/levmv/polka/internal/format"
-	"github.com/levmv/polka/internal/id"
 )
 
 const (
@@ -40,7 +39,7 @@ var (
 )
 
 type DeliveryDevice struct {
-	ID        string
+	ID        int64
 	UserID    int64
 	Name      string
 	Email     string
@@ -51,14 +50,14 @@ type DeliveryDevice struct {
 }
 
 type DeliveryJob struct {
-	ID          string
+	ID          int64
 	UserID      int64
-	DeviceID    sql.NullString
+	DeviceID    sql.NullInt64
 	DeviceName  string
 	DeviceEmail string
 	Preset      string
 	BookID      int64
-	AssetID     sql.NullString
+	AssetID     sql.NullInt64
 	Title       string
 	Target      sql.NullString
 	Filename    string
@@ -77,7 +76,7 @@ type DeliveryBookRow struct {
 }
 
 type DeliveryAssetRow struct {
-	ID        string
+	ID        int64
 	Filename  string
 	Extension string
 	Format    format.Format
@@ -120,7 +119,7 @@ func ListDeliveryDevices(queryer Queryer, userID int64) ([]DeliveryDevice, error
 	return devices, rows.Err()
 }
 
-func GetDeliveryDevice(queryer Queryer, userID int64, deviceID string) (*DeliveryDevice, error) {
+func GetDeliveryDevice(queryer Queryer, userID, deviceID int64) (*DeliveryDevice, error) {
 	if userID <= 0 {
 		return nil, ErrUserIDRequired
 	}
@@ -162,7 +161,7 @@ func (db *DB) CreateDeliveryDevice(ctx context.Context, userID int64, name, emai
 	if err := validateDeliveryDeviceInput(userID, name, email, preset); err != nil {
 		return nil, err
 	}
-	deviceID := id.New(id.DeliveryDevice)
+	var device DeliveryDevice
 	err := db.Transact(ctx, func(tx *Tx) error {
 		var count int
 		if err := tx.QueryRow("SELECT COUNT(*) FROM delivery_devices WHERE user_id = ?", userID).Scan(&count); err != nil {
@@ -176,10 +175,12 @@ func (db *DB) CreateDeliveryDevice(ctx context.Context, userID int64, name, emai
 				return fmt.Errorf("clear delivery default: %w", err)
 			}
 		}
-		_, err := tx.Exec(`
-			INSERT INTO delivery_devices (id, user_id, name, email, preset, is_default)
-			VALUES (?, ?, ?, ?, ?, ?)
-		`, deviceID, userID, strings.TrimSpace(name), strings.TrimSpace(email), preset, boolInt(isDefault))
+		var err error
+		device, err = scanDeliveryDevice(tx.QueryRow(`
+			INSERT INTO delivery_devices (user_id, name, email, preset, is_default)
+			VALUES (?, ?, ?, ?, ?)
+			RETURNING `+deliveryDeviceColumns,
+			userID, strings.TrimSpace(name), strings.TrimSpace(email), preset, boolInt(isDefault)))
 		if err != nil {
 			if isUniqueViolation(err) {
 				return ErrDeliveryDeviceNameExists
@@ -191,11 +192,11 @@ func (db *DB) CreateDeliveryDevice(ctx context.Context, userID int64, name, emai
 	if err != nil {
 		return nil, err
 	}
-	return GetDeliveryDevice(db.Read(ctx), userID, deviceID)
+	return &device, nil
 }
 
 func (db *DB) UpdateDeliveryDevice(ctx context.Context, userID int64, device DeliveryDevice) (*DeliveryDevice, error) {
-	if device.ID == "" {
+	if device.ID <= 0 {
 		return nil, ErrDeliveryDeviceNotFound
 	}
 	if err := validateDeliveryDeviceInput(userID, device.Name, device.Email, device.Preset); err != nil {
@@ -234,7 +235,7 @@ func (db *DB) UpdateDeliveryDevice(ctx context.Context, userID int64, device Del
 	return GetDeliveryDevice(db.Read(ctx), userID, device.ID)
 }
 
-func (db *DB) DeleteDeliveryDevice(ctx context.Context, userID int64, deviceID string) error {
+func (db *DB) DeleteDeliveryDevice(ctx context.Context, userID, deviceID int64) error {
 	if userID <= 0 {
 		return ErrUserIDRequired
 	}
@@ -336,28 +337,31 @@ func DeliveryBookForPlan(queryer Queryer, scope VisibilityScope, bookID int64) (
 }
 
 func (db *DB) CreateDeliveryJob(ctx context.Context, job DeliveryJob) (*DeliveryJob, error) {
-	if job.ID == "" {
-		job.ID = id.New(id.DeliveryJob)
-	}
 	if job.Status == "" {
 		job.Status = DeliveryStatusQueued
 	}
-	_, err := db.Write(ctx).Exec(`
-		INSERT INTO delivery_jobs (
-			id, user_id, device_id, device_name, device_email, preset, book_id,
-			asset_id, title, target, filename, size_bytes, status, error
-		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, job.ID, job.UserID, job.DeviceID, job.DeviceName, job.DeviceEmail, job.Preset,
-		job.BookID, job.AssetID, job.Title, job.Target, job.Filename, job.SizeBytes,
-		job.Status, job.Error)
+	var saved *DeliveryJob
+	err := db.Transact(ctx, func(tx *Tx) error {
+		var err error
+		saved, err = scanDeliveryJobRow(tx.QueryRow(`
+			INSERT INTO delivery_jobs (
+				user_id, device_id, device_name, device_email, preset, book_id,
+				asset_id, title, target, filename, size_bytes, status, error
+			)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			RETURNING `+deliveryJobColumns,
+			job.UserID, job.DeviceID, job.DeviceName, job.DeviceEmail, job.Preset,
+			job.BookID, job.AssetID, job.Title, job.Target, job.Filename, job.SizeBytes,
+			job.Status, job.Error))
+		return err
+	})
 	if err != nil {
 		return nil, fmt.Errorf("create delivery job: %w", err)
 	}
-	return GetDeliveryJob(db.Read(ctx), job.UserID, job.ID)
+	return saved, nil
 }
 
-func GetDeliveryJob(queryer Queryer, userID int64, jobID string) (*DeliveryJob, error) {
+func GetDeliveryJob(queryer Queryer, userID, jobID int64) (*DeliveryJob, error) {
 	if userID <= 0 {
 		return nil, ErrUserIDRequired
 	}
@@ -375,7 +379,7 @@ func GetDeliveryJob(queryer Queryer, userID int64, jobID string) (*DeliveryJob, 
 	return job, nil
 }
 
-func GetDeliveryJobByID(queryer Queryer, jobID string) (*DeliveryJob, error) {
+func GetDeliveryJobByID(queryer Queryer, jobID int64) (*DeliveryJob, error) {
 	job, err := scanDeliveryJobRow(queryer.QueryRow(`
 		SELECT `+deliveryJobColumns+`
 		FROM delivery_jobs
@@ -442,7 +446,7 @@ func ListDeliveryJobs(queryer Queryer, userID int64, limit int) ([]DeliveryJob, 
 	return jobs, rows.Err()
 }
 
-func (db *DB) SetDeliveryJobStatus(ctx context.Context, jobID, status, errorMessage string) error {
+func (db *DB) SetDeliveryJobStatus(ctx context.Context, jobID int64, status, errorMessage string) error {
 	if !validDeliveryStatus(status) {
 		return fmt.Errorf("invalid delivery status %q", status)
 	}
@@ -464,7 +468,7 @@ func (db *DB) SetDeliveryJobStatus(ctx context.Context, jobID, status, errorMess
 	return nil
 }
 
-func (db *DB) SetDeliveryJobSize(ctx context.Context, jobID string, size int64) error {
+func (db *DB) SetDeliveryJobSize(ctx context.Context, jobID, size int64) error {
 	_, err := db.Write(ctx).Exec("UPDATE delivery_jobs SET size_bytes = ?, updated_at = unixepoch() WHERE id = ?", size, jobID)
 	if err != nil {
 		return fmt.Errorf("set delivery job size: %w", err)

@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-
-	"github.com/levmv/polka/internal/id"
 )
 
 type ShelfKind string
@@ -37,7 +35,7 @@ var (
 var ErrScopeShelfNotEligible = errors.New("scope shelf query cannot be used for access")
 
 type Shelf struct {
-	ID         string
+	ID         int64
 	Name       string
 	Kind       ShelfKind
 	Query      string
@@ -147,20 +145,13 @@ func (db *DB) CreateShelf(ctx context.Context, ownerID int64, visibility ShelfVi
 		return nil, err
 	}
 
-	position, err := nextShelfPosition(db.Read(ctx), ownerID, visibility)
-	if err != nil {
-		return nil, err
-	}
-
 	shelf := &Shelf{
-		ID:         id.New(id.Shelf),
 		Name:       name,
 		Kind:       kind,
 		Query:      query,
 		QueryMatch: queryMatch,
 		OwnerID:    ownerID,
 		Visibility: visibility,
-		Position:   position,
 	}
 
 	var q sql.NullString
@@ -172,12 +163,23 @@ func (db *DB) CreateShelf(ctx context.Context, ownerID int64, visibility ShelfVi
 		qm = sql.NullString{String: queryMatch, Valid: true}
 	}
 
-	if _, err := db.Write(ctx).Exec(`INSERT INTO shelves (id, name, kind, query, query_match, owner_id, visibility, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		shelf.ID, shelf.Name, string(shelf.Kind), q, qm, shelf.OwnerID, string(shelf.Visibility), shelf.Position,
-	); err != nil {
+	err = db.Transact(ctx, func(tx *Tx) error {
+		position, err := nextShelfPosition(tx, ownerID, visibility)
+		if err != nil {
+			return err
+		}
+		shelf.Position = position
+		return tx.QueryRow(`
+			INSERT INTO shelves (name, kind, query, query_match, owner_id, visibility, position)
+			VALUES (?, ?, ?, ?, ?, ?, ?)
+			RETURNING id, created_at, updated_at
+		`, shelf.Name, string(shelf.Kind), q, qm, shelf.OwnerID, string(shelf.Visibility), shelf.Position,
+		).Scan(&shelf.ID, &shelf.CreatedAt, &shelf.UpdatedAt)
+	})
+	if err != nil {
 		return nil, fmt.Errorf("insert shelf: %w", err)
 	}
-	return GetShelf(db.Read(ctx), shelf.ID, ownerID)
+	return shelf, nil
 }
 
 // ListShelves returns shared shelves plus the viewer's personal shelves. With a
@@ -286,7 +288,7 @@ func ListShelvesForUser(queryer Queryer, userID int64) ([]Shelf, error) {
 
 // GetShelf returns a shelf visible to viewerID. Zero viewerID can only see
 // shared shelves.
-func GetShelf(queryer Queryer, shelfID string, viewerID int64) (*Shelf, error) {
+func GetShelf(queryer Queryer, shelfID int64, viewerID int64) (*Shelf, error) {
 	query := `
 			SELECT id, name, kind, query, query_match, owner_id, visibility, position, created_at, updated_at
 			FROM shelves
@@ -311,7 +313,7 @@ func GetShelf(queryer Queryer, shelfID string, viewerID int64) (*Shelf, error) {
 // GetShelfForUser returns a shelf only if it is visible in the user's current
 // library scope. Use GetShelf for low-level owner/shared checks that should not
 // apply content-scope narrowing.
-func GetShelfForUser(queryer Queryer, shelfID string, userID int64) (*Shelf, error) {
+func GetShelfForUser(queryer Queryer, shelfID int64, userID int64) (*Shelf, error) {
 	if userID <= 0 {
 		return GetShelf(queryer, shelfID, 0)
 	}
@@ -367,7 +369,7 @@ func scanShelf(row rowScanner) (Shelf, error) {
 // new search string; manual shelves ignore query and keep explicit membership.
 // visibility changes whether the shelf is personal or shared without changing
 // ownership.
-func (db *DB) UpdateShelf(ctx context.Context, shelfID string, viewerID int64, name, query string, visibility ShelfVisibility) (*Shelf, error) {
+func (db *DB) UpdateShelf(ctx context.Context, shelfID int64, viewerID int64, name, query string, visibility ShelfVisibility) (*Shelf, error) {
 	shelf, err := GetShelf(db.Read(ctx), shelfID, viewerID)
 	if err != nil {
 		return nil, err
@@ -411,7 +413,7 @@ func (db *DB) UpdateShelf(ctx context.Context, shelfID string, viewerID int64, n
 	return GetShelf(db.Read(ctx), shelfID, viewerID)
 }
 
-func (db *DB) DeleteShelf(ctx context.Context, shelfID string, viewerID int64) error {
+func (db *DB) DeleteShelf(ctx context.Context, shelfID int64, viewerID int64) error {
 	if _, err := GetShelf(db.Read(ctx), shelfID, viewerID); err != nil {
 		return err
 	}
@@ -425,7 +427,7 @@ func (db *DB) DeleteShelf(ctx context.Context, shelfID string, viewerID int64) e
 	return nil
 }
 
-func (db *DB) AddBookToShelf(ctx context.Context, shelfID string, viewerID int64, bookID int64) error {
+func (db *DB) AddBookToShelf(ctx context.Context, shelfID int64, viewerID int64, bookID int64) error {
 	shelf, err := GetShelf(db.Read(ctx), shelfID, viewerID)
 	if err != nil {
 		return err
@@ -448,7 +450,7 @@ func (db *DB) AddBookToShelf(ctx context.Context, shelfID string, viewerID int64
 // skipping any already present, and returns how many rows were newly inserted.
 // Each insert recomputes the next position, so the selection is appended in the
 // given order after whatever the shelf already held.
-func (db *DB) AddBooksToShelf(ctx context.Context, shelfID string, viewerID int64, bookIDs []int64) (int, error) {
+func (db *DB) AddBooksToShelf(ctx context.Context, shelfID int64, viewerID int64, bookIDs []int64) (int, error) {
 	shelf, err := GetShelf(db.Read(ctx), shelfID, viewerID)
 	if err != nil {
 		return 0, err
@@ -489,7 +491,7 @@ func (db *DB) AddBooksToShelf(ctx context.Context, shelfID string, viewerID int6
 
 // RemoveBooksFromShelf drops every bookID from the manual shelf in one statement
 // and returns how many rows were actually removed.
-func (db *DB) RemoveBooksFromShelf(ctx context.Context, shelfID string, viewerID int64, bookIDs []int64) (int, error) {
+func (db *DB) RemoveBooksFromShelf(ctx context.Context, shelfID int64, viewerID int64, bookIDs []int64) (int, error) {
 	shelf, err := GetShelf(db.Read(ctx), shelfID, viewerID)
 	if err != nil {
 		return 0, err
@@ -511,7 +513,7 @@ func (db *DB) RemoveBooksFromShelf(ctx context.Context, shelfID string, viewerID
 	return int(n), nil
 }
 
-func (db *DB) RemoveBookFromShelf(ctx context.Context, shelfID string, viewerID int64, bookID int64) error {
+func (db *DB) RemoveBookFromShelf(ctx context.Context, shelfID int64, viewerID int64, bookID int64) error {
 	shelf, err := GetShelf(db.Read(ctx), shelfID, viewerID)
 	if err != nil {
 		return err

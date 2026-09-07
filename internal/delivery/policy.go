@@ -33,7 +33,7 @@ type Book struct {
 }
 
 type Asset struct {
-	ID        string
+	ID        int64
 	Filename  string
 	Extension string
 	Format    format.Format
@@ -44,12 +44,12 @@ type Asset struct {
 type PlanOptions struct {
 	Preset            Preset
 	AttachmentLimitMB int
-	RequestedAssetID  string
+	RequestedAssetID  int64
 	RequestedTarget   converter.Target
 }
 
 type Plan struct {
-	AssetID      string
+	AssetID      int64
 	SourceFormat format.Format
 	Target       converter.Target
 	Filename     string
@@ -65,7 +65,7 @@ type PlanChoice struct {
 }
 
 func (p Plan) Sendable() bool {
-	return p.AssetID != "" && p.Reason.Code == ""
+	return p.AssetID != 0 && p.Reason.Code == ""
 }
 
 type Reason struct {
@@ -109,7 +109,7 @@ func PlanDelivery(book Book, opts PlanOptions) Plan {
 	if len(book.Assets) == 0 {
 		return noPlan(ReasonNoCompatibleFormat, "This book has no file to send.")
 	}
-	if opts.RequestedAssetID != "" {
+	if opts.RequestedAssetID != 0 {
 		return planRequested(book, opts)
 	}
 	return planBest(book, opts)
@@ -123,7 +123,7 @@ func PlanChoices(book Book, opts PlanOptions) []PlanChoice {
 
 	var choices []PlanChoice
 	type choiceKey struct {
-		assetID string
+		assetID int64
 		target  converter.Target
 	}
 	seen := make(map[choiceKey]struct{})
@@ -183,7 +183,7 @@ func planRequested(book Book, opts PlanOptions) Plan {
 			break
 		}
 	}
-	if selected.ID == "" {
+	if selected.ID == 0 {
 		return noPlan(ReasonAssetMissing, "The selected file is no longer available.")
 	}
 	if opts.RequestedTarget != "" {
@@ -466,7 +466,6 @@ func normalizePreset(preset Preset) Preset {
 
 func normalizePlanOptions(opts PlanOptions) PlanOptions {
 	opts.Preset = normalizePreset(opts.Preset)
-	opts.RequestedAssetID = strings.TrimSpace(opts.RequestedAssetID)
 	opts.RequestedTarget = converter.NormalizeTarget(string(opts.RequestedTarget))
 	if opts.AttachmentLimitMB <= 0 {
 		opts.AttachmentLimitMB = DefaultAttachmentLimitMB

@@ -98,9 +98,9 @@ func shelfList(ctx context.Context, database *db.DB, args []string) error {
 	}
 	for _, s := range shelves {
 		if s.Kind == db.ShelfQuery {
-			fmt.Printf("%-18s %-6s %s  q=%q\n", s.ID, s.Kind, s.Name, s.Query)
+			fmt.Printf("%-8d %-6s %s  q=%q\n", s.ID, s.Kind, s.Name, s.Query)
 		} else {
-			fmt.Printf("%-18s %-6s %s\n", s.ID, s.Kind, s.Name)
+			fmt.Printf("%-8d %-6s %s\n", s.ID, s.Kind, s.Name)
 		}
 	}
 	return nil
@@ -130,7 +130,7 @@ func shelfCreate(ctx context.Context, database *db.DB, args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Created %s shelf %q (%s)\n", shelf.Kind, shelf.Name, shelf.ID)
+	fmt.Printf("Created %s shelf %q (%d)\n", shelf.Kind, shelf.Name, shelf.ID)
 	return nil
 }
 
@@ -160,7 +160,11 @@ func shelfRemove(ctx context.Context, database *db.DB, args []string) error {
 		printShelfSubcommandUsage("remove")
 		return errors.New("usage: polka library shelves remove <shelf-id>")
 	}
-	if err := database.DeleteShelf(ctx, args[0], 0); err != nil {
+	shelfID, err := parseID(args[0], "shelf")
+	if err != nil {
+		return err
+	}
+	if err := database.DeleteShelf(ctx, shelfID, 0); err != nil {
 		return err
 	}
 	fmt.Printf("Removed shelf %s\n", args[0])
@@ -178,7 +182,11 @@ func shelfBooks(ctx context.Context, database *db.DB, args []string) error {
 		return reportedErrorf("usage: polka library shelves books [--limit N] <shelf-id>")
 	}
 
-	shelf, err := db.GetShelf(database.Read(ctx), fs.Args()[0], 0)
+	shelfID, err := parseID(fs.Args()[0], "shelf")
+	if err != nil {
+		return err
+	}
+	shelf, err := db.GetShelf(database.Read(ctx), shelfID, 0)
 	if err != nil {
 		return err
 	}
@@ -221,11 +229,15 @@ func shelfAddBook(ctx context.Context, database *db.DB, args []string) error {
 		printShelfSubcommandUsage("add-book")
 		return errors.New("usage: polka library shelves add-book <shelf-id> <book-id>")
 	}
-	bookID, err := parseBookID(args[1])
+	shelfID, err := parseID(args[0], "shelf")
 	if err != nil {
 		return err
 	}
-	if err := database.AddBookToShelf(ctx, args[0], 0, bookID); err != nil {
+	bookID, err := parseID(args[1], "book")
+	if err != nil {
+		return err
+	}
+	if err := database.AddBookToShelf(ctx, shelfID, 0, bookID); err != nil {
 		return err
 	}
 	fmt.Printf("Added %s to shelf %s\n", args[1], args[0])
@@ -237,21 +249,25 @@ func shelfRemoveBook(ctx context.Context, database *db.DB, args []string) error 
 		printShelfSubcommandUsage("remove-book")
 		return errors.New("usage: polka library shelves remove-book <shelf-id> <book-id>")
 	}
-	bookID, err := parseBookID(args[1])
+	shelfID, err := parseID(args[0], "shelf")
 	if err != nil {
 		return err
 	}
-	if err := database.RemoveBookFromShelf(ctx, args[0], 0, bookID); err != nil {
+	bookID, err := parseID(args[1], "book")
+	if err != nil {
+		return err
+	}
+	if err := database.RemoveBookFromShelf(ctx, shelfID, 0, bookID); err != nil {
 		return err
 	}
 	fmt.Printf("Removed %s from shelf %s\n", args[1], args[0])
 	return nil
 }
 
-func parseBookID(raw string) (int64, error) {
+func parseID(raw, entity string) (int64, error) {
 	id, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil || id <= 0 {
-		return 0, fmt.Errorf("invalid book ID %q", raw)
+		return 0, fmt.Errorf("invalid %s ID %q", entity, raw)
 	}
 	return id, nil
 }

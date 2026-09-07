@@ -90,9 +90,7 @@ func TestKOReaderSyncRoutes(t *testing.T) {
 		t.Fatalf("bob progress = %+v, want empty object", missing)
 	}
 
-	if err := db.SetAssetKOReaderHash(database.Write(t.Context()), "asset_1", "mapped-doc"); err != nil {
-		t.Fatalf("set mapped hash: %v", err)
-	}
+	mustExec(t, database, "UPDATE assets SET koreader_hash = 'mapped-doc' WHERE id = 1")
 	for _, tc := range []struct {
 		percentage float64
 		want       string

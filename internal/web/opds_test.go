@@ -97,9 +97,9 @@ func TestOPDSShelves(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create hidden shelf: %v", err)
 	}
-	for _, shelfID := range []string{shared.ID, personal.ID} {
+	for _, shelfID := range []int64{shared.ID, personal.ID} {
 		if err := database.AddBookToShelf(t.Context(), shelfID, alice.ID, 1); err != nil {
-			t.Fatalf("add Hobbit to %s: %v", shelfID, err)
+			t.Fatalf("add Hobbit to %d: %v", shelfID, err)
 		}
 	}
 
@@ -129,20 +129,20 @@ func TestOPDSShelves(t *testing.T) {
 		`<title>Tolkien</title>`,
 		`<summary type="text">Shelf</summary>`,
 		`<summary type="text">Saved search</summary>`,
-		`href="http://example.com/opds/shelves/` + shared.ID + `"`,
-		`href="http://example.com/opds/shelves/` + personal.ID + `"`,
-		`href="http://example.com/opds/shelves/` + query.ID + `"`,
+		`href="http://example.com/opds/shelves/` + strconv.FormatInt(shared.ID, 10) + `"`,
+		`href="http://example.com/opds/shelves/` + strconv.FormatInt(personal.ID, 10) + `"`,
+		`href="http://example.com/opds/shelves/` + strconv.FormatInt(query.ID, 10) + `"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("shelf navigation missing %q:\n%s", want, body)
 		}
 	}
-	if strings.Contains(body, "Bob only") || strings.Contains(body, hidden.ID) {
+	if strings.Contains(body, "Bob only") || strings.Contains(body, "urn:polka:opds:shelf:"+strconv.FormatInt(hidden.ID, 10)) {
 		t.Fatalf("shelf navigation exposed another user's personal shelf:\n%s", body)
 	}
 
 	for _, shelf := range []*db.Shelf{shared, personal, query} {
-		w = get("/opds/shelves/" + shelf.ID)
+		w = get("/opds/shelves/" + strconv.FormatInt(shelf.ID, 10))
 		if w.Code != http.StatusOK {
 			t.Fatalf("shelf %s status = %d, want 200; body: %s", shelf.Name, w.Code, w.Body.String())
 		}
@@ -155,7 +155,7 @@ func TestOPDSShelves(t *testing.T) {
 		}
 	}
 
-	w = get("/opds/shelves/" + hidden.ID)
+	w = get("/opds/shelves/" + strconv.FormatInt(hidden.ID, 10))
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("hidden shelf status = %d, want 404; body: %s", w.Code, w.Body.String())
 	}
@@ -346,7 +346,7 @@ func TestOPDSBooksFeed(t *testing.T) {
 		`<dc:language>en</dc:language>`,
 		`<dc:identifier>isbn:978-0-306-40615-7</dc:identifier>`,
 		`rel="http://opds-spec.org/acquisition"`,
-		`href="http://example.com/download/asset_1"`,
+		`href="http://example.com/download/1"`,
 		`type="application/epub+zip"`,
 		`rel="http://opds-spec.org/image/thumbnail"`,
 		`href="http://example.com/covers/1?v=2&amp;variant=thumb"`,
@@ -402,7 +402,7 @@ func TestOPDSDeliveryAcceptsAppToken(t *testing.T) {
 		},
 		{
 			name:        "download",
-			path:        "/download/asset_1",
+			path:        "/download/1",
 			contentType: "application/epub+zip",
 			body:        "epub content",
 		},
@@ -441,10 +441,10 @@ func TestOPDSPaginationBoundaries(t *testing.T) {
 			(3, 'Boundary One', 'Boundary One'),
 			(4, 'Boundary Two', 'Boundary Two'),
 			(5, 'Boundary Three', 'Boundary Three');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension) VALUES
-			('asset_3', 3, 'one.epub', 'one.epub', '.epub'),
-			('asset_4', 4, 'two.epub', 'two.epub', '.epub'),
-			('asset_5', 5, 'three.epub', 'three.epub', '.epub');
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, original_sha256, current_sha256) VALUES
+			(3, 3, 'one.epub', 'one.epub', '.epub', randomblob(32), randomblob(32)),
+			(4, 4, 'two.epub', 'two.epub', '.epub', randomblob(32), randomblob(32)),
+			(5, 5, 'three.epub', 'three.epub', '.epub', randomblob(32), randomblob(32));
 		INSERT INTO search (rowid, title, authors) VALUES
 			(3, 'Boundary One', ''),
 			(4, 'Boundary Two', ''),
@@ -659,7 +659,7 @@ func TestOPDSDownloadAcceptsBasicAuth(t *testing.T) {
 	_ = mustUser(t, database, "alice", db.RoleMember)
 	s := newTestServer(database, dir)
 
-	req := httptest.NewRequest("GET", "/download/asset_1", nil)
+	req := httptest.NewRequest("GET", "/download/1", nil)
 	req.SetBasicAuth("alice", "pw")
 	w := httptest.NewRecorder()
 	testRoutes(t, s).ServeHTTP(w, req)
@@ -694,7 +694,7 @@ func TestOPDSSearchFeed(t *testing.T) {
 	body := w.Body.String()
 	for _, want := range []string{
 		`<title>The Hobbit</title>`,
-		`href="http://example.com/download/asset_1"`,
+		`href="http://example.com/download/1"`,
 		`<opensearch:totalResults>1</opensearch:totalResults>`,
 		`<opensearch:itemsPerPage>50</opensearch:itemsPerPage>`,
 		`<opensearch:startIndex>1</opensearch:startIndex>`,
