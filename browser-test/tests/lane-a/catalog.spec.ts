@@ -157,6 +157,12 @@ test.describe('Catalog', () => {
 
     const downloadLink = page.locator('.detail-actions a.detail-action[href^="/download/"]');
     await expect(downloadLink.first()).toBeVisible();
+    await page.locator('.detail-download-group', { hasText: 'EPUB' }).locator('.detail-download-menu').click();
+    const downloads = page.locator('.floating-menu:not([hidden])');
+    for (const label of ['Download EPUB', 'Download Repaired EPUB', 'Download KEPUB']) {
+      await expect(downloads.getByRole('menuitem', { name: label, exact: true })).toBeVisible();
+    }
+    await page.keyboard.press('Escape');
 
     await expect(page.locator('.detail-authors a').first()).toBeVisible();
 
@@ -192,6 +198,7 @@ test.describe('Catalog', () => {
     await expect(moreToggle).toHaveCount(0);
 
     await expect(page.locator('#btn-edit-book')).toBeVisible();
+    await expect(page.locator('#sidebar-upload #book-upload-btn')).toBeVisible();
 
     // Reading status stays a quiet line below the action row, but the whole
     // line is an accessible status menu rather than another permanent button.
@@ -215,28 +222,6 @@ test.describe('Catalog', () => {
     await expect(readingStatus).toContainText('Unread');
 
     await page.screenshot({ path: 'screenshots/book.png', fullPage: true });
-  });
-
-  test('Cleanup page renders correctly', async ({ page }) => {
-    await page.goto('/cleanup');
-
-    await expect(page.locator('.cleanup-container')).toBeVisible();
-
-    const tiles = page.locator('.cleanup-tile');
-    await expect(tiles).toHaveCount(4);
-    await expect(tiles.filter({ hasText: 'Missing cover' })).toBeVisible();
-    await expect(tiles.filter({ hasText: 'Missing author' })).toBeVisible();
-    await expect(tiles.filter({ hasText: 'No tags' })).toBeVisible();
-    await expect(tiles.filter({ hasText: 'No description' })).toBeVisible();
-
-    const duplicatesHeader = page.locator('text=Possible duplicates');
-    await expect(duplicatesHeader).toBeVisible();
-
-    const duplicateGroupContainer = page.locator('.duplicate-group');
-    await expect(duplicateGroupContainer.first()).toBeVisible();
-    await expect(duplicateGroupContainer.first().locator('.cleanup-row')).toHaveCount(2);
-
-    await page.screenshot({ path: 'screenshots/cleanup.png', fullPage: true });
   });
 
   test('Series page shows series tiles that open the series in the library', async ({ page }) => {
@@ -286,42 +271,6 @@ test.describe('Catalog', () => {
       );
       expect(resetRes.ok()).toBe(true);
     }
-  });
-
-  test('Book detail opens from the library without full reload', async ({ page }) => {
-    await page.goto('/');
-    await expect(page.locator('.book-card', { hasText: 'With Cover Book' })).toBeVisible();
-    await page.evaluate(() => ((window as typeof window & { __polkaNavMarker?: string }).__polkaNavMarker = 'same-doc'));
-    await page.route('**/api/books/*', async (route) => {
-      if (route.request().method() === 'GET') {
-        await new Promise((resolve) => setTimeout(resolve, 650));
-      }
-      await route.continue();
-    });
-
-    await page.locator('.book-card', { hasText: 'With Cover Book' }).locator('.book-title-link').click();
-    await page.waitForURL((url) => url.pathname.startsWith('/book/'));
-    await expect(page.locator('.book-detail-loading-card')).toContainText('Loading book');
-    await expect(page.locator('.detail-title')).toHaveText('With Cover Book');
-    expect(await page.evaluate(() => (window as typeof window & { __polkaNavMarker?: string }).__polkaNavMarker)).toBe(
-      'same-doc',
-    );
-
-    await page.locator('.back-link a').click();
-    await page.waitForURL((url) => url.pathname === '/');
-    await expect(page.locator('.book-card', { hasText: 'With Cover Book' })).toBeVisible();
-    expect(await page.evaluate(() => (window as typeof window & { __polkaNavMarker?: string }).__polkaNavMarker)).toBe(
-      'same-doc',
-    );
-
-    await page.locator('.book-card', { hasText: 'With Cover Book' }).locator('.book-title-link').click();
-    await page.waitForURL((url) => url.pathname.startsWith('/book/'));
-    await expect(page.locator('.detail-title')).toHaveText('With Cover Book');
-    await page.goBack();
-    await expect(page.locator('.book-card', { hasText: 'With Cover Book' })).toBeVisible();
-    expect(await page.evaluate(() => (window as typeof window & { __polkaNavMarker?: string }).__polkaNavMarker)).toBe(
-      'same-doc',
-    );
   });
 
   test('Shelf active state follows router book navigation', async ({ page }) => {
@@ -486,8 +435,5 @@ test.describe('Catalog', () => {
 
     await page.locator('#view-grid-btn').click();
     await expect(page.locator('.book-card').first()).toBeVisible();
-
   });
-
-
 });

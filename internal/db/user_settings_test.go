@@ -8,14 +8,8 @@ import (
 
 func TestUserSettingsLifecycle(t *testing.T) {
 	database := newTestDB(t)
-	alice, err := database.CreateUser(t.Context(), "alice", "pw", RoleMember)
-	if err != nil {
-		t.Fatal(err)
-	}
-	bob, err := database.CreateUser(t.Context(), "bob", "pw", RoleMember)
-	if err != nil {
-		t.Fatal(err)
-	}
+	alice := mustUser(t, database, "alice", RoleMember)
+	bob := mustUser(t, database, "bob", RoleMember)
 
 	defaults := UserSettings{
 		UserID: alice.ID, Theme: ThemeSystem, ShowContinueReading: true, ReaderFlow: ReaderFlowPaginated,
@@ -92,10 +86,7 @@ func TestUserSettingsLifecycle(t *testing.T) {
 
 func TestUserSettingsRejectInvalidPatch(t *testing.T) {
 	database := newTestDB(t)
-	user, err := database.CreateUser(t.Context(), "reader", "pw", RoleMember)
-	if err != nil {
-		t.Fatal(err)
-	}
+	user := mustUser(t, database, "reader", RoleMember)
 	before, err := database.SaveUserSettings(t.Context(), user.ID, UserSettingsPatch{Theme: new(ThemeSepia)})
 	if err != nil {
 		t.Fatal(err)
@@ -135,10 +126,7 @@ func TestUserSettingsRejectInvalidPatch(t *testing.T) {
 
 func TestUserSettingsConcurrentPatches(t *testing.T) {
 	database := newTestDB(t)
-	user, err := database.CreateUser(t.Context(), "reader", "pw", RoleMember)
-	if err != nil {
-		t.Fatal(err)
-	}
+	user := mustUser(t, database, "reader", RoleMember)
 	patches := []UserSettingsPatch{
 		{Theme: new(ThemeDark)}, {ShowContinueReading: new(false)}, {TimeZone: new("UTC")},
 		{ReaderFlow: new(ReaderFlowScrolled)}, {ReaderStyle: new(ReaderStyleOriginal)},
@@ -173,10 +161,7 @@ func TestUserSettingsConcurrentPatches(t *testing.T) {
 
 func TestUserTimeZoneInitialization(t *testing.T) {
 	database := newTestDB(t)
-	user, err := database.CreateUser(t.Context(), "reader", "pw", RoleMember)
-	if err != nil {
-		t.Fatal(err)
-	}
+	user := mustUser(t, database, "reader", RoleMember)
 	settings, err := GetUserSettings(database.Read(t.Context()), user.ID)
 	if err != nil || settings.TimeZone != "" {
 		t.Fatalf("unset time zone: %+v, %v", settings, err)

@@ -92,10 +92,7 @@ func TestAssetKOReaderHashUsesCurrentBytes(t *testing.T) {
 
 func TestKOReaderAmbiguousHashSavesProviderStateWithoutAdvancingABook(t *testing.T) {
 	database := newTestDB(t)
-	user, err := database.CreateUser(t.Context(), "alice", "pw", RoleMember)
-	if err != nil {
-		t.Fatalf("CreateUser: %v", err)
-	}
+	user := mustUser(t, database, "alice", RoleMember)
 	mustExec(t, database, `
 		INSERT INTO books (id, title, sort_title) VALUES
 			(1, 'First', 'First'),
@@ -126,14 +123,8 @@ func TestKOReaderAmbiguousHashSavesProviderStateWithoutAdvancingABook(t *testing
 func TestKOReaderProgressRoundTripAndIsolation(t *testing.T) {
 	database := newTestDB(t)
 
-	alice, err := database.CreateUser(t.Context(), "alice", "pw", RoleMember)
-	if err != nil {
-		t.Fatalf("CreateUser alice: %v", err)
-	}
-	bob, err := database.CreateUser(t.Context(), "bob", "pw", RoleMember)
-	if err != nil {
-		t.Fatalf("CreateUser bob: %v", err)
-	}
+	alice := mustUser(t, database, "alice", RoleMember)
+	bob := mustUser(t, database, "bob", RoleMember)
 
 	saved, _, err := database.SaveKOReaderProgressAndAdvanceStatus(context.Background(), alice.ID, KOReaderProgress{
 		DocumentHash: "doc1",
@@ -171,10 +162,7 @@ func TestKOReaderProgressRoundTripAndIsolation(t *testing.T) {
 func TestKOReaderProgressValidation(t *testing.T) {
 	database := newTestDB(t)
 
-	user, err := database.CreateUser(t.Context(), "alice", "pw", RoleMember)
-	if err != nil {
-		t.Fatalf("CreateUser: %v", err)
-	}
+	user := mustUser(t, database, "alice", RoleMember)
 
 	cases := []struct {
 		name string
@@ -199,10 +187,7 @@ func TestKOReaderProgressValidation(t *testing.T) {
 
 func TestKOReaderProgressAndStatusCommitTogether(t *testing.T) {
 	database := newTestDB(t)
-	user, err := database.CreateUser(t.Context(), "kosync-atomic", "pw", RoleReader)
-	if err != nil {
-		t.Fatalf("create user: %v", err)
-	}
+	user := mustUser(t, database, "kosync-atomic", RoleReader)
 	mustExec(t, database, `
 		INSERT INTO books (id, title, sort_title) VALUES (144, 'Atomic', 'Atomic');
 		INSERT INTO assets (id, book_id, storage_path, filename, extension, koreader_hash, original_sha256, current_sha256)
@@ -214,7 +199,7 @@ func TestKOReaderProgressAndStatusCommitTogether(t *testing.T) {
 		END;
 	`)
 
-	_, _, err = database.SaveKOReaderProgressAndAdvanceStatus(context.Background(), user.ID, KOReaderProgress{
+	_, _, err := database.SaveKOReaderProgressAndAdvanceStatus(context.Background(), user.ID, KOReaderProgress{
 		DocumentHash: "atomic-hash",
 		Progress:     "chapter-4",
 		Percentage:   0.4,

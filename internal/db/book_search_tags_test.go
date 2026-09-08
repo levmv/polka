@@ -81,10 +81,7 @@ func TestExactTagShelfTracksMetadataAndAccess(t *testing.T) {
 
 		setSearchTags(t, database, book.id, book.tags)
 	}
-	user, err := database.CreateUser(t.Context(), "reader", "pw", RoleReader)
-	if err != nil {
-		t.Fatal(err)
-	}
+	user := mustUser(t, database, "reader", RoleReader)
 	shelf, err := database.CreateShelf(t.Context(), user.ID, ShelfShared, "History", ShelfQuery, `tag:"История"`)
 	if err != nil {
 		t.Fatal(err)

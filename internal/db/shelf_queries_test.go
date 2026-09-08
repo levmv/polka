@@ -10,10 +10,7 @@ func TestShelvesVisibilityAndMembership(t *testing.T) {
 	mustExec(t, database, "INSERT INTO book_authors (book_id, author_id, author_order) VALUES (1, 1, 0)")
 	mustExec(t, database, "INSERT INTO book_authors (book_id, author_id, author_order) VALUES (2, 1, 0)")
 
-	user, err := database.CreateUser(t.Context(), "alice", "pw", RoleMember)
-	if err != nil {
-		t.Fatalf("CreateUser: %v", err)
-	}
+	user := mustUser(t, database, "alice", RoleMember)
 
 	shared, err := database.CreateShelf(t.Context(), user.ID, ShelfShared, "Shared", ShelfManual, "")
 	if err != nil {

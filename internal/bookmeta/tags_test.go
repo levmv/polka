@@ -35,39 +35,18 @@ func TestApplyTagMode(t *testing.T) {
 		want    []string
 	}{
 		{
-			name:    "add appends new, keeps order",
-			current: []string{"a", "b"},
-			mode:    TagAdd,
-			values:  []string{"c", "d"},
-			want:    []string{"a", "b", "c", "d"},
-		},
-		{
-			name:    "add skips existing case-insensitively",
+			name:    "add preserves order and spelling while splitting and deduplicating",
 			current: []string{"Sci-Fi", "b"},
 			mode:    TagAdd,
-			values:  []string{"sci-fi", "c"},
-			want:    []string{"Sci-Fi", "b", "c"},
-		},
-		{
-			name:    "add keeps typed casing for new tags",
-			current: []string{"a"},
-			mode:    TagAdd,
-			values:  []string{"NewTag"},
-			want:    []string{"a", "NewTag"},
+			values:  []string{"sci-fi", "c, NewTag"},
+			want:    []string{"Sci-Fi", "b", "c", "NewTag"},
 		},
 		{
 			name:    "remove drops matches case-insensitively",
 			current: []string{"a", "B", "c"},
 			mode:    TagRemove,
-			values:  []string{"b", "C"},
+			values:  []string{"b", "C", "absent"},
 			want:    []string{"a"},
-		},
-		{
-			name:    "remove of absent is a no-op",
-			current: []string{"a", "b"},
-			mode:    TagRemove,
-			values:  []string{"z"},
-			want:    []string{"a", "b"},
 		},
 		{
 			name:    "replace sets exactly",
@@ -82,13 +61,6 @@ func TestApplyTagMode(t *testing.T) {
 			mode:    TagClear,
 			values:  []string{"ignored"},
 			want:    nil,
-		},
-		{
-			name:    "values may carry embedded commas",
-			current: nil,
-			mode:    TagAdd,
-			values:  []string{"a, b", "c"},
-			want:    []string{"a", "b", "c"},
 		},
 	}
 	for _, tt := range tests {

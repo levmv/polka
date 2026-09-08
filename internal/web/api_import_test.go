@@ -26,7 +26,7 @@ func TestAPIImportUploadImportsAndDuplicates(t *testing.T) {
 	defer database.Close()
 	ensureTestStorageLayout(t, dataDir)
 
-	u := mustUser(t, database, "Alice", db.RoleMember)
+	u := mustUser(t, database, "alice", db.RoleMember)
 	s := &Server{db: database, dataDir: dataDir, sessions: newSessionStore(database)}
 	sid, err := s.sessions.issue(t.Context(), u.ID)
 	if err != nil {
@@ -99,7 +99,7 @@ func TestAPIImportUploadRestoresTrashedDuplicate(t *testing.T) {
 	defer database.Close()
 	ensureTestStorageLayout(t, dataDir)
 
-	u := mustUser(t, database, "Alice", db.RoleMember)
+	u := mustUser(t, database, "alice", db.RoleMember)
 	s := &Server{db: database, dataDir: dataDir, sessions: newSessionStore(database)}
 	sid, err := s.sessions.issue(t.Context(), u.ID)
 	if err != nil {
@@ -170,7 +170,7 @@ func TestAPIImportUploadAcceptsZippedFB2(t *testing.T) {
 	defer database.Close()
 	ensureTestStorageLayout(t, dataDir)
 
-	u := mustUser(t, database, "Alice", db.RoleMember)
+	u := mustUser(t, database, "alice", db.RoleMember)
 	s := &Server{db: database, dataDir: dataDir, sessions: newSessionStore(database)}
 	sid, err := s.sessions.issue(t.Context(), u.ID)
 	if err != nil {
@@ -214,7 +214,7 @@ func TestAPIImportUploadRejectsUnsupportedFilename(t *testing.T) {
 	defer database.Close()
 	ensureTestStorageLayout(t, dataDir)
 
-	u := mustUser(t, database, "Alice", db.RoleMember)
+	u := mustUser(t, database, "alice", db.RoleMember)
 	s := &Server{db: database, dataDir: dataDir, sessions: newSessionStore(database)}
 	sid, err := s.sessions.issue(t.Context(), u.ID)
 	if err != nil {
@@ -292,7 +292,7 @@ func TestAPIImportRequiresLayoutBeforeWrite(t *testing.T) {
 			}
 			defer database.Close()
 
-			u := mustUser(t, database, "Alice", db.RoleMember)
+			u := mustUser(t, database, "alice", db.RoleMember)
 			root := tc.setup(t, dataDir, database)
 
 			s := &Server{db: database, dataDir: dataDir, storageRoot: root, sessions: newSessionStore(database)}

@@ -11,10 +11,7 @@ import (
 func readingActivityFixture(t *testing.T, zone string) (*DB, int64) {
 	t.Helper()
 	database := newTestDB(t)
-	user, err := database.CreateUser(t.Context(), "reader", "pw", RoleMember)
-	if err != nil {
-		t.Fatal(err)
-	}
+	user := mustUser(t, database, "reader", RoleMember)
 	if _, err := database.SaveUserSettings(t.Context(), user.ID, UserSettingsPatch{TimeZone: &zone}); err != nil {
 		t.Fatal(err)
 	}

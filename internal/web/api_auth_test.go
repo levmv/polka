@@ -15,7 +15,7 @@ func TestAPIMe(t *testing.T) {
 	database, dir := setupTestDB(t)
 	defer database.Close()
 
-	u := mustUser(t, database, "Alice", db.RoleMember)
+	u := mustUser(t, database, "alice", db.RoleMember)
 
 	s := newTestServer(database, dir)
 	sid, err := s.sessions.issue(t.Context(), u.ID)
@@ -23,6 +23,11 @@ func TestAPIMe(t *testing.T) {
 		t.Fatalf("issue session: %v", err)
 	}
 	handler := testRoutes(t, s)
+	unauthenticated := httptest.NewRecorder()
+	handler.ServeHTTP(unauthenticated, httptest.NewRequest("GET", "/api/me", nil))
+	if unauthenticated.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated status = %d, want 401", unauthenticated.Code)
+	}
 
 	req := httptest.NewRequest("GET", "/api/me", nil)
 	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sid})
@@ -42,26 +47,11 @@ func TestAPIMe(t *testing.T) {
 	}
 }
 
-func TestAPIMeRequiresAuth(t *testing.T) {
-	database, dir := setupTestDB(t)
-	defer database.Close()
-
-	_ = mustUser(t, database, "Alice", db.RoleMember)
-
-	s := newTestServer(database, dir)
-	w := httptest.NewRecorder()
-	testRoutes(t, s).ServeHTTP(w, httptest.NewRequest("GET", "/api/me", nil))
-
-	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want %d", w.Code, http.StatusUnauthorized)
-	}
-}
-
 func TestLogoutRequiresSameOriginPost(t *testing.T) {
 	database, dir := setupTestDB(t)
 	defer database.Close()
 
-	u := mustUser(t, database, "Alice", db.RoleMember)
+	u := mustUser(t, database, "alice", db.RoleMember)
 	s := newTestServer(database, dir)
 	handler := testRoutes(t, s)
 

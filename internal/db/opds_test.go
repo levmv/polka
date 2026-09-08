@@ -101,10 +101,7 @@ func TestListRecentOPDSPublicationsIsNewestFirstWithinOneSecond(t *testing.T) {
 
 func TestSearchOPDSPublicationsSupportsPerUserStatusFilters(t *testing.T) {
 	database := newTestDB(t)
-	user, err := database.CreateUser(t.Context(), "reader", "pw", RoleReader)
-	if err != nil {
-		t.Fatalf("create user: %v", err)
-	}
+	user := mustUser(t, database, "reader", RoleReader)
 	mustExec(t, database, `
 		INSERT INTO books (id, title, sort_title) VALUES
 			(1, 'Alpha Needle', 'Alpha Needle'),
@@ -133,10 +130,7 @@ func TestSearchOPDSPublicationsSupportsPerUserStatusFilters(t *testing.T) {
 func TestManualShelfOPDSPublicationsRespectContentScope(t *testing.T) {
 	database := newTestDB(t)
 
-	reader, err := database.CreateUser(t.Context(), "reader", "pw", RoleReader)
-	if err != nil {
-		t.Fatalf("create reader: %v", err)
-	}
+	reader := mustUser(t, database, "reader", RoleReader)
 	for _, statement := range []string{
 		"INSERT INTO books (id, title, sort_title) VALUES (11, 'Allowed', 'Allowed')",
 		"INSERT INTO books (id, title, sort_title) VALUES (13, 'Outside', 'Outside')",

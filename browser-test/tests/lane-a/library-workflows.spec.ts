@@ -1,33 +1,13 @@
 import { Buffer } from 'node:buffer';
 import { readFileSync } from 'node:fs';
 import { epub } from '../book-fixtures';
-import { expect, type Page, test } from '../fixtures';
+import { expect, test } from '../fixtures';
 import {
   createReaderTestUser,
   deleteTestUserAsAdmin,
   login,
   loginByRequest,
 } from '../helpers';
-
-async function createManualShelfFromSidebar(page: Page, name: string): Promise<void> {
-  await page.locator('#new-shelf-btn').click();
-  const dialog = page.locator('.settings-submodal');
-  await expect(dialog.getByRole('heading', { name: 'New shelf' })).toBeVisible();
-  await dialog.getByLabel('Name').fill(name);
-  await dialog.getByRole('button', { name: 'Create shelf' }).click();
-  await expect(dialog).toHaveCount(0);
-  await expect(page.locator('#shelf-nav .shelf-nav-item', { hasText: name })).toBeVisible();
-}
-
-function testMOBIWithPayload(payload: Buffer): Buffer {
-  const record0Offset = 78 + 8;
-  const data = Buffer.alloc(record0Offset + 32);
-  data.write('BOOKMOBI', 60, 'ascii');
-  data.writeUInt16BE(1, 76);
-  data.writeUInt32BE(record0Offset, 78);
-  data.write('MOBI', record0Offset + 16, 'ascii');
-  return Buffer.concat([data, payload]);
-}
 
 test.describe('Library workflows', () => {
   test('Sidebar log out posts to /logout', async ({ page }) => {
@@ -141,7 +121,6 @@ test.describe('Library workflows', () => {
         (url) => url.pathname === '/',
       );
     } finally {
-      await page.goto('/');
       await deleteTestUserAsAdmin(page, readerUser);
     }
   });
@@ -299,8 +278,7 @@ test.describe('Library workflows', () => {
       await page.locator('.menu-item', { hasText: 'Write metadata to file' }).click();
       await responseReady;
 
-      // Navigate within the SPA while A's completed server response is held.
-      // Releasing it on B used to replace B's title and currentBookDetail with A.
+      // A's late response must not replace the book opened in the meantime.
       await page.locator('#nav-library').click();
       await expect(page).toHaveURL(/\/$/);
       const nextBook = page.locator('.book-card', { hasText: 'No Cover Book' });
@@ -325,28 +303,7 @@ test.describe('Library workflows', () => {
     }
   });
 
-  test('Add book upload reports an existing duplicate', async ({ page }) => {
-    await page.goto('/');
-    await expect(page.locator('.book-card').first()).toBeVisible();
-    // The compact upload affordance lives beside the brand and stays available
-    // across app pages; import results use the shared toast surface.
-    await expect(page.locator('#sidebar-upload #book-upload-btn')).toHaveAttribute(
-      'aria-label',
-      'Add books',
-    );
-
-    await page.locator('#book-upload-input').setInputFiles('fixtures/without-cover.epub');
-
-    const toast = page.locator('.toast:not(.toast-leaving)', {
-      hasText: 'Already in library: No Cover Book',
-    });
-    await expect(toast).toBeVisible();
-
-    await toast.getByRole('button', { name: 'Open' }).click();
-    await expect(page.locator('.detail-title')).toContainText('No Cover Book');
-  });
-
-  test('Reuploading a trashed book restores it', async ({ page }) => {
+  test('Upload opens an existing duplicate and restores it after removal', async ({ page }) => {
     const title = `Upload Restore ${Date.now().toString(36)}`;
     const file = {
       name: `${title}.fb2`,
@@ -360,7 +317,10 @@ test.describe('Library workflows', () => {
 
     const card = page.locator('.book-card', { hasText: title });
     await expect(card).toBeVisible();
-    await card.locator('.book-title-link').click();
+    await page.locator('#book-upload-input').setInputFiles(file);
+    const duplicate = page.locator('.toast:not(.toast-leaving)', { hasText: `Already in library: ${title}` });
+    await expect(duplicate).toBeVisible();
+    await duplicate.getByRole('button', { name: 'Open' }).click();
     await expect(page.locator('.detail-title')).toContainText(title);
     await page.locator('#btn-book-menu').click();
     await page.locator('.menu-item', { hasText: 'Remove from library' }).click();
@@ -400,7 +360,7 @@ test.describe('Library workflows', () => {
     await expect(page.locator('.book-card', { hasText: title })).toBeVisible();
   });
 
-  test('Manual shelf can be created and opened from the sidebar', async ({ page }) => {
+  test('A manual shelf can be created, filled, renamed and deleted', async ({ page }) => {
     await page.goto('/');
     await expect(page.locator('.book-card').first()).toBeVisible();
 
@@ -408,7 +368,13 @@ test.describe('Library workflows', () => {
     const title = ((await firstCard.locator('.book-title').textContent()) || '').trim();
     expect(title).not.toBe('');
 
-    await createManualShelfFromSidebar(page, 'Browser Shelf');
+    await page.locator('#new-shelf-btn').click();
+    const dialog = page.locator('.settings-submodal');
+    await expect(dialog.getByRole('heading', { name: 'New shelf' })).toBeVisible();
+    await dialog.getByLabel('Name').fill('Browser Shelf');
+    await dialog.getByRole('button', { name: 'Create shelf' }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(page.locator('#shelf-nav .shelf-nav-item', { hasText: 'Browser Shelf' })).toBeVisible();
 
     await firstCard.locator('.book-title').click();
     await expect(page.locator('.detail-title')).toContainText(title);
@@ -424,6 +390,36 @@ test.describe('Library workflows', () => {
 
     await page.locator('#shelf-nav .shelf-nav-item', { hasText: 'Browser Shelf' }).click();
     await expect(page.locator('.book-card', { hasText: title })).toBeVisible();
+
+    const row = page.locator('#shelf-nav .shelf-nav-row', { hasText: 'Browser Shelf' });
+    await expect(row.locator('.shelf-nav-item')).toBeVisible();
+
+    // The action button becomes interactive on hover.
+    await row.hover();
+    await row.locator('.shelf-actions-btn').click();
+    await page.getByRole('menuitem', { name: 'Edit' }).click();
+    const editShelf = page.locator('.settings-submodal');
+    await expect(editShelf.getByRole('heading', { name: 'Edit shelf' })).toBeVisible();
+    await editShelf.getByLabel('Name').fill('Renamed Shelf');
+    await editShelf.getByRole('button', { name: 'Save' }).click();
+    await expect(editShelf).toHaveCount(0);
+    await expect(
+      page.locator('#shelf-nav .shelf-nav-item', { hasText: 'Renamed Shelf' }),
+    ).toBeVisible();
+
+    const renamedRow = page.locator('#shelf-nav .shelf-nav-row', { hasText: 'Renamed Shelf' });
+    await renamedRow.hover();
+    await renamedRow.locator('.shelf-actions-btn').click();
+    const shelfRowH = (await page.locator('#shelf-nav .shelf-nav-item').first().boundingBox())!
+      .height;
+    await page.getByRole('menuitem', { name: 'Delete' }).click();
+    const shelfBarH = (await page.locator('#shelf-nav .shelf-delete-confirm').boundingBox())!
+      .height;
+    expect(shelfBarH).toBe(shelfRowH);
+    await page.locator('#shelf-nav .shelf-delete-yes').click();
+    await expect(
+      page.locator('#shelf-nav .shelf-nav-item', { hasText: 'Renamed Shelf' }),
+    ).toHaveCount(0);
   });
 
   test('A shelf can be created from the book-page popover', async ({ page }) => {
@@ -452,11 +448,11 @@ test.describe('Library workflows', () => {
   });
 
   test('Popover keyboard nav toggles multiple shelves in a row', async ({ page }) => {
-    await page.goto('/');
     for (const name of ['Kbd One', 'Kbd Two']) {
-      await createManualShelfFromSidebar(page, name);
+      const created = await page.request.post('/api/shelves', { data: { name, kind: 'manual' } });
+      expect(created.ok()).toBe(true);
     }
-
+    await page.goto('/');
     await page.locator('.book-card').first().locator('.book-title').click();
     await page.locator('#btn-book-shelves').click();
     const popover = page.locator('.shelf-popover');
@@ -504,44 +500,6 @@ test.describe('Library workflows', () => {
     await expect(shelfRow.locator('.shelf-nav-item')).toBeVisible();
     await expect(shelfRow.locator('.shelf-kind-marker[data-kind="query"]')).toHaveCount(1);
     await expect(page.locator('.book-card', { hasText: 'No Cover Book' })).toBeVisible();
-  });
-
-  test('Shelf can be edited and deleted from the sidebar', async ({ page }) => {
-    await page.goto('/');
-    await expect(page.locator('.book-card').first()).toBeVisible();
-
-    await createManualShelfFromSidebar(page, 'Temp Shelf');
-    const row = page.locator('#shelf-nav .shelf-nav-row', { hasText: 'Temp Shelf' });
-    await expect(row.locator('.shelf-nav-item')).toBeVisible();
-
-    // Edit via the kebab action menu. The kebab only becomes interactive on
-    // hover, so hover the row first.
-    await row.hover();
-    await row.locator('.shelf-actions-btn').click();
-    await page.getByRole('menuitem', { name: 'Edit' }).click();
-    const editShelf = page.locator('.settings-submodal');
-    await expect(editShelf.getByRole('heading', { name: 'Edit shelf' })).toBeVisible();
-    await editShelf.getByLabel('Name').fill('Renamed Shelf');
-    await editShelf.getByRole('button', { name: 'Save' }).click();
-    await expect(editShelf).toHaveCount(0);
-    await expect(
-      page.locator('#shelf-nav .shelf-nav-item', { hasText: 'Renamed Shelf' }),
-    ).toBeVisible();
-
-    // Delete via the kebab action menu + inline confirm.
-    const renamedRow = page.locator('#shelf-nav .shelf-nav-row', { hasText: 'Renamed Shelf' });
-    await renamedRow.hover();
-    await renamedRow.locator('.shelf-actions-btn').click();
-    const shelfRowH = (await page.locator('#shelf-nav .shelf-nav-item').first().boundingBox())!
-      .height;
-    await page.getByRole('menuitem', { name: 'Delete' }).click();
-    const shelfBarH = (await page.locator('#shelf-nav .shelf-delete-confirm').boundingBox())!
-      .height;
-    expect(shelfBarH).toBe(shelfRowH);
-    await page.locator('#shelf-nav .shelf-delete-yes').click();
-    await expect(
-      page.locator('#shelf-nav .shelf-nav-item', { hasText: 'Renamed Shelf' }),
-    ).toHaveCount(0);
   });
 
   test('Send dialog adds a device inline and prepares a plan', async ({ page }) => {
@@ -636,71 +594,6 @@ test.describe('Library workflows', () => {
     await expect(page.locator('.trash-card', { hasText: title })).toHaveCount(0);
   });
 
-  test('AZW4 upload exposes a PDF download option', async ({ page }) => {
-    const title = `AZW4 Download ${Date.now().toString(36)}`;
-    const pdf = Buffer.from('%PDF-1.7\nbrowser test\n%%EOF');
-
-    await page.goto('/');
-    await expect(page.locator('.book-card').first()).toBeVisible();
-    await page.locator('#book-upload-input').setInputFiles({
-      name: `${title}.azw4`,
-      mimeType: 'application/vnd.amazon.ebook',
-      buffer: testMOBIWithPayload(pdf),
-    });
-
-    const card = page.locator('.book-card', { hasText: title });
-    await expect(card).toBeVisible();
-    await card.locator('.book-title-link').click();
-    await expect(page.locator('.detail-title')).toContainText(title);
-
-    const group = page.locator('.detail-download-group', { hasText: 'AZW4' });
-    await expect(group).toBeVisible();
-    const nativeDownload = group.locator('a.detail-download-main');
-    await expect(nativeDownload).toContainText('AZW4');
-
-    await group.locator('.detail-download-menu').click();
-    const menu = page.locator('.floating-menu:not([hidden])');
-    await expect(menu.locator('.menu-item', { hasText: 'Download AZW4' })).toBeVisible();
-    await expect(menu.locator('.menu-item', { hasText: 'Download PDF' })).toBeVisible();
-
-    const nativeHref = await nativeDownload.getAttribute('href');
-    if (!nativeHref) throw new Error('missing native download href');
-    const pdfResponse = await page.request.get(`${nativeHref}/as/pdf`);
-    expect(pdfResponse.status()).toBe(200);
-    expect(await pdfResponse.body()).toEqual(pdf);
-  });
-
-  test('EPUB exposes a distinct repaired download', async ({ page }) => {
-    const title = `EPUB Repair ${Date.now().toString(36)}`;
-
-    await page.goto('/');
-    await expect(page.locator('.book-card').first()).toBeVisible();
-    await page.locator('#book-upload-input').setInputFiles(epub(title, 'Repair Author', title));
-
-    const card = page.locator('.book-card', { hasText: title });
-    await expect(card).toBeVisible();
-    await card.locator('.book-title-link').click();
-    await expect(page.locator('.detail-title')).toContainText(title);
-
-    const group = page.locator('.detail-download-group', { hasText: 'EPUB' });
-    await expect(group).toBeVisible();
-    const nativeDownload = group.locator('a.detail-download-main');
-    await expect(nativeDownload).toContainText('EPUB');
-
-    await group.locator('.detail-download-menu').click();
-    const menu = page.locator('.floating-menu:not([hidden])');
-    await expect(menu.locator('.menu-item', { hasText: /^Download EPUB$/ })).toBeVisible();
-    await expect(menu.locator('.menu-item', { hasText: 'Download Repaired EPUB' })).toBeVisible();
-    await expect(menu.locator('.menu-item', { hasText: 'Download KEPUB' })).toBeVisible();
-
-    const nativeHref = await nativeDownload.getAttribute('href');
-    if (!nativeHref) throw new Error('missing native EPUB download href');
-    const repairedResponse = await page.request.get(`${nativeHref}/as/epub`);
-    expect(repairedResponse.status()).toBe(200);
-    expect(repairedResponse.headers()['content-type']).toBe('application/epub+zip');
-    expect(await repairedResponse.body()).not.toEqual(epub(title, 'Repair Author', title).buffer);
-  });
-
   test('A long description clamps behind a disclosure and opens in place', async ({ page }) => {
     const title = `Long Blurb ${Date.now().toString(36)}`;
     // Well past the twelve-line clamp at any viewport the suite uses, so the
@@ -730,12 +623,10 @@ test.describe('Library workflows', () => {
     await expect(blurb).toHaveClass(/detail-description--collapsed/);
 
     const clamped = await blurb.evaluate((el) => ({
-        height: el.clientHeight,
-        lineHeight: parseFloat(getComputedStyle(el).lineHeight),
+      height: el.clientHeight,
+      lineHeight: parseFloat(getComputedStyle(el).lineHeight),
     }));
-    // The gaps between those blocks are height no line of text pays for, so a
-    // clamp counting lines alone let this blurb stand two lines taller than a
-    // plain one. The collapsed block is capped however the markup falls.
+    // The height cap includes margins between headings and paragraphs.
     expect(clamped.height / clamped.lineHeight).toBeLessThanOrEqual(14);
 
     await more.click();

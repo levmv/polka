@@ -56,7 +56,7 @@ func TestUserLifecycle(t *testing.T) {
 		t.Fatalf("set password: %v", err)
 	}
 	if got, _ := Authenticate(database.Read(t.Context()), "alice", "s3cret"); got != nil {
-		t.Errorf("old password still books after change")
+		t.Errorf("old password accepted after change")
 	}
 	if got, _ := Authenticate(database.Read(t.Context()), "alice", "newpass"); got == nil {
 		t.Errorf("new password rejected after change")

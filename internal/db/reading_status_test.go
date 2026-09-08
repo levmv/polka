@@ -10,14 +10,8 @@ import (
 func TestReadingStatusLifecycleHistoryAndIsolation(t *testing.T) {
 	database := newTestDB(t)
 
-	alice, err := database.CreateUser(t.Context(), "alice", "pw", RoleMember)
-	if err != nil {
-		t.Fatalf("create alice: %v", err)
-	}
-	bob, err := database.CreateUser(t.Context(), "bob", "pw", RoleMember)
-	if err != nil {
-		t.Fatalf("create bob: %v", err)
-	}
+	alice := mustUser(t, database, "alice", RoleMember)
+	bob := mustUser(t, database, "bob", RoleMember)
 	mustExec(t, database, `
 		INSERT INTO books (id, title, sort_title) VALUES (1, 'Book', 'Book');
 		INSERT INTO assets (id, book_id, storage_path, filename, extension, koreader_hash, original_sha256, current_sha256)
@@ -110,10 +104,7 @@ func TestReadingStatusLifecycleHistoryAndIsolation(t *testing.T) {
 
 func TestAutomaticReadingStatusKeepsExplicitTerminalStates(t *testing.T) {
 	database := newTestDB(t)
-	user, err := database.CreateUser(t.Context(), "reader", "pw", RoleReader)
-	if err != nil {
-		t.Fatalf("create user: %v", err)
-	}
+	user := mustUser(t, database, "reader", RoleReader)
 	mustExec(t, database, `
 		INSERT INTO books (id, title, sort_title) VALUES (1, 'Book', 'Book');
 		INSERT INTO assets (id, book_id, storage_path, filename, extension, koreader_hash, original_sha256, current_sha256)

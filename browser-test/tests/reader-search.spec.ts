@@ -7,21 +7,14 @@ import {
 } from './helpers';
 
 test.describe('Reader local search', () => {
-  let openedAssets: string[] = [];
   let readerUser: TestUser | null = null;
 
   test.beforeEach(async ({ page }) => {
-    openedAssets = [];
     readerUser = await createReaderTestUser(page, 'reader-search');
     await loginByRequest(page, readerUser.username, readerUser.password);
   });
 
   test.afterEach(async ({ page }) => {
-    for (const assetId of openedAssets) {
-      await page.request.put(`/api/reader/assets/${assetId}/state`, {
-        data: { progress: 1, locator: { engine: 'browser-test', id: 'search-cleanup' } },
-      });
-    }
     if (readerUser) {
       await deleteTestUserAsAdmin(page, readerUser);
       readerUser = null;
@@ -29,7 +22,7 @@ test.describe('Reader local search', () => {
   });
 
   test('searches an EPUB and navigates to a result', async ({ page, browserName }) => {
-    await openReader(page, 'With Cover Book', openedAssets);
+    await openReader(page, 'With Cover Book');
 
     await page.getByRole('button', { name: 'Search in book' }).click();
     const panel = page.locator('#reader-search-panel');
@@ -61,13 +54,16 @@ test.describe('Reader local search', () => {
       path: `screenshots/reader-search-highlight-${browserName}.png`,
       fullPage: true,
     });
+    await trackReaderTurns(page);
     await page.keyboard.press('Escape');
     await expect(panel).toBeHidden();
     await expect.poll(() => hasFoliateSearchHighlight(page)).toBe(false);
+    await page.keyboard.press('Space');
+    await expect.poll(() => readerTurnCalls(page)).toEqual({ left: 0, right: 1 });
   });
 
   test('opens search from selected text', async ({ page }) => {
-    await openReader(page, 'With Cover Book', openedAssets);
+    await openReader(page, 'With Cover Book');
 
     const selected = await selectFirstText(page);
     const word = selected.trim().split(/\s+/)[0];
@@ -84,23 +80,9 @@ test.describe('Reader local search', () => {
     );
     await expect(panel.locator('.reader-search-result-btn').first()).toBeVisible();
   });
-
-  test('restores page-turn keys after closing search', async ({ page }) => {
-    await openReader(page, 'With Cover Book', openedAssets);
-    await trackReaderTurns(page);
-
-    await page.getByRole('button', { name: 'Search in book' }).click();
-    const panel = page.locator('#reader-search-panel');
-    await expect(panel).toBeVisible();
-    await page.keyboard.press('Escape');
-    await expect(panel).toBeHidden();
-
-    await page.keyboard.press('Space');
-    await expect.poll(() => readerTurnCalls(page)).toEqual({ left: 0, right: 1 });
-  });
 });
 
-async function openReader(page: Page, title: string, openedAssets: string[]): Promise<void> {
+async function openReader(page: Page, title: string): Promise<void> {
   await page.goto('/');
   const card = page.locator('.book-card', { hasText: title });
   await expect(card).toBeVisible();
@@ -113,14 +95,6 @@ async function openReader(page: Page, title: string, openedAssets: string[]): Pr
   await expect
     .poll(async () => page.locator('.reader-epub-stage').getAttribute('data-reader-ready'))
     .toBe('true');
-
-  const assetId = await page.locator('.reader-page').getAttribute('data-reader-asset-id');
-  if (assetId) {
-    openedAssets.push(assetId);
-    await page.request.put(`/api/reader/assets/${assetId}/state`, {
-      data: { progress: 1, locator: { engine: 'browser-test', id: 'search-open-cleanup' } },
-    });
-  }
 }
 
 async function firstSearchableWord(page: Page): Promise<string> {

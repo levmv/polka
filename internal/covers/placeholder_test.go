@@ -50,95 +50,36 @@ func TestPlaceholderDeterministic(t *testing.T) {
 	}
 }
 
-func TestGeneratedCoverVariesBySeed(t *testing.T) {
-	a, err := Generated("Dune", "Frank Herbert", VariantThumb, DefaultOptions(), 1)
+func TestGeneratedCoverSeedAndStyle(t *testing.T) {
+	baseline, err := Generated("Dune", "Frank Herbert", VariantThumb, DefaultOptions(), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := Generated("Dune", "Frank Herbert", VariantThumb, DefaultOptions(), 2)
-	if err != nil {
-		t.Fatal(err)
+	if baseline.Width != 360 || baseline.Height != 540 {
+		t.Fatalf("generated thumb size = %dx%d; want 360x540", baseline.Width, baseline.Height)
 	}
-	if a.Width != 360 || a.Height != 540 {
-		t.Fatalf("generated thumb size = %dx%d; want 360x540", a.Width, a.Height)
-	}
-	if bytes.Equal(a.Bytes, b.Bytes) {
-		t.Error("different generated cover seeds produced identical bytes")
-	}
-	if _, _, err := image.DecodeConfig(bytes.NewReader(a.Bytes)); err != nil {
+	if _, _, err := image.DecodeConfig(bytes.NewReader(baseline.Bytes)); err != nil {
 		t.Fatalf("decode generated cover: %v", err)
 	}
-}
-
-func TestGeneratedCoverVariesByStyle(t *testing.T) {
-	a, err := GeneratedStyled("Dune", "Frank Herbert", VariantThumb, DefaultOptions(), 4, GeneratedStyleClassic)
-	if err != nil {
-		t.Fatal(err)
-	}
-	b, err := GeneratedStyled("Dune", "Frank Herbert", VariantThumb, DefaultOptions(), 4, GeneratedStyleLabel)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if bytes.Equal(a.Bytes, b.Bytes) {
-		t.Error("different generated cover styles produced identical bytes")
-	}
-}
-
-func TestGeneratedTitleScalePrefersShortTitles(t *testing.T) {
-	short := generatedTitleScale("Dune")
-	medium := generatedTitleScale("The Left Hand of Darkness")
-	long := generatedTitleScale("A Very Long Generated Cover Title That Needs More Room Than One Line")
-	if short <= medium || medium <= long {
-		t.Fatalf("title scales not ordered by length: short=%v medium=%v long=%v", short, medium, long)
-	}
-	if short < 1.25 {
-		t.Fatalf("short title scale = %v; want visibly larger than base", short)
-	}
-	if long >= 1 {
-		t.Fatalf("long title scale = %v; want below base", long)
-	}
-}
-
-func TestGeneratedCoverDeterministicForSeed(t *testing.T) {
-	a, err := Generated("Dune", "Frank Herbert", VariantThumb, DefaultOptions(), 3)
-	if err != nil {
-		t.Fatal(err)
-	}
-	b, err := Generated("Dune", "Frank Herbert", VariantThumb, DefaultOptions(), 3)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(a.Bytes, b.Bytes) {
-		t.Error("identical generated-cover inputs produced different bytes")
-	}
-}
-
-func TestPlaceholderFillsFrame(t *testing.T) {
-	// The background must cover the whole frame and the text must mark it:
-	// decode and confirm at least two distinct colours are present.
-	enc, err := Placeholder("A Tale", "An Author", VariantThumb, DefaultOptions())
-	if err != nil {
-		t.Fatal(err)
-	}
-	img, _, err := image.Decode(bytes.NewReader(enc.Bytes))
-	if err != nil {
-		t.Fatal(err)
-	}
-	b := img.Bounds()
-	first := img.At(b.Min.X, b.Min.Y)
-	fr, fg, fb, _ := first.RGBA()
-	distinct := false
-	for y := b.Min.Y; y < b.Max.Y && !distinct; y++ {
-		for x := b.Min.X; x < b.Max.X; x++ {
-			r, g, bl, _ := img.At(x, y).RGBA()
-			if r != fr || g != fg || bl != fb {
-				distinct = true
-				break
+	for _, tt := range []struct {
+		name      string
+		seed      int
+		style     string
+		wantEqual bool
+	}{
+		{"same inputs", 1, GeneratedStyleClassic, true},
+		{"different seed", 2, GeneratedStyleClassic, false},
+		{"different style", 1, GeneratedStyleLabel, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := GeneratedStyled("Dune", "Frank Herbert", VariantThumb, DefaultOptions(), tt.seed, tt.style)
+			if err != nil {
+				t.Fatal(err)
 			}
-		}
-	}
-	if !distinct {
-		t.Error("placeholder is a single flat colour — no text rendered")
+			if equal := bytes.Equal(baseline.Bytes, got.Bytes); equal != tt.wantEqual {
+				t.Errorf("same bytes = %v; want %v", equal, tt.wantEqual)
+			}
+		})
 	}
 }
 

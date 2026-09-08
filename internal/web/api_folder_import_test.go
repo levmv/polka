@@ -23,7 +23,7 @@ func TestAPIAdminStorageImportFolderPreview(t *testing.T) {
 	defer database.Close()
 	ensureTestStorageLayout(t, dataDir)
 
-	admin := mustUser(t, database, "Admin", db.RoleAdmin)
+	admin := mustUser(t, database, "admin", db.RoleAdmin)
 
 	root := storage.NewRoot(dataDir)
 	duplicateBytes := testEPUB(t, "Existing Book", "Ada Writer", "Writer, Ada")
@@ -66,7 +66,7 @@ func TestAPIAdminStorageImportFolderRejectsDataDirOverlap(t *testing.T) {
 	database, dataDir := setupTestDB(t)
 	defer database.Close()
 
-	admin := mustUser(t, database, "Admin", db.RoleAdmin)
+	admin := mustUser(t, database, "admin", db.RoleAdmin)
 	sourceDir := filepath.Join(dataDir, "source")
 	if err := os.MkdirAll(sourceDir, 0o755); err != nil {
 		t.Fatalf("mkdir source: %v", err)
@@ -91,7 +91,7 @@ func TestAPIAdminStorageImportFolderPreviewFollowsRootSymlink(t *testing.T) {
 		t.Skipf("create directory symlink: %v", err)
 	}
 
-	admin := mustUser(t, database, "Admin", db.RoleAdmin)
+	admin := mustUser(t, database, "admin", db.RoleAdmin)
 	s := &Server{db: database, dataDir: dataDir, sessions: newSessionStore(database)}
 	w := httptest.NewRecorder()
 	testRoutes(t, s).ServeHTTP(w, jsonRequest(t, s, admin.ID, http.MethodPost, "/api/admin/storage/import/preview", folderImportRequest{Path: link}))
@@ -116,7 +116,7 @@ func TestAPIAdminStorageImportFolderRun(t *testing.T) {
 	defer database.Close()
 	ensureTestStorageLayout(t, dataDir)
 
-	admin := mustUser(t, database, "Admin", db.RoleAdmin)
+	admin := mustUser(t, database, "admin", db.RoleAdmin)
 	sourceDir := t.TempDir()
 	firstPath := filepath.Join(sourceDir, "first.epub")
 	secondPath := filepath.Join(sourceDir, "second.epub")

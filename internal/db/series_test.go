@@ -69,14 +69,8 @@ func TestSeriesQueries(t *testing.T) {
 func TestSeriesCardsPage(t *testing.T) {
 	database := newTestDB(t)
 
-	reader, err := database.CreateUser(t.Context(), "reader", "pw", RoleMember)
-	if err != nil {
-		t.Fatalf("create user: %v", err)
-	}
-	other, err := database.CreateUser(t.Context(), "other", "pw", RoleMember)
-	if err != nil {
-		t.Fatalf("create other user: %v", err)
-	}
+	reader := mustUser(t, database, "reader", RoleMember)
+	other := mustUser(t, database, "other", RoleMember)
 	mustExec(t, database, "INSERT INTO authors (id, name, sort_name) VALUES (1, 'Isaac Asimov', 'Asimov, Isaac')")
 	// Volume 1 has no cover, so volume 2 represents the series.
 	mustExec(t, database, "INSERT INTO books (id, title, sort_title, series, series_index, cover_version) VALUES (1, 'First', 'First', 'Foundation', 1, 0)")
@@ -116,10 +110,7 @@ func TestSeriesCardsPage(t *testing.T) {
 
 	// A scoped reader sees only the volumes on their shelf, so counts, cover,
 	// and finished count all have to be computed inside that scope.
-	scoped, err := database.CreateUser(t.Context(), "scoped", "pw", RoleReader)
-	if err != nil {
-		t.Fatalf("create scoped user: %v", err)
-	}
+	scoped := mustUser(t, database, "scoped", RoleReader)
 	shelf, err := database.CreateShelf(t.Context(), reader.ID, ShelfShared, "Shared", ShelfManual, "")
 	if err != nil {
 		t.Fatalf("create shelf: %v", err)

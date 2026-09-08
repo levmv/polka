@@ -15,7 +15,7 @@ func TestAPIShelvesManualAndQuery(t *testing.T) {
 	database, dir := setupTestDB(t)
 	defer database.Close()
 
-	u := mustUser(t, database, "Alice", "admin")
+	u := mustUser(t, database, "alice", "admin")
 
 	s := newTestServer(database, dir)
 	handler := testRoutes(t, s)

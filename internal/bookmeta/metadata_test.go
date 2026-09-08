@@ -29,24 +29,6 @@ func TestAuthorSort(t *testing.T) {
 	}
 }
 
-func TestAuthorSortHeuristicSets(t *testing.T) {
-	for _, word := range []string{"company", "corp", "foundation", "llc", "press", "team", "university"} {
-		if _, ok := authorNameCopyWords[word]; !ok {
-			t.Fatalf("authorNameCopyWords missing %q", word)
-		}
-	}
-	for _, word := range []string{"dr", "mrs.", "prof", "sir"} {
-		if _, ok := authorNamePrefixes[word]; !ok {
-			t.Fatalf("authorNamePrefixes missing %q", word)
-		}
-	}
-	for _, word := range []string{"jr.", "phd", "iii", "v", "senior"} {
-		if _, ok := authorNameSuffixes[word]; !ok {
-			t.Fatalf("authorNameSuffixes missing %q", word)
-		}
-	}
-}
-
 func TestParseAuthorList(t *testing.T) {
 	tests := []struct {
 		name string

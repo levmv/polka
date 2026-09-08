@@ -1,7 +1,7 @@
 import type { BookSummary } from '../../frontend/src/types';
 import { expect, type Page, test } from './fixtures';
 
-// Runs against the filler-only library (:8098, 55 books) so pagination and a
+// Runs against the filler-only library (55 books) so pagination and a
 // scrollable document are available — see playwright.config `pager-chromium`.
 //
 // What is under test is that Back returns the *same* library instance: the
@@ -61,9 +61,22 @@ test.describe('Retained library navigation', () => {
       await route.continue();
     });
 
-    await page.locator('.book-card').nth(firstPage).locator('.book-title-link').click();
-    await expect(page).toHaveURL(/\/book\//);
-    await expect(page.locator('#book-detail-container')).toBeVisible();
+    let releaseBook!: () => void;
+    const bookReady = new Promise<void>((resolve) => {
+      releaseBook = resolve;
+    });
+    await page.route(/\/api\/books\/\d+$/, async (route) => {
+      await bookReady;
+      await route.continue();
+    });
+    try {
+      await page.locator('.book-card').nth(firstPage).locator('.book-title-link').click();
+      await expect(page).toHaveURL(/\/book\//);
+      await expect(page.locator('.book-detail-loading-card')).toContainText('Loading book');
+    } finally {
+      releaseBook();
+    }
+    await expect(page.locator('.detail-title')).toBeFocused();
     // The library is detached, not merely hidden.
     await expect(page.locator('#library-grid')).toHaveCount(0);
     const entries = await page.evaluate(() => history.length);
@@ -354,26 +367,12 @@ test.describe('Retained library navigation', () => {
     await page.locator('#view-grid-btn').click();
   });
 
-  test('An in-app book opening takes focus; a reload leaves it alone', async ({ page }) => {
-    await page.goto('/');
-    await page.locator('.book-card').first().locator('.book-title-link').click();
-    await expect(page.locator('.detail-title')).toBeVisible();
-    // The document did not change under the reader, so nothing but the page
-    // itself can say where they now are.
-    await expect(page.locator('.detail-title')).toBeFocused();
-
-    await page.reload();
-    await expect(page.locator('.detail-title')).toBeVisible();
-    // A load the browser performed needs none of that, and taking focus here
-    // only paints a focus ring on a heading nobody moved to.
-    await expect(page.locator('.detail-title')).not.toBeFocused();
-  });
-
   test('A direct book URL keeps working without a retained parent', async ({ page }) => {
     await page.goto('/');
     const href = await page.locator('.book-card').first().locator('.book-title-link').getAttribute('href');
     await page.goto(href ?? '/');
     await expect(page.locator('#book-detail-container')).toBeVisible();
+    await expect(page.locator('.detail-title')).not.toBeFocused();
     // No known predecessor, so Back falls back to the list the URL describes.
     await expect(page.locator('.back-link a')).toHaveAttribute('href', /^\//);
     await page.locator('.back-link a').click();

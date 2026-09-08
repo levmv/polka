@@ -45,7 +45,7 @@ func TestSessionLookupWhileWriterIsHeld(t *testing.T) {
 func TestSessionStorePersistsAcrossDBReopen(t *testing.T) {
 	database, dir := setupTestDB(t)
 
-	u := mustUser(t, database, "Alice", db.RoleMember)
+	u := mustUser(t, database, "alice", db.RoleMember)
 
 	sid, err := newSessionStore(database).issue(t.Context(), u.ID)
 	if err != nil {
@@ -81,7 +81,7 @@ func TestSessionStoreIdleExpiryAndLastSeenBump(t *testing.T) {
 	database, _ := setupTestDB(t)
 	defer database.Close()
 
-	u := mustUser(t, database, "Alice", db.RoleMember)
+	u := mustUser(t, database, "alice", db.RoleMember)
 
 	now := time.Unix(1700000000, 0)
 	store := newSessionStore(database)
@@ -116,7 +116,7 @@ func TestSessionStoreAbsoluteExpiry(t *testing.T) {
 	database, _ := setupTestDB(t)
 	defer database.Close()
 
-	u := mustUser(t, database, "Alice", db.RoleMember)
+	u := mustUser(t, database, "alice", db.RoleMember)
 
 	start := time.Unix(1700000000, 0)
 	now := start
@@ -142,8 +142,8 @@ func TestSessionStoreRevokesOtherUserSessions(t *testing.T) {
 	database, _ := setupTestDB(t)
 	defer database.Close()
 
-	u := mustUser(t, database, "Alice", db.RoleMember)
-	other := mustUser(t, database, "Bob", db.RoleMember)
+	u := mustUser(t, database, "alice", db.RoleMember)
+	other := mustUser(t, database, "bob", db.RoleMember)
 
 	store := newSessionStore(database)
 	keepSID, err := store.issue(t.Context(), u.ID)

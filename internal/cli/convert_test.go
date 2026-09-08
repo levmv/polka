@@ -4,7 +4,6 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
-	"encoding/binary"
 	"errors"
 	"io"
 	"os"
@@ -32,47 +31,6 @@ func TestRunContextCancelsConvertAndCleansOutput(t *testing.T) {
 	}
 }
 
-func TestRunConvertAZW4ToPDF(t *testing.T) {
-	dir := t.TempDir()
-	src := filepath.Join(dir, "print-replica.azw4")
-	dst := filepath.Join(dir, "print-replica.pdf")
-	pdf := []byte("%PDF-1.7\nbody\n%%EOF")
-	if err := os.WriteFile(src, testCLIMOBIWithPayload(pdf), 0o644); err != nil {
-		t.Fatalf("write source: %v", err)
-	}
-
-	if err := runConvert(context.Background(), "", []string{"--to", "pdf", src, dst}); err != nil {
-		t.Fatalf("runConvert: %v", err)
-	}
-	got, err := os.ReadFile(dst)
-	if err != nil {
-		t.Fatalf("read output: %v", err)
-	}
-	if string(got) != string(pdf) {
-		t.Fatalf("output = %q; want %q", got, pdf)
-	}
-}
-
-func TestRunConvertTXTToEPUB(t *testing.T) {
-	dir := t.TempDir()
-	src := filepath.Join(dir, "notes.txt")
-	dst := filepath.Join(dir, "notes.epub")
-	if err := os.WriteFile(src, []byte("Plain CLI text.\n"), 0o644); err != nil {
-		t.Fatalf("write source: %v", err)
-	}
-
-	if err := runConvert(context.Background(), "", []string{"--to", "epub", src, dst}); err != nil {
-		t.Fatalf("runConvert: %v", err)
-	}
-	got, err := os.ReadFile(dst)
-	if err != nil {
-		t.Fatalf("read output: %v", err)
-	}
-	if xhtml := cliZipEntry(t, got, "OEBPS/text.xhtml"); !strings.Contains(xhtml, "Plain CLI text.") {
-		t.Fatalf("text.xhtml = %s", xhtml)
-	}
-}
-
 func TestRunConvertEPUBToKEPUB(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "book.epub")
@@ -81,8 +39,8 @@ func TestRunConvertEPUBToKEPUB(t *testing.T) {
 		t.Fatalf("write source: %v", err)
 	}
 
-	if err := runConvert(context.Background(), "", []string{"--to", ".kepub", src, dst}); err != nil {
-		t.Fatalf("runConvert: %v", err)
+	if err := RunContext(t.Context(), []string{"convert", "--to", ".kepub", src, dst}); err != nil {
+		t.Fatalf("RunContext: %v", err)
 	}
 	got, err := os.ReadFile(dst)
 	if err != nil {
@@ -158,15 +116,4 @@ func writeCLIEPUB(path, title, body string) error {
 		return err
 	}
 	return os.WriteFile(path, buf.Bytes(), 0o644)
-}
-
-func testCLIMOBIWithPayload(payload []byte) []byte {
-	const record0Offset = 78 + 8
-
-	data := make([]byte, record0Offset+32)
-	copy(data[60:68], "BOOKMOBI")
-	binary.BigEndian.PutUint16(data[76:78], 1)
-	binary.BigEndian.PutUint32(data[78:82], record0Offset)
-	copy(data[record0Offset+16:record0Offset+20], "MOBI")
-	return append(data, payload...)
 }

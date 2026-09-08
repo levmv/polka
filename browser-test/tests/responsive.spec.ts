@@ -1,10 +1,8 @@
 import { expect, type Page, test } from './fixtures';
 
-// Runs under the iPad-sized projects against the small fixture library on
-// :8099. Covers responsive layout/JS below the tablet breakpoints in both
-// Chromium and Playwright's WebKit build.
+// Tablet layout and touch interactions run in Chromium and WebKit.
 test.describe('Responsive layout (iPad viewport)', () => {
-  test('Sidebar toggles open via hamburger and closed via overlay', async ({
+  test('Drawer controls work across tablet breakpoints', async ({
     page,
     browserName,
   }) => {
@@ -43,24 +41,23 @@ test.describe('Responsive layout (iPad viewport)', () => {
     await expect(sidebar).not.toHaveClass(/open/);
     await expect(overlay).not.toHaveClass(/open/);
 
-  });
-
-  test('Settings opens from the drawer and closes it on the way', async ({ page }) => {
-    await page.goto('/');
-
-    const sidebar = page.locator('#app-sidebar');
-    const overlay = page.locator('#sidebar-overlay');
-    await page.locator('#sidebar-toggle').click();
-    await expect(sidebar).toHaveClass(/open/);
-
-    // Or the modal covers a drawer still open behind it.
+    await toggle.click();
     await page.locator('.account-settings').click();
     await expect(page.locator('.settings-modal')).toBeVisible();
     await expect(sidebar).not.toHaveClass(/open/);
     await expect(overlay).not.toHaveClass(/open/);
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.settings-modal')).toHaveCount(0);
+
+    await page.setViewportSize({ width: 820, height: 1180 });
+    await expect(toggle).toBeVisible();
+    await expect.poll(async () => (await sidebar.boundingBox())!.x).toBeLessThan(0);
+    await page.setViewportSize({ width: 1024, height: 1180 });
+    await expect(toggle).toBeHidden();
+    await expect.poll(async () => (await sidebar.boundingBox())!.x).toBeGreaterThanOrEqual(0);
   });
 
-  test('Closing a reader panel reveals the touch chrome', async ({ page }) => {
+  test('Reader panels restore touch controls and selection survives a page snap', async ({ page }) => {
     await openReadOnlyReader(page);
     const reader = page.locator('.reader-page');
 
@@ -82,10 +79,7 @@ test.describe('Responsive layout (iPad viewport)', () => {
       await expect(panel).toBeHidden();
       await expect(reader).not.toHaveClass(/reader-chrome-hidden/);
     }
-  });
 
-  test('Reader selection survives a pagination snap', async ({ page }) => {
-    await openReadOnlyReader(page);
     const selected = await page.evaluate(() => {
       const view = document.querySelector('foliate-view') as HTMLElement & {
         renderer?: { getContents?: () => Array<{ doc?: Document }> };
@@ -117,27 +111,7 @@ test.describe('Responsive layout (iPad viewport)', () => {
     await expect(toolbar).toBeVisible();
   });
 
-  test('Sidebar drawer breakpoint covers portrait iPad Air but not large portrait tablets', async ({
-    page,
-  }) => {
-    await page.setViewportSize({ width: 820, height: 1180 });
-    await page.goto('/?q=With%20Cover');
-
-    const toggle = page.locator('#sidebar-toggle');
-    const sidebar = page.locator('#app-sidebar');
-
-    await expect(toggle).toBeVisible();
-    const drawerBox = await sidebar.boundingBox();
-    expect(drawerBox).not.toBeNull();
-    expect(drawerBox!.x).toBeLessThan(0);
-
-    await page.setViewportSize({ width: 1024, height: 1180 });
-    await expect(toggle).toBeHidden();
-    await expect.poll(async () => (await sidebar.boundingBox())!.x).toBeGreaterThanOrEqual(0);
-
-  });
-
-  test('Switching library views keeps portrait tablet content width stable', async ({ page }) => {
+  test('The table keeps its width and selection controls inside the viewport', async ({ page }) => {
     await page.setViewportSize({ width: 820, height: 1180 });
     await page.addInitScript(() => localStorage.setItem('polka-view-mode', 'grid'));
     await page.goto('/');
@@ -168,24 +142,24 @@ test.describe('Responsive layout (iPad viewport)', () => {
       expect(Math.abs(table[key].width - grid[key].width)).toBeLessThanOrEqual(1);
     }
 
-  });
+    const overflow = await page.evaluate(() => {
+      const grid = document.getElementById('library-grid')!;
+      return {
+        page: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        table: grid.scrollWidth > grid.clientWidth,
+      };
+    });
+    expect(overflow).toEqual({ page: 0, table: true });
 
-  test('Table view scrolls horizontally instead of squashing columns', async ({ page }) => {
-    await page.goto('/?q=With%20Cover');
-    await expect(page.locator('.book-card', { hasText: 'With Cover Book' })).toBeVisible();
-
-    await page.locator('#view-table-btn').click();
-    await expect(page.locator('.library-table-container')).toBeVisible();
-
-    // The table keeps its min-width rather than squashing columns: it stays
-    // wider than the 768px viewport, so the row scrolls horizontally instead of
-    // collapsing into unreadable columns.
-    const table = page.locator('.library-table');
-    const box = await table.boundingBox();
-    expect(box).not.toBeNull();
-    expect(box!.width).toBeGreaterThanOrEqual(800);
-    expect(box!.width).toBeGreaterThan(768);
-
+    const rows = page.locator('.table-row');
+    const rowCount = await rows.count();
+    await page.locator('.table-select-all').check();
+    await expect(page.locator('.bulk-bar-count')).toHaveText(`${rowCount} selected`);
+    const bar = page.locator('.bulk-bar');
+    await expect(bar).toBeInViewport({ ratio: 1 });
+    await expect(page.locator('.table-select-row:checked')).toHaveCount(rowCount);
+    await page.locator('.table-select-all').uncheck();
+    await expect(bar).toHaveCount(0);
   });
 
   test('Large-library title jumps stay beside the grid', async ({ page, browserName }) => {

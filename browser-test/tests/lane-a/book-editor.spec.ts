@@ -1,6 +1,7 @@
 import { Buffer } from 'node:buffer';
 import { epub } from '../book-fixtures';
 import { expect, type Locator, type Page, test } from '../fixtures';
+import { importTestBook } from '../helpers';
 
 let disposableBookIDs: number[] = [];
 
@@ -17,20 +18,16 @@ test.afterEach(async ({ page }) => {
   }
 });
 
-async function uploadDisposableBook(page: Page, prefix: string): Promise<string> {
+async function importDisposableBook(page: Page, prefix: string): Promise<string> {
   const stamp = Date.now().toString(36);
   const title = `${prefix} ${stamp}`;
   const fixtureName = prefix.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-  await page.goto('/');
-  await page.locator('#book-upload-input').setInputFiles(
+  const bookID = await importTestBook(
+    page,
     epub(title, 'Disposable Editor Author', `editor-${fixtureName}-${stamp}`),
   );
-  const card = page.locator('.book-card', { hasText: title });
-  await expect(card).toBeVisible();
-  const href = await card.locator('.book-title-link').getAttribute('href');
-  const bookID = href ? Number(new URL(href, page.url()).pathname.split('/').pop()) : 0;
-  if (!bookID) throw new Error('missing disposable editor book id');
   disposableBookIDs.push(bookID);
+  await page.goto('/');
   return title;
 }
 
@@ -262,17 +259,21 @@ test.describe('Book editor', () => {
     });
     const nextButton = page.locator('.edit-modal button[id^="btn-edit-next-"]');
     await expect(nextButton).toBeEnabled();
-    await page.route('**/api/books/*', async (route) => {
-      const url = new URL(route.request().url());
-      if (route.request().method() === 'GET' && !url.pathname.endsWith('/sequence')) {
-        await new Promise((resolve) => setTimeout(resolve, 650));
-      }
+    let releaseBook!: () => void;
+    const bookReady = new Promise<void>((resolve) => {
+      releaseBook = resolve;
+    });
+    await page.route(`**/api/books/${nextBook.id}`, async (route) => {
+      await bookReady;
       await route.continue();
     });
-
-    await nextButton.click();
-    await expect(page.locator('.edit-form-loading-overlay')).toBeVisible();
-    await expect(page.locator('.edit-modal .save-indicator')).not.toContainText('Loading');
+    try {
+      await nextButton.click();
+      await expect(page.locator('.edit-form-loading-overlay')).toBeVisible();
+      await expect(page.locator('.edit-modal .save-indicator')).not.toContainText('Loading');
+    } finally {
+      releaseBook();
+    }
     await expect(page.locator('.edit-modal input[name="title"]')).toHaveValue(nextBook.title);
     await expect(page.locator('.detail-title')).toContainText(nextBook.title);
     expect(readerStateRequests).toEqual([]);
@@ -350,7 +351,7 @@ test.describe('Book editor', () => {
       });
     });
 
-    const disposableTitle = await uploadDisposableBook(page, 'Metadata Fetch Draft');
+    const disposableTitle = await importDisposableBook(page, 'Metadata Fetch Draft');
     await page
       .locator('.book-card', { hasText: disposableTitle })
       .locator('.book-title')
@@ -632,30 +633,10 @@ test.describe('Book editor', () => {
     expect(uploadRequests).toBe(1);
   });
 
-  test('Cover search error composes its action and cause once', async ({ page, browserErrors }) => {
+  test('Web cover search recovers from an error and stages the choice until Save', async ({ page, browserErrors }) => {
     browserErrors.allow(
       message => message.includes('/cover-search?') && message.includes('502 (Bad Gateway)'),
     );
-    await page.route(/\/api\/books\/[^/]+\/cover-search(?:\?.*)?$/, async route => {
-      await route.fulfill({
-        status: 502,
-        contentType: 'text/plain',
-        body: 'Cover provider unavailable',
-      });
-    });
-
-    await page.goto('/');
-    const card = page.locator('.book-card', { hasText: 'With Cover Book' });
-    await expect(card).toBeVisible();
-    await card.locator('.book-title').click();
-    await page.locator('#btn-edit-book').click();
-    await page.locator('.edit-modal').getByRole('button', { name: 'Find cover online' }).click();
-
-    const toast = page.locator('.toast:not(.toast-leaving) .toast-text');
-    await expect(toast).toHaveText('Cover search failed: Cover provider unavailable');
-  });
-
-  test('Web cover search is staged until Save', async ({ page }) => {
     let searchRequests = 0;
     let applyRequests = 0;
     let appliedToken = '';
@@ -675,6 +656,14 @@ test.describe('Book editor', () => {
       const reqURL = new URL(route.request().url());
       if (route.request().method() === 'GET') {
         searchRequests++;
+        if (searchRequests === 1) {
+          await route.fulfill({
+            status: 502,
+            contentType: 'text/plain',
+            body: 'Cover provider unavailable',
+          });
+          return;
+        }
         searchQueries.push({
           title: reqURL.searchParams.get('title'),
           author: reqURL.searchParams.get('author'),
@@ -736,14 +725,21 @@ test.describe('Book editor', () => {
     await expect(searchModal.getByLabel('Title')).toHaveValue(title);
     await expect(searchModal.getByLabel('Author')).toHaveValue(author);
 
+    await expect(page.locator('.toast:not(.toast-leaving) .toast-text')).toHaveText(
+      'Cover search failed: Cover provider unavailable',
+    );
+    await searchModal.getByRole('button', { name: 'Search', exact: true }).click();
     await expect(searchModal.locator('.cover-search-result')).toHaveCount(2);
     await expect(searchModal.getByRole('button', { name: 'Search' })).toBeEnabled();
     await expect(searchModal.locator('.cover-search-result').first()).toContainText('Goodreads');
-    await page.waitForTimeout(220);
-    await page.screenshot({ path: 'screenshots/cover-search-results.png', fullPage: true });
+    await page.screenshot({
+      path: 'screenshots/cover-search-results.png',
+      fullPage: true,
+      animations: 'disabled',
+    });
     await searchModal.getByRole('button', { name: 'Use cover 1 from Goodreads' }).click();
 
-    expect(searchRequests).toBe(1);
+    expect(searchRequests).toBe(2);
     expect(searchQueries).toEqual([{ title, author }]);
     expect(applyRequests).toBe(0);
     await expect(searchModal).toHaveCount(0);
@@ -822,9 +818,7 @@ test.describe('Book editor', () => {
     await tagsInput.fill('new, s');
     const tagSuggestions = page.locator('.tag-list-input .text-list-ac-list');
     await expect(tagSuggestions).toBeVisible();
-    // Click the specific suggestion rather than pressing Enter on the first one:
-    // a tag created by a parallel test can also match "s" and would otherwise be
-    // the highlighted pick, making this assertion flaky on the shared library.
+    // Other fixture tags can also match "s", so choose the exact suggestion.
     await tagSuggestions.getByRole('option', { name: 'sf', exact: true }).click();
     await expect(tagsInput).toHaveValue('new, sf');
 
@@ -867,8 +861,8 @@ test.describe('Book editor', () => {
     await expect(page.locator('.detail-title')).toBeVisible();
   });
 
-  test('Edit view rich editor books correctly', async ({ page }) => {
-    const disposableTitle = await uploadDisposableBook(page, 'Rich Editor Draft');
+  test('Rich description editor formats text and validates links', async ({ page }) => {
+    const disposableTitle = await importDisposableBook(page, 'Rich Editor Draft');
 
     const card = page.locator('.book-card', { hasText: disposableTitle });
     await expect(card).toBeVisible();
@@ -938,6 +932,4 @@ test.describe('Book editor', () => {
     await page.keyboard.press('Escape');
     await expect(page.locator('.modal-backdrop')).toHaveCount(0);
   });
-
-
 });

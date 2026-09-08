@@ -1,4 +1,12 @@
 import type { Page } from '@playwright/test';
+import type { UploadFile } from './book-fixtures';
+
+export async function importTestBook(page: Page, file: UploadFile): Promise<number> {
+  const response = await page.request.post('/api/import', { multipart: { book: file } });
+  if (!response.ok()) throw new Error(`import status ${response.status()}: ${await response.text()}`);
+  const result = (await response.json()) as { book: { id: number } };
+  return result.book.id;
+}
 
 export interface TestUser {
   id: number;
@@ -69,8 +77,10 @@ export async function createReaderTestUser(page: Page, prefix: string): Promise<
 }
 
 export async function deleteTestUserAsAdmin(page: Page, user: TestUser): Promise<void> {
+  // Stop reader saves before changing the browser's session to the admin account.
+  await page.goto('about:blank');
   await loginByRequest(page);
-  const res = await page.request.delete(`/api/users/${encodeURIComponent(user.id)}`);
+  const res = await page.request.delete(`/api/users/${user.id}`);
   if (!res.ok() && res.status() !== 404) {
     throw new Error(`delete user status ${res.status()}: ${await res.text()}`);
   }

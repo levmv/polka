@@ -126,7 +126,7 @@ func TestRunMetaReportsToleratedFormatWarnings(t *testing.T) {
 	kindlePath := filepath.Join(dir, "unknown-codepage.mobi")
 	writeMetaEPUBWithFallbackPaths(t, epubPath)
 	writeMetaFB2Zip(t, fb2Path, "Rock & Roll")
-	kindle := testCLIMOBIWithPayload(nil)
+	kindle := testfixture.MinimalMOBI()
 	const record0Offset = 78 + 8
 	binary.BigEndian.PutUint32(kindle[record0Offset+28:record0Offset+32], 932)
 	if err := os.WriteFile(kindlePath, kindle, 0o644); err != nil {
@@ -417,10 +417,10 @@ func TestRunMetaJSONIncludesAZW4PDFDetail(t *testing.T) {
 	dir := t.TempDir()
 	withPDF := filepath.Join(dir, "print-replica.azw4")
 	withoutPDF := filepath.Join(dir, "empty.azw4")
-	if err := os.WriteFile(withPDF, testCLIMOBIWithPayload([]byte("%PDF-1.7\nbody\n%%EOF")), 0o644); err != nil {
+	if err := os.WriteFile(withPDF, append(testfixture.MinimalMOBI(), []byte("%PDF-1.7\nbody\n%%EOF")...), 0o644); err != nil {
 		t.Fatalf("write AZW4 with PDF: %v", err)
 	}
-	if err := os.WriteFile(withoutPDF, testCLIMOBIWithPayload(nil), 0o644); err != nil {
+	if err := os.WriteFile(withoutPDF, testfixture.MinimalMOBI(), 0o644); err != nil {
 		t.Fatalf("write AZW4 without PDF: %v", err)
 	}
 
@@ -554,7 +554,7 @@ func TestRunMetaSetRejectsUnsupportedFormat(t *testing.T) {
 func TestRunMetaPrintsAZW4PDFDetail(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "print-replica.azw4")
-	if err := os.WriteFile(src, testCLIMOBIWithPayload([]byte("%PDF-1.7\nbody\n%%EOF")), 0o644); err != nil {
+	if err := os.WriteFile(src, append(testfixture.MinimalMOBI(), []byte("%PDF-1.7\nbody\n%%EOF")...), 0o644); err != nil {
 		t.Fatalf("write AZW4: %v", err)
 	}
 

@@ -59,7 +59,7 @@ func TestAPIAuthorInfo(t *testing.T) {
 	database, dir := setupTestDB(t)
 	defer database.Close()
 
-	u := mustUser(t, database, "Alice", db.RoleMember)
+	u := mustUser(t, database, "alice", db.RoleMember)
 	s := newTestServer(database, dir)
 	handler := testRoutes(t, s)
 
@@ -99,7 +99,7 @@ func TestAPIAuthorMutationMissingAuthor(t *testing.T) {
 	database, dir := setupTestDB(t)
 	defer database.Close()
 
-	admin := mustUser(t, database, "Admin", db.RoleAdmin)
+	admin := mustUser(t, database, "admin", db.RoleAdmin)
 	s := newTestServer(database, dir)
 	handler := testRoutes(t, s)
 

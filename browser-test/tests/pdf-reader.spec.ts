@@ -1,5 +1,6 @@
 import { pdf } from './book-fixtures';
 import { expect, test } from './fixtures';
+import { importTestBook } from './helpers';
 
 test('PDF reader behavior', async ({
   page,
@@ -21,23 +22,12 @@ test('PDF reader behavior', async ({
     }
   });
   const title = `PDF Reader ${stamp}`;
-  await page.goto('/');
-  await page.locator('#book-upload-input').setInputFiles(
-    pdf(title, 'PDF Fixture Author', `pdf-reader-${stamp}`),
-  );
-  await expect(page.getByRole('button', { name: 'Add books' })).toBeEnabled({ timeout: 15_000 });
-
-  const card = page.locator('.book-card', { hasText: title });
-  await expect(card).toBeVisible();
-  const href = await card.locator('.book-title-link').getAttribute('href');
-  const bookId = Number(href?.split('/').pop()?.split('?')[0]);
-  if (!bookId) throw new Error('missing PDF book id');
+  const bookId = await importTestBook(page, pdf(title, 'PDF Fixture Author', `pdf-reader-${stamp}`));
   const reader = page.locator('.reader-page');
   const stage = page.locator('.reader-pdf-stage');
-  let assetId = 0;
 
   try {
-    await test.step('opens and saves the current page', async () => {
+    await test.step('opens, saves and restores the page and zoom', async () => {
       await page.goto(`/read/${bookId}`);
       await expect(reader).toHaveAttribute('data-reader-format', 'pdf');
       await expect.poll(async () => stage.getAttribute('data-reader-ready')).toBe('true');
@@ -51,21 +41,8 @@ test('PDF reader behavior', async ({
       await expect(page.locator('[data-pdf-text-layer]')).toContainText('Second PDF page');
       await expect.poll(() => activityCheckpoints).toBeGreaterThan(0);
 
-      assetId = Number(await reader.getAttribute('data-reader-asset-id'));
+      const assetId = Number(await reader.getAttribute('data-reader-asset-id'));
       if (!assetId) throw new Error('missing PDF asset id');
-      await expect
-        .poll(async () =>
-          page.evaluate(async (id) => {
-            const response = await fetch(`/api/reader/assets/${id}/state`);
-            if (!response.ok) return 0;
-            const state = await response.json();
-            return state.locator?.engine === 'pdfjs' ? state.locator.page : 0;
-          }, assetId),
-        )
-        .toBe(2);
-    });
-
-    await test.step('restores zoom and toggles reader chrome', async () => {
       await reader.evaluate((element) => element.classList.remove('reader-chrome-hidden'));
       await page.getByRole('button', { name: 'Zoom in' }).click();
       await expect
@@ -80,10 +57,10 @@ test('PDF reader behavior', async ({
             const response = await fetch(`/api/reader/assets/${id}/state`);
             if (!response.ok) return 0;
             const state = await response.json();
-            return state.locator?.engine === 'pdfjs' ? state.locator.zoom : 0;
+            return state.locator?.engine === 'pdfjs' ? state.locator : null;
           }, assetId),
         )
-        .toBe(1.2);
+        .toMatchObject({ page: 2, zoom: 1.2 });
       await page.screenshot({ path: `screenshots/reader-pdf-${browserName}.png`, fullPage: true });
 
       await reader.evaluate((element) => element.classList.remove('reader-chrome-hidden'));
