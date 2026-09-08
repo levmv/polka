@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/levmv/polka/internal/db"
@@ -251,17 +252,42 @@ func TestAPIAnnotationsLifecycle(t *testing.T) {
 		t.Fatalf("created annotation = %+v", created)
 	}
 
-	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodPatch, "/api/reader/assets/1/annotations/"+strconv.FormatInt(created.ID, 10), annotationNoteRequest{Note: "  my note  "}))
-	if w.Code != http.StatusOK {
-		t.Fatalf("update note status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
-	}
 	var updated AnnotationDTO
-	if err := json.UnmarshalRead(w.Body, &updated); err != nil {
-		t.Fatalf("decode updated annotation: %v", err)
+	for _, edit := range []struct {
+		name        string
+		patch       annotationUpdateRequest
+		note, color string
+	}{
+		{"set note and color", annotationUpdateRequest{Note: new("  my note  "), Color: new("blue")}, "my note", "blue"},
+		{"color preserves note", annotationUpdateRequest{Color: new("purple")}, "my note", "purple"},
+		{"clear note preserves color", annotationUpdateRequest{Note: new("")}, "", "purple"},
+	} {
+		w = httptest.NewRecorder()
+		handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodPatch, "/api/reader/assets/1/annotations/"+strconv.FormatInt(created.ID, 10), edit.patch))
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: %d %s", edit.name, w.Code, w.Body.String())
+		}
+		updated = AnnotationDTO{}
+		if err := json.UnmarshalRead(w.Body, &updated); err != nil {
+			t.Fatal(err)
+		}
+		if updated.Note != edit.note || updated.Color != edit.color || updated.ID != created.ID || updated.CFI != created.CFI || updated.Quote != created.Quote || updated.CreatedAt != created.CreatedAt {
+			t.Fatalf("%s overwrote annotation content: %+v", edit.name, updated)
+		}
 	}
-	if updated.ID != created.ID || updated.Note != "my note" || updated.Quote != created.Quote {
-		t.Fatalf("updated annotation = %+v", updated)
+	for _, patch := range []annotationUpdateRequest{
+		{Note: new("must not overwrite"), Color: new("red")},
+		{Note: new(strings.Repeat("я", db.MaxAnnotationNoteLength+1)), Color: new("green")},
+		{},
+	} {
+		w = httptest.NewRecorder()
+		handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodPatch, "/api/reader/assets/1/annotations/"+strconv.FormatInt(created.ID, 10), patch))
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("invalid update: %d %s", w.Code, w.Body.String())
+		}
+		if list := listFor(alice.ID); len(list) != 1 || list[0] != updated {
+			t.Fatalf("invalid update overwrote annotation: %+v", list)
+		}
 	}
 
 	if list := listFor(bob.ID); len(list) != 0 {
@@ -269,7 +295,7 @@ func TestAPIAnnotationsLifecycle(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, bob.ID, http.MethodPatch, "/api/reader/assets/1/annotations/"+strconv.FormatInt(created.ID, 10), annotationNoteRequest{Note: "stolen"}))
+	handler.ServeHTTP(w, jsonRequest(t, s, bob.ID, http.MethodPatch, "/api/reader/assets/1/annotations/"+strconv.FormatInt(created.ID, 10), annotationUpdateRequest{Note: new("stolen")}))
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("bob update status = %d, want %d", w.Code, http.StatusNotFound)
 	}
@@ -296,6 +322,73 @@ func TestAPIAnnotationsLifecycle(t *testing.T) {
 	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodPost, "/api/reader/assets/1/annotations", annotationRequest{CFI: "", Quote: "x"}))
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("invalid create status = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+}
+
+func TestAPIBookAnnotationsIncludeAllFilesAndRespectAccess(t *testing.T) {
+	database, dir := setupTestDB(t)
+	defer database.Close()
+	alice := mustUser(t, database, "alice-book-notes", db.RoleReader)
+	bob := mustUser(t, database, "bob-book-notes", db.RoleReader)
+	mustExec(t, database, `
+        INSERT INTO assets (id, book_id, storage_path, filename, original_filename, extension, original_sha256, current_sha256)
+        VALUES (2, 1, 'second.fb2', 'second.fb2', 'second.fb2', '.fb2', randomblob(32), randomblob(32)),
+               (3, 2, 'other.epub', 'other.epub', 'other.epub', '.epub', randomblob(32), randomblob(32));
+    `)
+	for _, fixture := range []struct {
+		userID, assetID int64
+		quote           string
+	}{
+		{alice.ID, 1, "First private quote"},
+		{alice.ID, 2, "Second private quote"},
+		{alice.ID, 3, "Another book quote"},
+		{bob.ID, 1, "Another user quote"},
+	} {
+		if _, err := database.CreateAnnotation(t.Context(), fixture.userID, fixture.assetID, db.AnnotationCreate{
+			CFI: "epubcfi(/6/2)", Quote: fixture.quote, Note: "Personal note", Color: "blue",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := newTestServer(database, dir)
+	handler := testRoutes(t, s)
+	paths := []string{
+		"/api/books/1/annotations",
+		"/api/books/1/annotations/export",
+		"/api/books/1/annotations/export?format=markdown",
+	}
+	for _, path := range paths {
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodGet, path, nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: %d %s", path, w.Code, w.Body.String())
+		}
+		body := w.Body.String()
+		for _, quote := range []string{"First private quote", "Second private quote"} {
+			if !strings.Contains(body, quote) {
+				t.Errorf("%s missing %q", path, quote)
+			}
+		}
+		for _, quote := range []string{"Another book quote", "Another user quote"} {
+			if strings.Contains(body, quote) {
+				t.Errorf("%s leaked %q", path, quote)
+			}
+		}
+		if strings.Contains(path, "/export") && !strings.Contains(body, "second.fb2") {
+			t.Errorf("%s lost the source file name", path)
+		}
+	}
+	if _, err := database.UpdateUserAccess(t.Context(), alice.ID, db.UserAccess{
+		Role: db.RoleReader, ContentScope: db.ContentScopeShelves,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range paths {
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodGet, path, nil))
+		if w.Code != http.StatusNotFound {
+			t.Errorf("%s after access revoked: %d %s", path, w.Code, w.Body.String())
+		}
 	}
 }
 

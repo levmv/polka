@@ -156,10 +156,12 @@ func TestAnnotationUpsertAndTextLimits(t *testing.T) {
 		t.Fatalf("normalized annotation = %+v", created)
 	}
 
-	if _, err := database.UpdateAnnotationNote(t.Context(), alice.ID, 1, created.ID, AnnotationNoteUpdate{Note: "remember this"}); err != nil {
-		t.Fatalf("UpdateAnnotationNote: %v", err)
+	if _, err := database.UpdateAnnotation(t.Context(), alice.ID, 1, created.ID, AnnotationUpdate{
+		Note: new("remember this"), Color: new("blue"),
+	}); err != nil {
+		t.Fatalf("UpdateAnnotation: %v", err)
 	}
-	if _, err := database.UpdateAnnotationNote(t.Context(), alice.ID, 1, created.ID, AnnotationNoteUpdate{Note: strings.Repeat("я", MaxAnnotationNoteLength+1)}); !errors.Is(err, ErrInvalidAnnotation) {
+	if _, err := database.UpdateAnnotation(t.Context(), alice.ID, 1, created.ID, AnnotationUpdate{Note: new(strings.Repeat("я", MaxAnnotationNoteLength+1))}); !errors.Is(err, ErrInvalidAnnotation) {
 		t.Fatalf("long note update err = %v, want ErrInvalidAnnotation", err)
 	}
 	duplicateAfterNote, err := database.CreateAnnotation(t.Context(), alice.ID, 1, AnnotationCreate{
@@ -169,8 +171,8 @@ func TestAnnotationUpsertAndTextLimits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateAnnotation duplicate after note: %v", err)
 	}
-	if duplicateAfterNote.ID != created.ID || duplicateAfterNote.Quote != "quote after note" || duplicateAfterNote.Note != "remember this" {
-		t.Fatalf("duplicate after note = %+v, want note preserved", duplicateAfterNote)
+	if duplicateAfterNote.ID != created.ID || duplicateAfterNote.Quote != "quote after note" || duplicateAfterNote.Note != "remember this" || duplicateAfterNote.Color != "blue" {
+		t.Fatalf("duplicate after note = %+v, want note and color preserved", duplicateAfterNote)
 	}
 
 	if _, err := database.CreateAnnotation(t.Context(), alice.ID, 1, AnnotationCreate{CFI: "epubcfi(/6/4)", Quote: strings.Repeat("я", MaxAnnotationQuoteLength)}); err != nil {

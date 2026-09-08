@@ -1,5 +1,7 @@
 import { Overlayer } from 'foliate-js/overlayer.js';
-import { createAnnotation, deleteAnnotation, fetchAnnotations, updateAnnotationNote } from '../api';
+import { ANNOTATION_COLORS, sortAnnotations } from '../annotations';
+import { createAnnotation, deleteAnnotation, fetchAnnotations, updateAnnotation } from '../api';
+import { createAnnotationColorPicker } from '../components/annotation-color-picker';
 import { clamp } from '../dom';
 import { iconElement } from '../icons';
 import type { Annotation } from '../types';
@@ -12,7 +14,6 @@ import type {
     ReaderSelectionPayload,
 } from './selection';
 
-const HIGHLIGHT_COLOR = '#f2d46b';
 const POPOVER_GAP = 8;
 const POPOVER_MARGIN = 8;
 
@@ -27,6 +28,7 @@ interface AnnotationPopover {
     note: HTMLTextAreaElement;
     status: HTMLElement;
     doneButton: HTMLButtonElement;
+    colors: ReturnType<typeof createAnnotationColorPicker>;
 }
 
 interface RenderedAnnotation {
@@ -42,7 +44,8 @@ interface AnnotationPanel extends ReaderPanelElements {
 
 export interface AnnotationController {
     hydrate(): Promise<void>;
-    savePendingNote(): Promise<boolean>;
+    location(annotationID: number): string | undefined;
+    savePendingEdits(): Promise<boolean>;
     createHighlight(payload: ReaderSelectionPayload, editNote?: boolean): void;
     editNote(cfi: string): void;
     deleteHighlight(cfi: string): void;
@@ -63,7 +66,7 @@ export function wireAnnotations(
     const popover = buildPopover();
     page.append(popover.root);
     let activePopoverAnnotation: Annotation | null = null;
-    let pendingNoteSave: Promise<boolean> | null = null;
+    let pendingSave: Promise<boolean> | null = null;
     let pendingNoteEditorCFI: string | null = null;
     const persistedAnnotations = fetchAnnotations(assetId).then(
         (rows) => ({ ok: true as const, rows }),
@@ -72,7 +75,7 @@ export function wireAnnotations(
     let hydration: Promise<void> | null = null;
 
     const sortedAnnotations = (): Annotation[] =>
-        [...annotations.values()].sort((a, b) => a.created_at - b.created_at || a.id - b.id);
+        sortAnnotations([...annotations.values()], 'position');
 
     const hidePopover = (): void => {
         activePopoverAnnotation = null;
@@ -87,11 +90,9 @@ export function wireAnnotations(
     const replaceAnnotation = (annotation: Annotation): void => {
         annotations.set(annotation.cfi, annotation);
         if (activePopoverAnnotation?.id === annotation.id) activePopoverAnnotation = annotation;
-        renderList();
     };
 
     const renderAnnotation = async (annotation: Annotation): Promise<void> => {
-        replaceAnnotation(annotation);
         const result = await view.addAnnotation?.(foliateAnnotation(annotation));
         if (typeof result?.index === 'number') sections.set(annotation.id, result.index);
     };
@@ -108,19 +109,29 @@ export function wireAnnotations(
 
     const saveAndClosePopover = (restoreFocus = false): Promise<boolean> => {
         if (!activePopoverAnnotation) return Promise.resolve(true);
-        if (pendingNoteSave) return pendingNoteSave;
+        if (pendingSave) return pendingSave;
         const annotation = activePopoverAnnotation;
         const note = popover.note.value;
-        if (note === (annotation.note || '')) {
+        const color = popover.colors.getValue();
+        if (note === (annotation.note || '') && color === annotation.color) {
             hidePopover();
             if (restoreFocus) focusReaderSurface(page);
             return Promise.resolve(true);
         }
 
         setPopoverBusy(popover, true, 'Saving...');
-        const request = updateAnnotationNote(assetId, annotation.id, note)
+        const request = updateAnnotation(assetId, annotation.id, {
+            ...(note !== (annotation.note || '') ? { note } : {}),
+            ...(color !== annotation.color ? { color } : {}),
+        })
             .then((updated) => {
                 replaceAnnotation(updated);
+                renderList();
+                if (updated.color !== annotation.color) {
+                    void renderAnnotation(updated).catch((e) =>
+                        console.error('Failed to draw annotation:', e),
+                    );
+                }
                 if (activePopoverAnnotation?.id === annotation.id) {
                     hidePopover();
                     if (restoreFocus) focusReaderSurface(page);
@@ -138,9 +149,9 @@ export function wireAnnotations(
                 if (activePopoverAnnotation?.id === annotation.id) {
                     setPopoverBusy(popover, false);
                 }
-                if (pendingNoteSave === request) pendingNoteSave = null;
+                if (pendingSave === request) pendingSave = null;
             });
-        pendingNoteSave = request;
+        pendingSave = request;
         return request;
     };
 
@@ -204,7 +215,8 @@ export function wireAnnotations(
             index,
             range: detail.range.cloneRange(),
         });
-        detail.draw(Overlayer.highlight, { color: HIGHLIGHT_COLOR, padding: 1 });
+        const color = annotations.get(detail.annotation.value)?.color ?? 'yellow';
+        detail.draw(Overlayer.highlight, { color: ANNOTATION_COLORS[color], padding: 1 });
     });
     view.addEventListener('show-annotation', (event) => {
         const detail = (event as CustomEvent<{ value?: string; index?: number; range?: Range }>)
@@ -313,7 +325,6 @@ export function wireAnnotations(
             quote: payload.quote,
             context_before: payload.context_before,
             context_after: payload.context_after,
-            color: 'yellow',
         })
             .then(async (annotation) => {
                 const previous = annotations.get(annotation.cfi);
@@ -322,6 +333,8 @@ export function wireAnnotations(
                     renderedAnnotations.delete(previous.cfi);
                     void view.deleteAnnotation?.(foliateAnnotation(previous));
                 }
+                replaceAnnotation(annotation);
+                renderList();
                 await renderAnnotation(annotation);
                 if (editNote) openNoteEditor(annotation.cfi);
             })
@@ -331,6 +344,10 @@ export function wireAnnotations(
     if (panel) wireAnnotationPanel(page, panel, () => renderList());
 
     return {
+        location(annotationID: number): string | undefined {
+            return [...annotations.values()].find((annotation) => annotation.id === annotationID)
+                ?.cfi;
+        },
         hydrate(): Promise<void> {
             hydration ??= persistedAnnotations.then(async (result) => {
                 if (!result.ok) {
@@ -338,6 +355,8 @@ export function wireAnnotations(
                     if (panel) panel.status.textContent = 'Could not load highlights.';
                     return;
                 }
+                for (const annotation of result.rows) replaceAnnotation(annotation);
+                renderList();
                 await Promise.all(
                     result.rows.map((annotation) =>
                         renderAnnotation(annotation).catch((e) =>
@@ -345,11 +364,10 @@ export function wireAnnotations(
                         ),
                     ),
                 );
-                renderList();
             });
             return hydration;
         },
-        savePendingNote(): Promise<boolean> {
+        savePendingEdits(): Promise<boolean> {
             return saveAndClosePopover();
         },
         createHighlight(payload: ReaderSelectionPayload, editNote = false): void {
@@ -497,6 +515,7 @@ function renderAnnotationList(
         button.className = 'reader-annotations-item';
         button.type = 'button';
         button.dataset.readerAnnotationId = String(annotation.id);
+        button.style.setProperty('--annotation-color', ANNOTATION_COLORS[annotation.color]);
 
         const quote = document.createElement('span');
         quote.className = 'reader-annotations-quote';
@@ -561,13 +580,15 @@ function buildPopover(): AnnotationPopover {
     doneButton.setAttribute('aria-label', 'Done');
     doneButton.append(iconElement('check'));
 
-    root.append(quote, note, status, doneButton);
-    return { root, quote, note, status, doneButton };
+    const colors = createAnnotationColorPicker('reader-annotation-color');
+    root.append(quote, note, colors.el, status, doneButton);
+    return { root, quote, note, colors, status, doneButton };
 }
 
 function setPopoverBusy(popover: AnnotationPopover, busy: boolean, status?: string): void {
     popover.note.disabled = busy;
     popover.doneButton.disabled = busy;
+    popover.colors.el.disabled = busy;
     if (status !== undefined) popover.status.textContent = status;
 }
 
@@ -581,6 +602,7 @@ function showPopover(
 ): void {
     popover.quote.textContent = annotation.quote;
     popover.note.value = annotation.note || '';
+    popover.colors.setValue(annotation.color);
     popover.status.textContent = '';
     setPopoverBusy(popover, false);
     popover.root.hidden = false;

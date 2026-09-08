@@ -39,7 +39,7 @@ func TestAPIAnnotationExportIsStandaloneEscapedAndUserScoped(t *testing.T) {
 	handler := testRoutes(t, s)
 
 	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodGet, "/api/reader/assets/1/annotations/export", nil))
+	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodGet, "/api/books/1/annotations/export", nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("export status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
 	}
@@ -80,7 +80,7 @@ func TestAPIAnnotationExportIsStandaloneEscapedAndUserScoped(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodGet, "/api/reader/assets/1/annotations/export?format=markdown", nil))
+	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodGet, "/api/books/1/annotations/export?format=markdown", nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("Markdown export status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
 	}
@@ -112,28 +112,28 @@ func TestAPIAnnotationExportIsStandaloneEscapedAndUserScoped(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodGet, "/api/reader/assets/1/annotations/export?format=pdf", nil))
+	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodGet, "/api/books/1/annotations/export?format=pdf", nil))
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("unsupported export format status = %d, want %d", w.Code, http.StatusBadRequest)
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, bob.ID, http.MethodGet, "/api/reader/assets/1/annotations/export", nil))
+	handler.ServeHTTP(w, jsonRequest(t, s, bob.ID, http.MethodGet, "/api/books/1/annotations/export", nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("second user export status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
 	}
-	if body := w.Body.String(); strings.Contains(body, "Quoted") || !strings.Contains(body, "No highlights or notes for this file.") {
+	if body := w.Body.String(); strings.Contains(body, "Quoted") || !strings.Contains(body, "No highlights or notes for this book.") {
 		t.Fatalf("second user export leaked another user's annotation: %s", body)
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodGet, "/api/reader/assets/missing/annotations/export", nil))
+	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodGet, "/api/books/missing/annotations/export", nil))
 	if w.Code != http.StatusNotFound {
-		t.Fatalf("missing asset status = %d, want %d", w.Code, http.StatusNotFound)
+		t.Fatalf("missing book status = %d, want %d", w.Code, http.StatusNotFound)
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/reader/assets/1/annotations/export", nil))
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/books/1/annotations/export", nil))
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated export status = %d, want %d", w.Code, http.StatusUnauthorized)
 	}

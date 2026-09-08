@@ -54,6 +54,7 @@ import type {
     ReadingStatus,
     SendOptions,
 } from '../types';
+import { createBookAnnotations } from './book-annotations';
 import { type BookDetailHost, registerActiveBookDetailHost } from './book-detail-host';
 import { openEditModal } from './book-edit';
 import { renderShelfPicker } from './book-shelf-picker';
@@ -69,6 +70,7 @@ interface BookDetailView {
     listContext: BookListContext | null;
     abort: AbortController;
     renderCleanup: RouteCleanup | null;
+    annotations: ReturnType<typeof createBookAnnotations> | null;
     // Whether this page has to place focus itself; see the heading below.
     takeFocus: boolean;
 }
@@ -139,11 +141,6 @@ function assetDownloadAsUrl(asset: Asset, target: string): string {
     return `/download/${asset.id}/as/${encodeURIComponent(target)}`;
 }
 
-function annotationExportUrl(asset: Asset, format: 'html' | 'markdown'): string {
-    const url = `/api/reader/assets/${asset.id}/annotations/export`;
-    return format === 'markdown' ? `${url}?format=markdown` : url;
-}
-
 function assetDownloadHtml(asset: Asset): string {
     const label = assetFormatLabel(asset);
     const nativeLink = `<a href="${assetDownloadUrl(asset)}" class="detail-action detail-download-main" target="_blank" rel="noopener noreferrer">${icon('download', 16)}${escapeHtml(label)}</a>`;
@@ -200,6 +197,7 @@ export function initBookDetail(
         listContext: readBookListContextFromLocation(),
         abort: new AbortController(),
         renderCleanup: null,
+        annotations: null,
         takeFocus: context.clientNavigation,
     };
     const releaseEditorHost = registerActiveBookDetailHost(hostFor(view));
@@ -211,6 +209,8 @@ export function initBookDetail(
             view.abort.abort();
             view.renderCleanup?.();
             view.renderCleanup = null;
+            view.annotations?.destroy();
+            view.annotations = null;
             view.book = null;
         },
     };
@@ -278,47 +278,46 @@ function updateBackLink(root: HTMLElement, context: BookListContext | null): voi
 
 // Height budgets use multiples of line-height to include paragraph spacing.
 // The larger threshold leaves nearly fitting descriptions expanded.
-const COLLAPSED_DESCRIPTION_LINES = 13;
-const WHOLE_DESCRIPTION_LINES = 15;
+const COLLAPSED_DESCRIPTION_LINES = 7;
+const WHOLE_DESCRIPTION_LINES = 8;
 // However the gaps fall, a collapsed blurb still has to say something.
-const COLLAPSED_DESCRIPTION_MIN_LINES = 6;
+const COLLAPSED_DESCRIPTION_MIN_LINES = 3;
 
-function setupDescriptionDisclosure(container: HTMLElement): void {
+function setupDescriptionDisclosure(container: HTMLElement): RouteCleanup {
     const description = container.querySelector<HTMLElement>('.detail-description');
     const more = container.querySelector<HTMLButtonElement>('.detail-description-more');
-    if (!description || !more) return;
+    if (!description || !more) return () => {};
+    let expanded = false;
 
-    // The clamp ships in the markup, so a long blurb is never briefly full
-    // height. Under it, scrollHeight is what the whole blurb would take.
-    const lineHeight = parseFloat(getComputedStyle(description).lineHeight);
-    if (!Number.isFinite(lineHeight) || lineHeight <= 0) return;
-    if (description.scrollHeight <= lineHeight * WHOLE_DESCRIPTION_LINES) {
-        description.classList.remove('detail-description--collapsed');
-        more.remove();
-        return;
-    }
-
-    // The clamp is what cuts between lines and supplies the ellipsis, so the
-    // cap is applied by asking it for fewer lines rather than by cropping the
-    // box. Only block-spaced blurbs give back any lines, and they stop after a
-    // step or two, so this costs a couple of reflows on a box already laid out.
-    const budget = lineHeight * COLLAPSED_DESCRIPTION_LINES;
-    let lines = parseInt(getComputedStyle(description).webkitLineClamp, 10);
-    while (
-        Number.isFinite(lines) &&
-        lines > COLLAPSED_DESCRIPTION_MIN_LINES &&
-        description.clientHeight > budget
-    ) {
-        lines -= 1;
-        description.style.setProperty('-webkit-line-clamp', String(lines));
-    }
-
-    more.hidden = false;
-    more.addEventListener('click', () => {
-        description.classList.remove('detail-description--collapsed');
+    const fit = () => {
+        description.classList.toggle('detail-description--collapsed', !expanded);
         description.style.removeProperty('-webkit-line-clamp');
-        more.remove();
+        // scrollHeight includes the text beyond the clamp and paragraph gaps.
+        const lineHeight = parseFloat(getComputedStyle(description).lineHeight);
+        const needsDisclosure = description.scrollHeight > lineHeight * WHOLE_DESCRIPTION_LINES;
+        more.hidden = !needsDisclosure;
+        more.textContent = expanded ? 'Show less' : 'Show more';
+        more.setAttribute('aria-expanded', String(expanded));
+        if (expanded || !needsDisclosure) {
+            description.classList.remove('detail-description--collapsed');
+            return;
+        }
+
+        // Reduce the line clamp when rich-text margins exceed the height budget.
+        const budget = lineHeight * COLLAPSED_DESCRIPTION_LINES;
+        let lines = parseInt(getComputedStyle(description).webkitLineClamp, 10);
+        while (lines > COLLAPSED_DESCRIPTION_MIN_LINES && description.clientHeight > budget) {
+            description.style.setProperty('-webkit-line-clamp', String(--lines));
+        }
+    };
+
+    more.addEventListener('click', () => {
+        expanded = !expanded;
+        fit();
     });
+    window.addEventListener('resize', fit);
+    fit();
+    return () => window.removeEventListener('resize', fit);
 }
 
 function renderBookDetail(
@@ -350,17 +349,16 @@ function renderBookDetail(
     if (b.description_html) {
         descHtml = `
             <div class="detail-description-block">
-                <div class="detail-description detail-description--collapsed">${b.description_html}</div>
-                <button type="button" class="detail-description-more" hidden>Show more</button>
+                <div id="book-description-${b.id}" class="detail-description detail-description--collapsed">${b.description_html}</div>
+                <button type="button" class="detail-description-more" aria-controls="book-description-${b.id}" aria-expanded="false" hidden>Show more</button>
             </div>
         `;
     }
 
-    // Publication facts + identifiers — the "Details" block that lives in the
-    // cover rail (see the layout below).
+    // Publication facts and identifiers beneath the cover.
     let detailsHtml = '';
     if (b.language || b.publisher || b.year || b.identifiers || b.date_human) {
-        detailsHtml = '<div class="detail-meta detail-meta-top">';
+        detailsHtml = '<div class="detail-meta detail-meta-top detail-rail">';
         if (b.language)
             detailsHtml += `<span>Language: ${escapeHtml(b.language_name || b.language)}</span><br>`;
         if (b.publisher || b.date_human || b.year) {
@@ -385,7 +383,7 @@ function renderBookDetail(
                 const text = showValue
                     ? `${identifierLabel(id.type)} ${id.value}`
                     : identifierLabel(id.type);
-                const cls = `detail-tag detail-identifier${extra ? ' detail-ids-extra' : ''}`;
+                const cls = `detail-identifier${extra ? ' detail-ids-extra' : ''}`;
                 const hid = extra ? ' hidden' : '';
                 if (link) {
                     return `<a href="${escapeHtml(link)}" target="_blank" rel="noopener noreferrer" class="${cls}"${hid}>${escapeHtml(text)}</a>`;
@@ -425,28 +423,18 @@ function renderBookDetail(
             .map((t: string) => t.trim())
             .filter((t: string) => t.length > 0);
         if (tags.length > 0) {
-            const tagChip = (tag: string, extra = false) =>
-                `<a href="/?q=${encodeURIComponent(queryTerm('tag', tag))}" class="detail-tag${extra ? ' detail-tags-extra' : ''}"${extra ? ' hidden' : ''}>${escapeHtml(tag)}</a>`;
-            // The narrow cover rail can hold a handful of tags comfortably; the
-            // long tail collapses behind a quiet "+N". Hidden tags are direct
-            // flex children carrying `hidden` (not wrapped) so they keep the
-            // chip gap/styling when revealed.
-            const TAGS_VISIBLE = 8;
-            const visible = tags.slice(0, TAGS_VISIBLE);
-            const hidden = tags.slice(TAGS_VISIBLE);
-            tagsHtml = `<div class="detail-tags">`;
-            tagsHtml += visible.map((t) => tagChip(t)).join('');
-            tagsHtml += hidden.map((t) => tagChip(t, true)).join('');
-            if (hidden.length > 0) {
-                tagsHtml += `<button type="button" class="detail-tag detail-tags-more" data-reveal=".detail-tags-extra" aria-expanded="false" aria-label="Show ${hidden.length} more tags">+${hidden.length}</button>`;
-            }
-            tagsHtml += '</div>';
+            const VISIBLE_TAGS = 5;
+            const hiddenCount = tags.length - VISIBLE_TAGS;
+            tagsHtml = `<div id="book-tags-${b.id}" class="detail-tags">
+                ${tags
+                    .map(
+                        (tag, index) =>
+                            `<a href="/?q=${encodeURIComponent(queryTerm('tag', tag))}" class="detail-tag" title="${escapeHtml(tag)}"${index >= VISIBLE_TAGS ? ' hidden' : ''}>${escapeHtml(tag)}</a>`,
+                    )
+                    .join('')}
+                ${hiddenCount > 0 ? `<button type="button" class="detail-tags-more" data-reveal=".detail-tags .detail-tag[hidden]" aria-controls="book-tags-${b.id}" aria-expanded="false" aria-label="Show ${hiddenCount} more tags">+${hiddenCount}</button>` : ''}
+            </div>`;
         }
-    }
-
-    let railHtml = '';
-    if (detailsHtml || tagsHtml) {
-        railHtml = `<div class="detail-rail">${detailsHtml}${tagsHtml}</div>`;
     }
 
     // Read + per-asset download buttons. They share the .detail-action family
@@ -491,6 +479,13 @@ function renderBookDetail(
 
     let bottomMetaHtml = '';
     const bottomParts = [];
+    if (b.assets && b.assets.length > 0) {
+        const files = b.assets.map((asset) => {
+            const size = asset.size ? ` (${formatSize(asset.size)})` : '';
+            return `${assetFormatLabel(asset)}${size}`;
+        });
+        bottomParts.push(files.join(', '));
+    }
     if (b.added_at) {
         bottomParts.push(`Added ${formatTimestampHuman(b.added_at)}`);
 
@@ -506,16 +501,6 @@ function renderBookDetail(
         }
     }
 
-    if (b.assets && b.assets.length > 0) {
-        let totalSize = 0;
-        b.assets.forEach((a) => {
-            if (a.size) totalSize += a.size;
-        });
-        if (totalSize > 0) {
-            bottomParts.push(`${formatSize(totalSize)}`);
-        }
-    }
-
     if (bottomParts.length > 0) {
         bottomMetaHtml = `<div class="detail-meta detail-meta-bottom">${bottomParts.map(escapeHtml).join(' &middot; ')}</div>`;
     }
@@ -525,7 +510,7 @@ function renderBookDetail(
     container.innerHTML = `
         <div class="detail-layout-cover">
             ${coverHtml}
-            ${railHtml}
+            ${detailsHtml}
         </div>
         <div class="detail-layout-info">
             <div class="detail-header">
@@ -554,12 +539,17 @@ function renderBookDetail(
                 }
             </div>
             ${readingStatusHtml}
+            ${tagsHtml}
             ${descHtml}
             ${bottomMetaHtml}
         </div>
     `;
-    // Quiet inline disclosures (store identifiers "…", tags "+N"): reveal the
-    // hidden chips in place and drop the toggle.
+    if (view.annotations?.bookId !== b.id) {
+        view.annotations?.destroy();
+        view.annotations = createBookAnnotations(b);
+    }
+    container.append(view.annotations.el);
+    // Inline disclosures reveal the remaining identifiers or tags in place.
     container.querySelectorAll<HTMLButtonElement>('[data-reveal]').forEach((btn) => {
         btn.addEventListener('click', () => {
             const sel = btn.getAttribute('data-reveal');
@@ -572,7 +562,7 @@ function renderBookDetail(
         });
     });
 
-    setupDescriptionDisclosure(container);
+    cleanup.push(setupDescriptionDisclosure(container));
 
     if (primaryReadableAsset && opts.loadReaderProgress !== false) {
         renderBookReaderProgress(container, b, primaryReadableAsset.id);
@@ -634,14 +624,6 @@ function renderBookDetail(
             });
         }
         if (primaryReadableAsset) {
-            items.push({
-                label: 'Export highlights as HTML',
-                action: () => openDownload(annotationExportUrl(primaryReadableAsset, 'html')),
-            });
-            items.push({
-                label: 'Export highlights as Markdown',
-                action: () => openDownload(annotationExportUrl(primaryReadableAsset, 'markdown')),
-            });
             items.push({
                 label: 'Reset reading position',
                 action: () => void resetBookReaderPosition(container, primaryReadableAsset),

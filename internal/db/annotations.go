@@ -52,8 +52,9 @@ type AnnotationCreate struct {
 	Color         string
 }
 
-type AnnotationNoteUpdate struct {
-	Note string
+type AnnotationUpdate struct {
+	Note  *string
+	Color *string
 }
 
 func ListAnnotations(queryer Queryer, userID, assetID int64) ([]Annotation, error) {
@@ -63,12 +64,28 @@ func ListAnnotations(queryer Queryer, userID, assetID int64) ([]Annotation, erro
 	if _, err := GetReaderState(queryer, userID, assetID); err != nil {
 		return nil, err
 	}
-	rows, err := queryer.Query(`
+	return listAnnotations(queryer, `
 		SELECT `+annotationColumns+`
 		FROM user_annotations
 		WHERE user_id = ? AND asset_id = ?
 		ORDER BY created_at ASC, id ASC
 	`, userID, assetID)
+}
+
+func ListBookAnnotations(queryer Queryer, userID, bookID int64) ([]Annotation, error) {
+	if userID <= 0 {
+		return nil, ErrUserIDRequired
+	}
+	return listAnnotations(queryer, `
+		SELECT `+annotationColumns+`
+		FROM user_annotations
+		WHERE user_id = ? AND asset_id IN (SELECT id FROM assets WHERE book_id = ?)
+		ORDER BY asset_id, created_at, id
+	`, userID, bookID)
+}
+
+func listAnnotations(queryer Queryer, query string, args ...any) ([]Annotation, error) {
+	rows, err := queryer.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list annotations: %w", err)
 	}
@@ -112,10 +129,11 @@ func (db *DB) CreateAnnotation(ctx context.Context, userID, assetID int64, input
 					WHEN excluded.note = '' THEN user_annotations.note
 					ELSE excluded.note
 				END,
-				color = excluded.color,
+				color = CASE WHEN ? THEN user_annotations.color ELSE excluded.color END,
 				updated_at = unixepoch()
 			RETURNING `+annotationColumns,
-			ann.UserID, ann.AssetID, ann.Kind, ann.CFI, ann.Quote, ann.ContextBefore, ann.ContextAfter, ann.Note, ann.Color), &ann)
+			ann.UserID, ann.AssetID, ann.Kind, ann.CFI, ann.Quote, ann.ContextBefore, ann.ContextAfter, ann.Note, ann.Color,
+			strings.TrimSpace(input.Color) == ""), &ann)
 	})
 	if err != nil {
 		return Annotation{}, fmt.Errorf("create annotation: %w", err)
@@ -123,36 +141,37 @@ func (db *DB) CreateAnnotation(ctx context.Context, userID, assetID int64, input
 	return ann, nil
 }
 
-func (db *DB) UpdateAnnotationNote(ctx context.Context, userID, assetID, annotationID int64, input AnnotationNoteUpdate) (Annotation, error) {
+func (db *DB) UpdateAnnotation(ctx context.Context, userID, assetID, annotationID int64, input AnnotationUpdate) (Annotation, error) {
 	if userID <= 0 {
 		return Annotation{}, ErrUserIDRequired
 	}
-	note, err := normalizeAnnotationNote(input.Note)
-	if err != nil {
-		return Annotation{}, err
+	if input.Note == nil && input.Color == nil {
+		return Annotation{}, ErrInvalidAnnotation
 	}
-	if _, err := db.Write(ctx).Exec(`
-		UPDATE user_annotations
-		SET note = ?, updated_at = unixepoch()
-		WHERE id = ? AND user_id = ? AND asset_id = ?
-	`, note, annotationID, userID, assetID); err != nil {
-		return Annotation{}, fmt.Errorf("update annotation note: %w", err)
+	if input.Note != nil {
+		note, err := normalizeAnnotationNote(*input.Note)
+		if err != nil {
+			return Annotation{}, err
+		}
+		input.Note = &note
 	}
-	return GetAnnotationByID(db.Read(ctx), userID, assetID, annotationID)
-}
-
-func GetAnnotationByID(queryer Queryer, userID, assetID, annotationID int64) (Annotation, error) {
+	if input.Color != nil && !validAnnotationColor(*input.Color) {
+		return Annotation{}, ErrInvalidAnnotation
+	}
 	var ann Annotation
-	err := scanAnnotation(queryer.QueryRow(`
-		SELECT `+annotationColumns+`
-		FROM user_annotations
-		WHERE id = ? AND user_id = ? AND asset_id = ?
-	`, annotationID, userID, assetID), &ann)
+	err := db.Transact(ctx, func(tx *Tx) error {
+		return scanAnnotation(tx.QueryRow(`
+			UPDATE user_annotations
+			SET note = coalesce(?, note), color = coalesce(?, color), updated_at = unixepoch()
+			WHERE id = ? AND user_id = ? AND asset_id = ?
+			RETURNING `+annotationColumns,
+			input.Note, input.Color, annotationID, userID, assetID), &ann)
+	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return Annotation{}, ErrAnnotationNotFound
 	}
 	if err != nil {
-		return Annotation{}, fmt.Errorf("get annotation: %w", err)
+		return Annotation{}, fmt.Errorf("update annotation: %w", err)
 	}
 	return ann, nil
 }
@@ -225,7 +244,7 @@ func normalizeAnnotation(userID, assetID int64, input AnnotationCreate) (Annotat
 	if ann.Kind != AnnotationKindHighlight {
 		return Annotation{}, ErrInvalidAnnotation
 	}
-	if ann.Color != AnnotationColorYellow {
+	if !validAnnotationColor(ann.Color) {
 		return Annotation{}, ErrInvalidAnnotation
 	}
 	if ann.CFI == "" || ann.Quote == "" {
@@ -238,6 +257,14 @@ func normalizeAnnotation(userID, assetID int64, input AnnotationCreate) (Annotat
 		return Annotation{}, ErrInvalidAnnotation
 	}
 	return ann, nil
+}
+
+func validAnnotationColor(color string) bool {
+	switch color {
+	case AnnotationColorYellow, "green", "blue", "pink", "purple":
+		return true
+	}
+	return false
 }
 
 func normalizeAnnotationNote(note string) (string, error) {

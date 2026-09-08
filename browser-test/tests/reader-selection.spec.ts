@@ -67,6 +67,7 @@ test.describe('Reader selection toolbar', () => {
   });
 
   test('creates a persisted highlight from selected text', async ({ page }) => {
+    test.setTimeout(30000);
     const assetId = await openReader(page, 'With Cover Book');
 
     const selected = await selectFirstText(page);
@@ -118,11 +119,13 @@ test.describe('Reader selection toolbar', () => {
     });
     await expect(popover).toBeVisible();
     await note.fill('Reader note');
+    await popover.getByRole('radio', { name: 'Blue', exact: true }).check();
     await pointerDownInReaderDocument(page);
     await expect(popover).toBeHidden();
     await expect.poll(async () => (await fetchAnnotations(page, assetId))[0]?.note).toBe(
       'Reader note',
     );
+    await expect.poll(async () => (await fetchAnnotations(page, assetId))[0]?.color).toBe('blue');
 
     await showAnnotationActions(page, annotation.cfi);
     await expect(toolbar.getByRole('button', { name: 'Edit note' })).toBeVisible();
@@ -139,11 +142,13 @@ test.describe('Reader selection toolbar', () => {
     if (!bookURL) throw new Error('missing book detail URL');
     await page.goto(bookURL);
     await expect(page.locator('.detail-title')).toHaveText('With Cover Book');
-    await page.getByRole('button', { name: 'More actions' }).click();
-    const exportItem = page.getByRole('menuitem', { name: 'Export highlights as HTML' });
+    const highlights = page.getByRole('region', { name: 'Highlights & notes', exact: true });
+    await expect(highlights.locator('.book-annotation-note')).toHaveText('Reader note');
+    await highlights.getByRole('button', { name: 'Export', exact: true }).click();
+    const exportItem = page.getByRole('menuitem', { name: 'Export all as HTML' });
     await expect(exportItem).toBeVisible();
     await expect(
-      page.getByRole('menuitem', { name: 'Export highlights as Markdown' }),
+      page.getByRole('menuitem', { name: 'Export all as Markdown' }),
     ).toBeVisible();
     await page.screenshot({ path: 'screenshots/annotation-export-menu.png', fullPage: true });
 
@@ -161,6 +166,35 @@ test.describe('Reader selection toolbar', () => {
     await expect(exportPage.locator('.note')).toHaveText('Reader note');
     await exportPage.screenshot({ path: 'screenshots/annotation-export.png', fullPage: true });
     await exportPage.close();
+
+    // A different saved position makes the passage link exercise navigation.
+    await page.setViewportSize({ width: 390, height: 600 });
+    const saved = await page.request.put(`/api/reader/assets/${assetId}/state`, {
+      data: { progress: 0.8, locator: { engine: 'foliate', fraction: 0.8 } },
+    });
+    expect(saved.ok()).toBe(true);
+    await highlights.locator('.book-annotation-quote').click();
+    await highlights.getByRole('textbox', { name: 'Note', exact: true }).fill('Updated from book page');
+    await highlights.getByRole('radio', { name: 'Green', exact: true }).check();
+    await highlights.getByRole('button', { name: 'Open in reader' }).click();
+    await expect(page).toHaveURL(new RegExp(`/read/asset/${assetId}#annotation=${annotation.id}$`));
+    await expect(page.locator('.reader-epub-stage')).toHaveAttribute('data-reader-ready', 'true');
+    await expect.poll(() => page.evaluate((cfi) => {
+      const view = document.querySelector('foliate-view') as HTMLElement & {
+        lastLocation?: { range?: Range };
+        resolveNavigation: (cfi: string) => { index: number; anchor: (doc: Document) => Range };
+        renderer?: { getContents?: () => Array<{ index?: number; doc?: Document }> };
+      };
+      const target = view.resolveNavigation(cfi);
+      const doc = view.renderer?.getContents?.().find((content) => content.index === target.index)?.doc;
+      if (!doc || !view.lastLocation?.range) return false;
+      const range = target.anchor(doc);
+      return view.lastLocation.range.isPointInRange(range.startContainer, range.startOffset);
+    }, annotation.cfi)).toBe(true);
+    await expect.poll(() => renderedHighlightCount(page)).toBeGreaterThan(0);
+    await showAnnotationPopover(page, annotation.cfi);
+    await expect(popover.locator('.reader-annotation-note')).toHaveValue('Updated from book page');
+    await expect(popover.getByRole('radio', { name: 'Green', exact: true })).toBeChecked();
   });
 
   test('saves a directly-created note before closing the reader', async ({ page }) => {
@@ -409,12 +443,12 @@ async function selectFirstText(page: Page, targetIndex = 0): Promise<string> {
 async function fetchAnnotations(
   page: Page,
   assetId: number,
-): Promise<Array<{ id: number; cfi: string; quote: string; note?: string }>> {
+): Promise<Array<{ id: number; cfi: string; quote: string; note?: string; color: string }>> {
   const res = await page.request.get(
     `/api/reader/assets/${assetId}/annotations`,
   );
   if (!res.ok()) throw new Error(`annotations status ${res.status()}`);
-  return (await res.json()) as Array<{ id: number; cfi: string; quote: string; note?: string }>;
+  return (await res.json()) as Array<{ id: number; cfi: string; quote: string; note?: string; color: string }>;
 }
 
 async function showAnnotationActions(page: Page, cfi: string): Promise<void> {

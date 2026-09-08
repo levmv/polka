@@ -371,7 +371,7 @@ CREATE TABLE user_annotations (
     context_before TEXT NOT NULL DEFAULT '',
     context_after  TEXT NOT NULL DEFAULT '',
     note           TEXT NOT NULL DEFAULT '',
-    color          TEXT NOT NULL DEFAULT 'yellow' CHECK (color IN ('yellow')),
+    color          TEXT NOT NULL DEFAULT 'yellow' CHECK (color IN ('yellow', 'green', 'blue', 'pink', 'purple')),
     created_at     INTEGER NOT NULL DEFAULT (unixepoch()),
     updated_at     INTEGER NOT NULL DEFAULT (unixepoch()),
     UNIQUE (user_id, asset_id, kind, cfi)

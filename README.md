@@ -27,7 +27,7 @@ lower-maintenance home for your books.
   suggestions fetched from Open Library and Google Books (only when you ask).
 - **Read in the browser** with your place remembered. Reflowable books also
   have in-book search and personal highlights with notes, exportable per book
-  as a standalone HTML file. OPDS and KOReader progress sync let external
+  as standalone HTML or Markdown. OPDS and KOReader progress sync let external
   readers in too; Kobo sync can project one chosen shelf into the device's
   native library.
 - **Send books to a device** by email — Kindle and PocketBook presets, or any

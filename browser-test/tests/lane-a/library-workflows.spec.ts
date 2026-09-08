@@ -594,12 +594,9 @@ test.describe('Library workflows', () => {
     await expect(page.locator('.trash-card', { hasText: title })).toHaveCount(0);
   });
 
-  test('A long description clamps behind a disclosure and opens in place', async ({ page }) => {
+  test('Book details stay compact and expand in place', async ({ page }) => {
     const title = `Long Blurb ${Date.now().toString(36)}`;
-    // Well past the twelve-line clamp at any viewport the suite uses, so the
-    // book earns a toggle rather than being shown in full. Real blurbs arrive
-    // as sanitized markup, and headings and paragraph margins are exactly what
-    // pushes the text off a whole number of line-heights.
+    // Rich-text margins count toward the space above the annotations.
     const paragraph =
       'This publisher blurb runs long on purpose so the book page has something to clamp. '.repeat(
         4,
@@ -617,21 +614,46 @@ test.describe('Library workflows', () => {
     await card.locator('.book-title-link').click();
     await expect(page.locator('.detail-title')).toContainText(title);
 
+    const bookURL = page.url();
+    const bookId = new URL(bookURL).pathname.split('/').pop();
+    const tags = ['Literature', 'Essays', 'Reading', 'Creativity', 'Memory', 'Culture', 'Language', 'Art', 'Philosophy', 'History', 'Education', 'Criticism', 'Nonfiction', 'Writing'];
+    const update = await page.request.patch(`/api/books/${bookId}`, { data: { tags: tags.join(', ') } });
+    expect(update.ok()).toBe(true);
+    const book = await update.json();
+    const highlight = await page.request.post(`/api/reader/assets/${book.assets[0].id}/annotations`, {
+      data: { cfi: 'epubcfi(/6/2!/4/2/1:0)', quote: 'A passage worth returning to.', note: 'Keep this question for the next discussion.' },
+    });
+    expect(highlight.ok()).toBe(true);
+    await page.reload();
+
     const blurb = page.locator('.detail-description');
     const more = page.locator('.detail-description-more');
     await expect(more).toBeVisible();
-    await expect(blurb).toHaveClass(/detail-description--collapsed/);
-
-    const clamped = await blurb.evaluate((el) => ({
-      height: el.clientHeight,
-      lineHeight: parseFloat(getComputedStyle(el).lineHeight),
-    }));
-    // The height cap includes margins between headings and paragraphs.
-    expect(clamped.height / clamped.lineHeight).toBeLessThanOrEqual(14);
+    const clampedHeight = await blurb.evaluate((el) => el.clientHeight);
+    const tagRow = page.locator('.detail-tags');
+    const visibleTags = tagRow.locator('.detail-tag:visible');
+    const tagsMore = tagRow.getByRole('button');
+    await expect(visibleTags).toHaveText(tags.slice(0, 5));
+    await expect(tagsMore).toHaveText(`+${tags.length - 5}`);
+    await expect(page.getByRole('heading', { name: 'Highlights & notes' })).toBeInViewport({ ratio: 1 });
+    await page.screenshot({ animations: 'disabled', path: 'screenshots/book-compact-desktop.png', fullPage: true });
 
     await more.click();
-    await expect(more).toHaveCount(0);
-    await expect(blurb).not.toHaveClass(/detail-description--collapsed/);
-    expect(await blurb.evaluate((el) => el.clientHeight)).toBeGreaterThan(clamped.height);
+    await expect(more).toHaveText('Show less');
+    expect(await blurb.evaluate((el) => el.clientHeight)).toBeGreaterThan(clampedHeight);
+    await tagsMore.click();
+    await expect(visibleTags).toHaveCount(tags.length);
+    await more.click();
+    expect(await blurb.evaluate((el) => el.clientHeight)).toBe(clampedHeight);
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(visibleTags).toHaveCount(tags.length);
+    await page.goBack();
+    await expect(card).toBeVisible();
+    await card.locator('.book-title-link').click();
+    await expect(visibleTags).toHaveCount(5);
+    await page.screenshot({ animations: 'disabled', path: 'screenshots/book-compact-mobile.png', fullPage: true });
+    await tagsMore.click();
+    await expect(visibleTags).toHaveCount(tags.length);
   });
 });

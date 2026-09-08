@@ -13,8 +13,9 @@ export interface ReaderPositionSaver {
 export async function restoreReaderPosition(
     view: FoliateViewElement,
     state: ReaderPosition | null,
+    target?: string,
 ): Promise<void> {
-    const lastLocation = state ? storedLocation(state) : null;
+    const lastLocation = target ?? (state ? storedLocation(state) : null);
     await view.init({ lastLocation, showTextStart: !lastLocation });
 }
 

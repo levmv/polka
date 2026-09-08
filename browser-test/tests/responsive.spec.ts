@@ -197,12 +197,26 @@ test.describe('Responsive layout (iPad viewport)', () => {
     });
   });
 
-  test('Book page download button stays within the viewport', async ({ page }) => {
+  test('Book details and tag disclosures fit narrow viewports', async ({ page, browserName }) => {
+    const tags = ['Literature', 'Essays', 'Reading', 'Creativity', 'Memory', 'Culture', 'Language', 'Art', 'Philosophy', 'History', 'Education', 'Criticism', 'Nonfiction', 'Writing'];
+    await page.route(/\/api\/books\/\d+$/, async (route) => {
+      const response = await route.fetch();
+      const book = await response.json();
+      await route.fulfill({ response, json: {
+        ...book,
+        tags: tags.join(', '),
+        assets: [
+          { ...book.assets[0], size: 768 * 1024 },
+          { id: 999999, extension: '.pdf', size: 12.5 * 1024 * 1024, is_primary: false, can_read: true },
+        ],
+      } });
+    });
     await page.goto('/?q=With%20Cover');
     const card = page.locator('.book-card', { hasText: 'With Cover Book' });
     await expect(card).toBeVisible();
     await card.locator('.book-title').click();
     await expect(page.locator('.detail-title')).toBeVisible();
+    await expect(page.locator('.detail-meta-bottom')).toHaveText(/^EPUB \(768 KB\), PDF \(12\.5 MB\) · Added /);
 
     const download = page.locator('.detail-actions a.detail-action[href^="/download/"]').first();
     await expect(download).toBeVisible();
@@ -213,7 +227,7 @@ test.describe('Responsive layout (iPad viewport)', () => {
     expect(box!.x + box!.width).toBeLessThanOrEqual(769);
 
     // Stacked order below the breakpoint: cover, then title/authors, then the
-    // reading state, then the cover rail (Details + tags), then the description.
+    // reading state, then publication details, tags, and the description.
     // This guards the display: contents + order rules, which silently lose to
     // the base layout if their @media block is placed before it (equal
     // specificity, source order wins) — and an element left out of the order
@@ -222,16 +236,31 @@ test.describe('Responsive layout (iPad viewport)', () => {
     const titleBox = await page.locator('.detail-title').boundingBox();
     const readingBox = await page.locator('.detail-reading-state').boundingBox();
     const railBox = await page.locator('.detail-rail').boundingBox();
+    const tagsBox = await page.locator('.detail-tags').boundingBox();
     const descBox = await page.locator('.detail-description').boundingBox();
     expect(coverBox).not.toBeNull();
     expect(titleBox).not.toBeNull();
     expect(readingBox).not.toBeNull();
     expect(railBox).not.toBeNull();
+    expect(tagsBox).not.toBeNull();
     expect(descBox).not.toBeNull();
     expect(coverBox!.y).toBeLessThan(titleBox!.y);
     expect(titleBox!.y).toBeLessThan(readingBox!.y);
     expect(readingBox!.y).toBeLessThan(railBox!.y);
-    expect(railBox!.y).toBeLessThan(descBox!.y);
+    expect(railBox!.y).toBeLessThan(tagsBox!.y);
+    expect(tagsBox!.y).toBeLessThan(descBox!.y);
+
+    const tagRow = page.locator('.detail-tags');
+    const tagsMore = tagRow.getByRole('button');
+    await expect(tagsMore).toBeVisible();
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await page.screenshot({ animations: 'disabled', path: `screenshots/book-tags-desktop-${browserName}.png`, fullPage: true });
+    await tagsMore.click();
+    await expect(tagRow.locator('.detail-tag:visible')).toHaveCount(tags.length);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(tagRow.locator('.detail-tag:visible')).toHaveCount(tags.length);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+    await page.screenshot({ animations: 'disabled', path: `screenshots/book-tags-mobile-${browserName}.png`, fullPage: true });
   });
 });
 
