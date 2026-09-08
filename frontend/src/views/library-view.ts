@@ -17,6 +17,7 @@ import { createSelect, type ManagedSelect } from '../components/select';
 import { coverUrl } from '../cover';
 import { debounce, escapeHtml } from '../dom';
 import { errorMessage } from '../errors';
+import { readScrollPosition } from '../history-state';
 import { icon } from '../icons';
 import { beginGlobalLoading } from '../loading-indicator';
 import {
@@ -104,18 +105,10 @@ if (typeof window !== 'undefined') {
     });
 }
 
-// The saved position for the current history entry, written by the navigation
-// layer in main.ts. A view whose content arrives asynchronously has to apply it
-// itself: main.ts restores as soon as mount() resolves, and scrolling against a
-// document that is still one empty viewport tall clamps to the top.
-function restoreSavedScroll(): void {
-    const state = window.history.state as { polkaScroll?: { x: number; y: number } } | null;
-    const scroll = state?.polkaScroll;
-    if (!scroll || typeof scroll.x !== 'number' || typeof scroll.y !== 'number') return;
-    window.scrollTo(scroll.x, scroll.y);
-}
-
 export function initLibrary(root: HTMLElement): RouteController {
+    // Capture before loading: the empty page can clamp to the top and save that
+    // position into history before the books arrive.
+    const initialScroll = readScrollPosition(window.history.state);
     const searchInput = root.querySelector<HTMLInputElement>('#search-input');
     const params = new URLSearchParams(window.location.search);
     const initialQuery = params.get('q') || '';
@@ -408,7 +401,9 @@ export function initLibrary(root: HTMLElement): RouteController {
         // Only while this instance is the page on screen: a first load that
         // lands after the reader has already opened a book would otherwise
         // scroll the book page to the list's saved position.
-        if (loaded && state.phase === 'active') restoreSavedScroll();
+        if (loaded && state.phase === 'active' && initialScroll) {
+            window.scrollTo(initialScroll.x, initialScroll.y);
+        }
     });
     return {
         // Everything this instance owns outside its own root is handed back to

@@ -25,10 +25,7 @@ func seedKoboBook(t *testing.T, database *DB, bookID, assetID int64, title strin
 
 func TestKoboConnectionIncrementalLifecycle(t *testing.T) {
 	database := newTestDB(t)
-	user, err := database.CreateUser(t.Context(), "kobo-reader", "pw", RoleMember)
-	if err != nil {
-		t.Fatal(err)
-	}
+	user := mustUser(t, database, "kobo-reader", RoleMember)
 	shelf, err := database.CreateShelf(t.Context(), user.ID, ShelfPersonal, "On Kobo", ShelfManual, "")
 	if err != nil {
 		t.Fatal(err)
@@ -132,10 +129,7 @@ func TestKoboConnectionIncrementalLifecycle(t *testing.T) {
 
 func TestKoboSyncPaginationQueryShelfAndCursorValidation(t *testing.T) {
 	database := newTestDB(t)
-	user, err := database.CreateUser(t.Context(), "query-kobo", "pw", RoleReader)
-	if err != nil {
-		t.Fatal(err)
-	}
+	user := mustUser(t, database, "query-kobo", RoleReader)
 	seedKoboBook(t, database, 103, 1, "A", "epub", "send")
 	seedKoboBook(t, database, 112, 2, "B", "epub", "send")
 	seedKoboBook(t, database, 115, 3, "C", "epub", "skip")
@@ -172,14 +166,8 @@ func TestKoboSyncPaginationQueryShelfAndCursorValidation(t *testing.T) {
 
 func TestKoboConnectionCannotSelectInvisibleShelf(t *testing.T) {
 	database := newTestDB(t)
-	alice, err := database.CreateUser(t.Context(), "alice-kobo", "pw", RoleMember)
-	if err != nil {
-		t.Fatal(err)
-	}
-	bob, err := database.CreateUser(t.Context(), "bob-kobo", "pw", RoleMember)
-	if err != nil {
-		t.Fatal(err)
-	}
+	alice := mustUser(t, database, "alice-kobo", RoleMember)
+	bob := mustUser(t, database, "bob-kobo", RoleMember)
 	shelf, err := database.CreateShelf(t.Context(), alice.ID, ShelfPersonal, "Alice only", ShelfManual, "")
 	if err != nil {
 		t.Fatal(err)

@@ -116,10 +116,7 @@ func TestAppPageContentSecurityPolicy(t *testing.T) {
 	database, dir := setupTestDB(t)
 	defer database.Close()
 
-	user, err := database.CreateUser(t.Context(), "admin", "password", db.RoleAdmin)
-	if err != nil {
-		t.Fatalf("create user: %v", err)
-	}
+	user := mustUser(t, database, "admin", db.RoleAdmin)
 	const hostileUsername = `</script><script>alert(1)</script>`
 	mustExec(t, database, "UPDATE users SET username = ? WHERE id = ?", hostileUsername, user.ID)
 

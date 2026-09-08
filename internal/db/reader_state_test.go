@@ -10,14 +10,8 @@ import (
 func TestResetReaderStatePreservesAnnotationsAndOtherUsers(t *testing.T) {
 	database := newTestDB(t)
 
-	user, err := database.CreateUser(t.Context(), "reader", "pw", RoleMember)
-	if err != nil {
-		t.Fatalf("create user: %v", err)
-	}
-	other, err := database.CreateUser(t.Context(), "other", "pw", RoleMember)
-	if err != nil {
-		t.Fatalf("create other user: %v", err)
-	}
+	user := mustUser(t, database, "reader", RoleMember)
+	other := mustUser(t, database, "other", RoleMember)
 	mustExec(t, database, "INSERT INTO books (id, title, sort_title) VALUES (1, 'T1', 'T1')")
 	mustExec(t, database, "INSERT INTO assets (id, book_id, storage_path, filename, extension, is_primary, original_sha256, current_sha256) VALUES (1, 1, 'books/a.epub', 'a.epub', '.epub', 1, randomblob(32), randomblob(32))")
 
@@ -67,10 +61,7 @@ func TestResetReaderStatePreservesAnnotationsAndOtherUsers(t *testing.T) {
 func TestTouchReaderStateAndAdvanceStatusRollsBackTogether(t *testing.T) {
 	database := newTestDB(t)
 
-	user, err := database.CreateUser(t.Context(), "reader", "pw", RoleMember)
-	if err != nil {
-		t.Fatalf("create user: %v", err)
-	}
+	user := mustUser(t, database, "reader", RoleMember)
 	mustExec(t, database, `
 		INSERT INTO books (id, title, sort_title) VALUES (1, 'Book', 'Book');
 		INSERT INTO assets (id, book_id, storage_path, filename, extension, original_sha256, current_sha256)
@@ -99,10 +90,7 @@ func TestTouchReaderStateAndAdvanceStatusRollsBackTogether(t *testing.T) {
 func TestSaveReaderStateAndStatusCommitTogether(t *testing.T) {
 	database := newTestDB(t)
 
-	user, err := database.CreateUser(t.Context(), "reader-atomic", "pw", RoleReader)
-	if err != nil {
-		t.Fatalf("create user: %v", err)
-	}
+	user := mustUser(t, database, "reader-atomic", RoleReader)
 	mustExec(t, database, `
 		INSERT INTO books (id, title, sort_title) VALUES (108, 'Atomic', 'Atomic');
 		INSERT INTO assets (id, book_id, storage_path, filename, extension, original_sha256, current_sha256)
@@ -151,10 +139,7 @@ func TestSaveReaderStateAndStatusCommitTogether(t *testing.T) {
 func TestAnnotationUpsertAndTextLimits(t *testing.T) {
 	database := newTestDB(t)
 
-	alice, err := database.CreateUser(t.Context(), "alice", "pw", RoleMember)
-	if err != nil {
-		t.Fatalf("create alice: %v", err)
-	}
+	alice := mustUser(t, database, "alice", RoleMember)
 	mustExec(t, database, "INSERT INTO books (id, title, sort_title) VALUES (1, 'T1', 'T1')")
 	mustExec(t, database, "INSERT INTO assets (id, book_id, storage_path, filename, extension, is_primary, original_sha256, current_sha256) VALUES (1, 1, 'books/a.epub', 'a.epub', '.epub', 1, randomblob(32), randomblob(32))")
 
@@ -202,14 +187,8 @@ func TestAnnotationUpsertAndTextLimits(t *testing.T) {
 func TestListContinueReading(t *testing.T) {
 	database := newTestDB(t)
 
-	alice, err := database.CreateUser(t.Context(), "alice", "pw", RoleMember)
-	if err != nil {
-		t.Fatalf("create alice: %v", err)
-	}
-	bob, err := database.CreateUser(t.Context(), "bob", "pw", RoleMember)
-	if err != nil {
-		t.Fatalf("create bob: %v", err)
-	}
+	alice := mustUser(t, database, "alice", RoleMember)
+	bob := mustUser(t, database, "bob", RoleMember)
 
 	mustExec := func(query string, args ...any) {
 		t.Helper()

@@ -10,10 +10,7 @@ import (
 
 func TestDeliveryDeviceLifecycleKeepsOneDefault(t *testing.T) {
 	database := newTestDB(t)
-	user, err := database.CreateUser(t.Context(), "alice", "pw", RoleReader)
-	if err != nil {
-		t.Fatalf("create user: %v", err)
-	}
+	user := mustUser(t, database, "alice", RoleReader)
 
 	first, err := database.CreateDeliveryDevice(context.Background(), user.ID, "Kindle", "alice@kindle.com", DeliveryPresetKindle, false)
 	if err != nil {
@@ -55,10 +52,7 @@ func TestDeliveryDeviceLifecycleKeepsOneDefault(t *testing.T) {
 
 func TestDeliveryBookForPlanAppliesScope(t *testing.T) {
 	database := newTestDB(t)
-	user, err := database.CreateUser(t.Context(), "reader", "pw", RoleReader)
-	if err != nil {
-		t.Fatalf("create user: %v", err)
-	}
+	user := mustUser(t, database, "reader", RoleReader)
 	shelf, err := database.CreateShelf(t.Context(), user.ID, ShelfShared, "Allowed", ShelfManual, "")
 	if err != nil {
 		t.Fatalf("create shelf: %v", err)
@@ -97,10 +91,7 @@ func TestDeliveryBookForPlanAppliesScope(t *testing.T) {
 
 func TestDeliveryJobLifecycle(t *testing.T) {
 	database := newTestDB(t)
-	user, err := database.CreateUser(t.Context(), "alice", "pw", RoleReader)
-	if err != nil {
-		t.Fatalf("create user: %v", err)
-	}
+	user := mustUser(t, database, "alice", RoleReader)
 	mustExec(t, database, `
 		INSERT INTO books (id, title, sort_title) VALUES (1, 'Book', 'Book');
 		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, original_sha256, current_sha256)

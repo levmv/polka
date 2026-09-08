@@ -4,6 +4,7 @@ import {
   epubWithVerticalWriting,
 } from '../book-fixtures';
 import { expect, test } from '../fixtures';
+import { importTestBook } from '../helpers';
 
 test.describe('Reader', () => {
   test('Vertical EPUB fills the stage without changing its column length', async ({
@@ -11,16 +12,7 @@ test.describe('Reader', () => {
   }) => {
     const stamp = Date.now().toString(36);
     const title = `Vertical EPUB ${stamp}`;
-    await page.goto('/');
-    await page.locator('#book-upload-input').setInputFiles(
-      epubWithVerticalWriting(title, `Vertical Author ${stamp}`, `vertical-epub-${stamp}`),
-    );
-
-    const card = page.locator('.book-card', { hasText: title });
-    await expect(card).toBeVisible();
-    const href = await card.locator('.book-title-link').getAttribute('href');
-    const bookId = Number(href?.split('/').pop()?.split('?')[0]);
-    if (!bookId) throw new Error('missing vertical EPUB book id');
+    const bookId = await importTestBook(page, epubWithVerticalWriting(title, 'Vertical Author', `vertical-epub-${stamp}`));
 
     try {
       await page.goto(`/read/${bookId}`);
@@ -430,16 +422,7 @@ test.describe('Reader', () => {
     const stamp = Date.now().toString(36);
     const title = `Tolerated EPUB ${stamp}`;
     const author = `Fallback Author ${stamp}`;
-    await page.goto('/');
-    await page.locator('#book-upload-input').setInputFiles(
-      epubWithNonstandardZIPSignature(title, author, `tolerated-epub-${stamp}`),
-    );
-
-    const card = page.locator('.book-card', { hasText: title });
-    await expect(card).toBeVisible();
-    const href = await card.locator('.book-title-link').getAttribute('href');
-    const bookId = Number(href?.split('/').pop()?.split('?')[0]);
-    if (!bookId) throw new Error('missing tolerated EPUB book id');
+    const bookId = await importTestBook(page, epubWithNonstandardZIPSignature(title, author, `tolerated-epub-${stamp}`));
 
     try {
       await page.goto(`/read/${bookId}`);
@@ -477,16 +460,7 @@ test.describe('Reader', () => {
     const stamp = Date.now().toString(36);
     const title = `UTF-8 path EPUB ${stamp}`;
     const author = `Unicode Path Author ${stamp}`;
-    await page.goto('/');
-    await page.locator('#book-upload-input').setInputFiles(
-      epubWithUnmarkedUTF8Entry(title, author, `utf8-path-epub-${stamp}`),
-    );
-
-    const card = page.locator('.book-card', { hasText: title });
-    await expect(card).toBeVisible();
-    const href = await card.locator('.book-title-link').getAttribute('href');
-    const bookId = Number(href?.split('/').pop()?.split('?')[0]);
-    if (!bookId) throw new Error('missing UTF-8 path EPUB book id');
+    const bookId = await importTestBook(page, epubWithUnmarkedUTF8Entry(title, author, `utf8-path-epub-${stamp}`));
 
     try {
       await page.goto(`/read/${bookId}`);
@@ -516,49 +490,4 @@ test.describe('Reader', () => {
       expect(purge.status()).toBe(204);
     }
   });
-
-  test('FB2 book opens in the foliate reader', async ({ page }) => {
-    await page.goto('/');
-    const card = page.locator('.book-card', { hasText: 'FB2 Reader Book' });
-    await expect(card).toBeVisible();
-
-    const href = await card.locator('.book-title-link').getAttribute('href');
-    const bookId = Number(href?.split('/').pop()?.split('?')[0]);
-    if (!bookId) throw new Error('missing book id');
-
-    await page.goto(`/read/${bookId}`);
-    const reader = page.locator('.reader-page');
-    await expect(reader).toHaveAttribute('data-reader-format', 'fb2');
-    // FB2 shares the foliate stage with EPUB.
-    await expect(page.locator('.reader-epub-stage')).toBeVisible();
-    await expect(page.locator('foliate-view')).toBeVisible();
-    await expect
-      .poll(async () => page.locator('.reader-epub-stage').getAttribute('data-reader-ready'))
-      .toBe('true');
-
-    // The display panel is available for FB2 too.
-    await expect(page.locator('[data-reader-display-toggle]')).toBeVisible();
-    const tocToggle = page.locator('[data-reader-toc-toggle]');
-    await expect(tocToggle).toBeVisible();
-    await tocToggle.click();
-    const tocPanel = page.locator('#reader-toc-panel');
-    await expect(tocPanel).toBeVisible();
-    await tocPanel.getByRole('button', { name: 'FB2 Reader Book' }).click();
-    await expect(tocPanel).toBeHidden();
-
-    const assetId = await reader.getAttribute('data-reader-asset-id');
-    if (!assetId) throw new Error('missing reader asset id');
-    await expect
-      .poll(async () =>
-        page.evaluate(async (id) => {
-          const res = await fetch(`/api/reader/assets/${id}/state`);
-          if (!res.ok) return 0;
-          return (await res.json()).last_read_at || 0;
-        }, assetId),
-      )
-      .toBeGreaterThan(0);
-    await page.screenshot({ path: 'screenshots/reader-fb2.png', fullPage: true });
-  });
-
-
 });

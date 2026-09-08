@@ -51,56 +51,27 @@ func TestPlanChoicesUsePolicyOrderAndIncludeAlternates(t *testing.T) {
 	}
 }
 
-func TestPlanDeliveryKindleConvertsLegacyKindleSourcesToEPUB(t *testing.T) {
+func TestPlanDeliveryKindleConversions(t *testing.T) {
 	for _, tt := range []struct {
-		id     int64
-		ext    string
-		format format.Format
+		ext      string
+		format   format.Format
+		target   converter.Target
+		filename string
 	}{
-		{id: 1, ext: ".mobi", format: format.FormatMOBI},
-		{id: 2, ext: ".pdb", format: format.FormatPDB},
+		{".mobi", format.FormatMOBI, converter.TargetEPUB, "Book.epub"},
+		{".pdb", format.FormatPDB, converter.TargetEPUB, "Book.epub"},
+		{".fb2", format.FormatFB2, converter.TargetEPUB, "Book.epub"},
+		{".azw4", format.FormatAZW4, converter.TargetPDF, "Book.pdf"},
 	} {
-		t.Run(format.FormatLabel(tt.format), func(t *testing.T) {
-			book := Book{Title: "Old", Assets: []Asset{
-				{ID: tt.id, Filename: "old" + tt.ext, Extension: tt.ext, Format: tt.format, Size: 1024},
+		t.Run(tt.ext, func(t *testing.T) {
+			book := Book{Title: "Book", Assets: []Asset{
+				{ID: 1, Filename: "source" + tt.ext, Extension: tt.ext, Format: tt.format, Size: 1024},
 			}}
-
 			plan := PlanDelivery(book, PlanOptions{Preset: PresetKindle})
-			if !plan.Sendable() {
-				t.Fatalf("plan not sendable: %+v", plan)
-			}
-			if plan.AssetID != tt.id || plan.Target != converter.TargetEPUB || !plan.Converted || plan.Filename != "Old.epub" {
-				t.Fatalf("plan = %+v, want %s -> EPUB", plan, format.FormatLabel(tt.format))
+			if !plan.Sendable() || plan.AssetID != 1 || !plan.Converted || plan.Target != tt.target || plan.Filename != tt.filename {
+				t.Fatalf("plan = %+v; want asset 1 converted to %s as %s", plan, tt.target, tt.filename)
 			}
 		})
-	}
-}
-
-func TestPlanDeliveryKindleConvertsFB2ToEPUB(t *testing.T) {
-	book := Book{Title: "FB2", Assets: []Asset{
-		{ID: 1, Filename: "fb2.fb2", Extension: ".fb2", Format: format.FormatFB2, Size: 1024, IsPrimary: true},
-	}}
-
-	plan := PlanDelivery(book, PlanOptions{Preset: PresetKindle})
-	if !plan.Sendable() {
-		t.Fatalf("plan not sendable: %+v", plan)
-	}
-	if plan.AssetID != 1 || plan.Target != converter.TargetEPUB || !plan.Converted || plan.Filename != "FB2.epub" {
-		t.Fatalf("plan = %+v, want FB2 -> EPUB", plan)
-	}
-}
-
-func TestPlanDeliveryKindleAllowsAZW4ToPDF(t *testing.T) {
-	book := Book{Title: "Fixed", Assets: []Asset{
-		{ID: 1, Filename: "fixed.azw4", Extension: ".azw4", Format: format.FormatAZW4, Size: 1024},
-	}}
-
-	plan := PlanDelivery(book, PlanOptions{Preset: PresetKindle})
-	if !plan.Sendable() {
-		t.Fatalf("plan not sendable: %+v", plan)
-	}
-	if plan.Target != converter.TargetPDF || plan.Filename != "Fixed.pdf" {
-		t.Fatalf("plan = %+v, want AZW4 -> PDF", plan)
 	}
 }
 

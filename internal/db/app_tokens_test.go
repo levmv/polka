@@ -9,10 +9,7 @@ import (
 func TestAppTokenLifecycle(t *testing.T) {
 	database := newTestDB(t)
 
-	u, err := database.CreateUser(t.Context(), "alice", "pw", RoleMember)
-	if err != nil {
-		t.Fatalf("create user: %v", err)
-	}
+	u := mustUser(t, database, "alice", RoleMember)
 
 	token, err := database.CreateAppToken(t.Context(), u.ID, "kobo")
 	if err != nil {

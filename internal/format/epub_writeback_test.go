@@ -789,36 +789,6 @@ func TestRewriteEPUBMetadataRefusesUnsafePackageSecurity(t *testing.T) {
 	}
 }
 
-func TestRewriteEPUBMetadataPreservesDirectoryEntries(t *testing.T) {
-	src := testWritebackEPUB(t, []testWritebackEntry{
-		{name: "mimetype", method: zip.Store, data: []byte("application/epub+zip")},
-		{name: "META-INF/", method: zip.Store},
-		{name: "META-INF/container.xml", data: []byte(testWritebackContainer("OEBPS/content.opf"))},
-		{name: "OEBPS/", method: zip.Store},
-		{name: "OEBPS/content.opf", data: []byte(`<?xml version="1.0"?>
-<package version="2.0">
-  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
-    <dc:title>Directory Entries</dc:title>
-  </metadata>
-  <manifest/>
-  <spine/>
-</package>`)},
-	})
-
-	out, err := RewriteEPUBMetadata(src, Metadata{Title: "Rewritten Directory Entries"}, time.Time{})
-	if err != nil {
-		t.Fatalf("RewriteEPUBMetadata: %v", err)
-	}
-
-	zr := testZipReader(t, out)
-	for _, name := range []string{"META-INF/", "OEBPS/"} {
-		f := testZipEntry(t, zr, name)
-		if !f.FileInfo().IsDir() {
-			t.Fatalf("entry %s is not a directory", name)
-		}
-	}
-}
-
 func TestRewriteEPUBMetadataDirectoryEntriesStayByteStable(t *testing.T) {
 	modified := time.Date(2020, 3, 4, 5, 6, 7, 0, time.UTC)
 	src := testWritebackEPUB(t, []testWritebackEntry{
@@ -848,10 +818,12 @@ func TestRewriteEPUBMetadataDirectoryEntriesStayByteStable(t *testing.T) {
 		t.Fatal("second rewrite with timestamped directory entries changed the EPUB bytes")
 	}
 
-	srcDir := testZipEntry(t, testZipReader(t, src), "META-INF/")
-	outDir := testZipEntry(t, testZipReader(t, out), "META-INF/")
-	if len(outDir.Extra) != len(srcDir.Extra) {
-		t.Fatalf("directory extra length = %d, want %d", len(outDir.Extra), len(srcDir.Extra))
+	srcZip, outZip := testZipReader(t, src), testZipReader(t, out)
+	for _, name := range []string{"META-INF/", "OEBPS/"} {
+		srcDir, outDir := testZipEntry(t, srcZip, name), testZipEntry(t, outZip, name)
+		if !outDir.FileInfo().IsDir() || !bytes.Equal(outDir.Extra, srcDir.Extra) {
+			t.Errorf("directory %s lost its type or extra data", name)
+		}
 	}
 }
 

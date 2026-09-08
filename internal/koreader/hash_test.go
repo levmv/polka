@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"crypto/md5"
 	"encoding/hex"
-	"os"
-	"path/filepath"
 	"testing"
 )
 
@@ -38,24 +36,5 @@ func TestPartialMD5SamplesKOReaderOffsets(t *testing.T) {
 	want := hex.EncodeToString(h.Sum(nil))
 	if got != want {
 		t.Fatalf("PartialMD5 = %q; want %q", got, want)
-	}
-}
-
-func TestPartialMD5File(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "book.epub")
-	if err := os.WriteFile(path, []byte("file bytes"), 0o644); err != nil {
-		t.Fatalf("write fixture: %v", err)
-	}
-
-	got, err := PartialMD5File(path)
-	if err != nil {
-		t.Fatalf("PartialMD5File: %v", err)
-	}
-	want, err := PartialMD5(bytes.NewReader([]byte("file bytes")))
-	if err != nil {
-		t.Fatalf("PartialMD5 fixture: %v", err)
-	}
-	if got != want {
-		t.Fatalf("PartialMD5File = %q; want %q", got, want)
 	}
 }

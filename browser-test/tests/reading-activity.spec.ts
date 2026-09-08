@@ -29,7 +29,6 @@ test.describe('Reading activity', () => {
   });
 
   test.afterEach(async ({ page }) => {
-    await page.goto('/');
     await deleteTestUserAsAdmin(page, user);
   });
 

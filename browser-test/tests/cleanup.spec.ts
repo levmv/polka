@@ -1,11 +1,10 @@
 import type { Cleanup, DuplicateGroup } from '../../frontend/src/types';
 import { epub, fb2, type UploadFile } from './book-fixtures';
 import { expect, type Page, test } from './fixtures';
+import { importTestBook } from './helpers';
 
-async function uploadDuplicatePair(page: Page, files: UploadFile[], title: string): Promise<void> {
-  await page.goto('/');
-  await page.locator('#book-upload-input').setInputFiles(files);
-  await expect(page.locator('.book-card', { hasText: title })).toHaveCount(files.length);
+async function importDuplicatePair(page: Page, files: UploadFile[]): Promise<void> {
+  for (const file of files) await importTestBook(page, file);
 }
 
 async function cleanupGroupForTitle(
@@ -42,11 +41,11 @@ test.describe('Cleanup page', () => {
       );
     }
 
+    await page.screenshot({ path: 'screenshots/cleanup.png', fullPage: true });
+
     await tiles.filter({ hasText: 'Missing cover' }).click();
     await expect(page).toHaveURL((url) => url.pathname === '/' && url.searchParams.get('q') === 'no:cover');
     await expect(page.locator('#search-input')).toHaveValue('no:cover');
-
-    await page.screenshot({ path: 'screenshots/cleanup-tiles.png', fullPage: true });
   });
 
   test('library menu keeps Cleanup and Trash available without primary nav items', async ({
@@ -93,13 +92,12 @@ test.describe('Cleanup page', () => {
     const stamp = Date.now().toString(36);
     const title = `Cleanup Dismiss ${stamp}`;
     const author = `Cleanup Author ${stamp}`;
-    await uploadDuplicatePair(
+    await importDuplicatePair(
       page,
       [
         fb2(title, author, `cleanup-dismiss-a-${stamp}`, 'first copy'),
         fb2(title, author, `cleanup-dismiss-b-${stamp}`, 'second copy'),
       ],
-      title,
     );
     const apiGroup = await cleanupGroupForTitle(page, title);
     const ids = apiGroup.books.map((book) => book.id);
@@ -111,20 +109,18 @@ test.describe('Cleanup page', () => {
     await expect(page.locator('.toast', { hasText: 'Dismissed duplicate group' })).toBeVisible();
     await expect(page.locator('.duplicate-group', { hasText: title })).toHaveCount(0);
     await purgeBooks(page, ids);
-
   });
 
   test('merge combines an EPUB and FB2 pair into one book', async ({ page }) => {
     const stamp = Date.now().toString(36);
     const title = `Cleanup Merge ${stamp}`;
     const author = `Merge Author ${stamp}`;
-    await uploadDuplicatePair(
+    await importDuplicatePair(
       page,
       [
         epub(title, author, `cleanup-merge-${stamp}`),
         fb2(title, author, `cleanup-merge-${stamp}`, 'fb2 copy'),
       ],
-      title,
     );
 
     const apiGroup = await cleanupGroupForTitle(page, title);
@@ -156,6 +152,5 @@ test.describe('Cleanup page', () => {
       page,
       apiGroup.books.map((book) => book.id),
     );
-
   });
 });

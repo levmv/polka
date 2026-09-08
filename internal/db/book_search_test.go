@@ -44,10 +44,7 @@ func TestSearchFilterAccessScopeReasons(t *testing.T) {
 
 func TestBookSearchConsumersSelectTheSameBooks(t *testing.T) {
 	database := newTestDB(t)
-	user, err := database.CreateUser(t.Context(), "search-reader", "pw", RoleReader)
-	if err != nil {
-		t.Fatalf("create user: %v", err)
-	}
+	user := mustUser(t, database, "search-reader", RoleReader)
 	mustExec(t, database, `
 		INSERT INTO books (id, title, sort_title, cover_version, tags) VALUES
 			(1, 'Alpha Needle', 'Alpha Needle', 0, 'Science fiction'),

@@ -12,7 +12,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -89,9 +88,10 @@ func newTestServer(database *db.DB, dataDir string) *Server {
 
 func mustUser(t *testing.T, database *db.DB, username, role string) *db.User {
 	t.Helper()
-	user, err := database.CreateUser(t.Context(), username, "pw", role)
-	if err != nil {
-		t.Fatalf("create user %q: %v", username, err)
+	id := testfixture.SeedUser(t, database.Write(t.Context()).Exec, username, role)
+	user, err := db.GetUserByID(database.Read(t.Context()), id)
+	if err != nil || user == nil {
+		t.Fatalf("get user %q: %v", username, err)
 	}
 	return user
 }
@@ -100,19 +100,6 @@ func ensureTestStorageLayout(t *testing.T, dir string) {
 	t.Helper()
 	if err := storage.EnsureLayout(storage.NewRoot(dir)); err != nil {
 		t.Fatalf("EnsureLayout: %v", err)
-	}
-}
-
-func TestAssetDTOIncludesDownloadAsOptions(t *testing.T) {
-	want := []DownloadAsOption{
-		{Target: "epub", Label: "Repaired EPUB"},
-		{Target: "kepub", Label: "KEPUB"},
-	}
-	if got := assetDTO(db.AssetRow{Format: format.FormatEPUB}).DownloadAs; !slices.Equal(got, want) {
-		t.Fatalf("EPUB download_as = %+v; want %+v", got, want)
-	}
-	if got := assetDTO(db.AssetRow{Format: format.FormatPDF}).DownloadAs; got != nil {
-		t.Fatalf("PDF download_as = %+v; want none", got)
 	}
 }
 

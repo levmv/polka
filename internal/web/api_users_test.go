@@ -16,8 +16,8 @@ func TestAPIUsersAdminListAndCreate(t *testing.T) {
 	database, dir := setupTestDB(t)
 	defer database.Close()
 
-	admin := mustUser(t, database, "Admin", db.RoleAdmin)
-	member := mustUser(t, database, "Bob", db.RoleMember)
+	admin := mustUser(t, database, "admin", db.RoleAdmin)
+	member := mustUser(t, database, "bob", db.RoleMember)
 
 	s := newTestServer(database, dir)
 	handler := testRoutes(t, s)
@@ -154,8 +154,8 @@ func TestAPIUserAccessCanUseAdminPrivateShelf(t *testing.T) {
 	database, dir := setupTestDB(t)
 	defer database.Close()
 
-	admin := mustUser(t, database, "Admin", db.RoleAdmin)
-	reader := mustUser(t, database, "Reader", db.RoleReader)
+	admin := mustUser(t, database, "admin", db.RoleAdmin)
+	reader := mustUser(t, database, "reader", db.RoleReader)
 	private, err := database.CreateShelf(t.Context(), admin.ID, db.ShelfPersonal, "Kids picks", db.ShelfManual, "")
 	if err != nil {
 		t.Fatalf("create admin private shelf: %v", err)
@@ -208,8 +208,8 @@ func TestAPIUserPasswordSelfAndAdmin(t *testing.T) {
 	database, dir := setupTestDB(t)
 	defer database.Close()
 
-	admin := mustUser(t, database, "Admin", db.RoleAdmin)
-	member := mustUser(t, database, "Bob", db.RoleMember)
+	admin := mustUser(t, database, "admin", db.RoleAdmin)
+	member := mustUser(t, database, "bob", db.RoleMember)
 
 	s := newTestServer(database, dir)
 	handler := testRoutes(t, s)
@@ -275,8 +275,8 @@ func TestAPIUserDeleteGuardsLastAdminAndRevokesSessions(t *testing.T) {
 	database, dir := setupTestDB(t)
 	defer database.Close()
 
-	admin := mustUser(t, database, "Admin", db.RoleAdmin)
-	member := mustUser(t, database, "Bob", db.RoleMember)
+	admin := mustUser(t, database, "admin", db.RoleAdmin)
+	member := mustUser(t, database, "bob", db.RoleMember)
 
 	s := newTestServer(database, dir)
 	handler := testRoutes(t, s)
@@ -320,7 +320,7 @@ func TestAPIUserDeleteGuardsLastAdminAndRevokesSessions(t *testing.T) {
 		t.Fatalf("deleted user's session status = %d, want %d", w.Code, http.StatusUnauthorized)
 	}
 
-	admin2 := mustUser(t, database, "OtherAdmin", db.RoleAdmin)
+	admin2 := mustUser(t, database, "otheradmin", db.RoleAdmin)
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, jsonRequest(t, s, admin.ID, http.MethodDelete, "/api/users/"+strconv.FormatInt(admin2.ID, 10), nil))
 	if w.Code != http.StatusNoContent {

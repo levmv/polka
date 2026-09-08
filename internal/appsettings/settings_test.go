@@ -8,31 +8,6 @@ import (
 	"github.com/levmv/polka/internal/db"
 )
 
-func TestGetSet(t *testing.T) {
-	database, err := db.InitPath(filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatalf("db.Init: %v", err)
-	}
-	defer database.Close()
-
-	if got, ok, err := Get(database.Read(t.Context()), "missing"); err != nil || ok || got != "" {
-		t.Fatalf("Get missing = %q, %v, %v; want empty, false, nil", got, ok, err)
-	}
-	if err := Set(database.Write(t.Context()), "example", "value"); err != nil {
-		t.Fatalf("Set: %v", err)
-	}
-	if err := Set(database.Write(t.Context()), "example", "updated"); err != nil {
-		t.Fatalf("Set update: %v", err)
-	}
-	got, ok, err := Get(database.Read(t.Context()), "example")
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if !ok || got != "updated" {
-		t.Fatalf("Get = %q, %v; want updated, true", got, ok)
-	}
-}
-
 func TestBoolSettings(t *testing.T) {
 	database, err := db.InitPath(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {

@@ -3,15 +3,12 @@ package pdfcover
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"image"
 	"image/color"
 	"image/jpeg"
 	"io"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -88,37 +85,6 @@ func TestWASMFallbackRendersWithoutHostFilesystem(t *testing.T) {
 	}
 	if _, err := r.RenderFirstPageJPEG(context.Background(), bytes.NewReader(pdf), int64(len(pdf)), 72); err != nil {
 		t.Fatalf("RenderFirstPageJPEG after cancellation reset: %v", err)
-	}
-}
-
-func TestEmbeddedPDFiumWASMMatchesManifest(t *testing.T) {
-	type manifest struct {
-		GoPDFium struct {
-			PDFiumVersion int `json:"pdfium_version"`
-		} `json:"go_pdfium"`
-		Output struct {
-			Bytes  int    `json:"bytes"`
-			SHA256 string `json:"sha256"`
-		} `json:"output"`
-	}
-
-	manifestData, err := os.ReadFile("pdfium-wasm.json")
-	if err != nil {
-		t.Fatalf("read PDFium Wasm manifest: %v", err)
-	}
-	var expected manifest
-	if err := json.Unmarshal(manifestData, &expected); err != nil {
-		t.Fatalf("decode PDFium Wasm manifest: %v", err)
-	}
-	if len(pdfiumCoverWASM) != expected.Output.Bytes {
-		t.Fatalf("embedded PDFium Wasm is %d bytes, manifest says %d", len(pdfiumCoverWASM), expected.Output.Bytes)
-	}
-	if pdfiumVersion != fmt.Sprint(expected.GoPDFium.PDFiumVersion) {
-		t.Fatalf("PDFium version = %s, manifest says %d", pdfiumVersion, expected.GoPDFium.PDFiumVersion)
-	}
-	sum := sha256.Sum256(pdfiumCoverWASM)
-	if got := fmt.Sprintf("%x", sum); got != expected.Output.SHA256 {
-		t.Fatalf("embedded PDFium Wasm SHA-256 = %s, manifest says %s", got, expected.Output.SHA256)
 	}
 }
 

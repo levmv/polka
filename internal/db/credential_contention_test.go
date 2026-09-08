@@ -8,10 +8,7 @@ import (
 
 func TestDeviceAuthenticationWhileWriterIsHeld(t *testing.T) {
 	database := newTestDB(t)
-	user, err := database.CreateUser(t.Context(), "device-busy", "pw", RoleMember)
-	if err != nil {
-		t.Fatal(err)
-	}
+	user := mustUser(t, database, "device-busy", RoleMember)
 	token, err := database.CreateAppToken(t.Context(), user.ID, "OPDS")
 	if err != nil {
 		t.Fatal(err)

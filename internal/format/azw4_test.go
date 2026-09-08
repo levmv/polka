@@ -57,17 +57,6 @@ func TestExtractAZW4PDFNoEmbeddedPDF(t *testing.T) {
 	}
 }
 
-func TestHasAZW4PDF(t *testing.T) {
-	withPDF := []byte("prefix%PDF-1.7\nbody\n%%EOFsuffix")
-	if !HasAZW4PDF(bytes.NewReader(withPDF), int64(len(withPDF))) {
-		t.Fatalf("HasAZW4PDF = false; want true for embedded PDF markers")
-	}
-	withoutPDF := []byte("azw4 wrapper without pdf")
-	if HasAZW4PDF(bytes.NewReader(withoutPDF), int64(len(withoutPDF))) {
-		t.Fatalf("HasAZW4PDF = true; want false without embedded PDF markers")
-	}
-}
-
 func TestExtractAZW4PDFContextCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

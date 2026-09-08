@@ -45,7 +45,7 @@ func (p *fakeMetadataProvider) Search(_ context.Context, q metalookup.Query) ([]
 func TestAPIMetadataCandidates(t *testing.T) {
 	database, dir := setupTestDB(t)
 	defer database.Close()
-	u := mustUser(t, database, "Alice", db.RoleMember)
+	u := mustUser(t, database, "alice", db.RoleMember)
 
 	provider := &fakeMetadataProvider{}
 	s := &Server{
@@ -86,7 +86,7 @@ func TestAPIMetadataCandidates(t *testing.T) {
 func TestAPIMetadataProviderFailuresAreIsolated(t *testing.T) {
 	database, dir := setupTestDB(t)
 	defer database.Close()
-	u := mustUser(t, database, "Alice", db.RoleMember)
+	u := mustUser(t, database, "alice", db.RoleMember)
 
 	s := &Server{
 		db:       database,
@@ -136,7 +136,7 @@ func (p *fakeDescProvider) FetchDescription(_ context.Context, ref string) (stri
 func TestAPIMetadataDescription(t *testing.T) {
 	database, dir := setupTestDB(t)
 	defer database.Close()
-	u := mustUser(t, database, "Alice", db.RoleMember)
+	u := mustUser(t, database, "alice", db.RoleMember)
 
 	desc := &fakeDescProvider{desc: "Lazy fetched description."}
 	s := &Server{
@@ -193,7 +193,7 @@ func TestAPIMetadataDescription(t *testing.T) {
 func TestAPIMetadataCandidatesRejectsUnknownProvider(t *testing.T) {
 	database, dir := setupTestDB(t)
 	defer database.Close()
-	u := mustUser(t, database, "Alice", db.RoleMember)
+	u := mustUser(t, database, "alice", db.RoleMember)
 
 	s := &Server{
 		db:       database,

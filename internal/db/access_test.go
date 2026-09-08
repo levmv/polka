@@ -16,10 +16,7 @@ func seedAccessBooks(t *testing.T, database *DB) {
 func TestVisibilityScopeManualShelf(t *testing.T) {
 	database := newTestDB(t)
 	seedAccessBooks(t, database)
-	user, err := database.CreateUser(t.Context(), "reader", "pw", RoleReader)
-	if err != nil {
-		t.Fatalf("create user: %v", err)
-	}
+	user := mustUser(t, database, "reader", RoleReader)
 	shelf, err := database.CreateShelf(t.Context(), user.ID, ShelfShared, "Kids", ShelfManual, "")
 	if err != nil {
 		t.Fatalf("create shelf: %v", err)
@@ -69,10 +66,7 @@ func TestVisibilityScopeManualShelf(t *testing.T) {
 func TestVisibilityScopeIgnoresPrivateScopeShelfRows(t *testing.T) {
 	database := newTestDB(t)
 	seedAccessBooks(t, database)
-	user, err := database.CreateUser(t.Context(), "reader", "pw", RoleReader)
-	if err != nil {
-		t.Fatalf("create user: %v", err)
-	}
+	user := mustUser(t, database, "reader", RoleReader)
 	shelf, err := database.CreateShelf(t.Context(), user.ID, ShelfPersonal, "Private Kids", ShelfManual, "")
 	if err != nil {
 		t.Fatalf("create private shelf: %v", err)
@@ -95,14 +89,8 @@ func TestVisibilityScopeIgnoresPrivateScopeShelfRows(t *testing.T) {
 func TestVisibilityScopePrivateCuratorShelf(t *testing.T) {
 	database := newTestDB(t)
 	seedAccessBooks(t, database)
-	curator, err := database.CreateUser(t.Context(), "admin", "pw", RoleAdmin)
-	if err != nil {
-		t.Fatalf("create curator: %v", err)
-	}
-	user, err := database.CreateUser(t.Context(), "reader", "pw", RoleReader)
-	if err != nil {
-		t.Fatalf("create reader: %v", err)
-	}
+	curator := mustUser(t, database, "admin", RoleAdmin)
+	user := mustUser(t, database, "reader", RoleReader)
 	shelf, err := database.CreateShelf(t.Context(), curator.ID, ShelfPersonal, "Private Kids", ShelfManual, "")
 	if err != nil {
 		t.Fatalf("create private shelf: %v", err)
@@ -142,10 +130,7 @@ func TestVisibilityScopePrivateCuratorShelf(t *testing.T) {
 func TestVisibilityScopeQueryShelf(t *testing.T) {
 	database := newTestDB(t)
 	seedAccessBooks(t, database)
-	user, err := database.CreateUser(t.Context(), "reader", "pw", RoleReader)
-	if err != nil {
-		t.Fatalf("create user: %v", err)
-	}
+	user := mustUser(t, database, "reader", RoleReader)
 	shelf, err := database.CreateShelf(t.Context(), user.ID, ShelfShared, "Kids query", ShelfQuery, "tag:kid")
 	if err != nil {
 		t.Fatalf("create query shelf: %v", err)
@@ -196,10 +181,7 @@ func TestVisibilityScopeQueryShelf(t *testing.T) {
 func TestVisibilityScopeTrash(t *testing.T) {
 	database := newTestDB(t)
 	seedAccessBooks(t, database)
-	user, err := database.CreateUser(t.Context(), "reader", "pw", RoleReader)
-	if err != nil {
-		t.Fatalf("create user: %v", err)
-	}
+	user := mustUser(t, database, "reader", RoleReader)
 	shelf, err := database.CreateShelf(t.Context(), user.ID, ShelfShared, "Kids", ShelfManual, "")
 	if err != nil {
 		t.Fatalf("create shelf: %v", err)

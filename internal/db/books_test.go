@@ -61,10 +61,7 @@ func TestListBookJumpsUsesVisibleSortBoundaries(t *testing.T) {
 func TestListBookJumpsRespectsVisibilityScope(t *testing.T) {
 	database := newTestDB(t)
 	seedAccessBooks(t, database)
-	user, err := database.CreateUser(t.Context(), "jump-reader", "pw", RoleReader)
-	if err != nil {
-		t.Fatalf("create user: %v", err)
-	}
+	user := mustUser(t, database, "jump-reader", RoleReader)
 	shelf, err := database.CreateShelf(t.Context(), user.ID, ShelfShared, "Kids", ShelfManual, "")
 	if err != nil {
 		t.Fatalf("create shelf: %v", err)
@@ -124,14 +121,8 @@ func TestListBookJumpsDropsPathologicalBucketSets(t *testing.T) {
 
 func TestListBooksFiltersReadingStatusPerUser(t *testing.T) {
 	database := newTestDB(t)
-	alice, err := database.CreateUser(t.Context(), "alice", "pw", RoleMember)
-	if err != nil {
-		t.Fatalf("create alice: %v", err)
-	}
-	bob, err := database.CreateUser(t.Context(), "bob", "pw", RoleMember)
-	if err != nil {
-		t.Fatalf("create bob: %v", err)
-	}
+	alice := mustUser(t, database, "alice", RoleMember)
+	bob := mustUser(t, database, "bob", RoleMember)
 	mustExec(t, database, `
 		INSERT INTO books (id, title, sort_title, added_at) VALUES
 			(1, 'Alpha Needle', 'Alpha Needle', 1),

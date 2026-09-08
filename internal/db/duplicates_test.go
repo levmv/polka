@@ -84,10 +84,7 @@ func TestDismissDuplicateGroupHidesOnlyCoveredCurrentSet(t *testing.T) {
 	database := newTestDB(t)
 	insertDuplicateBooks(t, database, 1, 2)
 
-	user, err := database.CreateUser(t.Context(), "curator", "pw", RoleMember)
-	if err != nil {
-		t.Fatalf("create user: %v", err)
-	}
+	user := mustUser(t, database, "curator", RoleMember)
 	for _, bookIDs := range [][]int64{{2, 1}, {1, 2}} {
 		if err := database.Transact(t.Context(), func(tx *Tx) error {
 			return DismissDuplicateGroup(tx, FullVisibilityScope(), bookIDs, user.ID)
@@ -125,10 +122,7 @@ func TestMergeDuplicateBooksMovesAssetsShelvesAndSafeFillIns(t *testing.T) {
 	database := newTestDB(t)
 	insertDuplicateBooks(t, database, 1, 2)
 
-	user, err := database.CreateUser(t.Context(), "curator", "pw", RoleMember)
-	if err != nil {
-		t.Fatalf("create user: %v", err)
-	}
+	user := mustUser(t, database, "curator", RoleMember)
 	mustExec(t, database, "UPDATE books SET description = NULL, cover_version = 0 WHERE id = 1")
 	mustExec(t, database, "UPDATE books SET description = 'Loser description', cover_version = 2 WHERE id = 2")
 	mustExec(t, database, `
@@ -235,10 +229,7 @@ func TestMergeDuplicateBooksMovesAssetsShelvesAndSafeFillIns(t *testing.T) {
 func TestMergeDuplicateBooksPreservesExistingMetadata(t *testing.T) {
 	database := newTestDB(t)
 	insertDuplicateBooks(t, database, 1, 2)
-	user, err := database.CreateUser(t.Context(), "curator", "pw", RoleMember)
-	if err != nil {
-		t.Fatalf("create user: %v", err)
-	}
+	user := mustUser(t, database, "curator", RoleMember)
 	mustExec(t, database, "UPDATE books SET description = 'Survivor description', cover_version = 1 WHERE id = 1")
 	mustExec(t, database, "UPDATE books SET description = 'Loser description', cover_version = 0 WHERE id = 2")
 
@@ -272,14 +263,8 @@ func TestMergeDuplicateBooksMergesPerUserReadingStateAndHistories(t *testing.T) 
 	database := newTestDB(t)
 	insertDuplicateBooks(t, database, 1, 2, 3)
 
-	alice, err := database.CreateUser(t.Context(), "alice", "pw", RoleMember)
-	if err != nil {
-		t.Fatalf("create alice: %v", err)
-	}
-	bob, err := database.CreateUser(t.Context(), "bob", "pw", RoleMember)
-	if err != nil {
-		t.Fatalf("create bob: %v", err)
-	}
+	alice := mustUser(t, database, "alice", RoleMember)
+	bob := mustUser(t, database, "bob", RoleMember)
 	mustExec(t, database, `
 		INSERT INTO user_book_reading_events
 			(id, user_id, book_id, previous_event_id, from_status, to_status, source, occurred_at)

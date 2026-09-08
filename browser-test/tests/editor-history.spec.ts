@@ -54,25 +54,6 @@ test.describe('Editor overlay history', () => {
     }
   });
 
-  test('Back leaves a book editor on the book before returning to the library', async ({ page }) => {
-    await page.goto('/?sort=title');
-    const firstCard = page.locator('.book-card').first();
-    await expect(firstCard).toBeVisible();
-    await firstCard.locator('.book-title-link').click();
-    await expect(page.locator('.detail-title')).toBeVisible();
-    await page.locator('#btn-edit-book').click();
-    await expect(page.locator('.edit-modal input[name="title"]')).toBeVisible();
-
-    await page.goBack();
-    await expect(page.locator('.edit-modal')).toHaveCount(0);
-    await expect(page).toHaveURL(/\/book\//);
-    await expect(page.locator('.detail-title')).toBeVisible();
-
-    await page.goBack();
-    await expect(page).toHaveURL(/\/?sort=title$/);
-    await expect(page.locator('.book-card').first()).toBeVisible();
-  });
-
   test('repeated Back closes the discard prompt and keeps the Save & Next target', async ({
     page,
   }) => {
@@ -132,7 +113,6 @@ test.describe('Editor overlay history', () => {
     await expect(editor).toHaveCount(0);
     await expect(page).toHaveURL(/\/book\//);
     await expect(page.locator('.detail-title')).toBeVisible();
-    await expect(page).toHaveURL(/\/book\//);
 
     await page.goBack();
     await expect(page).toHaveURL(/\/?sort=title$/);

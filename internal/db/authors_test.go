@@ -364,15 +364,14 @@ func TestSetAuthorSortNameUpdatesPrimaryAuthorSort(t *testing.T) {
 		t.Fatalf("initial updatePrimaryAuthorSorts: %v", err)
 	}
 
-	tx, _ := database.BeginWrite(context.Background())
-	affected, err := SetAuthorSortName(tx, "Author One", "One, Author")
-	if err != nil {
+	if err := database.Transact(t.Context(), func(tx *Tx) error {
+		affected, err := SetAuthorSortName(tx, "Author One", "One, Author")
+		if len(affected) != 2 {
+			t.Errorf("affected = %v, want both linked books", affected)
+		}
+		return err
+	}); err != nil {
 		t.Fatalf("set sort name: %v", err)
-	}
-	tx.Commit()
-
-	if len(affected) != 2 {
-		t.Fatalf("affected = %v, want both linked books", affected)
 	}
 	var primarySort, secondarySort string
 	database.Read(t.Context()).QueryRow("SELECT primary_author_sort FROM books WHERE id = 1").Scan(&primarySort)
@@ -383,22 +382,13 @@ func TestSetAuthorSortNameUpdatesPrimaryAuthorSort(t *testing.T) {
 	if secondarySort != "Other Author" {
 		t.Fatalf("secondary book sort = %q; want Other Author", secondarySort)
 	}
-}
-
-func TestSetAuthorSortNameNoOpReturnsNoChanges(t *testing.T) {
-	database := newTestDB(t)
-	mustExec(t, database, "INSERT INTO books (id, title, sort_title) VALUES (1, 'Primary', 'Primary')")
-	mustExec(t, database, "INSERT INTO authors (id, name, sort_name) VALUES (1, 'Author One', 'Author One')")
-	mustExec(t, database, "INSERT INTO book_authors (book_id, author_id, author_order) VALUES (1, 1, 0)")
-
-	tx, _ := database.BeginWrite(context.Background())
-	affected, err := SetAuthorSortName(tx, "Author One", "Author One")
-	if err != nil {
-		t.Fatalf("set sort name: %v", err)
-	}
-	tx.Commit()
-
-	if len(affected) != 0 {
-		t.Fatalf("affected = %v, want none", affected)
+	if err := database.Transact(t.Context(), func(tx *Tx) error {
+		affected, err := SetAuthorSortName(tx, "Author One", "One, Author")
+		if len(affected) != 0 {
+			t.Errorf("repeated sort change affects %v; want none", affected)
+		}
+		return err
+	}); err != nil {
+		t.Fatal(err)
 	}
 }

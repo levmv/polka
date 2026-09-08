@@ -8,14 +8,8 @@ import (
 func TestUpdateUserAccessScopeShelfVisibility(t *testing.T) {
 	database := newTestDB(t)
 
-	curator, err := database.CreateUser(t.Context(), "admin", "pw", RoleAdmin)
-	if err != nil {
-		t.Fatalf("create curator: %v", err)
-	}
-	reader, err := database.CreateUser(t.Context(), "reader", "pw", RoleReader)
-	if err != nil {
-		t.Fatalf("create reader: %v", err)
-	}
+	curator := mustUser(t, database, "admin", RoleAdmin)
+	reader := mustUser(t, database, "reader", RoleReader)
 	curatorPrivate, err := database.CreateShelf(t.Context(), curator.ID, ShelfPersonal, "Curator Private", ShelfManual, "")
 	if err != nil {
 		t.Fatalf("create curator private shelf: %v", err)
@@ -55,14 +49,8 @@ func TestUpdateUserAccessScopeShelfVisibility(t *testing.T) {
 func TestQueryShelfAccessRequiresCompleteFTSQuery(t *testing.T) {
 	database := newTestDB(t)
 
-	owner, err := database.CreateUser(t.Context(), "owner", "pw", RoleMember)
-	if err != nil {
-		t.Fatalf("create owner: %v", err)
-	}
-	reader, err := database.CreateUser(t.Context(), "reader", "pw", RoleReader)
-	if err != nil {
-		t.Fatalf("create reader: %v", err)
-	}
+	owner := mustUser(t, database, "owner", RoleMember)
+	reader := mustUser(t, database, "reader", RoleReader)
 	safe, err := database.CreateShelf(t.Context(), owner.ID, ShelfShared, "Kids", ShelfQuery, "tag:kids")
 	if err != nil {
 		t.Fatalf("create FTS scope shelf: %v", err)
@@ -133,18 +121,9 @@ func TestQueryShelfAccessRequiresCompleteFTSQuery(t *testing.T) {
 func TestUpdateUserAccessPreservesExistingHiddenScopeShelf(t *testing.T) {
 	database := newTestDB(t)
 
-	firstCurator, err := database.CreateUser(t.Context(), "admin1", "pw", RoleAdmin)
-	if err != nil {
-		t.Fatalf("create first curator: %v", err)
-	}
-	secondCurator, err := database.CreateUser(t.Context(), "admin2", "pw", RoleAdmin)
-	if err != nil {
-		t.Fatalf("create second curator: %v", err)
-	}
-	reader, err := database.CreateUser(t.Context(), "reader", "pw", RoleReader)
-	if err != nil {
-		t.Fatalf("create reader: %v", err)
-	}
+	firstCurator := mustUser(t, database, "admin1", RoleAdmin)
+	secondCurator := mustUser(t, database, "admin2", RoleAdmin)
+	reader := mustUser(t, database, "reader", RoleReader)
 	hidden, err := database.CreateShelf(t.Context(), firstCurator.ID, ShelfPersonal, "Hidden Scope", ShelfManual, "")
 	if err != nil {
 		t.Fatalf("create hidden scope shelf: %v", err)
@@ -183,10 +162,7 @@ func TestUpdateUserAccessPreservesExistingHiddenScopeShelf(t *testing.T) {
 func TestUpdateUserAccessShelfScopeIsReaderOnly(t *testing.T) {
 	database := newTestDB(t)
 
-	member, err := database.CreateUser(t.Context(), "member", "pw", RoleMember)
-	if err != nil {
-		t.Fatalf("create member: %v", err)
-	}
+	member := mustUser(t, database, "member", RoleMember)
 	shelf, err := database.CreateShelf(t.Context(), member.ID, ShelfShared, "Kids", ShelfManual, "")
 	if err != nil {
 		t.Fatalf("create shelf: %v", err)
@@ -221,10 +197,7 @@ func TestUpdateUserAccessShelfScopeIsReaderOnly(t *testing.T) {
 func TestUpdateShelfEditsQueryAndVisibility(t *testing.T) {
 	database := newTestDB(t)
 
-	admin, err := database.CreateUser(t.Context(), "admin", "pw", RoleAdmin)
-	if err != nil {
-		t.Fatalf("create admin: %v", err)
-	}
+	admin := mustUser(t, database, "admin", RoleAdmin)
 	shelf, err := database.CreateShelf(t.Context(), admin.ID, ShelfPersonal, "Kids", ShelfQuery, "tag:kids")
 	if err != nil {
 		t.Fatalf("create query shelf: %v", err)
@@ -245,10 +218,7 @@ func TestUpdateShelfEditsQueryAndVisibility(t *testing.T) {
 func TestListShelvesForScopedUser(t *testing.T) {
 	database := newTestDB(t)
 
-	reader, err := database.CreateUser(t.Context(), "reader", "pw", RoleReader)
-	if err != nil {
-		t.Fatalf("create reader: %v", err)
-	}
+	reader := mustUser(t, database, "reader", RoleReader)
 	kids, err := database.CreateShelf(t.Context(), reader.ID, ShelfShared, "Kids", ShelfManual, "")
 	if err != nil {
 		t.Fatalf("create kids shelf: %v", err)
@@ -292,14 +262,8 @@ func shelfNames(shelves []Shelf) []string {
 func TestSharedShelfNamesOwnedBy(t *testing.T) {
 	database := newTestDB(t)
 
-	owner, err := database.CreateUser(t.Context(), "owner", "pw", RoleMember)
-	if err != nil {
-		t.Fatalf("CreateUser owner: %v", err)
-	}
-	other, err := database.CreateUser(t.Context(), "other", "pw", RoleMember)
-	if err != nil {
-		t.Fatalf("CreateUser other: %v", err)
-	}
+	owner := mustUser(t, database, "owner", RoleMember)
+	other := mustUser(t, database, "other", RoleMember)
 
 	if _, err := database.CreateShelf(t.Context(), owner.ID, ShelfShared, "Zoo", ShelfManual, ""); err != nil {
 		t.Fatalf("shared Zoo: %v", err)

@@ -18,8 +18,8 @@ func TestAPIAdminStorageStatus(t *testing.T) {
 	database, dataDir := setupTestDB(t)
 	defer database.Close()
 
-	admin := mustUser(t, database, "Admin", db.RoleAdmin)
-	member := mustUser(t, database, "Member", db.RoleMember)
+	admin := mustUser(t, database, "admin", db.RoleAdmin)
+	member := mustUser(t, database, "member", db.RoleMember)
 
 	storageDir := filepath.Join(dataDir, "managed")
 	root, err := storage.SaveRoot(database.Write(t.Context()), dataDir, storageDir)
@@ -107,8 +107,8 @@ func TestAPIAdminStorageUpdateIncomingFolder(t *testing.T) {
 	database, dataDir := setupTestDB(t)
 	defer database.Close()
 
-	admin := mustUser(t, database, "Admin", db.RoleAdmin)
-	member := mustUser(t, database, "Member", db.RoleMember)
+	admin := mustUser(t, database, "admin", db.RoleAdmin)
+	member := mustUser(t, database, "member", db.RoleMember)
 
 	storageDir := filepath.Join(dataDir, "managed")
 	root, err := storage.SaveRoot(database.Write(t.Context()), dataDir, storageDir)
@@ -180,7 +180,7 @@ func TestAPIAdminStorageDoesNotSaveUnusableIncomingFolder(t *testing.T) {
 	database, dataDir := setupTestDB(t)
 	defer database.Close()
 
-	admin := mustUser(t, database, "Admin", db.RoleAdmin)
+	admin := mustUser(t, database, "admin", db.RoleAdmin)
 	before, err := ingest.OpenConfig(database.Read(t.Context()), dataDir)
 	if err != nil {
 		t.Fatalf("open ingest config: %v", err)
@@ -219,7 +219,7 @@ func TestAPIAdminStorageUpdateWritebackAuto(t *testing.T) {
 	database, dataDir := setupTestDB(t)
 	defer database.Close()
 
-	admin := mustUser(t, database, "Admin", db.RoleAdmin)
+	admin := mustUser(t, database, "admin", db.RoleAdmin)
 	root, err := storage.SaveRoot(database.Write(t.Context()), dataDir, filepath.Join(dataDir, "managed"))
 	if err != nil {
 		t.Fatalf("SaveRoot: %v", err)
