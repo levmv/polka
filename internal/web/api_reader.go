@@ -58,8 +58,9 @@ type annotationRequest struct {
 	Color         string `json:"color"`
 }
 
-type annotationNoteRequest struct {
-	Note string `json:"note"`
+type annotationUpdateRequest struct {
+	Note  *string `json:"note,omitzero"`
+	Color *string `json:"color,omitzero"`
 }
 
 func readerStateDTO(state *db.ReaderState, change db.ReadingStatusChange) ReaderStateDTO {
@@ -255,6 +256,21 @@ func (s *Server) handleAPIReaderStateTouch(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, readerStateDTO(state, change))
 }
 
+func (s *Server) handleAPIBookAnnotations(w http.ResponseWriter, r *http.Request) {
+	bookID, validID := pathID(w, r, "id")
+	if !validID {
+		return
+	}
+	if _, ok := s.requireBookAccess(w, r, bookID); !ok {
+		return
+	}
+	rows, err := db.ListBookAnnotations(s.db.Read(r.Context()), UserID(r.Context()), bookID)
+	if writeReaderStateError(w, r, err) {
+		return
+	}
+	writeJSON(w, http.StatusOK, annotationDTOs(rows))
+}
+
 func (s *Server) handleAPIAnnotations(w http.ResponseWriter, r *http.Request) {
 	assetID, validID := pathID(w, r, "id")
 	if !validID {
@@ -309,12 +325,13 @@ func (s *Server) handleAPIAnnotationUpdate(w http.ResponseWriter, r *http.Reques
 	if _, ok := s.requireAssetAccess(w, r, assetID); !ok {
 		return
 	}
-	var req annotationNoteRequest
+	var req annotationUpdateRequest
 	if !readJSON(w, r, &req) {
 		return
 	}
-	ann, err := s.db.UpdateAnnotationNote(r.Context(), UserID(r.Context()), assetID, annotationID, db.AnnotationNoteUpdate{
-		Note: req.Note,
+	ann, err := s.db.UpdateAnnotation(r.Context(), UserID(r.Context()), assetID, annotationID, db.AnnotationUpdate{
+		Note:  req.Note,
+		Color: req.Color,
 	})
 	if writeReaderStateError(w, r, err) {
 		return

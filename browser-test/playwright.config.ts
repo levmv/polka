@@ -95,6 +95,18 @@ export default defineConfig({
       },
     },
     {
+      name: 'book-annotations-webkit',
+      dependencies: ['lane-b-chromium'],
+      workers: 1,
+      testMatch: /book-annotations\.spec\.ts/,
+      use: {
+        ...devices['iPad Mini'],
+        browserName: 'webkit',
+        baseURL: laneBBaseURL,
+        storageState: laneBAdminStorageState,
+      },
+    },
+    {
       name: 'pdf-reader-chromium',
       dependencies: ['lane-a-chromium'],
       workers: 1,

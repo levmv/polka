@@ -110,7 +110,7 @@ async function initFoliateReader(
     await annotations.hydrate();
     wireReaderControls(page, stage, view, {
         onNavigate,
-        beforeClose: annotations.savePendingNote,
+        beforeClose: annotations.savePendingEdits,
     });
     wireReaderTOC(page, view, {
         onNavigate,
@@ -122,7 +122,10 @@ async function initFoliateReader(
     if (format === 'fb2') {
         view.renderer?.setAttribute('flow', 'scrolled');
     }
-    await restoreReaderPosition(view, state);
+    const annotationID = Number(
+        new URLSearchParams(window.location.hash.slice(1)).get('annotation'),
+    );
+    await restoreReaderPosition(view, state, annotations.location(annotationID));
     positionSaver.enableSaving();
     void stateSaver.flush();
     wireReaderPreferences(page, view, preferences);

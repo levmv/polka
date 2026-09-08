@@ -171,7 +171,7 @@ export interface ReaderState {
 }
 
 export type AnnotationKind = 'highlight';
-export type AnnotationColor = 'yellow';
+export type AnnotationColor = 'yellow' | 'green' | 'blue' | 'pink' | 'purple';
 
 export interface Annotation {
     id: number;

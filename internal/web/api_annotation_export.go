@@ -1,8 +1,6 @@
 package web
 
 import (
-	"database/sql"
-	"errors"
 	"fmt"
 	"html/template"
 	"io"
@@ -27,6 +25,8 @@ type annotationExportItem struct {
 	Quote   string
 	Note    string
 	CFI     string
+	Color   string
+	File    string
 	Created annotationExportTime
 	Updated annotationExportTime
 }
@@ -126,6 +126,10 @@ mark {
   background: var(--highlight);
   color: inherit;
 }
+li[data-color="green"] { --highlight: #81bf9166; }
+li[data-color="blue"] { --highlight: #7caddd66; }
+li[data-color="pink"] { --highlight: #df98af66; }
+li[data-color="purple"] { --highlight: #b59cdd66; }
 .note {
   margin: 1.1rem 0 0;
   padding: .9rem 1rem;
@@ -180,10 +184,10 @@ footer {
   {{if .Annotations}}
   <ol>
     {{range .Annotations}}
-    <li>
+    <li data-color="{{.Color}}">
       <blockquote><mark>{{.Quote}}</mark></blockquote>
       {{if .Note}}<p class="note">{{.Note}}</p>{{end}}
-      <p class="meta">Highlighted <time datetime="{{.Created.ISO}}">{{.Created.Human}}</time>{{if .Updated.Human}} · Updated <time datetime="{{.Updated.ISO}}">{{.Updated.Human}}</time>{{end}}</p>
+      <p class="meta">{{if .File}}{{.File}} · {{end}}Highlighted <time datetime="{{.Created.ISO}}">{{.Created.Human}}</time>{{if .Updated.Human}} · Updated <time datetime="{{.Updated.ISO}}">{{.Updated.Human}}</time>{{end}}</p>
       <details>
         <summary>Source location</summary>
         <code>{{.CFI}}</code>
@@ -192,7 +196,7 @@ footer {
     {{end}}
   </ol>
   {{else}}
-  <p class="empty">No highlights or notes for this file.</p>
+  <p class="empty">No highlights or notes for this book.</p>
   {{end}}
   <footer>Exported from polka</footer>
 </main>
@@ -210,57 +214,74 @@ func (s *Server) handleAPIAnnotationExport(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	assetID, validID := pathID(w, r, "id")
+	bookID, validID := pathID(w, r, "id")
 	if !validID {
 		return
 	}
-	if _, ok := s.requireAssetAccess(w, r, assetID); !ok {
+	scope, ok := s.requireBookAccess(w, r, bookID)
+	if !ok {
 		return
 	}
-
-	asset, err := s.assetFile(r.Context(), assetID)
-	if errors.Is(err, sql.ErrNoRows) {
-		http.Error(w, "Asset not found", http.StatusNotFound)
-		return
-	} else if err != nil {
-		serverError(w, r, err)
-		return
-	}
-	rows, err := db.ListAnnotations(s.db.Read(r.Context()), UserID(r.Context()), assetID)
-	if writeReaderStateError(w, r, err) {
-		return
-	}
-	authorsByBook, err := db.AuthorsByBookIDs(s.db.Read(r.Context()), []int64{asset.BookID})
+	book, err := db.GetBook(s.db.Read(r.Context()), scope, bookID)
 	if err != nil {
 		serverError(w, r, err)
 		return
 	}
-	_, authors := authorsToDTO(authorsByBook[asset.BookID])
+	rows, err := db.ListBookAnnotations(s.db.Read(r.Context()), UserID(r.Context()), bookID)
+	if writeReaderStateError(w, r, err) {
+		return
+	}
+	assets, err := db.AssetsByBookIDs(s.db.Read(r.Context()), []int64{bookID})
+	if err != nil {
+		serverError(w, r, err)
+		return
+	}
+	authorsByBook, err := db.AuthorsByBookIDs(s.db.Read(r.Context()), []int64{bookID})
+	if err != nil {
+		serverError(w, r, err)
+		return
+	}
+	_, authors := authorsToDTO(authorsByBook[bookID])
 
-	document := buildAnnotationExportDocument(asset, authors, rows)
+	document := buildAnnotationExportDocument(book.Title, authors, assets, rows)
 	w.Header().Set("Cache-Control", "private, no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	if exportFormat == "markdown" {
 		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
-		w.Header().Set("Content-Disposition", fileContentDisposition("attachment", annotationExportFilename(asset.Title, "md")))
+		w.Header().Set("Content-Disposition", fileContentDisposition("attachment", annotationExportFilename(document.Title, "md")))
 		_ = writeAnnotationMarkdown(w, document)
 		return
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Content-Disposition", fileContentDisposition("attachment", annotationExportFilename(asset.Title, "html")))
+	w.Header().Set("Content-Disposition", fileContentDisposition("attachment", annotationExportFilename(document.Title, "html")))
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'")
 	_ = writeAnnotationExport(w, document)
 }
 
-func buildAnnotationExportDocument(asset assetFileRow, authors string, rows []db.Annotation) annotationExportDocument {
+func buildAnnotationExportDocument(title, authors string, assets []db.AssetRow, rows []db.Annotation) annotationExportDocument {
+	files := make(map[int64]string)
+	formatLabel := ""
+	if len(assets) == 1 && assets[0].Format != format.FormatUnknown {
+		formatLabel = format.FormatLabel(assets[0].Format)
+	} else if len(assets) > 1 {
+		for _, asset := range assets {
+			name := asset.OriginalFilename
+			if name == "" {
+				name = strings.ToUpper(strings.TrimPrefix(asset.Extension, "."))
+			}
+			files[asset.ID] = name
+		}
+	}
 	items := make([]annotationExportItem, 0, len(rows))
 	for _, row := range rows {
 		item := annotationExportItem{
 			Quote:   row.Quote,
 			Note:    row.Note,
 			CFI:     row.CFI,
+			Color:   row.Color,
+			File:    files[row.AssetID],
 			Created: annotationExportTimestamp(row.CreatedAt),
 		}
 		if row.UpdatedAt > row.CreatedAt {
@@ -275,13 +296,9 @@ func buildAnnotationExportDocument(asset assetFileRow, authors string, rows []db
 	} else if len(items) > 1 {
 		summary = fmt.Sprintf("%d highlights", len(items))
 	}
-	title := strings.TrimSpace(asset.Title)
+	title = strings.TrimSpace(title)
 	if title == "" {
 		title = "Untitled"
-	}
-	formatLabel := ""
-	if asset.Format != format.FormatUnknown {
-		formatLabel = format.FormatLabel(asset.Format)
 	}
 	return annotationExportDocument{
 		Title:       title,
@@ -320,7 +337,7 @@ func writeAnnotationMarkdown(w io.Writer, document annotationExportDocument) err
 	export.WriteString("\n")
 
 	if len(document.Annotations) == 0 {
-		export.WriteString("\n_No highlights or notes for this file._\n")
+		export.WriteString("\n_No highlights or notes for this book._\n")
 	} else {
 		for index, annotation := range document.Annotations {
 			fmt.Fprintf(&export, "\n## Highlight %d\n\n", index+1)
@@ -335,6 +352,10 @@ func writeAnnotationMarkdown(w io.Writer, document annotationExportDocument) err
 				fmt.Fprintf(&export, " · Updated %s", escapeMarkdownText(annotation.Updated.Human))
 			}
 			fmt.Fprintf(&export, "\n\nSource: %s\n", markdownCodeSpan(annotation.CFI))
+			if annotation.File != "" {
+				fmt.Fprintf(&export, "\nFile: %s\n", escapeMarkdownText(annotation.File))
+			}
+			fmt.Fprintf(&export, "\nColor: %s\n", escapeMarkdownText(annotation.Color))
 		}
 	}
 	export.WriteString("\n---\n\nExported from polka\n")

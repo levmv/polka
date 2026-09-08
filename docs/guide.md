@@ -171,8 +171,11 @@ automatically.
 
 EPUB, FB2, and Kindle books support in-book search, paged or scrolled layout,
 themes, typography controls, and text selection. Selected text can be saved as
-a personal highlight with an optional note. Highlights are collected in the
-reader and can be exported per book from **More actions** as HTML or Markdown.
+a personal highlight with an optional note. Your highlights and notes are
+collected on the book page, with links back to their passages in the reader.
+Export them as standalone HTML or Markdown to keep a copy or work with them
+elsewhere. The export includes all your highlights from every file of the book,
+even when the list is filtered by a search.
 
 ## Other devices and reading apps
 

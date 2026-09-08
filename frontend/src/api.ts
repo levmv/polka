@@ -865,6 +865,17 @@ export async function touchReaderState(assetId: number): Promise<ReaderState> {
     );
 }
 
+export async function fetchBookAnnotations(
+    bookId: number,
+    signal?: AbortSignal,
+): Promise<Annotation[]> {
+    return await fetchJSON<Annotation[]>(
+        `/api/books/${bookId}/annotations`,
+        'Failed to fetch highlights',
+        { signal },
+    );
+}
+
 export async function fetchAnnotations(assetId: number): Promise<Annotation[]> {
     return await fetchJSON<Annotation[]>(
         `/api/reader/assets/${assetId}/annotations`,
@@ -891,15 +902,15 @@ export async function createAnnotation(
     );
 }
 
-export async function updateAnnotationNote(
+export async function updateAnnotation(
     assetId: number,
     annotationId: number,
-    note: string,
+    changes: { note?: string; color?: Annotation['color'] },
 ): Promise<Annotation> {
     return await fetchJSON<Annotation>(
         `/api/reader/assets/${assetId}/annotations/${annotationId}`,
         'Failed to update annotation',
-        jsonBody('PATCH', { note }),
+        jsonBody('PATCH', changes),
     );
 }
 
