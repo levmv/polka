@@ -30,7 +30,6 @@ var (
 	opfMetadataTagRe = regexp.MustCompile(`(?is)<\s*(?:[A-Za-z_][A-Za-z0-9_.-]*:)?metadata\b[^>]*>`)
 	opfManifestTagRe = regexp.MustCompile(`(?is)<\s*(?:[A-Za-z_][A-Za-z0-9_.-]*:)?manifest\b[^>]*>`)
 	opfAttrRe        = regexp.MustCompile(`(?is)([A-Za-z_:][-A-Za-z0-9_:.]*)\s*=\s*("([^"]*)"|'([^']*)')`)
-	opfMediaTypeRe   = regexp.MustCompile(`(?is)(\s(?:[A-Za-z_:][-A-Za-z0-9_:.]*:)?media-type\s*=\s*)("[^"]*"|'[^']*')`)
 	opfStripTagsRe   = regexp.MustCompile(`(?is)<[^>]+>`)
 )
 
@@ -230,7 +229,7 @@ func opfUniqueIdentifierValue(raw []byte) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	children, err := opfMetadataChildren(raw[metadataTag.end:endStart])
+	children, err := opfMetadataChildren(raw[metadataTag.end:endStart], false)
 	if err != nil {
 		return "", err
 	}
@@ -668,7 +667,10 @@ func opfSetManifestItemMediaType(raw []byte, id, mediaType string) ([]byte, erro
 
 func opfSetTagAttr(tag []byte, attr, value string) []byte {
 	escaped := opfEscapeAttr(value)
-	if loc := opfMediaTypeRe.FindSubmatchIndex(tag); loc != nil {
+	for _, loc := range opfAttrRe.FindAllSubmatchIndex(tag, -1) {
+		if opfXMLLocalName(string(tag[loc[2]:loc[3]])) != attr {
+			continue
+		}
 		out := make([]byte, 0, len(tag)+len(escaped))
 		out = append(out, tag[:loc[4]]...)
 		out = append(out, []byte(`"`+escaped+`"`)...)
@@ -887,12 +889,12 @@ func rewriteOPFMetadata(raw []byte, meta Metadata, modified time.Time) ([]byte, 
 	epub3 := opfVersionAtLeast3(version)
 
 	inner := raw[metadataTag.end:endStart]
-	children, err := opfMetadataChildren(inner)
+	children, err := opfMetadataChildren(inner, false)
 	if err != nil {
 		return nil, err
 	}
 
-	preserved := opfPreservedMetadataChildren(children, uniqueID, bookmeta.ParseIdentifiers(meta.Identifier))
+	preserved := opfPreservedMetadataChildren(children, uniqueID, bookmeta.ParseIdentifiers(meta.Identifier), meta.PageCount > 0)
 	generatedUsesOPFAttrs := opfGeneratedUsesOPFAttrs(meta, epub3)
 	generated := renderOPFMetadataChildren(raw, string(metadataTag.raw), meta, preserved.Identifiers, modified, epub3, generatedUsesOPFAttrs, preserved.GeneratedIdentifierIDs)
 	nextInner := assembleOPFMetadataInner(inner, generated, preserved.Children)
@@ -917,11 +919,24 @@ type opfTagRange struct {
 }
 
 func opfFirstTag(raw []byte, re *regexp.Regexp) (opfTagRange, error) {
-	loc := re.FindIndex(raw)
-	if loc == nil {
-		return opfTagRange{}, fmt.Errorf("OPF package metadata not found")
+	// Match actual opening tags, never examples inside comments or CDATA.
+	for pos := 0; pos < len(raw); {
+		start := bytes.IndexByte(raw[pos:], '<')
+		if start < 0 {
+			break
+		}
+		start += pos
+		end := opfTagEnd(raw, start)
+		if end < 0 {
+			break
+		}
+		tag := raw[start:end]
+		if info := opfParseTag(tag); info.local != "" && !info.end && re.Match(tag) {
+			return opfTagRange{raw: tag, start: start, end: end}, nil
+		}
+		pos = end
 	}
-	return opfTagRange{raw: raw[loc[0]:loc[1]], start: loc[0], end: loc[1]}, nil
+	return opfTagRange{}, fmt.Errorf("OPF package metadata not found")
 }
 
 func opfFindMetadataEnd(raw []byte, after int) (int, int, error) {
@@ -1033,16 +1048,20 @@ func opfTagEnd(raw []byte, start int) int {
 
 type opfMetadataChild struct {
 	raw   []byte
+	start int
+	end   int
 	local string
 	attrs map[string]string
 	text  string
 }
 
-func opfMetadataChildren(raw []byte) ([]opfMetadataChild, error) {
-	// We only need direct <metadata> children. Keeping their raw bytes lets us
-	// preserve unknown records without an encoding/xml namespace round-trip.
+func opfMetadataChildren(raw []byte, includeLegacy bool) ([]opfMetadataChild, error) {
+	// Keep raw spans to preserve namespaces and unknown content. includeLegacy
+	// descends through the same containers as opfMetadata.UnmarshalXML, leaving
+	// their tags outside the spans so callers can patch records in place.
 	var children []opfMetadataChild
 	depth := 0
+	containerDepth := 0
 	childStart := -1
 	childLocal := ""
 	childAttrs := map[string]string(nil)
@@ -1062,6 +1081,16 @@ func opfMetadataChildren(raw []byte) ([]opfMetadataChild, error) {
 			pos = tagEnd
 			continue
 		}
+		if includeLegacy && depth == 0 && isOPFMetadataContainer(info.local) {
+			switch {
+			case info.end:
+				containerDepth--
+			case !info.selfClosing:
+				containerDepth++
+			}
+			pos = tagEnd
+			continue
+		}
 
 		switch {
 		case info.end:
@@ -1071,6 +1100,8 @@ func opfMetadataChildren(raw []byte) ([]opfMetadataChild, error) {
 					fragment := raw[childStart:tagEnd]
 					children = append(children, opfMetadataChild{
 						raw:   bytes.Clone(fragment),
+						start: childStart,
+						end:   tagEnd,
 						local: childLocal,
 						attrs: childAttrs,
 						text:  opfElementText(fragment),
@@ -1085,6 +1116,8 @@ func opfMetadataChildren(raw []byte) ([]opfMetadataChild, error) {
 				fragment := raw[tagStart:tagEnd]
 				children = append(children, opfMetadataChild{
 					raw:   bytes.Clone(fragment),
+					start: tagStart,
+					end:   tagEnd,
 					local: info.local,
 					attrs: info.attrs,
 				})
@@ -1100,7 +1133,7 @@ func opfMetadataChildren(raw []byte) ([]opfMetadataChild, error) {
 
 		pos = tagEnd
 	}
-	if depth != 0 {
+	if depth != 0 || containerDepth != 0 {
 		return nil, fmt.Errorf("unclosed metadata child tag")
 	}
 	return children, nil
@@ -1117,7 +1150,7 @@ type opfOutputIdentifier struct {
 	Raw        []byte
 }
 
-func opfPreservedMetadataChildren(children []opfMetadataChild, uniqueID string, polkaIDs []bookmeta.Identifier) opfPreservedMetadata {
+func opfPreservedMetadataChildren(children []opfMetadataChild, uniqueID string, polkaIDs []bookmeta.Identifier, replacePageCount bool) opfPreservedMetadata {
 	// Generated Polka records replace the fields in bookmeta.Metadata; unrelated
 	// metadata, cover hints, manifest refinements, and internal package ids survive.
 	var desired []bookmeta.Identifier
@@ -1198,12 +1231,20 @@ func opfPreservedMetadataChildren(children []opfMetadataChild, uniqueID string, 
 		}
 	}
 
+	owned := func(child opfMetadataChild) bool {
+		// Writeback owns only the canonical count. An unknown DB count leaves
+		// the existing declaration intact; other programs' fields are preserved.
+		if child.local == "meta" && child.attrs["refines"] == "" && (isCanonicalPageCountKey(child.attrs["name"]) || isCanonicalPageCountKey(child.attrs["property"])) {
+			return replacePageCount
+		}
+		return opfChildOwnedByPolka(child, uniqueID, polkaTypes, uniqueIDPolkaTypes, seriesCollectionIDs)
+	}
 	removedIDs := make(map[string]bool)
 	for childIndex, child := range children {
 		if matchedChildren[childIndex] {
 			continue
 		}
-		if opfChildOwnedByPolka(child, uniqueID, polkaTypes, uniqueIDPolkaTypes, seriesCollectionIDs) {
+		if owned(child) {
 			if id := strings.TrimSpace(child.attrs["id"]); id != "" {
 				removedIDs[id] = true
 			}
@@ -1215,7 +1256,7 @@ func opfPreservedMetadataChildren(children []opfMetadataChild, uniqueID string, 
 		if matchedChildren[childIndex] {
 			continue
 		}
-		if opfChildOwnedByPolka(child, uniqueID, polkaTypes, uniqueIDPolkaTypes, seriesCollectionIDs) {
+		if owned(child) {
 			continue
 		}
 		target := strings.TrimPrefix(strings.TrimSpace(child.attrs["refines"]), "#")
@@ -1398,6 +1439,13 @@ func renderOPFMetadataChildren(raw []byte, metadataTag string, meta Metadata, id
 			if meta.SeriesIndex != 0 {
 				out = append(out, fmt.Sprintf(`<meta refines="#polka-series" property="group-position">%s</meta>`, opfEscapeText(strconv.FormatFloat(meta.SeriesIndex, 'f', -1, 64))))
 			}
+		}
+	}
+	if meta.PageCount > 0 {
+		if epub3 {
+			out = append(out, fmt.Sprintf(`<meta property="schema:numberOfPages">%d</meta>`, meta.PageCount))
+		} else {
+			out = append(out, fmt.Sprintf(`<meta name="schema:numberOfPages" content="%d"/>`, meta.PageCount))
 		}
 	}
 	if epub3 && !modified.IsZero() {

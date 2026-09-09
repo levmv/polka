@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/base64"
 	"encoding/xml"
 	"fmt"
@@ -22,9 +23,14 @@ import (
 type fb2Doc struct {
 	Description fb2Description `xml:"description"`
 	Binaries    []fb2Binary    `xml:"binary"`
+	Body        fb2PageBody    `xml:"body"`
 }
 
 type fb2Description struct {
+	CustomInfo []struct {
+		Type string `xml:"info-type,attr"`
+		Text string `xml:",chardata"`
+	} `xml:"custom-info"`
 	TitleInfo    fb2TitleInfo   `xml:"title-info"`
 	SrcTitleInfo fb2TitleInfo   `xml:"src-title-info"`
 	DocumentInfo fb2TitleInfo   `xml:"document-info"`
@@ -311,21 +317,28 @@ func FB2PlainFilename(filename string) string {
 }
 
 func decodeFB2Reader(r io.Reader) (*fb2Doc, error) {
-	raw, err := readAllLimited(r, "FB2 document", maxFB2DocumentBytes)
+	return decodeFB2ReaderContext(context.Background(), r)
+}
+
+func decodeFB2ReaderContext(ctx context.Context, r io.Reader) (*fb2Doc, error) {
+	raw, err := readAllLimited(contextReader{ctx: ctx, r: r}, "FB2 document", maxFB2DocumentBytes)
 	if err != nil {
 		return nil, fmt.Errorf("read fb2: %w", err)
 	}
 	// A successful full decode also proves that the XML is valid, so the common
 	// path does not need a separate validation pass. Keep normalization and its
 	// bounded repairs as the retry path for imperfect real-world files.
-	if doc, err := decodeFB2XML(raw); err == nil {
+	if doc, err := decodeFB2XMLContext(ctx, raw); err == nil {
 		return doc, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	raw, err = NormalizeFB2XMLBytes(raw)
 	if err != nil {
 		return nil, err
 	}
-	return decodeFB2XML(raw)
+	return decodeFB2XMLContext(ctx, raw)
 }
 
 func decodeFB2Metadata(r io.ReaderAt, size int64) (*fb2Doc, error) {
@@ -442,7 +455,11 @@ func normalizeFB2XMLEncodingDecl(raw []byte) []byte {
 }
 
 func decodeFB2XML(raw []byte) (*fb2Doc, error) {
-	decoder := xml.NewDecoder(bytes.NewReader(raw))
+	return decodeFB2XMLContext(context.Background(), raw)
+}
+
+func decodeFB2XMLContext(ctx context.Context, raw []byte) (*fb2Doc, error) {
+	decoder := xml.NewDecoder(contextReader{ctx: ctx, r: bytes.NewReader(raw)})
 	decoder.CharsetReader = charset.NewReaderLabel
 	var doc fb2Doc
 	if err := decoder.Decode(&doc); err != nil {
@@ -490,6 +507,7 @@ func metadataFromFB2(doc *fb2Doc) *Metadata {
 	publishInfo := doc.Description.PublishInfo
 
 	meta := &Metadata{
+		PageCount:   fb2PageCount(doc),
 		Title:       fb2Title(doc),
 		Language:    bookmeta.NormalizeLanguage(cleanText(doc.Description.TitleInfo.Lang)),
 		Description: fb2DescriptionText(doc),

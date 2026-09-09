@@ -18,6 +18,12 @@ type Metadata struct {
 	Series      string
 	SeriesIndex float64
 	Tags        []string
+	// PageCount describes this file, not all formats of the book. Merge leaves
+	// it alone; import resolves embedded and sidecar counts separately.
+	PageCount int
+	// FixedLayout marks an EPUB whose PageCount comes from its spine. Import
+	// preserves that count over sidecar declarations.
+	FixedLayout bool
 	// CalibreTimestamp is transient import context from calibre:timestamp. It
 	// is not bibliographic metadata and is not written back into book files.
 	CalibreTimestamp string
@@ -30,7 +36,7 @@ type AuthorMeta struct {
 	Role     string
 }
 
-// Merge overlays o onto m: every field o sets non-empty wins. Used to let a
+// Merge overlays nonempty book fields from o onto m. Used to let a
 // curated metadata sidecar take precedence over metadata embedded in the book
 // file.
 func (m *Metadata) Merge(o *Metadata) {

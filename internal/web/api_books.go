@@ -135,12 +135,14 @@ func authorsToDTO(rows []db.AuthorRow) ([]Author, string) {
 }
 
 type Asset struct {
-	ID         int64              `json:"id"`
-	Extension  string             `json:"extension"`
-	Size       int64              `json:"size,omitzero"`
-	IsPrimary  bool               `json:"is_primary"`
-	CanRead    bool               `json:"can_read"`
-	DownloadAs []DownloadAsOption `json:"download_as,omitempty"`
+	ID                   int64              `json:"id"`
+	Extension            string             `json:"extension"`
+	Size                 int64              `json:"size,omitzero"`
+	PageCount            int                `json:"page_count,omitzero"`
+	PageCountApproximate bool               `json:"page_count_approximate"`
+	IsPrimary            bool               `json:"is_primary"`
+	CanRead              bool               `json:"can_read"`
+	DownloadAs           []DownloadAsOption `json:"download_as,omitempty"`
 }
 
 type DownloadAsOption struct {
@@ -150,12 +152,14 @@ type DownloadAsOption struct {
 
 func assetDTO(row db.AssetRow) Asset {
 	return Asset{
-		ID:         row.ID,
-		Extension:  row.Extension,
-		Size:       row.Size,
-		IsPrimary:  row.IsPrimary,
-		CanRead:    row.CanRead,
-		DownloadAs: downloadAsOptions(row.Format),
+		ID:                   row.ID,
+		Extension:            row.Extension,
+		Size:                 row.Size,
+		PageCount:            row.PageCount,
+		PageCountApproximate: format.IsPageCountApproximate(row.Format),
+		IsPrimary:            row.IsPrimary,
+		CanRead:              row.CanRead,
+		DownloadAs:           downloadAsOptions(row.Format),
 	}
 }
 

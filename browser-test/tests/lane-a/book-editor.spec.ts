@@ -263,9 +263,18 @@ test.describe('Book editor', () => {
     const bookReady = new Promise<void>((resolve) => {
       releaseBook = resolve;
     });
+    let nextAssetID = 0;
     await page.route(`**/api/books/${nextBook.id}`, async (route) => {
       await bookReady;
-      await route.continue();
+      const response = await route.fetch();
+      const book = await response.json();
+      const primary = book.assets.find((asset: { is_primary: boolean }) => asset.is_primary);
+      nextAssetID = primary.id;
+      delete primary.page_count;
+      await route.fulfill({ response, json: book });
+    });
+    await page.route(`**/api/books/${nextBook.id}/page-count`, async (route) => {
+      await route.fulfill({ json: { asset_id: nextAssetID, page_count: 4205 } });
     });
     try {
       await nextButton.click();
@@ -284,6 +293,7 @@ test.describe('Book editor', () => {
 
     await page.keyboard.press('Escape');
     await expect(page.locator('.modal-backdrop')).toHaveCount(0);
+    await expect(page.locator('.detail-page-count')).toHaveText(/^(≈ )?4205 pages$/);
   });
 
   test('Metadata fetch dialog applies candidates to the edit draft', async ({ page }) => {

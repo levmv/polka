@@ -71,7 +71,7 @@ func ExtractEPUBMetadata(r io.ReaderAt, size int64) (*Metadata, error) {
 	if !ok {
 		return nil, nil
 	}
-	return metadataFromOPF(opf.doc), nil
+	return metadataFromEPUB(zr, opf), nil
 }
 
 // ExtractEPUBMetadataAndCover extracts metadata and cover data from one parsed
@@ -92,10 +92,7 @@ func ExtractEPUBMetadataAndCover(r io.ReaderAt, size int64) (*Metadata, []byte, 
 	}
 
 	coverBytes, coverExt, err := epubCoverFromOPF(zr, opf.path, opf.doc)
-	if err != nil {
-		return nil, nil, "", err
-	}
-	return metadataFromOPF(opf.doc), coverBytes, coverExt, nil
+	return metadataFromEPUB(zr, opf), coverBytes, coverExt, err
 }
 
 // ExtractEPUBCover extracts the cover image from an EPUB file.

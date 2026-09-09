@@ -45,22 +45,30 @@ func TestResolveZIPEntry(t *testing.T) {
 			for _, name := range tt.entries {
 				zr.File = append(zr.File, &zip.File{Name: name})
 			}
-			file, ambiguous := ResolveZIPEntry(zr, tt.requested)
-			if ambiguous != tt.ambiguous {
-				t.Fatalf("ResolveZIPEntry ambiguity = %v; want %v", ambiguous, tt.ambiguous)
-			}
-			if tt.want == "" {
-				if file != nil {
-					t.Fatalf("ResolveZIPEntry file = %q; want nil", file.Name)
-				}
-				return
-			}
-			if file == nil || file.Name != tt.want {
-				got := "<nil>"
-				if file != nil {
-					got = file.Name
-				}
-				t.Fatalf("ResolveZIPEntry file = %q; want %q", got, tt.want)
+			index := &zipEntryIndex{files: zr.File}
+			for name, resolve := range map[string]func(string) (*zip.File, bool){
+				"scan":  func(name string) (*zip.File, bool) { return ResolveZIPEntry(zr, name) },
+				"index": index.resolve,
+			} {
+				t.Run(name, func(t *testing.T) {
+					file, ambiguous := resolve(tt.requested)
+					if ambiguous != tt.ambiguous {
+						t.Fatalf("ResolveZIPEntry ambiguity = %v; want %v", ambiguous, tt.ambiguous)
+					}
+					if tt.want == "" {
+						if file != nil {
+							t.Fatalf("ResolveZIPEntry file = %q; want nil", file.Name)
+						}
+						return
+					}
+					if file == nil || file.Name != tt.want {
+						got := "<nil>"
+						if file != nil {
+							got = file.Name
+						}
+						t.Fatalf("ResolveZIPEntry file = %q; want %q", got, tt.want)
+					}
+				})
 			}
 		})
 	}

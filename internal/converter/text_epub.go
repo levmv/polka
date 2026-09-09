@@ -639,6 +639,7 @@ type epubMetadata struct {
 }
 
 func toEPUBMetadata(meta *format.Metadata) epubMetadata {
+	// PageCount describes the source asset; generated EPUBs need their own count.
 	out := epubMetadata{}
 	if meta == nil {
 		return out

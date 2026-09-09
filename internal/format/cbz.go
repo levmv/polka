@@ -24,7 +24,7 @@ const (
 	maxCBZCoverPixels    = 80_000_000
 )
 
-// ComicPage describes one valid image page in canonical archive reading order.
+// ComicPage describes a page in canonical archive reading order.
 type ComicPage struct {
 	Index     int
 	Name      string
@@ -71,8 +71,8 @@ func isCBZ(r io.ReaderAt, size int64) bool {
 	return firstValidCBZPage(images) != nil
 }
 
-// ListCBZPages returns valid image pages in the same natural order used for
-// cover extraction, reader/export work, and future page-count persistence.
+// ListCBZPages returns pages with decodable image headers in natural path order.
+// Use ReadyPageCount when only a count is needed.
 func ListCBZPages(r io.ReaderAt, size int64) ([]ComicPage, error) {
 	zr, err := zip.NewReader(r, size)
 	if err != nil {
@@ -89,24 +89,30 @@ func ListCBZPages(r io.ReaderAt, size int64) ([]ComicPage, error) {
 	return out, nil
 }
 
-// ExtractCBZMetadata extracts ComicInfo.xml metadata from a CBZ archive.
+// ExtractCBZMetadata extracts ComicInfo.xml metadata and the archive page count.
 func ExtractCBZMetadata(r io.ReaderAt, size int64) (*Metadata, error) {
 	zr, err := zip.NewReader(r, size)
 	if err != nil {
 		return nil, err
 	}
-	_, comicInfo, err := scanCBZ(zr)
+	images, comicInfo, err := scanCBZ(zr)
 	if err != nil {
 		return nil, err
 	}
+	meta := &Metadata{PageCount: len(images)}
 	if comicInfo == nil {
-		return &Metadata{}, nil
+		return meta, nil
 	}
 	raw, err := readZipFileLimited(comicInfo, maxCBZComicInfoBytes)
 	if err != nil {
-		return nil, err
+		return meta, err
 	}
-	return parseComicInfoMetadata(raw)
+	parsed, err := parseComicInfoMetadata(raw)
+	if err != nil {
+		return meta, err
+	}
+	parsed.PageCount = meta.PageCount
+	return parsed, nil
 }
 
 // ExtractCBZCover returns the first valid JPEG/PNG/GIF/WebP/AVIF page image

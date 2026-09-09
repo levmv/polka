@@ -312,6 +312,7 @@ func TestConvertTXTToEPUBUsesFallbackMetadata(t *testing.T) {
 			Authors:    []bookmeta.AuthorMeta{{Name: "Library Author"}},
 			Language:   "en",
 			Identifier: "isbn:978-0-306-40615-7",
+			PageCount:  321,
 		},
 		SourceName: "fallback-title.txt",
 	}
@@ -320,6 +321,9 @@ func TestConvertTXTToEPUBUsesFallbackMetadata(t *testing.T) {
 	}
 
 	opf := zipEntry(t, out.Bytes(), "OEBPS/content.opf")
+	if strings.Contains(opf, "numberOfPages") {
+		t.Fatalf("generated EPUB inherited the source count: %s", opf)
+	}
 	for _, want := range []string{
 		"<dc:title>Library Title</dc:title>",
 		"<dc:creator>Library Author</dc:creator>",
@@ -1436,6 +1440,9 @@ func TestConvertEPUBToKEPUB(t *testing.T) {
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
     <dc:title>Kobo Source</dc:title>
     <meta name="cover" content="cover-image"/>
+    <!-- Keep library notes. -->
+    <meta name="calibre:user_metadata" content='{"#pages":{"#value#":37},"#review":{"#value#":"Keep &amp; preserve"}}'/>
+    <meta name="bookorbit:page_count" content="9"/>
   </metadata>
   <manifest>
     <item id="text" href="text.xhtml" media-type="application/xhtml+xml"/>
@@ -1462,6 +1469,13 @@ func TestConvertEPUBToKEPUB(t *testing.T) {
 	opf := zipEntry(t, out.Bytes(), "OEBPS/content.opf")
 	if !strings.Contains(opf, `id="cover-image" href="cover.png" media-type="image/png" properties="cover-image"`) {
 		t.Fatalf("content.opf did not mark cover-image manifest item:\n%s", opf)
+	}
+	meta, err := format.ParseOPF(strings.NewReader(opf))
+	if err != nil || meta.PageCount != 37 || strings.Count(opf, "schema:numberOfPages") != 1 || strings.Contains(opf, "#pages") || strings.Contains(opf, "bookorbit:page_count") {
+		t.Fatalf("KEPUB page-count metadata = %s, %v", opf, err)
+	}
+	if !strings.Contains(opf, "Keep &amp; preserve") || !strings.Contains(opf, "<!-- Keep library notes. -->") {
+		t.Fatalf("KEPUB normalization lost unrelated metadata: %s", opf)
 	}
 	xhtml := zipEntry(t, out.Bytes(), "OEBPS/text.xhtml")
 	for _, want := range []string{
@@ -1537,6 +1551,18 @@ func TestConvertEPUBToKEPUBNormalizesCompatibleOPFVariants(t *testing.T) {
 func TestConvertEPUBToEPUBRepairsPackageWithoutChangingContent(t *testing.T) {
 	opf := []byte(`<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <!-- Export notes: retain <metadata> declarations. -->
+  <metadata>
+    <dc-metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+      <dc:description>Legacy description.</dc:description>
+      <meta property="schema:numberOfPages">55</meta>
+    </dc-metadata>
+    <x-metadata>
+      <meta property="calibre:user_metadata">{"#pages":{"#value#":37},"#review":{"#value#":"Keep"}}</meta>
+      <meta id="old-pages" name="bookorbit:page_count" content="9"/>
+    </x-metadata>
+    <meta refines="#old-pages" property="dcterms:source">Old pagination</meta>
+  </metadata>
   <manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest>
   <spine><itemref idref="chapter"/></spine>
 </package>
@@ -1586,6 +1612,17 @@ trailing producer junk`)
 			}
 			if got := zipEntry(t, out.Bytes(), "OPS/package.opf"); strings.Contains(got, "producer junk") || !strings.HasSuffix(got, "</package>\n") {
 				t.Fatalf("rebuilt OPF retained trailing junk or unstable ending:\n%s", got)
+			}
+			rebuiltOPF := zipEntry(t, out.Bytes(), "OPS/package.opf")
+			meta, err := format.ParseOPF(strings.NewReader(rebuiltOPF))
+			if err != nil || meta.PageCount != 55 || strings.Count(rebuiltOPF, "schema:numberOfPages") != 1 || strings.Contains(rebuiltOPF, "#pages") || strings.Contains(rebuiltOPF, "bookorbit:page_count") || !strings.Contains(rebuiltOPF, "#review") || !strings.Contains(rebuiltOPF, "Keep") {
+				t.Fatalf("rebuilt page-count metadata = %s, %v", rebuiltOPF, err)
+			}
+			if strings.Contains(rebuiltOPF, "old-pages") || !strings.Contains(rebuiltOPF, "<!-- Export notes: retain <metadata> declarations. -->") {
+				t.Fatalf("normalization left dangling refinements or changed comments: %s", rebuiltOPF)
+			}
+			if meta.Description != "Legacy description." || !strings.Contains(rebuiltOPF, `<dc-metadata xmlns:dc="http://purl.org/dc/elements/1.1/">`) || !strings.Contains(rebuiltOPF, "<x-metadata>") {
+				t.Fatalf("normalization changed legacy metadata containers: %s", rebuiltOPF)
 			}
 			if got := zipEntryBytes(t, out.Bytes(), "OPS/chapter.xhtml"); !bytes.Equal(got, chapter) {
 				t.Fatal("rebuilt EPUB changed chapter bytes")
@@ -2852,7 +2889,7 @@ func testHTMLText(n *nethtml.Node) string {
 }
 
 func TestConvertFB2ToEPUB(t *testing.T) {
-	src := testFB2ForEPUB()
+	src := bytes.Replace(testFB2ForEPUB(), []byte("</description>"), []byte(`<custom-info info-type="schema:numberOfPages">123</custom-info></description>`), 1)
 	var out bytes.Buffer
 	if err := ConvertContext(context.Background(), &out, bytes.NewReader(src), format.FormatFB2, int64(len(src)), TargetEPUB); err != nil {
 		t.Fatalf("Convert FB2 to EPUB: %v", err)
@@ -2908,6 +2945,9 @@ func TestConvertFB2ToEPUB(t *testing.T) {
 		if !strings.Contains(opf, want) {
 			t.Fatalf("content.opf missing %q:\n%s", want, opf)
 		}
+	}
+	if strings.Contains(opf, "numberOfPages") {
+		t.Fatalf("generated EPUB inherited the FB2 count: %s", opf)
 	}
 	if got := zipEntryBytes(t, out.Bytes(), "OEBPS/images/img1.png"); !bytes.Equal(got, converterTinyPNG) {
 		t.Fatalf("embedded FB2 image = %d bytes; want tiny PNG", len(got))

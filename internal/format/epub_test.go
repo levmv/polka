@@ -49,6 +49,28 @@ func TestExtractEPUBMetadataAndCover(t *testing.T) {
 	if !bytes.Equal(coverBytes, tinyPNG) {
 		t.Fatal("cover bytes mismatch")
 	}
+
+	zr, err := zip.NewReader(r, r.Size())
+	if err != nil {
+		t.Fatal(err)
+	}
+	broken := make([]byte, r.Size())
+	if _, err := r.ReadAt(broken, 0); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range zr.File {
+		if entry.Name == "OEBPS/images/cover.png" {
+			offset, err := entry.DataOffset()
+			if err != nil {
+				t.Fatal(err)
+			}
+			broken[offset] = 0x07 // Reserved DEFLATE block type.
+		}
+	}
+	meta, _, _, err = ExtractEPUBMetadataAndCover(bytes.NewReader(broken), int64(len(broken)))
+	if err == nil || meta == nil || meta.Title != "Combined EPUB" {
+		t.Fatalf("damaged cover discarded usable metadata: %+v, %v", meta, err)
+	}
 }
 
 func TestExtractEPUBMetadataUsesFirstExistingRootfile(t *testing.T) {

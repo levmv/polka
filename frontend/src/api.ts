@@ -725,6 +725,16 @@ export async function fetchBook(bookId: number, signal?: AbortSignal): Promise<B
     });
 }
 
+export async function ensureBookPageCount(
+    bookId: number,
+    signal?: AbortSignal,
+): Promise<{ asset_id: number; page_count?: number }> {
+    return await fetchJSON(`/api/books/${bookId}/page-count`, 'Failed to count pages', {
+        method: 'POST',
+        signal,
+    });
+}
+
 export async function writebackBook(bookId: number): Promise<BookWritebackResult> {
     return await fetchJSON<BookWritebackResult>(
         `/api/books/${bookId}/writeback`,

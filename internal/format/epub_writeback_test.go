@@ -525,6 +525,7 @@ func TestRewriteEPUBMetadataEPUB3RefinementsAndDeterminism(t *testing.T) {
 		Identifier:  "url:https://example.org/books/modern, google:modern-id",
 		Series:      "Modern Series",
 		SeriesIndex: 4,
+		PageCount:   123,
 	}
 	modified := time.Date(2026, 7, 6, 12, 34, 56, 0, time.FixedZone("MSK", 3*60*60))
 

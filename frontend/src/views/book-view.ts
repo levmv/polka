@@ -2,6 +2,7 @@ import {
     createDelivery,
     createDeliveryDevice,
     deleteBook,
+    ensureBookPageCount,
     fetchBook,
     fetchCurrentUser,
     fetchDeliveryJob,
@@ -69,6 +70,7 @@ interface BookDetailView {
     book: Book | null;
     listContext: BookListContext | null;
     abort: AbortController;
+    pageCountRequest: { assetId: number; abort: AbortController } | null;
     renderCleanup: RouteCleanup | null;
     annotations: ReturnType<typeof createBookAnnotations> | null;
     // Whether this page has to place focus itself; see the heading below.
@@ -98,14 +100,14 @@ function hostFor(view: BookDetailView): BookDetailHost {
             if (view.phase !== 'active' || !host || view.book?.id === b.id) return;
             view.book = b;
             view.listContext = listContext ?? view.listContext;
-            renderBookDetail(view, host, b, { loadReaderProgress: false });
+            renderBookDetail(view, host, { loadReaderProgress: false });
             document.title = `${b.title} - polka`;
             syncLocation();
         },
         rerender(): void {
             const host = container();
             if (view.phase !== 'active' || !host || !view.book) return;
-            renderBookDetail(view, host, view.book);
+            renderBookDetail(view, host);
             syncLocation();
         },
     };
@@ -131,6 +133,18 @@ function isReadableAsset(asset: Asset): boolean {
 
 function assetFormatLabel(asset: Asset): string {
     return asset.extension.toUpperCase().replace('.', '');
+}
+
+function assetDetailsHtml(asset: Asset, showPageCount: boolean, showFormat: boolean): string {
+    const details: string[] = [];
+    if (asset.size) details.push(escapeHtml(formatSize(asset.size)));
+    if (showPageCount && asset.page_count) {
+        details.push(
+            `<span class="detail-page-count"${asset.page_count_approximate ? ' title="Estimated page count"' : ''}>${pageCountLabel(asset.page_count, asset)}</span>`,
+        );
+    }
+    if (!showFormat && details.length) return details.join(', ');
+    return `${escapeHtml(assetFormatLabel(asset))}${details.length ? ` (${details.join(', ')})` : ''}`;
 }
 
 function assetDownloadUrl(asset: Asset): string {
@@ -196,6 +210,7 @@ export function initBookDetail(
         book: null,
         listContext: readBookListContextFromLocation(),
         abort: new AbortController(),
+        pageCountRequest: null,
         renderCleanup: null,
         annotations: null,
         takeFocus: context.clientNavigation,
@@ -207,6 +222,7 @@ export function initBookDetail(
             releaseEditorHost();
             view.phase = 'destroyed';
             view.abort.abort();
+            view.pageCountRequest?.abort.abort();
             view.renderCleanup?.();
             view.renderCleanup = null;
             view.annotations?.destroy();
@@ -234,7 +250,7 @@ async function loadBookDetail(view: BookDetailView, bookId: number): Promise<voi
         updateBackLink(view.root, view.listContext);
         container.classList.remove('book-detail-loading');
         container.removeAttribute('aria-busy');
-        renderBookDetail(view, container, b, {
+        renderBookDetail(view, container, {
             canCurate: me.role === 'admin' || me.role === 'member',
         });
 
@@ -323,13 +339,15 @@ function setupDescriptionDisclosure(container: HTMLElement): RouteCleanup {
 function renderBookDetail(
     view: BookDetailView,
     container: HTMLElement,
-    b: Book,
     opts: { loadReaderProgress?: boolean; canCurate?: boolean } = {},
-): RouteCleanup {
+): void {
+    const b = view.book;
+    if (!b) return;
     view.renderCleanup?.();
     view.renderCleanup = null;
     const cleanup: RouteCleanup[] = [];
     const canCurate = opts.canCurate ?? true;
+    const primaryAsset = b.assets.find((asset) => asset.is_primary) ?? b.assets[0];
     const authorsHtml = b.authors_list
         .map((author) => author.name)
         .filter((name) => name)
@@ -355,10 +373,18 @@ function renderBookDetail(
         `;
     }
 
-    // Publication facts and identifiers beneath the cover.
+    let filesHtml = '';
+    if (b.assets.length > 0) {
+        const files = b.assets.map(
+            (asset) =>
+                `<span class="detail-file" data-file-asset="${asset.id}">${assetDetailsHtml(asset, asset.id === primaryAsset?.id, b.assets.length > 1)}</span>`,
+        );
+        filesHtml = `<div class="detail-files">${files.join('')}</div>`;
+    }
+
     let detailsHtml = '';
-    if (b.language || b.publisher || b.year || b.identifiers || b.date_human) {
-        detailsHtml = '<div class="detail-meta detail-meta-top detail-rail">';
+    if (filesHtml || b.language || b.publisher || b.year || b.identifiers || b.date_human) {
+        detailsHtml = `<div class="detail-meta detail-meta-top detail-rail">${filesHtml}`;
         if (b.language)
             detailsHtml += `<span>Language: ${escapeHtml(b.language_name || b.language)}</span><br>`;
         if (b.publisher || b.date_human || b.year) {
@@ -441,7 +467,6 @@ function renderBookDetail(
     // with Shelves/Edit/⋯ below, so the whole row reads as one set; Read is the
     // single filled (primary) action.
     let assetsHtml = '';
-    const primaryAsset = b.assets?.find((a: Asset) => a.is_primary) ?? b.assets?.[0];
     const primaryReadableAsset =
         primaryAsset && isReadableAsset(primaryAsset) ? primaryAsset : null;
     if (b.assets && b.assets.length > 0) {
@@ -479,13 +504,6 @@ function renderBookDetail(
 
     let bottomMetaHtml = '';
     const bottomParts = [];
-    if (b.assets && b.assets.length > 0) {
-        const files = b.assets.map((asset) => {
-            const size = asset.size ? ` (${formatSize(asset.size)})` : '';
-            return `${assetFormatLabel(asset)}${size}`;
-        });
-        bottomParts.push(files.join(', '));
-    }
     if (b.added_at) {
         bottomParts.push(`Added ${formatTimestampHuman(b.added_at)}`);
 
@@ -612,10 +630,8 @@ function renderBookDetail(
     const menuBtn = container.querySelector<HTMLElement>('#btn-book-menu');
     if (menuBtn) {
         const items: MenuItem[] = [];
-        // Admin-only "Write metadata to file" (manual mode, writable asset): the
-        // server sets `available` so the item never shows for non-admins. It stays
-        // visible-but-disabled when the file is already current, keeping the
-        // feature legible.
+        // The server decides availability. Keep the item visible but disabled
+        // when the file is current, so it does not disappear after writing.
         if (b.writeback?.available) {
             items.push({
                 label: b.writeback.dirty ? 'Write metadata to file' : 'Metadata file is up to date',
@@ -642,7 +658,7 @@ function renderBookDetail(
     // An admin who turns sending on or off in Settings sees the action row follow
     // immediately, without leaving the page they were looking at.
     const handleSendEnabled = () => {
-        if (view.book?.id === b.id) renderBookDetail(view, container, b, opts);
+        if (view.book?.id === b.id) renderBookDetail(view, container, opts);
     };
     window.addEventListener(SEND_ENABLED_EVENT, handleSendEnabled);
     cleanup.push(() => window.removeEventListener(SEND_ENABLED_EVENT, handleSendEnabled));
@@ -652,7 +668,44 @@ function renderBookDetail(
         if (view.renderCleanup === destroy) view.renderCleanup = null;
     };
     view.renderCleanup = destroy;
-    return destroy;
+    void loadPageCount(view);
+}
+
+async function loadPageCount(view: BookDetailView): Promise<void> {
+    const book = view.book;
+    const primary = book?.assets.find((asset) => asset.is_primary);
+    if (view.pageCountRequest && view.pageCountRequest.assetId !== primary?.id) {
+        view.pageCountRequest.abort.abort();
+        view.pageCountRequest = null;
+    }
+    if (!book || !primary || primary.page_count) return;
+    if (view.pageCountRequest) return;
+    const request = { assetId: primary.id, abort: new AbortController() };
+    view.pageCountRequest = request;
+    try {
+        const result = await ensureBookPageCount(book.id, request.abort.signal);
+        if (
+            view.phase !== 'active' ||
+            view.book?.id !== book.id ||
+            view.pageCountRequest !== request ||
+            !result.page_count
+        )
+            return;
+        const current = view.book.assets.find((asset) => asset.is_primary);
+        if (current?.id !== result.asset_id) return;
+        current.page_count = result.page_count;
+        const el = view.root.querySelector<HTMLElement>(`[data-file-asset="${current.id}"]`);
+        if (el) el.innerHTML = assetDetailsHtml(current, true, view.book.assets.length > 1);
+        notifyCatalogChanged({ kind: 'books-updated', books: [view.book] });
+    } catch {
+        // Length is optional; opening and reading the book remain available.
+    } finally {
+        if (view.pageCountRequest === request) view.pageCountRequest = null;
+    }
+}
+
+function pageCountLabel(count: number, asset: Asset): string {
+    return `${asset.page_count_approximate ? '≈ ' : ''}${count} ${count === 1 ? 'page' : 'pages'}`;
 }
 
 function openSendBookModal(book: Book): void {
@@ -1067,11 +1120,12 @@ async function changeBookReadingStatus(
     opts: { loadReaderProgress?: boolean; canCurate?: boolean },
 ): Promise<void> {
     try {
-        book.reading_status = await setReadingStatus(book.id, status);
+        const saved = await setReadingStatus(book.id, status);
         showToast(`Marked as ${readingStatusLabel(status).toLowerCase()}`);
-        if (view.phase !== 'active') return;
-        renderBookDetail(view, container, book, opts);
-        notifyCatalogChanged({ kind: 'books-updated', books: [book] });
+        if (view.phase !== 'active' || view.book?.id !== book.id) return;
+        view.book.reading_status = saved;
+        renderBookDetail(view, container, opts);
+        notifyCatalogChanged({ kind: 'books-updated', books: [view.book] });
     } catch (err) {
         showToast(errorMessage(err, 'Failed to change reading status'), { type: 'error' });
     }
@@ -1134,7 +1188,7 @@ async function writeBookMetadata(
         // this action, so canCurate holds.
         if (view.phase !== 'active' || view.book?.id !== b.id) return;
         view.book = result.book;
-        renderBookDetail(view, container, result.book, { canCurate: true });
+        renderBookDetail(view, container, { canCurate: true });
     } catch (e) {
         showToast(errorMessage(e, 'Failed to write metadata to file'), { type: 'error' });
     }

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"image"
 	"io"
 	"sort"
 	"strings"
@@ -20,69 +19,83 @@ const (
 )
 
 func isCB7(r io.ReaderAt, size int64) bool {
-	result, err := scanCB7(r, size, true)
-	return err == nil && len(result.pages) > 0
+	index, err := readCB7Index(r, size)
+	return err == nil && len(index.pages) > 0
 }
 
-// ListCB7Pages returns valid image pages in natural archive-path order.
-func ListCB7Pages(r io.ReaderAt, size int64) ([]ComicPage, error) {
-	result, err := scanCB7(r, size, false)
-	if err != nil {
-		return nil, err
-	}
-	return result.pages, nil
-}
-
-// ExtractCB7MetadataAndCover scans a 7z archive once for both ComicInfo.xml
-// metadata and the first naturally sorted page. A metadata error does not
-// discard a cover that was extracted successfully.
+// ExtractCB7MetadataAndCover reads ComicInfo.xml and the first usable cover
+// through one archive reader. Errors preserve any available results,
+// including the page count from the archive index.
 func ExtractCB7MetadataAndCover(r io.ReaderAt, size int64) (*Metadata, []byte, string, error) {
-	result, err := scanCB7(r, size, false)
+	index, err := readCB7Index(r, size)
 	if err != nil {
 		return nil, nil, "", err
 	}
-	meta := &Metadata{}
-	if result.comicInfoErr != nil {
-		return meta, result.cover, result.coverExtension, result.comicInfoErr
+	var meta *Metadata
+	var metadataErr error
+	// Read the earlier target first so a solid block can continue forward
+	// instead of being decompressed again for the other entry.
+	if index.comicInfo != nil && (len(index.pages) == 0 || index.comicInfo.order < index.pages[0].order) {
+		meta, metadataErr = index.metadata()
 	}
-	if result.comicInfo != nil {
-		meta, err = parseComicInfoMetadata(result.comicInfo)
-		if err != nil {
-			return &Metadata{}, result.cover, result.coverExtension, err
-		}
+	cover, extension, coverErr := index.cover()
+	if meta == nil {
+		meta, metadataErr = index.metadata()
 	}
-	return meta, result.cover, result.coverExtension, nil
+	return meta, cover, extension, errors.Join(metadataErr, coverErr)
 }
 
 // ExtractCB7Metadata extracts ComicInfo.xml metadata from a CB7 archive.
 func ExtractCB7Metadata(r io.ReaderAt, size int64) (*Metadata, error) {
-	meta, _, _, err := ExtractCB7MetadataAndCover(r, size)
-	return meta, err
+	index, err := readCB7Index(r, size)
+	if err != nil {
+		return nil, err
+	}
+	return index.metadata()
 }
 
-// ExtractCB7Cover returns the first valid naturally sorted comic page.
+// ExtractCB7Cover returns the first usable cover among entries with supported
+// image extensions, in natural path order.
 func ExtractCB7Cover(r io.ReaderAt, size int64) ([]byte, string, error) {
-	result, err := scanCB7(r, size, false)
+	index, err := readCB7Index(r, size)
 	if err != nil {
 		return nil, "", err
 	}
-	return result.cover, result.coverExtension, nil
+	return index.cover()
 }
 
-func scanCB7(src io.ReaderAt, size int64, firstPageOnly bool) (comicArchiveScanResult, error) {
-	var result comicArchiveScanResult
+type cb7Entry struct {
+	file  *sevenzip.File
+	name  string
+	order int
+}
+
+type cb7Index struct {
+	pages     []cb7Entry
+	comicInfo *cb7Entry
+}
+
+func readCB7Index(src io.ReaderAt, size int64) (*cb7Index, error) {
 	if src == nil || size <= 0 {
-		return result, fmt.Errorf("CB7 archive is empty")
+		return nil, fmt.Errorf("CB7 archive is empty")
 	}
 	zr, err := sevenzip.NewReader(src, size)
 	if err != nil {
-		return result, cb7ReadError("open CB7 archive", err)
+		return nil, cb7ReadError("open CB7 archive", err)
 	}
-	if err := validateCB7Headers(zr.File); err != nil {
-		return result, err
+	if len(zr.File) > maxCB7Entries {
+		return nil, fmt.Errorf("CB7 archive has more than %d entries", maxCB7Entries)
 	}
 
-	for _, file := range zr.File {
+	index := &cb7Index{}
+	var declaredBytes int64
+	// In a solid archive, reaching an image header can decompress every preceding
+	// page. Collect pages by name to keep import and counting cheap.
+	for order, file := range zr.File {
+		if file.UncompressedSize > uint64(maxCB7DecodedBytes-declaredBytes) {
+			return nil, fmt.Errorf("CB7 archive expands beyond %d bytes", maxCB7DecodedBytes)
+		}
+		declaredBytes += int64(file.UncompressedSize)
 		if !file.FileInfo().Mode().IsRegular() {
 			continue
 		}
@@ -90,111 +103,61 @@ func scanCB7(src io.ReaderAt, size int64, firstPageOnly bool) (comicArchiveScanR
 		if name == "" || isIgnoredComicEntry(name) {
 			continue
 		}
+		entry := cb7Entry{file: file, name: name, order: order}
 		if isComicInfoName(name) {
-			if betterComicInfoName(name, result.comicInfoName) {
-				result.comicInfoName = name
-				if file.UncompressedSize > uint64(maxCBZComicInfoBytes) {
-					result.comicInfo = nil
-					result.comicInfoErr = fmt.Errorf("read %s: entry exceeds %d bytes", name, maxCBZComicInfoBytes)
-				} else {
-					result.comicInfo, result.comicInfoErr = readCB7FileLimited(file, maxCBZComicInfoBytes)
-					if result.comicInfoErr != nil {
-						result.comicInfoErr = fmt.Errorf("read %s: %w", name, result.comicInfoErr)
-					}
-				}
+			if index.comicInfo == nil || betterComicInfoName(name, index.comicInfo.name) {
+				index.comicInfo = &entry
 			}
-			continue
-		}
-
-		page, raw, err := cb7PageFromFile(file, name, betterComicPageName(name, result.coverName))
-		if err != nil {
-			return result, fmt.Errorf("read CB7 page %s: %w", name, err)
-		}
-		if page == nil {
-			continue
-		}
-		result.pages = append(result.pages, *page)
-		if firstPageOnly {
-			return result, nil
-		}
-		if raw != nil && validCBZCoverDimensions(page.Width, page.Height) && betterComicPageName(name, result.coverName) {
-			result.cover = raw
-			result.coverExtension = page.Extension
-			result.coverName = name
+		} else if isComicImageName(name) {
+			index.pages = append(index.pages, entry)
 		}
 	}
 
-	sort.Slice(result.pages, func(i, j int) bool {
-		return naturalLess(strings.ToLower(result.pages[i].Name), strings.ToLower(result.pages[j].Name))
+	sort.Slice(index.pages, func(i, j int) bool {
+		return naturalLess(strings.ToLower(index.pages[i].name), strings.ToLower(index.pages[j].name))
 	})
-	for i := range result.pages {
-		result.pages[i].Index = i
-	}
-	return result, nil
+	return index, nil
 }
 
-func validateCB7Headers(files []*sevenzip.File) error {
-	if len(files) > maxCB7Entries {
-		return fmt.Errorf("CB7 archive has more than %d entries", maxCB7Entries)
+func (index *cb7Index) metadata() (*Metadata, error) {
+	meta := &Metadata{PageCount: len(index.pages)}
+	if index.comicInfo == nil {
+		return meta, nil
 	}
-	var declaredBytes int64
-	for _, file := range files {
-		if file.UncompressedSize > uint64(maxCB7DecodedBytes-declaredBytes) {
-			return fmt.Errorf("CB7 archive expands beyond %d bytes", maxCB7DecodedBytes)
-		}
-		declaredBytes += int64(file.UncompressedSize)
+	entry := index.comicInfo
+	if entry.file.UncompressedSize > uint64(maxCBZComicInfoBytes) {
+		return meta, fmt.Errorf("read %s: entry exceeds %d bytes", entry.name, maxCBZComicInfoBytes)
 	}
-	return nil
+	raw, err := readCB7FileLimited(entry.file, maxCBZComicInfoBytes)
+	if err != nil {
+		return meta, fmt.Errorf("read %s: %w", entry.name, err)
+	}
+	parsed, err := parseComicInfoMetadata(raw)
+	if err != nil {
+		return meta, err
+	}
+	parsed.PageCount = meta.PageCount
+	return parsed, nil
 }
 
-func cb7PageFromFile(file *sevenzip.File, name string, coverCandidate bool) (*ComicPage, []byte, error) {
-	rc, err := file.Open()
-	if err != nil {
-		return nil, nil, cb7ReadError("open entry", err)
-	}
-	prefix, readErr := readComicEntryPrefix(rc, comicImageHeaderBytes)
-	if readErr != nil {
-		_ = rc.Close()
-		return nil, nil, cb7ReadError("read entry header", readErr)
-	}
-	if _, _, ok := ComicImageTypeFromBytes(prefix); !ok && !isComicImageName(name) {
-		if err := rc.Close(); err != nil {
-			return nil, nil, cb7ReadError("close entry", err)
+func (index *cb7Index) cover() ([]byte, string, error) {
+	for _, entry := range index.pages {
+		if entry.file.UncompressedSize > uint64(maxCBZCoverBytes) {
+			continue
 		}
-		return nil, nil, nil
-	}
-
-	var (
-		cfg        image.Config
-		formatName string
-		raw        []byte
-	)
-	if coverCandidate && file.UncompressedSize <= uint64(maxCBZCoverBytes) {
-		raw, err = readComicEntryLimited(rc, prefix, maxCBZCoverBytes)
-		if err == nil {
-			cfg, formatName, err = imagecodec.DecodeConfig(bytes.NewReader(raw))
+		raw, err := readCB7FileLimited(entry.file, maxCBZCoverBytes)
+		if err != nil {
+			return nil, "", fmt.Errorf("read CB7 cover %s: %w", entry.name, err)
 		}
-	} else {
-		cfg, formatName, err = imagecodec.DecodeConfig(io.LimitReader(io.MultiReader(bytes.NewReader(prefix), rc), maxCBZCoverBytes+1))
+		cfg, formatName, err := imagecodec.DecodeConfig(bytes.NewReader(raw))
+		if err != nil || !validCBZCoverDimensions(cfg.Width, cfg.Height) {
+			continue
+		}
+		if extension, ok := cbzImageExtension(formatName); ok {
+			return raw, extension, nil
+		}
 	}
-	closeErr := rc.Close()
-	if err != nil {
-		return nil, nil, nil
-	}
-	if closeErr != nil {
-		return nil, nil, cb7ReadError("close entry", closeErr)
-	}
-	extension, ok := cbzImageExtension(formatName)
-	if !ok {
-		return nil, nil, nil
-	}
-	return &ComicPage{
-		Name:      name,
-		Extension: extension,
-		Size:      file.UncompressedSize,
-		Width:     cfg.Width,
-		Height:    cfg.Height,
-	}, raw, nil
+	return nil, "", nil
 }
 
 func readCB7FileLimited(file *sevenzip.File, maxBytes int64) ([]byte, error) {
@@ -202,7 +165,7 @@ func readCB7FileLimited(file *sevenzip.File, maxBytes int64) ([]byte, error) {
 	if err != nil {
 		return nil, cb7ReadError("open entry", err)
 	}
-	raw, readErr := readComicEntryLimited(rc, nil, maxBytes)
+	raw, readErr := readAllLimited(rc, "entry", maxBytes)
 	closeErr := rc.Close()
 	if readErr != nil {
 		return nil, cb7ReadError("read entry", readErr)

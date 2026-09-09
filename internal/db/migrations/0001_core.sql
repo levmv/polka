@@ -65,6 +65,7 @@ CREATE INDEX idx_books_live_series_order ON books(
 CREATE TABLE assets (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    page_count INTEGER CHECK (page_count > 0),
     storage_path TEXT NOT NULL,
     filename TEXT NOT NULL, -- Basename of the current storage_path.
     original_filename TEXT NOT NULL DEFAULT '', -- Basename at import.

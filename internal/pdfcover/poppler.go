@@ -84,7 +84,7 @@ func (r *Renderer) renderPoppler(ctx context.Context, pdf io.Reader, size int64,
 	}
 	err := r.command(ctx, r.backend.Executable, args, io.LimitReader(pdf, size), &stdout, &stderr)
 	if ctx.Err() != nil {
-		return nil, renderContextError(ctx, "render PDF page 1 with pdftoppm", r.renderTimeout)
+		return nil, operationContextError(ctx, "render PDF page 1 with pdftoppm", r.operationTimeout)
 	}
 	if err != nil {
 		diagnostic := oneLineDiagnostic(stderr.Bytes())

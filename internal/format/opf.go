@@ -73,10 +73,14 @@ type opfManifest struct {
 
 type opfSpine struct {
 	Itemrefs []opfItemref `xml:"itemref"`
+	TOC      string       `xml:"toc,attr"`
+	PageMap  string       `xml:"page-map,attr"`
 }
 
 type opfItemref struct {
-	IDRef string `xml:"idref,attr"`
+	IDRef      string `xml:"idref,attr"`
+	Linear     string `xml:"linear,attr"`
+	Properties string `xml:"properties,attr"`
 }
 
 type opfGuide struct {
@@ -116,13 +120,16 @@ func (m *opfMetadata) UnmarshalXML(dec *xml.Decoder, start xml.StartElement) err
 		}
 		switch tok := tok.(type) {
 		case xml.StartElement:
-			switch strings.ToLower(tok.Name.Local) {
-			case "metadata", "dc-metadata", "x-metadata":
+			local := strings.ToLower(tok.Name.Local)
+			if isOPFMetadataContainer(local) {
 				var nested opfMetadata
 				if err := dec.DecodeElement(&nested, &tok); err != nil {
 					return err
 				}
 				parsed.merge(nested)
+				continue
+			}
+			switch local {
 			case "title":
 				var value opfTitle
 				if err := dec.DecodeElement(&value, &tok); err != nil {
@@ -189,6 +196,10 @@ func (m *opfMetadata) UnmarshalXML(dec *xml.Decoder, start xml.StartElement) err
 			}
 		}
 	}
+}
+
+func isOPFMetadataContainer(local string) bool {
+	return local == "metadata" || local == "dc-metadata" || local == "x-metadata"
 }
 
 func (m *opfMetadata) merge(other opfMetadata) {
@@ -451,7 +462,7 @@ func isXMLSpace(b byte) bool {
 
 // metadataFromOPF maps a decoded OPF document onto our Metadata struct.
 func metadataFromOPF(opf opfDoc) *Metadata {
-	meta := &Metadata{}
+	meta := &Metadata{PageCount: opfDeclaredPageCount(opf.Metadata.Meta)}
 	refinements := opfRefinementsByTarget(opf.Metadata.Meta)
 
 	meta.Title = opfTitleValue(opf.Metadata.Title, refinements)

@@ -57,6 +57,52 @@ func ResolveZIPEntry(zr *zip.Reader, name string) (*zip.File, bool) {
 	return fallback, false
 }
 
+// zipEntryIndex applies the same resolution policy to repeated lookups in one
+// archive. Build each index only when needed; most well-formed EPUBs never use
+// the normalized fallback.
+type zipEntryIndex struct {
+	files      []*zip.File
+	exact      map[string]zipEntryMatch
+	normalized map[string]zipEntryMatch
+}
+
+type zipEntryMatch struct {
+	file      *zip.File
+	ambiguous bool
+}
+
+func indexZIPEntries(files []*zip.File, key func(string) string) map[string]zipEntryMatch {
+	entries := make(map[string]zipEntryMatch, len(files))
+	for _, file := range files {
+		name := key(file.Name)
+		match, exists := entries[name]
+		if exists {
+			match.ambiguous = true
+		} else {
+			match.file = file
+		}
+		entries[name] = match
+	}
+	return entries
+}
+
+func (z *zipEntryIndex) resolve(name string) (*zip.File, bool) {
+	if z.exact == nil {
+		z.exact = indexZIPEntries(z.files, func(name string) string { return name })
+	}
+	if match, ok := z.exact[name]; ok {
+		return match.file, match.ambiguous
+	}
+	if z.normalized == nil {
+		z.normalized = indexZIPEntries(z.files, zipEntryLookupKey)
+	}
+	match := z.normalized[zipEntryLookupKey(name)]
+	if match.ambiguous {
+		return nil, true
+	}
+	return match.file, false
+}
+
 func zipEntryNameCollisionKey(name string) string {
 	if decoded, err := url.PathUnescape(name); err == nil {
 		name = decoded
