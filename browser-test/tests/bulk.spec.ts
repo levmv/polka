@@ -62,6 +62,12 @@ test.describe('Bulk actions', () => {
     expect(matched.ok()).toBe(true);
     expect((await matched.json()).length).toBe(2);
 
+    for (const title of [titleA, titleB]) {
+      const card = page.locator('.book-card', { hasText: title });
+      await expect(card).toHaveClass(/selected/);
+      await expect(card.locator('.card-select')).toHaveAttribute('aria-checked', 'true');
+    }
+
     await page.screenshot({ path: 'screenshots/bulk-tags.png', fullPage: true });
   });
 
@@ -73,6 +79,8 @@ test.describe('Bulk actions', () => {
 
     await prepareBooks(page, [titleA, titleB]);
     await selectCards(page, [titleA, titleB]);
+    await page.locator('#view-table-btn').click();
+    await expect(page.locator('.table-row.selected')).toHaveCount(2);
 
     await page.locator('.bulk-bar-action[data-action="authors"]').click();
     const dialog = page.locator('.bulk-modal');
@@ -90,6 +98,13 @@ test.describe('Bulk actions', () => {
     );
     expect(matched.ok()).toBe(true);
     expect((await matched.json()).length).toBe(2);
+
+    for (const title of [titleA, titleB]) {
+      const row = page.locator('.table-row', { hasText: title });
+      await expect(row).toContainText(author);
+      await expect(row.locator('.table-select-row')).toBeChecked();
+    }
+    await page.screenshot({ path: 'screenshots/bulk-authors-table.png', fullPage: true });
   });
 
   test('Bulk series numbers selected books by order', async ({ page }) => {

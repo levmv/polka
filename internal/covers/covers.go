@@ -16,13 +16,14 @@ import (
 	"fmt"
 	"image"
 	"image/color"
-	"image/draw"
 	"image/jpeg"
 	"math"
 	"os"
 	"path"
 	"strconv"
 	"strings"
+
+	"golang.org/x/image/draw"
 
 	"github.com/levmv/polka/internal/imagecodec"
 	"github.com/levmv/polka/internal/storage"
@@ -174,14 +175,12 @@ func Process(src []byte, variant Variant, opts Options) (Encoded, error) {
 		return Encoded{}, fmt.Errorf("decode image: %w", err)
 	}
 
-	flat := flattenToRGBA(img)
-
 	maxW, maxH, err := variantBounds(variant, opts)
 	if err != nil {
 		return Encoded{}, err
 	}
 
-	resized := resizeToFit(flat, maxW, maxH)
+	resized := resizeToFit(img, maxW, maxH)
 	var out bytes.Buffer
 	if err := jpeg.Encode(&out, resized, &jpeg.Options{Quality: opts.JPEGQuality}); err != nil {
 		return Encoded{}, fmt.Errorf("encode jpeg: %w", err)
@@ -227,70 +226,19 @@ func variantBounds(variant Variant, opts Options) (int, int, error) {
 	}
 }
 
-// flattenToRGBA composites onto white, so the remaining cover pipeline can use
-// concrete opaque RGBA fast paths for resizing and JPEG encoding.
-func flattenToRGBA(src image.Image) *image.RGBA {
-	b := src.Bounds()
-	dst := image.NewRGBA(image.Rect(0, 0, b.Dx(), b.Dy()))
-	draw.Draw(dst, dst.Bounds(), &image.Uniform{C: color.White}, image.Point{}, draw.Src)
-	draw.Draw(dst, dst.Bounds(), src, b.Min, draw.Over)
-	return dst
-}
-
-func resizeToFit(src *image.RGBA, maxW, maxH int) *image.RGBA {
+func resizeToFit(src image.Image, maxW, maxH int) *image.RGBA {
 	b := src.Bounds()
 	w, h := b.Dx(), b.Dy()
-	if w <= maxW && h <= maxH {
-		return src
+	if w > maxW || h > maxH {
+		scale := math.Min(float64(maxW)/float64(w), float64(maxH)/float64(h))
+		w = max(1, int(math.Round(float64(w)*scale)))
+		h = max(1, int(math.Round(float64(h)*scale)))
 	}
 
-	scale := math.Min(float64(maxW)/float64(w), float64(maxH)/float64(h))
-	newW := max(1, int(math.Round(float64(w)*scale)))
-	newH := max(1, int(math.Round(float64(h)*scale)))
-
-	dst := image.NewRGBA(image.Rect(0, 0, newW, newH))
-	for y := range newH {
-		srcY := (float64(y)+0.5)/scale - 0.5
-		y0 := clampInt(int(math.Floor(srcY)), 0, h-1)
-		y1 := clampInt(y0+1, 0, h-1)
-		fy := srcY - math.Floor(srcY)
-		for x := range newW {
-			srcX := (float64(x)+0.5)/scale - 0.5
-			x0 := clampInt(int(math.Floor(srcX)), 0, w-1)
-			x1 := clampInt(x0+1, 0, w-1)
-			fx := srcX - math.Floor(srcX)
-			dst.SetRGBA(x, y, bilinear(src, b.Min.X+x0, b.Min.Y+y0, b.Min.X+x1, b.Min.Y+y1, fx, fy))
-		}
-	}
+	// Composite at the output size: flattening the original first would allocate
+	// another full-resolution image just to produce a small JPEG.
+	dst := image.NewRGBA(image.Rect(0, 0, w, h))
+	draw.Draw(dst, dst.Bounds(), &image.Uniform{C: color.White}, image.Point{}, draw.Src)
+	draw.ApproxBiLinear.Scale(dst, dst.Bounds(), src, b, draw.Over, nil)
 	return dst
-}
-
-func bilinear(src *image.RGBA, x0, y0, x1, y1 int, fx, fy float64) color.RGBA {
-	c00 := src.RGBAAt(x0, y0)
-	c10 := src.RGBAAt(x1, y0)
-	c01 := src.RGBAAt(x0, y1)
-	c11 := src.RGBAAt(x1, y1)
-
-	return color.RGBA{
-		R: interp(c00.R, c10.R, c01.R, c11.R, fx, fy),
-		G: interp(c00.G, c10.G, c01.G, c11.G, fx, fy),
-		B: interp(c00.B, c10.B, c01.B, c11.B, fx, fy),
-		A: interp(c00.A, c10.A, c01.A, c11.A, fx, fy),
-	}
-}
-
-func interp(c00, c10, c01, c11 uint8, fx, fy float64) uint8 {
-	top := float64(c00)*(1-fx) + float64(c10)*fx
-	bottom := float64(c01)*(1-fx) + float64(c11)*fx
-	return uint8(math.Round(top*(1-fy) + bottom*fy))
-}
-
-func clampInt(v, lo, hi int) int {
-	if v < lo {
-		return lo
-	}
-	if v > hi {
-		return hi
-	}
-	return v
 }

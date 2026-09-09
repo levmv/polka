@@ -2978,8 +2978,9 @@ func TestConvertFB2ToKEPUB(t *testing.T) {
 			t.Fatalf("composed KEPUB text.xhtml missing %q:\n%s", want, xhtml)
 		}
 	}
-	if got := zipEntryBytes(t, out.Bytes(), "OEBPS/images/img1.png"); !bytes.Equal(got, converterTinyPNG) {
-		t.Fatalf("composed KEPUB image = %d bytes; want original PNG", len(got))
+	cover, _, err := format.ExtractCover(bytes.NewReader(out.Bytes()), int64(out.Len()), format.FormatKEPUB)
+	if err != nil || !bytes.Equal(cover, converterTinyPNG) {
+		t.Fatalf("composed KEPUB cover = %d bytes, error %v; want original PNG", len(cover), err)
 	}
 	problems, err := checkEPUBInternalLinks(out.Bytes())
 	if err != nil {
@@ -2990,39 +2991,42 @@ func TestConvertFB2ToKEPUB(t *testing.T) {
 	}
 }
 
-func TestConvertFB2PreservesFirstDecodableFallbackCover(t *testing.T) {
-	original := testFB2ForEPUB()
-	coverpage := []byte(`      <coverpage><image l:href="#cover.png"/></coverpage>` + "\n")
-	src := bytes.Replace(original, coverpage, nil, 1)
-	if bytes.Equal(src, original) || bytes.Contains(src, []byte("<coverpage>")) {
-		t.Fatal("test fixture still declares an explicit cover")
-	}
-	validBinary := []byte(`  <binary id="cover.png" content-type="image/png">`)
-	brokenBinary := []byte("  <binary id=\"broken.png\" content-type=\"image/png\">not-valid-base64</binary>\n")
-	withBrokenFirst := bytes.Replace(src, validBinary, append(brokenBinary, validBinary...), 1)
-	if bytes.Equal(withBrokenFirst, src) {
-		t.Fatal("test fixture did not gain the broken first image")
-	}
-	src = withBrokenFirst
-	sourceCover, _, err := format.ExtractCover(bytes.NewReader(src), int64(len(src)), format.FormatFB2)
-	if err != nil || !bytes.Equal(sourceCover, converterTinyPNG) {
-		t.Fatalf("source fallback cover = %d bytes, error %v; want original PNG", len(sourceCover), err)
-	}
+func TestConvertFB2ToEPUBPreservesCover(t *testing.T) {
+	otherImage := `<binary id="illustration.gif" content-type="image/gif">` + base64.StdEncoding.EncodeToString(converterTinyGIF) + `</binary>`
 	for _, tt := range []struct {
-		target Target
-		kind   format.Format
+		name        string
+		description string
+		firstBinary string
 	}{
-		{target: TargetEPUB, kind: format.FormatEPUB},
-		{target: TargetKEPUB, kind: format.FormatKEPUB},
+		{
+			name:        "declared cover",
+			description: `<title-info><coverpage><image/><image href="#cover.png"/></coverpage></title-info>`,
+			firstBinary: otherImage,
+		},
+		{
+			name:        "cover in source metadata",
+			description: `<title-info/><src-title-info><coverpage><image href="#cover.png"/></coverpage></src-title-info>`,
+			firstBinary: otherImage,
+		},
+		{
+			name:        "fallback after unusable image",
+			firstBinary: `<binary id="broken.png" content-type="image/png">not-valid-base64</binary>`,
+		},
 	} {
-		t.Run(string(tt.target), func(t *testing.T) {
-			var out bytes.Buffer
-			if err := ConvertContext(context.Background(), &out, bytes.NewReader(src), format.FormatFB2, int64(len(src)), tt.target); err != nil {
-				t.Fatalf("Convert FB2 to %s: %v", tt.target, err)
+		t.Run(tt.name, func(t *testing.T) {
+			src := []byte(`<FictionBook><description>` + tt.description + `</description><body><section><p>Text.</p></section></body>` + tt.firstBinary +
+				`<binary id="cover.png" content-type="image/png">` + base64.StdEncoding.EncodeToString(converterTinyPNG) + `</binary></FictionBook>`)
+			sourceCover, _, err := format.ExtractCover(bytes.NewReader(src), int64(len(src)), format.FormatFB2)
+			if err != nil || !bytes.Equal(sourceCover, converterTinyPNG) {
+				t.Fatalf("source cover = %d bytes, error %v; want original PNG", len(sourceCover), err)
 			}
-			cover, _, err := format.ExtractCover(bytes.NewReader(out.Bytes()), int64(out.Len()), tt.kind)
+			var out bytes.Buffer
+			if err := ConvertContext(context.Background(), &out, bytes.NewReader(src), format.FormatFB2, int64(len(src)), TargetEPUB); err != nil {
+				t.Fatalf("Convert FB2 to EPUB: %v", err)
+			}
+			cover, _, err := format.ExtractCover(bytes.NewReader(out.Bytes()), int64(out.Len()), format.FormatEPUB)
 			if err != nil || !bytes.Equal(cover, converterTinyPNG) {
-				t.Fatalf("converted fallback cover = %d bytes, error %v; want original PNG", len(cover), err)
+				t.Fatalf("converted cover = %d bytes, error %v; want original PNG", len(cover), err)
 			}
 		})
 	}

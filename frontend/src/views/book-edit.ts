@@ -608,6 +608,24 @@ function openLoadedEditModal(
         const authorSortChange = currentAuthorSortChange();
         let saved: Book | null = null;
         const authorChange = { changed: false, previous: '', next: '' };
+        // Each successful step becomes the saved baseline even if a later step fails.
+        const acceptSavedBook = (updated: Book) => {
+            host?.applySaved(updated);
+            Object.assign(b, updated);
+            syncEditFormFromBook(form, b, uiID);
+            coverDraft?.renderPending();
+            savedState = readEditForm(form);
+            notifyCatalogChanged({ kind: 'books-updated', books: [updated] });
+            if (savedFlashTimer) window.clearTimeout(savedFlashTimer);
+            savedFlashTimer = undefined;
+            if (flash && !coverDraft?.hasPending()) {
+                savedFlashTimer = flashSaved(uiID, () => {
+                    savedFlashTimer = undefined;
+                    updateDirtyState();
+                });
+            }
+        };
+
         if (metadataDirty) {
             normalizeFormBeforeSave(form);
             if (!validateTitle(form, uiID)) return null;
@@ -617,11 +635,7 @@ function openLoadedEditModal(
             updateDirtyState();
             try {
                 const updated = await updateBook(b.id, payload);
-                host?.applySaved(updated);
-                Object.assign(b, updated);
-                syncEditFormFromBook(form, b, uiID);
-                coverDraft?.renderPending();
-                savedState = readEditForm(form);
+                acceptSavedBook(updated);
                 fetchedFieldSources.clear();
                 titleSortControls.close();
                 titleSortControls.resetFollow();
@@ -633,16 +647,7 @@ function openLoadedEditModal(
                     authorChange.previous = prevAuthors;
                     authorChange.next = nextAuthors;
                 }
-                if (savedFlashTimer) window.clearTimeout(savedFlashTimer);
-                savedFlashTimer = undefined;
-                if (flash && !coverDraft?.hasPending()) {
-                    savedFlashTimer = flashSaved(uiID, () => {
-                        savedFlashTimer = undefined;
-                        updateDirtyState();
-                    });
-                }
                 saved = updated;
-                notifyCatalogChanged({ kind: 'books-updated', books: [updated] });
             } catch (err) {
                 showToast(`Save failed: ${errorMessage(err)}`, { type: 'error' });
             } finally {
@@ -661,22 +666,9 @@ function openLoadedEditModal(
                 await setAuthorSortName(authorSortChange.name, authorSortChange.sortName);
                 const updated = await fetchBook(b.id);
                 if (closed) return null;
-                host?.applySaved(updated);
-                Object.assign(b, updated);
-                syncEditFormFromBook(form, b, uiID);
-                coverDraft?.renderPending();
-                savedState = readEditForm(form);
+                acceptSavedBook(updated);
                 resetAuthorSortFromBook(b);
                 saved = updated;
-                notifyCatalogChanged({ kind: 'books-updated', books: [updated] });
-                if (savedFlashTimer) window.clearTimeout(savedFlashTimer);
-                savedFlashTimer = undefined;
-                if (flash && !coverDraft?.hasPending()) {
-                    savedFlashTimer = flashSaved(uiID, () => {
-                        savedFlashTimer = undefined;
-                        updateDirtyState();
-                    });
-                }
             } catch (err) {
                 authorSortState = {
                     ...authorSortState,
@@ -693,24 +685,12 @@ function openLoadedEditModal(
             updateDirtyState();
             try {
                 const updated = await coverDraft.savePending(b.id);
-                host?.applySaved(updated);
-                Object.assign(b, updated);
-                syncEditFormFromBook(form, b, uiID);
-                savedState = readEditForm(form);
+                acceptSavedBook(updated);
                 fetchedFieldSources.clear();
                 titleSortControls.close();
                 titleSortControls.resetFollow();
                 resetAuthorSortFromBook(b);
                 saved = updated;
-                notifyCatalogChanged({ kind: 'books-updated', books: [updated] });
-                if (savedFlashTimer) window.clearTimeout(savedFlashTimer);
-                savedFlashTimer = undefined;
-                if (flash) {
-                    savedFlashTimer = flashSaved(uiID, () => {
-                        savedFlashTimer = undefined;
-                        updateDirtyState();
-                    });
-                }
             } catch {
                 return null;
             } finally {

@@ -16,7 +16,11 @@ import (
 	"github.com/levmv/polka/internal/storage"
 )
 
-const maxImportUploadBytes = 512 << 20 // 512 MiB
+const (
+	maxImportUploadBytes = 512 << 20 // 512 MiB
+	// Keep ParseMultipartForm's default part limit when streaming uploads.
+	maxImportUploadParts = 1000
+)
 
 type ImportUploadDTO struct {
 	Status   string        `json:"status"`
@@ -26,52 +30,11 @@ type ImportUploadDTO struct {
 }
 
 func (s *Server) handleAPIImport(w http.ResponseWriter, r *http.Request) {
-	if !parseLimitedMultipartForm(w, r, maxImportUploadBytes, 32<<20) {
+	source, ok := s.readImportUpload(w, r)
+	if !ok {
 		return
 	}
-	if r.MultipartForm != nil {
-		defer r.MultipartForm.RemoveAll()
-	}
-
-	file, header, err := r.FormFile("book")
-	if err != nil {
-		http.Error(w, "Missing book field", http.StatusBadRequest)
-		return
-	}
-	defer file.Close()
-
-	originalName := cleanUploadFilename(header.Filename)
-	if originalName == "" {
-		http.Error(w, "Missing filename", http.StatusBadRequest)
-		return
-	}
-	if !importer.IsSupportedBook(originalName) {
-		http.Error(w, "Unsupported book format", http.StatusBadRequest)
-		return
-	}
-
-	tmpDir := filepath.Join(s.dataDir, "tmp", "uploads")
-	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
-		serverError(w, r, err)
-		return
-	}
-	tmp, err := os.CreateTemp(tmpDir, "book-*")
-	if err != nil {
-		serverError(w, r, err)
-		return
-	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
-
-	if _, err := io.Copy(tmp, file); err != nil {
-		tmp.Close()
-		http.Error(w, "Failed to save upload", http.StatusBadRequest)
-		return
-	}
-	if err := tmp.Close(); err != nil {
-		serverError(w, r, err)
-		return
-	}
+	defer os.Remove(source.Path)
 
 	renderer := pdfcover.NewRenderer()
 	defer renderer.Close()
@@ -98,10 +61,7 @@ func (s *Server) handleAPIImport(w http.ResponseWriter, r *http.Request) {
 	}
 	defer releaseImport()
 
-	res, err := importer.Import(r.Context(), s.db, root, importer.Source{
-		Path:         tmpPath,
-		OriginalName: originalName,
-	}, renderer, importer.Options{PathTemplate: template, CoverRoot: s.dataRoot()})
+	res, err := importer.Import(r.Context(), s.db, root, source, renderer, importer.Options{PathTemplate: template, CoverRoot: s.dataRoot()})
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Import failed: %v", err), http.StatusBadRequest)
 		return
@@ -144,6 +104,84 @@ func (s *Server) handleAPIImport(w http.ResponseWriter, r *http.Request) {
 		AssetID:  res.AssetID,
 		Warnings: warnings,
 	})
+}
+
+// readImportUpload writes the HTTP error and removes the temporary file on
+// failure. On success, the caller owns the file and must remove it after import.
+func (s *Server) readImportUpload(w http.ResponseWriter, r *http.Request) (source importer.Source, ok bool) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxImportUploadBytes)
+	form, err := r.MultipartReader()
+	if err != nil {
+		writeMultipartError(w, err)
+		return importer.Source{}, false
+	}
+
+	var tmpPath, originalName string
+	// Read the entire form before importing: later fields can still exceed the
+	// request limit, and a truncated upload must never reach managed storage.
+	for parts := 0; ; parts++ {
+		part, err := form.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			writeMultipartError(w, err)
+			return importer.Source{}, false
+		}
+		if parts >= maxImportUploadParts {
+			http.Error(w, "Too many multipart fields", http.StatusBadRequest)
+			return importer.Source{}, false
+		}
+		if tmpPath != "" || part.FormName() != "book" || part.FileName() == "" {
+			if _, err := io.Copy(io.Discard, part); err != nil {
+				writeMultipartError(w, err)
+				return importer.Source{}, false
+			}
+			continue
+		}
+
+		originalName = cleanUploadFilename(part.FileName())
+		if !importer.IsSupportedBook(originalName) {
+			http.Error(w, "Unsupported book format", http.StatusBadRequest)
+			return importer.Source{}, false
+		}
+		tmpDir := filepath.Join(s.dataDir, "tmp", "uploads")
+		if err := os.MkdirAll(tmpDir, 0o755); err != nil {
+			serverError(w, r, err)
+			return importer.Source{}, false
+		}
+		tmp, err := os.CreateTemp(tmpDir, "book-*")
+		if err != nil {
+			serverError(w, r, err)
+			return importer.Source{}, false
+		}
+		tmpPath = tmp.Name()
+		defer func() {
+			if !ok {
+				os.Remove(tmpPath)
+			}
+		}()
+
+		_, copyErr := io.Copy(tmp, part)
+		closeErr := tmp.Close()
+		if copyErr != nil {
+			if _, ok := errors.AsType[*os.PathError](copyErr); ok {
+				serverError(w, r, copyErr)
+			} else {
+				writeMultipartError(w, copyErr)
+			}
+			return importer.Source{}, false
+		}
+		if closeErr != nil {
+			serverError(w, r, closeErr)
+			return importer.Source{}, false
+		}
+	}
+	if tmpPath == "" {
+		http.Error(w, "Missing book field", http.StatusBadRequest)
+		return importer.Source{}, false
+	}
+	return importer.Source{Path: tmpPath, OriginalName: originalName}, true
 }
 
 func cleanUploadFilename(name string) string {

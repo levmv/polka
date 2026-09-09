@@ -54,7 +54,8 @@ func Placeholder(title, author string, variant Variant, opts Options) (Encoded, 
 	}
 	author = strings.TrimSpace(author)
 
-	img := image.NewNRGBA(image.Rect(0, 0, w, h))
+	// The cover is opaque; RGBA also lets JPEG encoding avoid per-pixel allocations.
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
 	hue := hueFromText(title, author)
 	bg := hslToNRGBA(hue, 0.42, 0.38)
 	draw.Draw(img, img.Bounds(), &image.Uniform{C: bg}, image.Point{}, draw.Src)

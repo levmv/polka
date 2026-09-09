@@ -168,17 +168,52 @@ func TestProcessWebP(t *testing.T) {
 	}
 }
 
-func TestProcessPreservesSourceRatioWhenResizing(t *testing.T) {
-	src := encodeJPEG(t, solidImage(96, 150, color.NRGBA{R: 40, G: 80, B: 120, A: 255}))
+func TestProcessPreservesCoverAppearance(t *testing.T) {
 	opts := DefaultOptions()
 	opts.DisplayMaxWidth = 48
 	opts.DisplayMaxHeight = 1000
 
-	out, err := Process(src, VariantDisplay, opts)
-	if err != nil {
+	img := image.NewNRGBA(image.Rect(0, 0, 96, 150))
+	draw.Draw(img, image.Rect(16, 16, 80, 134), &image.Uniform{C: color.NRGBA{40, 80, 120, 128}}, image.Point{}, draw.Src)
+	var transparentPNG bytes.Buffer
+	if err := png.Encode(&transparentPNG, img); err != nil {
 		t.Fatal(err)
 	}
-	if out.Width != 48 || out.Height != 75 {
-		t.Fatalf("processed dimensions = %dx%d; want ratio-preserving 48x75", out.Width, out.Height)
+	opaque := color.NRGBA{40, 80, 120, 255}
+
+	for _, tc := range []struct {
+		name       string
+		src        []byte
+		wantCenter color.NRGBA
+		wantCorner color.NRGBA
+	}{
+		{"JPEG", encodeJPEG(t, solidImage(96, 150, opaque)), opaque, opaque},
+		{"transparent PNG", transparentPNG.Bytes(), color.NRGBA{147, 167, 187, 255}, color.NRGBA{255, 255, 255, 255}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := Process(tc.src, VariantDisplay, opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			decoded, err := jpeg.Decode(bytes.NewReader(out.Bytes))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if out.Width != 48 || out.Height != 75 || decoded.Bounds().Size() != image.Pt(48, 75) {
+				t.Fatalf("processed dimensions = %dx%d, JPEG = %v; want ratio-preserving 48x75", out.Width, out.Height, decoded.Bounds())
+			}
+			for point, want := range map[image.Point]color.NRGBA{
+				{24, 37}: tc.wantCenter,
+				{2, 2}:   tc.wantCorner,
+			} {
+				got := color.NRGBAModel.Convert(decoded.At(point.X, point.Y)).(color.NRGBA)
+				// JPEG encoding can shift an otherwise uniform color slightly.
+				for _, pair := range [][2]uint8{{got.R, want.R}, {got.G, want.G}, {got.B, want.B}} {
+					if delta := int(pair[0]) - int(pair[1]); delta < -3 || delta > 3 {
+						t.Fatalf("pixel at %v = %v, want approximately %v", point, got, want)
+					}
+				}
+			}
+		})
 	}
 }

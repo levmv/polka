@@ -3,7 +3,6 @@ import {
     applyCoverURL as apiApplyCoverURL,
     uploadCover as apiUploadCover,
     generateCoverPreview,
-    searchCoverImages,
 } from '../api';
 import { parseAuthorList } from '../authors';
 import { coverImgHtml } from '../cover';
@@ -12,7 +11,8 @@ import { errorMessage } from '../errors';
 import { icon } from '../icons';
 import { openModal } from '../modal';
 import { showToast } from '../toast';
-import type { Book, BookUpdate, CoverSearchResult } from '../types';
+import type { Book, BookUpdate } from '../types';
+import { openCoverSearchDialog } from './book-edit-cover-search';
 
 export type PendingCoverDraft =
     | {
@@ -75,17 +75,11 @@ export function createCoverDraftController(opts: {
 }): CoverDraftController {
     let pendingCover: PendingCoverDraft | null = null;
     let coverChooser: ReturnType<typeof openModal> | null = null;
-    let coverSearch: ReturnType<typeof openModal> | null = null;
+    let coverSearch: ReturnType<typeof openCoverSearchDialog> | null = null;
     let generatingCover = false;
     let generatedCoverSeed = 0;
     let generatedVariants: GeneratedCoverVariantPreview[] = [];
     let showSavedReference = false;
-    let coverSearchResults: CoverSearchResult[] = [];
-    let coverSearchLoading = false;
-    let coverSearchSearched = false;
-    let coverSearchTitle = '';
-    let coverSearchAuthor = '';
-    let coverSearchAbort: AbortController | null = null;
 
     const coverChooserBtn = document.getElementById(
         `btn-edit-cover-chooser-${opts.uiID}`,
@@ -353,143 +347,29 @@ export function createCoverDraftController(opts: {
         });
     }
 
-    const refreshCoverSearch = () => {
-        const searchRoot = coverSearch?.root;
-        if (!searchRoot || !coverSearch?.modal.isOpen()) return;
-        const body = searchRoot.querySelector<HTMLElement>('.modal-body');
-        if (!body) return;
-        body.innerHTML = renderCoverSearchModalBody({
-            uiID: opts.uiID,
-            title: coverSearchTitle,
-            author: coverSearchAuthor,
-            results: coverSearchResults,
-            loading: coverSearchLoading,
-            searched: coverSearchSearched,
-        });
-        wireCoverSearchActions();
-    };
-
     const openCoverSearch = () => {
-        if (opts.isBusy() || generatingCover) return;
-        if (coverSearch?.modal.isOpen()) {
-            refreshCoverSearch();
-            return;
-        }
+        if (opts.isBusy() || generatingCover || coverSearch?.isOpen()) return;
         const draft = opts.draft();
-        coverSearchTitle = draft.title.trim();
-        coverSearchAuthor = parseAuthorList(draft.authors || '')[0] || '';
-        coverSearchResults = [];
-        const autoSearch = coverSearchTitle !== '';
-        coverSearchLoading = autoSearch;
-        coverSearchSearched = autoSearch;
-        coverSearch = openModal({
-            title: 'Find cover online',
-            body: renderCoverSearchModalBody({
-                uiID: opts.uiID,
-                title: coverSearchTitle,
-                author: coverSearchAuthor,
-                results: coverSearchResults,
-                loading: coverSearchLoading,
-                searched: coverSearchSearched,
-            }),
-            modalClass: 'cover-search-modal',
-            bodyClass: 'cover-search-body',
+        coverSearch = openCoverSearchDialog({
+            bookID: currentBook().id,
+            title: draft.title.trim(),
+            author: parseAuthorList(draft.authors || '')[0] || '',
+            isBusy: opts.isBusy,
+            onChoose: (result) => {
+                setPendingCover({
+                    kind: 'search',
+                    token: result.token,
+                    previewUrl: result.preview_url,
+                    sourceName: result.source || 'web',
+                    source: 'search',
+                });
+                notifyChange();
+            },
             onClose: () => {
-                coverSearchAbort?.abort();
-                coverSearchAbort = null;
                 coverSearch = null;
-                coverSearchLoading = false;
             },
         });
-        wireCoverSearchActions();
-        const focusTarget =
-            coverSearch.root.querySelector<HTMLInputElement>(`#cover-search-title-${opts.uiID}`) ||
-            undefined;
-        coverSearch.modal.open(focusTarget);
-        if (autoSearch) {
-            const abort = new AbortController();
-            coverSearchAbort = abort;
-            void loadCoverSearchResults(coverSearchTitle, coverSearchAuthor, abort);
-        }
     };
-
-    async function loadCoverSearchResults(title: string, author: string, abort: AbortController) {
-        try {
-            const results = await searchCoverImages(currentBook().id, title, author, abort.signal);
-            if (abort.signal.aborted || opts.isClosed()) return;
-            coverSearchResults = results;
-        } catch (err) {
-            if (!abort.signal.aborted) {
-                coverSearchSearched = false;
-                showToast(`Cover search failed: ${errorMessage(err)}`, { type: 'error' });
-            }
-        } finally {
-            if (coverSearchAbort === abort) {
-                coverSearchAbort = null;
-            }
-            if (!abort.signal.aborted) {
-                coverSearchLoading = false;
-                refreshCoverSearch();
-            }
-        }
-    }
-
-    function performCoverSearch() {
-        if (coverSearchLoading || opts.isBusy()) return;
-        const searchRoot = coverSearch?.root;
-        if (!searchRoot) return;
-        const titleInput = searchRoot.querySelector<HTMLInputElement>(
-            `#cover-search-title-${opts.uiID}`,
-        );
-        const authorInput = searchRoot.querySelector<HTMLInputElement>(
-            `#cover-search-author-${opts.uiID}`,
-        );
-        coverSearchTitle = titleInput?.value.trim() || '';
-        coverSearchAuthor = authorInput?.value.trim() || '';
-        if (!coverSearchTitle) {
-            showToast('Title is required to search for a cover.', { type: 'error' });
-            titleInput?.focus();
-            return;
-        }
-
-        coverSearchAbort?.abort();
-        const abort = new AbortController();
-        coverSearchAbort = abort;
-        coverSearchLoading = true;
-        coverSearchSearched = true;
-        coverSearchResults = [];
-        refreshCoverSearch();
-        void loadCoverSearchResults(coverSearchTitle, coverSearchAuthor, abort);
-    }
-
-    function wireCoverSearchActions() {
-        const searchRoot = coverSearch?.root;
-        if (!searchRoot) return;
-        const form = searchRoot.querySelector<HTMLFormElement>(`#cover-search-form-${opts.uiID}`);
-        form?.addEventListener('submit', (event) => {
-            event.preventDefault();
-            performCoverSearch();
-        });
-        searchRoot
-            .querySelectorAll<HTMLButtonElement>('[data-cover-search-token]')
-            .forEach((btn) => {
-                btn.addEventListener('click', () => {
-                    if (opts.isBusy() || coverSearchLoading) return;
-                    const token = btn.dataset.coverSearchToken || '';
-                    const result = coverSearchResults.find((item) => item.token === token);
-                    if (!result) return;
-                    setPendingCover({
-                        kind: 'search',
-                        token: result.token,
-                        previewUrl: result.preview_url,
-                        sourceName: result.source || 'web',
-                        source: 'search',
-                    });
-                    notifyChange();
-                    coverSearch?.modal.close();
-                });
-            });
-    }
 
     uploadInput?.addEventListener('change', (e: Event) => {
         const input = e.target as HTMLInputElement;
@@ -568,10 +448,8 @@ export function createCoverDraftController(opts: {
         destroy: () => {
             coverChooser?.modal.close();
             coverChooser = null;
-            coverSearch?.modal.close();
+            coverSearch?.close();
             coverSearch = null;
-            coverSearchAbort?.abort();
-            coverSearchAbort = null;
             clearPendingCover();
             clearGeneratedVariants();
             showSavedReference = false;
@@ -700,58 +578,6 @@ function renderGeneratedVariantGrid(
                     .join('')}
             </div>
         </div>
-    `;
-}
-
-function renderCoverSearchModalBody(state: {
-    uiID: string;
-    title: string;
-    author: string;
-    results: CoverSearchResult[];
-    loading: boolean;
-    searched: boolean;
-}): string {
-    return `
-        <div class="cover-search">
-            <form id="cover-search-form-${state.uiID}" class="cover-search-form">
-                <div class="cover-search-fields">
-                    <label class="cover-search-field">
-                        <span class="form-label">Title</span>
-                        <input type="text" id="cover-search-title-${state.uiID}" class="form-input" value="${escapeHtml(state.title)}" autocomplete="off">
-                    </label>
-                    <label class="cover-search-field">
-                        <span class="form-label">Author</span>
-                        <input type="text" id="cover-search-author-${state.uiID}" class="form-input" value="${escapeHtml(state.author)}" autocomplete="off">
-                    </label>
-                </div>
-                <button type="submit" class="cover-search-submit" ${state.loading ? 'disabled aria-busy="true"' : ''}>
-                    ${state.loading ? '<span class="local-spinner" aria-hidden="true"></span>' : icon('search', 16)}
-                    Search
-                </button>
-            </form>
-            <div class="cover-search-status" role="status" aria-live="polite">
-                ${state.loading ? 'Searching...' : state.searched && state.results.length === 0 ? 'No covers found.' : ''}
-            </div>
-            <div class="cover-search-grid">
-                ${state.results.map(renderCoverSearchResult).join('')}
-            </div>
-        </div>
-    `;
-}
-
-function renderCoverSearchResult(result: CoverSearchResult, index: number): string {
-    const source = result.source || 'Web';
-    const resolution =
-        result.width > 0 && result.height > 0 ? `${result.width} x ${result.height}` : '';
-    const label = `Use cover ${index + 1} from ${source}`;
-    return `
-        <button type="button" class="cover-search-result" data-cover-search-token="${escapeHtml(result.token)}" aria-label="${escapeHtml(label)}">
-            <img src="${escapeHtml(result.preview_url)}" alt="" class="cover-search-image">
-            <span class="cover-search-result-meta">
-                <span class="cover-search-source">${escapeHtml(source)}</span>
-                ${resolution ? `<span class="cover-search-size">${escapeHtml(resolution)}</span>` : ''}
-            </span>
-        </button>
     `;
 }
 

@@ -25,17 +25,22 @@ func RemoveInvalidXML10Chars(raw []byte) []byte {
 // RemoveInvalidXML10ControlBytes removes the forbidden ASCII control bytes
 // while preserving every non-ASCII byte. It is safe to run before an XML
 // document's declared single-byte encoding has been decoded.
+// A replacement buffer is allocated only when a byte must be removed.
 func RemoveInvalidXML10ControlBytes(raw []byte) ([]byte, bool) {
-	removed := false
-	out := make([]byte, 0, len(raw))
-	for _, b := range raw {
+	var out []byte
+	for i, b := range raw {
 		if b < 0x20 && b != '\t' && b != '\n' && b != '\r' {
-			removed = true
+			if out == nil {
+				out = make([]byte, i, len(raw))
+				copy(out, raw[:i])
+			}
 			continue
 		}
-		out = append(out, b)
+		if out != nil {
+			out = append(out, b)
+		}
 	}
-	if !removed {
+	if out == nil {
 		return raw, false
 	}
 	return out, true

@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"slices"
 
 	"github.com/levmv/polka/internal/covers"
 	"github.com/levmv/polka/internal/db"
@@ -78,22 +79,30 @@ func (s *Server) handleAPICleanup(w http.ResponseWriter, r *http.Request) {
 	cleanup.NoDescription.Count = counts.NoDescription
 
 	cleanup.PossibleDuplicates.Count = dupCount
-	var apiDupGroups []DuplicateGroupAPI
-	for _, g := range dupGroups {
-		books, err := s.bookSummaryDTOs(r.Context(), g.Books)
+	var rows []db.BookSummaryRow
+	for _, group := range dupGroups {
+		rows = append(rows, group.Books...)
+	}
+	// Enrich groups together, bounding SQL parameter lists for large groups.
+	books := make([]BookSummaryDTO, 0, len(rows))
+	for chunk := range slices.Chunk(rows, 500) {
+		batch, err := s.bookSummaryDTOs(r.Context(), chunk)
 		if err != nil {
 			serverError(w, r, err)
 			return
 		}
-		apiDupGroups = append(apiDupGroups, DuplicateGroupAPI{
-			Reason: g.Reason,
-			Key:    g.Key,
-			Books:  books,
-		})
+		books = append(books, batch...)
 	}
-	// Always initialize so it serializes as an array even if empty
-	if apiDupGroups == nil {
-		apiDupGroups = []DuplicateGroupAPI{}
+
+	// bookSummaryDTOs preserves row order, so group boundaries stay unchanged.
+	apiDupGroups := make([]DuplicateGroupAPI, 0, len(dupGroups))
+	for _, group := range dupGroups {
+		apiDupGroups = append(apiDupGroups, DuplicateGroupAPI{
+			Reason: group.Reason,
+			Key:    group.Key,
+			Books:  books[:len(group.Books)],
+		})
+		books = books[len(group.Books):]
 	}
 	cleanup.PossibleDuplicates.Groups = apiDupGroups
 
