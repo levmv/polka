@@ -33,6 +33,7 @@ const fb2WritebackSample = `<?xml version="1.0" encoding="utf-8"?>
   <publish-info>
     <publisher>Old Publisher</publisher>
   </publish-info>
+  <custom-info info-type="review">Keep</custom-info>
 </description>
 <body><section><p>Hello.</p></section></body>
 <binary id="cover.jpg" content-type="image/jpeg">/9j/AAA=</binary>
@@ -50,6 +51,7 @@ func newMetaSnapshot() bookmeta.Metadata {
 		Description: "A grand tale.",
 		Date:        "2021",
 		Identifier:  "isbn:9780306406157",
+		PageCount:   123,
 	}
 }
 
@@ -73,7 +75,20 @@ func extractFB2(t *testing.T, raw []byte) *Metadata {
 
 func TestRewriteFB2MetadataRoundTrip(t *testing.T) {
 	meta := newMetaSnapshot()
-	out := rewriteFB2(t, []byte(fb2WritebackSample), meta)
+	foreign := `<custom-info info-type="bookorbit:page_count">9</custom-info>
+  <custom-info info-type="calibre:user_metadata:#pages">20</custom-info>`
+	source := bytes.Replace([]byte(fb2WritebackSample), []byte("</description>"), []byte(foreign+"</description>"), 1)
+	if got := extractFB2(t, source).PageCount; got != 20 {
+		t.Fatalf("fallback count = %d; want Calibre count 20", got)
+	}
+	source = bytes.Replace(source, []byte("</description>"), []byte(`<custom-info info-type="schema:numberOfPages">55</custom-info></description>`), 1)
+	if got := extractFB2(t, source).PageCount; got != 55 {
+		t.Fatalf("declared count = %d; want canonical count 55", got)
+	}
+	out := rewriteFB2(t, source, meta)
+	if !bytes.Contains(out, []byte(foreign)) {
+		t.Fatalf("writeback changed foreign counts: %s", out)
+	}
 
 	got := extractFB2(t, out)
 	if got.Title != "New Title" {
@@ -103,6 +118,13 @@ func TestRewriteFB2MetadataRoundTrip(t *testing.T) {
 	if !strings.Contains(got.Identifier, "9780306406157") {
 		t.Errorf("identifier = %q; want it to contain the ISBN", got.Identifier)
 	}
+	if got.PageCount != meta.PageCount {
+		t.Errorf("page count = %d; want %d", got.PageCount, meta.PageCount)
+	}
+	meta.PageCount = 0
+	if unknown := extractFB2(t, rewriteFB2(t, out, meta)); unknown.PageCount != got.PageCount {
+		t.Fatal("unknown count erased the FB2 declaration")
+	}
 }
 
 func TestRewriteFB2MetadataPreservesContent(t *testing.T) {
@@ -115,6 +137,7 @@ func TestRewriteFB2MetadataPreservesContent(t *testing.T) {
 		"<program-used>SomeTool</program-used>",                              // document-info preserved
 		"<id>abc-123</id>",                                                   // document-info preserved
 		`l:href="#cover.jpg"`,                                                // cover reference preserved
+		`<custom-info info-type="review">Keep</custom-info>`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("output missing preserved fragment %q\n---\n%s", want, text)

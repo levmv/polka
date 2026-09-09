@@ -207,7 +207,7 @@ func writeAsset(ctx context.Context, database *db.DB, root storage.Root, assetID
 		return fail(ctx, database, result, err)
 	}
 
-	snapshot, err := db.LoadMetadataWritebackSnapshot(database.Read(ctx), row.BookID)
+	snapshot, err := db.LoadMetadataWritebackSnapshot(database.Read(ctx), row.AssetID)
 	if err != nil {
 		return fail(ctx, database, result, fmt.Errorf("load metadata snapshot: %w", err))
 	}

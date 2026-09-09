@@ -170,7 +170,11 @@ func TestListCBZPagesUsesCanonicalPageOrder(t *testing.T) {
 }
 
 func TestCBZWebPPageAndCover(t *testing.T) {
-	data := writeTestZip(t, map[string][]byte{"page001.webp": tinyWebP})
+	data := writeTestZip(t, map[string][]byte{"page001.bin": tinyWebP})
+	count, err := CountPages(t.Context(), bytes.NewReader(data), int64(len(data)), FormatCBZ)
+	if err != nil || count != 1 {
+		t.Fatalf("page count = %d, %v; want one misnamed WebP page", count, err)
+	}
 	pages, err := ListCBZPages(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
 		t.Fatalf("ListCBZPages: %v", err)

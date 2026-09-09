@@ -1,8 +1,10 @@
 # Tailored PDFium WebAssembly module
 
-Polka embeds `pdfium-cover.wasm` for its PDF cover fallback. The file is a
-deterministic post-link reduction of the module distributed by go-pdfium, not
-an independent PDFium source build.
+Polka embeds `pdfium-cover.wasm` for PDF cover fallback and page counting when
+the bounded structural reader in `internal/format` cannot resolve the count.
+WASM cover rendering also returns the count from the same opened document.
+The file is a deterministic post-link reduction of the module distributed by
+go-pdfium, not an independent PDFium source build.
 
 [`pdfium-wasm.json`](pdfium-wasm.json) is the source of truth for the upstream
 version and hashes, retained imports and exports, Binaryen version, and
@@ -10,8 +12,8 @@ expected output.
 
 ## Verify and regenerate
 
-The normal build verifies the checked-in artifact without downloading or
-regenerating it:
+`make test` verifies the checked-in artifact without downloading or regenerating
+it. To run that check on its own:
 
 ```sh
 make pdfium-wasm-verify
@@ -31,9 +33,10 @@ PDFium source and Emscripten invocation are not published beside that file.
 
 ## Capability boundary
 
-The retained exports are limited to opening a seekable PDF, rendering a known
-page, and releasing the associated resources. PDFium's internally reachable
-font, image, color, transparency, and page-content handling remains available.
+The retained exports are limited to opening a seekable PDF, reading its page
+count, rendering a known page, and releasing the associated resources. PDFium's
+internally reachable font, image, color, transparency, and page-content handling
+remains available.
 
 Adding another server-side PDF capability requires an explicit allowlist and
 manifest update; it must not silently restore the full module.

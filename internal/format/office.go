@@ -37,6 +37,9 @@ type odtDocumentMeta struct {
 }
 
 type odtMeta struct {
+	Statistics struct {
+		Pages string `xml:"page-count,attr"`
+	} `xml:"document-statistic"`
 	Title          string           `xml:"title"`
 	Description    string           `xml:"description"`
 	Subject        string           `xml:"subject"`
@@ -145,6 +148,7 @@ func metadataFromODTMeta(raw []byte) *Metadata {
 	}
 	odt := doc.Meta
 	meta := &Metadata{
+		PageCount:   positivePageCount(odt.Statistics.Pages),
 		Title:       cleanXMLText(odt.Title),
 		Description: cleanXMLText(odt.Description),
 		Date:        bookmeta.NormalizeMetadataDate(cleanXMLText(odt.Date)),
@@ -418,6 +422,7 @@ func ExtractRTFMetadata(r io.ReaderAt, size int64) (*Metadata, error) {
 	}
 	meta := &Metadata{
 		Title:       rtfField(info, "title", codepage),
+		PageCount:   rtfDeclaredPageCount(info),
 		Description: rtfField(info, "subject", codepage),
 		Publisher:   publisher,
 		Tags:        rtfTags(rtfField(info, "category", codepage), rtfField(info, "keywords", codepage)),

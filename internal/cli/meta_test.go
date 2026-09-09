@@ -306,9 +306,10 @@ func TestRunMetaJSONIncludesArchivePageCount(t *testing.T) {
 		format    string
 		data      []byte
 		pageCount func(*metaFormatDetail) int
+		wantPages int
 	}{
-		{format: "cbr", data: testfixture.CBR5(), pageCount: func(d *metaFormatDetail) int { return d.CBRPageCount }},
-		{format: "cb7", data: testfixture.CB7(), pageCount: func(d *metaFormatDetail) int { return d.CB7PageCount }},
+		{format: "cbr", data: testfixture.CBR5(), pageCount: func(d *metaFormatDetail) int { return d.CBRPageCount }, wantPages: 2},
+		{format: "cb7", data: testfixture.CB7(), pageCount: func(d *metaFormatDetail) int { return d.CB7PageCount }, wantPages: 1},
 	} {
 		t.Run(tt.format, func(t *testing.T) {
 			src := filepath.Join(t.TempDir(), "comic."+tt.format)
@@ -331,8 +332,8 @@ func TestRunMetaJSONIncludesArchivePageCount(t *testing.T) {
 				t.Fatalf("reports len = %d; want 1", len(reports))
 			}
 			report := reports[0]
-			if report.Format != tt.format || report.Details == nil || tt.pageCount(report.Details) != 2 {
-				t.Fatalf("%s report = %+v; want two pages", tt.format, report)
+			if report.Format != tt.format || report.Details == nil || tt.pageCount(report.Details) != tt.wantPages {
+				t.Fatalf("%s report = %+v; want %d pages", tt.format, report, tt.wantPages)
 			}
 			if len(report.ConversionTargets) != 1 || report.ConversionTargets[0].Target != "cbz" {
 				t.Fatalf("%s conversion targets = %+v; want CBZ", tt.format, report.ConversionTargets)

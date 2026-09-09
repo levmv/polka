@@ -17,33 +17,37 @@ import (
 	"github.com/levmv/polka/internal/fsprofile"
 	"github.com/levmv/polka/internal/ingest"
 	"github.com/levmv/polka/internal/metalookup"
+	"github.com/levmv/polka/internal/pdfcover"
 	"github.com/levmv/polka/internal/storage"
 	"github.com/levmv/polka/internal/workslot"
 	"github.com/levmv/polka/internal/writeback"
 )
 
 type Server struct {
-	db                *db.DB
-	dataDir           string
-	storageRoot       storage.Root
-	ingester          *ingest.Service
-	ingestCancel      context.CancelFunc
-	ingestDone        <-chan struct{}
-	ingestMu          sync.Mutex
-	writebacker       *writeback.Service
-	storageQueue      *workslot.Queue
-	background        *taskGroup
-	deliveryWake      chan struct{}
-	deliveryTransport deliveryTransport
-	sessions          *sessionStore
-	metadata          metalookup.Registry
-	coverClient       *http.Client
-	coverSearchClient *http.Client
-	publicImageClient *http.Client
-	passwordAuthOnce  sync.Once
-	passwordAuthSlots chan struct{}
-	conversionOnce    sync.Once
-	conversionSlots   chan struct{}
+	db                 *db.DB
+	dataDir            string
+	storageRoot        storage.Root
+	ingester           *ingest.Service
+	ingestCancel       context.CancelFunc
+	ingestDone         <-chan struct{}
+	ingestMu           sync.Mutex
+	writebacker        *writeback.Service
+	storageQueue       *workslot.Queue
+	background         *taskGroup
+	requestBaseContext context.Context
+	deliveryWake       chan struct{}
+	deliveryTransport  deliveryTransport
+	sessions           *sessionStore
+	metadata           metalookup.Registry
+	coverClient        *http.Client
+	coverSearchClient  *http.Client
+	publicImageClient  *http.Client
+	passwordAuthOnce   sync.Once
+	passwordAuthSlots  chan struct{}
+	conversionOnce     sync.Once
+	conversionSlots    chan struct{}
+	pageCountRenderer  *pdfcover.Renderer
+	pageCountCooldown  map[int64]pageCountRetry // Access requires the storage slot.
 	// Per-process HMAC key for ephemeral cover-search preview/apply tokens.
 	// A restart invalidates outstanding search result tokens by design.
 	coverSearchKey []byte
@@ -167,6 +171,8 @@ func Serve(ctx context.Context, cfg Config) error {
 	if err != nil {
 		return err
 	}
+	s.pageCountRenderer = pdfcover.NewRenderer()
+	defer s.pageCountRenderer.Close()
 	if err := s.configureIngest(ingestConfig); err != nil {
 		return err
 	}
@@ -197,6 +203,7 @@ func Serve(ctx context.Context, cfg Config) error {
 		return err
 	}
 	requests := newTaskGroup(context.Background())
+	s.requestBaseContext = requests.Context()
 	handler := requests.Wrap(s.authMiddleware(mux))
 
 	// A bare `go build` embeds only static/placeholder.txt (esbuild never ran),
@@ -478,6 +485,7 @@ func (s *Server) routes() (*http.ServeMux, error) {
 	s.route(mux, "GET /api/deliveries/{id}", db.RoleReader, s.handleAPIDelivery)
 	s.route(mux, "GET /api/books/{id}/sequence", db.RoleReader, s.handleAPIBookSequence)
 	s.route(mux, "GET /api/books/{id}", db.RoleReader, s.handleAPIBookDetail)
+	s.route(mux, "POST /api/books/{id}/page-count", db.RoleReader, s.handleAPIBookPageCount)
 	s.route(mux, "PUT /api/books/{id}/reading-status", db.RoleReader, s.handleAPIReadingStatusSave)
 	s.route(mux, "POST /api/books/{id}/reading-status/undo", db.RoleReader, s.handleAPIReadingStatusUndo)
 	s.route(mux, "GET /api/books/{id}/metadata-candidates", db.RoleMember, s.handleAPIMetadataCandidates)

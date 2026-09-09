@@ -3,9 +3,9 @@
 // compiled to WebAssembly and run via wazero. The fallback is pure Go, so Polka
 // retains a zero-configuration, no-CGO renderer and its single static binary.
 //
-// PDFium is heavy (the tailored embedded Wasm is about 4 MiB and is compiled
-// once per process), so rendering is an explicit/batch step — wired into import
-// and a backfill command, never into a lazy /covers read.
+// PDFium also supplies page counts when internal/format cannot resolve them.
+// Cover rendering runs during import or explicit maintenance; serving an
+// existing cover never starts a renderer.
 package pdfcover
 
 import (
@@ -19,6 +19,7 @@ import (
 
 	"github.com/klippa-app/go-pdfium"
 	"github.com/klippa-app/go-pdfium/requests"
+	"github.com/klippa-app/go-pdfium/responses"
 	"github.com/klippa-app/go-pdfium/webassembly"
 	"github.com/tetratelabs/wazero"
 
@@ -30,24 +31,18 @@ import (
 const DefaultDPI = 150
 
 const (
-	defaultRenderTimeout = 30 * time.Second
-	workerStopTimeout    = 5 * time.Second
+	defaultOperationTimeout = 30 * time.Second
+	workerStopTimeout       = 5 * time.Second
 
-	// Rendered cover bytes are immediately decoded and normalized by covers,
-	// but bound the provider output before it reaches that step. This matches
-	// the HTTP cover-upload limit and is ample for a 150-DPI JPEG cover.
+	// Match the cover-upload limit before decoding the provider's output.
 	maxRenderedCoverBytes = 10 << 20
 
-	// PDFium's embedded module declares a 2 GiB maximum. First-page cover
-	// rendering does not need anything close to that: a 128 MiB linear-memory
-	// ceiling leaves ample room for the corpus's complex scan pages while making
-	// a pathological page a recoverable missing-cover warning instead of an
-	// unbounded server allocation.
-	pdfiumMemoryLimitPages = 128 << 4 // 64 KiB pages per MiB.
+	// Limit an expensive document to 128 MiB of WASM linear memory;
+	// the module's declared maximum is 2 GiB.
+	pdfiumMemoryLimitPages = 128 << 4 // 16 WebAssembly memory pages per MiB.
 
 	// go-pdfium's WebAssembly file callback currently receives a uint32 offset.
-	// Larger books still import and remain downloadable; only their best-effort
-	// rendered cover is skipped.
+	// Larger books still import and remain downloadable; WASM operations are skipped.
 	maxSeekablePDFBytes int64 = 1<<32 - 1
 )
 
@@ -66,22 +61,21 @@ type BackendInfo struct {
 }
 
 type rendererConfig struct {
-	backend       BackendInfo
-	command       externalCommand
-	poolFactory   func(webassembly.Config) (pdfium.Pool, error)
-	renderTimeout time.Duration
+	backend          BackendInfo
+	command          externalCommand
+	poolFactory      func(webassembly.Config) (pdfium.Pool, error)
+	operationTimeout time.Duration
 }
 
-// Renderer owns the selected cover provider. The choice is made once: a
-// usable pdftoppm is retained by absolute path, otherwise the WASM module is
-// compiled lazily. A per-document Poppler failure is returned to the importer;
-// it is not retried through a second engine. A Renderer is safe for sequential
-// use and should be shared by a batch caller, then closed.
+// Renderer retains one cover backend; document failures do not switch engines.
+// CountPages always uses PDFium, including when covers use Poppler. The WASM
+// module compiles on the first PDFium operation. Share a Renderer across
+// sequential operations and close it after the batch.
 type Renderer struct {
-	backend       BackendInfo
-	command       externalCommand
-	poolFactory   func(webassembly.Config) (pdfium.Pool, error)
-	renderTimeout time.Duration
+	backend          BackendInfo
+	command          externalCommand
+	poolFactory      func(webassembly.Config) (pdfium.Pool, error)
+	operationTimeout time.Duration
 
 	once    sync.Once
 	pool    pdfium.Pool
@@ -89,9 +83,9 @@ type Renderer struct {
 }
 
 var (
-	defaultBackendOnce sync.Once
-	defaultBackendInfo BackendInfo
-	errRenderTimeout   = errors.New("PDF cover render timeout")
+	defaultBackendOnce  sync.Once
+	defaultBackendInfo  BackendInfo
+	errOperationTimeout = errors.New("PDF operation timeout")
 )
 
 func NewRenderer() *Renderer {
@@ -119,21 +113,21 @@ func newRenderer(config rendererConfig) *Renderer {
 	if config.poolFactory == nil {
 		config.poolFactory = webassembly.InitWithWASM
 	}
-	if config.renderTimeout <= 0 {
-		config.renderTimeout = defaultRenderTimeout
+	if config.operationTimeout <= 0 {
+		config.operationTimeout = defaultOperationTimeout
 	}
 
 	return &Renderer{
-		backend:       config.backend,
-		command:       config.command,
-		poolFactory:   config.poolFactory,
-		renderTimeout: config.renderTimeout,
+		backend:          config.backend,
+		command:          config.command,
+		poolFactory:      config.poolFactory,
+		operationTimeout: config.operationTimeout,
 	}
 }
 
 func (r *Renderer) BackendInfo() BackendInfo { return r.backend }
 
-func (r *Renderer) ensure() error {
+func (r *Renderer) ensureWASM() error {
 	r.once.Do(func() {
 		pool, err := r.poolFactory(webassembly.Config{
 			MinIdle:       1,
@@ -153,86 +147,151 @@ func (r *Renderer) ensure() error {
 }
 
 // RenderFirstPageJPEG renders page 1 of a seekable PDF to JPEG bytes at the
-// given DPI (DefaultDPI when dpi <= 0). Both providers stream/seek over the
-// source rather than copying the complete PDF into the Go heap.
-func (r *Renderer) RenderFirstPageJPEG(ctx context.Context, pdf io.ReadSeeker, size int64, dpi int) ([]byte, error) {
+// given DPI (DefaultDPI when dpi <= 0). The WASM provider also returns the page
+// count from the same document, even if rendering subsequently fails. Poppler
+// returns zero for the count. Both providers stream/seek over the source.
+func (r *Renderer) RenderFirstPageJPEG(ctx context.Context, pdf io.ReadSeeker, size int64, dpi int) ([]byte, int, error) {
 	if pdf == nil || size <= 0 {
-		return nil, errors.New("empty pdf")
+		return nil, 0, errors.New("empty pdf")
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if dpi <= 0 {
 		dpi = DefaultDPI
 	}
-	renderCtx, cancel := context.WithTimeoutCause(ctx, r.renderTimeout, errRenderTimeout)
+	renderCtx, cancel := context.WithTimeoutCause(ctx, r.operationTimeout, errOperationTimeout)
 	defer cancel()
 	if _, err := pdf.Seek(0, io.SeekStart); err != nil {
-		return nil, fmt.Errorf("seek pdf: %w", err)
+		return nil, 0, fmt.Errorf("seek pdf: %w", err)
 	}
 
 	var (
-		rendered []byte
-		err      error
+		result pdfResult
+		err    error
 	)
 	switch r.backend.Backend {
 	case BackendPoppler:
-		rendered, err = r.renderPoppler(renderCtx, pdf, size, dpi)
+		result.jpeg, err = r.renderPoppler(renderCtx, pdf, size, dpi)
 	case BackendPDFiumWASM:
 		if size > maxSeekablePDFBytes {
-			return nil, fmt.Errorf("pdf is too large for the seekable WASM renderer (%d bytes)", size)
+			return nil, 0, fmt.Errorf("pdf is too large for the seekable WASM renderer (%d bytes)", size)
 		}
-		rendered, err = r.renderWASM(renderCtx, pdf, size, dpi)
+		result, err = r.renderWASM(renderCtx, pdf, size, dpi)
 	default:
-		return nil, fmt.Errorf("unknown PDF cover backend %q", r.backend.Backend)
+		return nil, 0, fmt.Errorf("unknown PDF cover backend %q", r.backend.Backend)
 	}
 	if err != nil {
-		return nil, err
+		return nil, result.pages, err
 	}
-	if len(rendered) > maxRenderedCoverBytes {
-		return nil, fmt.Errorf("rendered PDF cover exceeds %d bytes", maxRenderedCoverBytes)
+	if len(result.jpeg) > maxRenderedCoverBytes {
+		return nil, result.pages, fmt.Errorf("rendered PDF cover exceeds %d bytes", maxRenderedCoverBytes)
 	}
-	if _, err := covers.Inspect(rendered); err != nil {
-		return nil, fmt.Errorf("%s returned invalid JPEG: %w", r.backend.Backend, err)
+	if _, err := covers.Inspect(result.jpeg); err != nil {
+		return nil, result.pages, fmt.Errorf("%s returned invalid JPEG: %w", r.backend.Backend, err)
 	}
-	return rendered, nil
+	return result.jpeg, result.pages, nil
 }
 
-func (r *Renderer) renderWASM(ctx context.Context, pdf io.ReadSeeker, size int64, dpi int) ([]byte, error) {
-	if err := r.ensure(); err != nil {
-		return nil, err
+func (r *Renderer) renderWASM(ctx context.Context, pdf io.ReadSeeker, size int64, dpi int) (pdfResult, error) {
+	return r.withWASMInstance(ctx, "render PDF page 1", func(instance pdfOperations) (pdfResult, error) {
+		return renderWASMInstance(instance, pdf, size, dpi)
+	})
+}
+
+// CountPages is the fallback for counts unavailable to internal/format.
+// It uses PDFium even when covers use Poppler.
+func (r *Renderer) CountPages(ctx context.Context, pdf io.ReadSeeker, size int64) (int, error) {
+	if pdf == nil || size <= 0 || size > maxSeekablePDFBytes {
+		return 0, errors.New("PDF size is outside the seekable parser limit")
+	}
+	ctx, cancel := context.WithTimeoutCause(ctx, r.operationTimeout, errOperationTimeout)
+	defer cancel()
+	result, err := r.withWASMInstance(ctx, "count PDF pages", func(instance pdfOperations) (pdfResult, error) {
+		doc, err := instance.OpenDocument(&requests.OpenDocument{FileReader: pdf, FileReaderSize: size})
+		if err != nil {
+			return pdfResult{}, err
+		}
+		count, err := instance.FPDF_GetPageCount(&requests.FPDF_GetPageCount{Document: doc.Document})
+		if err != nil {
+			return pdfResult{}, err
+		}
+		return pdfResult{pages: count.PageCount}, nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return result.pages, nil
+}
+
+type pdfResult struct {
+	jpeg  []byte
+	pages int
+}
+
+type pdfOperations interface {
+	OpenDocument(*requests.OpenDocument) (*responses.OpenDocument, error)
+	FPDF_GetPageCount(*requests.FPDF_GetPageCount) (*responses.FPDF_GetPageCount, error)
+	RenderToFile(*requests.RenderToFile) (*responses.RenderToFile, error)
+}
+
+func (r *Renderer) withWASMInstance(ctx context.Context, action string, run func(pdfOperations) (pdfResult, error)) (pdfResult, error) {
+	if err := ctx.Err(); err != nil {
+		return pdfResult{}, err
+	}
+	if err := r.ensureWASM(); err != nil {
+		return pdfResult{}, err
 	}
 
 	instance, err := r.pool.GetInstanceWithContext(ctx)
 	if err != nil {
 		if ctx.Err() != nil {
-			return nil, renderContextError(ctx, "render PDF page 1", r.renderTimeout)
+			return pdfResult{}, operationContextError(ctx, action, r.operationTimeout)
 		}
-		return nil, fmt.Errorf("get pdfium instance: %w", err)
+		return pdfResult{}, fmt.Errorf("get pdfium instance: %w", err)
+	}
+	// go-pdfium's pool wrapper races on its closed flag when Kill interrupts a
+	// call. Capture the WASM implementation before starting; only this owner
+	// touches the wrapper, while operations use the worker that Kill cancels.
+	operations, ok := instance.GetImplementation().(pdfOperations)
+	if !ok {
+		_ = instance.Close()
+		return pdfResult{}, errors.New("unexpected PDFium WASM implementation")
 	}
 
-	type renderResult struct {
-		bytes []byte
-		err   error
+	type callResult struct {
+		output pdfResult
+		err    error
 	}
-	done := make(chan renderResult, 1)
+	done := make(chan callResult, 1)
 	go func() {
-		rendered, renderErr := renderWASMInstance(instance, pdf, size, dpi)
-		done <- renderResult{bytes: rendered, err: renderErr}
+		var call callResult
+		defer func() {
+			// Keep the pool wrapper's panic-to-error boundary for malformed PDFs.
+			if recovered := recover(); recovered != nil {
+				call.err = fmt.Errorf("%s: %v", action, recovered)
+			}
+			done <- call
+		}()
+		call.output, call.err = run(operations)
 	}()
 
 	select {
-	case result := <-done:
+	case call := <-done:
+		// go-pdfium closes every document via FPDF_CloseDocument here. With
+		// ReuseWorkers left false, Close also discards the worker's linear memory;
+		// the pool retains the compiled module for the next operation.
 		closeErr := instance.Close()
-		if result.err != nil {
-			return nil, result.err
+		if call.err != nil {
+			return call.output, call.err
 		}
 		if closeErr != nil {
-			return nil, fmt.Errorf("close pdfium instance: %w", closeErr)
+			return call.output, fmt.Errorf("close pdfium instance: %w", closeErr)
 		}
-		return result.bytes, nil
+		return call.output, nil
 	case <-ctx.Done():
-		contextErr := renderContextError(ctx, "render PDF page 1", r.renderTimeout)
+		// Interrupt WASM, then wait for the call to release the source reader.
+		contextErr := operationContextError(ctx, action, r.operationTimeout)
 		killDone := make(chan error, 1)
 		go func() {
 			killDone <- instance.Kill()
@@ -243,32 +302,36 @@ func (r *Renderer) renderWASM(ctx context.Context, pdf io.ReadSeeker, size int64
 			select {
 			case <-done:
 			case <-time.After(workerStopTimeout):
-				return nil, fmt.Errorf("%w; WASM call did not stop", contextErr)
+				return pdfResult{}, fmt.Errorf("%w; WASM call did not stop", contextErr)
 			}
 			if killErr != nil {
-				return nil, fmt.Errorf("%w; reset worker: %w", contextErr, killErr)
+				return pdfResult{}, fmt.Errorf("%w; reset worker: %w", contextErr, killErr)
 			}
-			return nil, contextErr
+			return pdfResult{}, contextErr
 		case <-time.After(workerStopTimeout):
-			return nil, fmt.Errorf("%w; could not reset WASM worker", contextErr)
+			return pdfResult{}, fmt.Errorf("%w; could not reset WASM worker", contextErr)
 		}
 	}
 }
 
-func renderContextError(ctx context.Context, action string, timeout time.Duration) error {
-	if errors.Is(context.Cause(ctx), errRenderTimeout) {
+func operationContextError(ctx context.Context, action string, timeout time.Duration) error {
+	if errors.Is(context.Cause(ctx), errOperationTimeout) {
 		return fmt.Errorf("%s timed out after %s: %w", action, timeout, context.DeadlineExceeded)
 	}
 	return fmt.Errorf("%s: %w", action, ctx.Err())
 }
 
-func renderWASMInstance(instance pdfium.Pdfium, pdf io.ReadSeeker, size int64, dpi int) ([]byte, error) {
+func renderWASMInstance(instance pdfOperations, pdf io.ReadSeeker, size int64, dpi int) (pdfResult, error) {
 	doc, err := instance.OpenDocument(&requests.OpenDocument{
 		FileReader:     pdf,
 		FileReaderSize: size,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("open pdf: %w", err)
+		return pdfResult{}, fmt.Errorf("open pdf: %w", err)
+	}
+	result := pdfResult{}
+	if pages, err := instance.FPDF_GetPageCount(&requests.FPDF_GetPageCount{Document: doc.Document}); err == nil {
+		result.pages = pages.PageCount
 	}
 
 	res, err := instance.RenderToFile(&requests.RenderToFile{
@@ -281,16 +344,17 @@ func renderWASMInstance(instance pdfium.Pdfium, pdf io.ReadSeeker, size int64, d
 		OutputQuality: 90,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("render page 1: %w", err)
+		return result, fmt.Errorf("render page 1: %w", err)
 	}
 	if res.ImageBytes == nil {
-		return nil, errors.New("pdfium returned no image bytes")
+		return result, errors.New("pdfium returned no image bytes")
 	}
-	return *res.ImageBytes, nil
+	result.jpeg = *res.ImageBytes
+	return result, nil
 }
 
 // Close releases the pdfium pool. Safe to call when the pool was never
-// initialized (no PDF was ever rendered).
+// initialized (no PDF operation has run).
 func (r *Renderer) Close() error {
 	if r.pool != nil {
 		return r.pool.Close()

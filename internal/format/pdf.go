@@ -1,12 +1,14 @@
 package format
 
 import (
+	"bufio"
 	"bytes"
 	"compress/flate"
 	"compress/zlib"
 	"encoding/binary"
 	"encoding/xml"
 	"io"
+	"iter"
 	"slices"
 	"strconv"
 	"strings"
@@ -16,79 +18,62 @@ import (
 	"github.com/levmv/polka/internal/bookmeta"
 )
 
-// ExtractPDFMetadata performs lightweight fallback extraction of Title and
-// Author from direct PDF metadata bytes. Encrypted Info dictionaries,
-// compressed object streams, and indirect metadata values remain out of scope;
-// those cases should fall back to filename/external metadata rather than
-// pulling in another parser just for PDF metadata.
+// ExtractPDFMetadata reads Title, Author and the native page count.
+// Unsupported or unreadable values remain empty; see ExtractPDFMetadataReader.
 func ExtractPDFMetadata(b []byte) *Metadata {
-	meta := &Metadata{}
-	if !pdfHasEncryptReference(b) {
-		scope := b
-		if info := pdfInfoObject(b); len(info) > 0 {
-			scope = info
-		}
-		pdfFillInfoMetadata(meta, scope)
-	}
-
-	// XMP is a fill-in fallback only: PDFs can carry stale editor/producer
-	// metadata there, while the trailer Info dictionary is the direct book-level
-	// source when present.
-	if xmp := pdfXMPMetadata(b); xmp != nil {
-		if meta.Title == "" {
-			meta.Title = xmp.Title
-		}
-		if len(meta.Authors) == 0 {
-			meta.Authors = xmp.Authors
-		}
-	}
-
-	return meta
+	return ExtractPDFMetadataReader(bytes.NewReader(b), int64(len(b)))
 }
 
-// ExtractPDFMetadataReader performs the same deliberately lightweight metadata
-// extraction as ExtractPDFMetadata without retaining the whole PDF. It scans
-// through bounded windows, then reads only the referenced Info object or XMP
-// packet. This keeps large PDF import memory independent of source size while
-// preserving filename fallback when metadata is absent or outside the narrow
-// supported shapes.
+// ExtractPDFMetadataReader resolves current Info, XMP and Pages objects through
+// ordinary xref tables. If that structure is unavailable, a scan with bounded
+// buffers recovers metadata from uncompressed objects. Page-count fallback to
+// PDFium belongs to the caller.
 func ExtractPDFMetadataReader(r io.ReaderAt, size int64) *Metadata {
 	meta := &Metadata{}
 	if r == nil || size <= 0 {
 		return meta
 	}
+	if structure := openPDFStructure(r, size); structure != nil {
+		meta.PageCount = structure.pageCount()
+		structure.fillMetadata(meta)
+		return meta
+	}
 
 	if !pdfHasEncryptReferenceReader(r, size) {
 		if info := pdfInfoObjectReader(r, size); len(info) > 0 {
-			pdfFillInfoMetadata(meta, info)
+			pdfFillInfoMetadata(meta, func(key string) (string, bool) {
+				return pdfInfoString(info, key)
+			})
 		} else {
-			if title, ok := pdfInfoStringReader(r, size, "Title"); ok {
-				meta.Title = title
-			}
-			if author, ok := pdfInfoStringReader(r, size, "Author"); ok {
-				meta.Authors = append(meta.Authors, bookmeta.AuthorMeta{Name: author})
-			}
+			pdfFillInfoMetadata(meta, func(key string) (string, bool) {
+				return pdfInfoStringReader(r, size, key)
+			})
 		}
 	}
 
 	if meta.Title == "" || len(meta.Authors) == 0 {
-		if xmp := pdfXMPMetadataPacket(pdfXMPPacketReader(r, size)); xmp != nil {
-			if meta.Title == "" {
-				meta.Title = xmp.Title
-			}
-			if len(meta.Authors) == 0 {
-				meta.Authors = xmp.Authors
-			}
-		}
+		pdfFillMissingMetadata(meta, metadataFromPDFXMP(pdfXMPPacketReader(r, size)))
 	}
 	return meta
 }
 
-func pdfFillInfoMetadata(meta *Metadata, info []byte) {
-	if title, ok := pdfInfoString(info, "Title"); ok {
+func pdfFillMissingMetadata(meta, fallback *Metadata) {
+	if fallback == nil {
+		return
+	}
+	if meta.Title == "" {
+		meta.Title = fallback.Title
+	}
+	if len(meta.Authors) == 0 {
+		meta.Authors = fallback.Authors
+	}
+}
+
+func pdfFillInfoMetadata(meta *Metadata, readString func(string) (string, bool)) {
+	if title, ok := readString("Title"); ok {
 		meta.Title = title
 	}
-	if author, ok := pdfInfoString(info, "Author"); ok {
+	if author, ok := readString("Author"); ok {
 		meta.Authors = append(meta.Authors, bookmeta.AuthorMeta{Name: author})
 	}
 }
@@ -100,60 +85,29 @@ const (
 	maxPDFMetadataDictSize = 64 << 10
 )
 
-func pdfHasEncryptReference(b []byte) bool {
-	searchEnd := len(b)
-	for {
-		idx := bytes.LastIndex(b[:searchEnd], []byte("/Encrypt"))
-		if idx == -1 {
-			return false
-		}
-		nameEnd := idx + len("/Encrypt")
-		if nameEnd == len(b) || isPDFDelimiter(b[nameEnd]) {
-			if _, _, ok := readPDFIndirectReference(b[nameEnd:]); ok {
-				return true
-			}
-		}
-		searchEnd = idx
-	}
-}
-
 func pdfHasEncryptReferenceReader(r io.ReaderAt, size int64) bool {
-	searchEnd := size
-	for {
-		idx := pdfLastIndexReader(r, searchEnd, []byte("/Encrypt"))
-		if idx < 0 {
-			return false
-		}
-		if pdfHasEncryptReference(pdfReadWindow(r, size, idx, 128)) {
+	for idx := range pdfTokenOffsetsReader(r, size, []byte("/Encrypt"), true) {
+		ref := pdfReadWindow(r, size, idx+int64(len("/Encrypt")), 128)
+		if _, _, ok := pdfReferencePrefix(ref); ok {
 			return true
 		}
-		searchEnd = idx
 	}
+	return false
 }
 
 func pdfInfoObjectReader(r io.ReaderAt, size int64) []byte {
-	searchEnd := size
-	for {
-		idx := pdfLastIndexReader(r, searchEnd, []byte("/Info"))
-		if idx < 0 {
-			return nil
-		}
+	for idx := range pdfTokenOffsetsReader(r, size, []byte("/Info"), true) {
 		ref := pdfReadWindow(r, size, idx+int64(len("/Info")), 128)
-		if obj, gen, ok := readPDFIndirectReference(ref); ok {
+		if obj, gen, ok := pdfReferencePrefix(ref); ok {
 			return pdfIndirectObjectReader(r, size, obj, gen)
 		}
-		searchEnd = idx
 	}
+	return nil
 }
 
-func pdfIndirectObjectReader(r io.ReaderAt, size int64, obj, gen int) []byte {
-	marker := []byte(strconv.Itoa(obj) + " " + strconv.Itoa(gen) + " obj")
-	searchAt := int64(0)
-	for {
-		idx := pdfIndexReader(r, size, marker, searchAt)
-		if idx < 0 {
-			return nil
-		}
+func pdfIndirectObjectReader(r io.ReaderAt, size, obj, gen int64) []byte {
+	marker := []byte(strconv.FormatInt(obj, 10) + " " + strconv.FormatInt(gen, 10) + " obj")
+	for idx := range pdfTokenOffsetsReader(r, size, marker, false) {
 		if idx == 0 || isPDFWhitespace(pdfByteAt(r, idx-1)) {
 			start := idx + int64(len(marker))
 			object := pdfReadWindow(r, size, start, maxPDFInfoObjectBytes)
@@ -162,65 +116,76 @@ func pdfIndirectObjectReader(r io.ReaderAt, size int64, obj, gen int) []byte {
 			}
 			return object
 		}
-		searchAt = idx + 1
 	}
+	return nil
 }
 
 func pdfInfoStringReader(r io.ReaderAt, size int64, key string) (string, bool) {
 	needle := []byte("/" + key)
-	searchAt := int64(0)
-	for {
-		idx := pdfIndexReader(r, size, needle, searchAt)
-		if idx < 0 {
-			return "", false
-		}
+	for idx := range pdfTokenOffsetsReader(r, size, needle, false) {
 		window := pdfReadWindow(r, size, idx, maxPDFInfoStringBytes)
 		if value, ok := pdfInfoString(window, key); ok {
 			return value, true
 		}
-		searchAt = idx + int64(len(needle))
 	}
+	return "", false
 }
 
-func pdfIndexReader(r io.ReaderAt, size int64, needle []byte, start int64) int64 {
-	if len(needle) == 0 || start < 0 || start >= size {
-		return -1
+// Scan literal token endings in either direction, reusing each window.
+// Matches inside strings or streams are still candidates for callers to check.
+// The delimiter check rejects prefixes of longer names.
+func pdfTokenOffsetsReader(r io.ReaderAt, size int64, needle []byte, reverse bool) iter.Seq[int64] {
+	return func(yield func(int64) bool) {
+		buffer := make([]byte, pdfMetadataScanChunk)
+		overlap := int64(len(needle) - 1)
+		for start, end := int64(0), size; start < end; {
+			offset := start
+			if reverse {
+				offset = max(end-int64(len(buffer)), start)
+			}
+			window := buffer[:min(int64(len(buffer)), end-offset)]
+			n, err := r.ReadAt(window, offset)
+			if err != nil && err != io.EOF {
+				return
+			}
+			window = window[:n]
+			for lo, hi := 0, n; lo < hi; {
+				var index int
+				if reverse {
+					index = bytes.LastIndex(window[lo:hi], needle)
+				} else {
+					index = bytes.Index(window[lo:hi], needle)
+				}
+				if index < 0 {
+					break
+				}
+				index += lo
+				nameEnd := index + len(needle)
+				var next byte
+				if nameEnd < n {
+					next = window[nameEnd]
+				} else if offset+int64(nameEnd) < size {
+					next = pdfByteAt(r, offset+int64(nameEnd))
+				}
+				if isPDFDelimiter(next) && !yield(offset+int64(index)) {
+					return
+				}
+				if reverse {
+					hi = index
+				} else {
+					lo = nameEnd
+				}
+			}
+			if int64(n) <= overlap || reverse && offset == 0 {
+				return
+			}
+			if reverse {
+				end = offset + overlap
+			} else {
+				start = offset + int64(n) - overlap
+			}
+		}
 	}
-	overlap := int64(len(needle) - 1)
-	for offset := start; offset < size; {
-		window := pdfReadWindow(r, size, offset, pdfMetadataScanChunk)
-		if len(window) == 0 {
-			return -1
-		}
-		if idx := bytes.Index(window, needle); idx >= 0 {
-			return offset + int64(idx)
-		}
-		step := int64(len(window)) - overlap
-		if step <= 0 {
-			return -1
-		}
-		offset += step
-	}
-	return -1
-}
-
-func pdfLastIndexReader(r io.ReaderAt, end int64, needle []byte) int64 {
-	if len(needle) == 0 || end <= 0 {
-		return -1
-	}
-	overlap := int64(len(needle) - 1)
-	for end > 0 {
-		start := max(end-pdfMetadataScanChunk, 0)
-		window := pdfReadWindow(r, end, start, int(end-start))
-		if idx := bytes.LastIndex(window, needle); idx >= 0 {
-			return start + int64(idx)
-		}
-		if start == 0 {
-			return -1
-		}
-		end = start + overlap
-	}
-	return -1
 }
 
 func pdfReadWindow(r io.ReaderAt, size, offset int64, limit int) []byte {
@@ -246,89 +211,12 @@ func pdfByteAt(r io.ReaderAt, offset int64) byte {
 	return b[0]
 }
 
-func pdfInfoObject(b []byte) []byte {
-	// Restrict metadata lookup to the trailer's Info object when available:
-	// outline/bookmark dictionaries also use /Title, and they are not book titles.
-	searchEnd := len(b)
-	for {
-		idx := bytes.LastIndex(b[:searchEnd], []byte("/Info"))
-		if idx == -1 {
-			return nil
-		}
-		obj, gen, ok := readPDFIndirectReference(b[idx+len("/Info"):])
-		if !ok {
-			searchEnd = idx
-			continue
-		}
-		if objBytes := pdfIndirectObject(b, obj, gen); len(objBytes) > 0 {
-			return objBytes
-		}
-		searchEnd = idx
-	}
-}
-
-func pdfIndirectObject(b []byte, obj, gen int) []byte {
-	marker := []byte(strconv.Itoa(obj) + " " + strconv.Itoa(gen) + " obj")
-	offset := 0
-	for {
-		idx := bytes.Index(b[offset:], marker)
-		if idx == -1 {
-			return nil
-		}
-		idx += offset
-		if idx == 0 || isPDFWhitespace(b[idx-1]) {
-			start := idx + len(marker)
-			if end := bytes.Index(b[start:], []byte("endobj")); end >= 0 {
-				return b[start : start+end]
-			}
-			return b[start:]
-		}
-		offset = idx + 1
-	}
-}
-
-func readPDFInt(b []byte) (int, int, bool) {
-	consumed := 0
-	for len(b) > 0 && isPDFWhitespace(b[0]) {
-		b = b[1:]
-		consumed++
-	}
-	start := 0
-	for start < len(b) && b[start] >= '0' && b[start] <= '9' {
-		start++
-	}
-	if start == 0 {
+func pdfReferencePrefix(b []byte) (int64, int64, bool) {
+	p := pdfSyntax{data: b}
+	if !p.skipValue(0) {
 		return 0, 0, false
 	}
-	v, err := strconv.Atoi(string(b[:start]))
-	if err != nil {
-		return 0, 0, false
-	}
-	return v, consumed + start, true
-}
-
-func readPDFIndirectReference(b []byte) (int, int, bool) {
-	obj, n, ok := readPDFInt(b)
-	if !ok {
-		return 0, 0, false
-	}
-	b = b[n:]
-	gen, n, ok := readPDFInt(b)
-	if !ok {
-		return 0, 0, false
-	}
-	b = skipPDFWhitespace(b[n:])
-	if len(b) == 0 || b[0] != 'R' || len(b) > 1 && !isPDFDelimiter(b[1]) {
-		return 0, 0, false
-	}
-	return obj, gen, true
-}
-
-func skipPDFWhitespace(b []byte) []byte {
-	for len(b) > 0 && isPDFWhitespace(b[0]) {
-		b = b[1:]
-	}
-	return b
+	return pdfReference(b[:p.pos])
 }
 
 func pdfInfoString(b []byte, key string) (string, bool) {
@@ -348,24 +236,28 @@ func pdfInfoString(b []byte, key string) (string, bool) {
 		if idx >= len(b) {
 			return found, foundOK
 		}
-		if b[idx] == '(' {
-			if s, ok := parsePDFLiteralString(b, idx); ok {
-				found = s
-				foundOK = true
-			}
-			offset = idx + 1
-			continue
-		}
-		if b[idx] == '<' && idx+1 < len(b) && b[idx+1] != '<' {
-			if s, ok := parsePDFHexString(b, idx); ok {
-				found = s
-				foundOK = true
-			}
-			offset = idx + 1
-			continue
+		if s, ok := pdfTextString(b[idx:]); ok {
+			found = s
+			foundOK = true
 		}
 		offset = idx + 1
 	}
+}
+
+func pdfTextString(b []byte) (string, bool) {
+	p := pdfSyntax{data: b}
+	raw := p.next()
+	if len(raw) == 0 {
+		return "", false
+	}
+	var text string
+	var ok bool
+	if raw[0] == '(' {
+		text, ok = parsePDFLiteralString(raw, 0)
+	} else if raw[0] == '<' && !bytes.HasPrefix(raw, []byte("<<")) {
+		text, ok = parsePDFHexString(raw, 0)
+	}
+	return text, ok && strings.TrimSpace(text) != ""
 }
 
 func parsePDFLiteralString(b []byte, start int) (string, bool) {
@@ -571,11 +463,7 @@ const (
 	maxPDFMetadataStream = 4 << 20
 )
 
-func pdfXMPMetadata(b []byte) *Metadata {
-	return pdfXMPMetadataPacket(pdfXMPPacket(b))
-}
-
-func pdfXMPMetadataPacket(packet []byte) *Metadata {
+func metadataFromPDFXMP(packet []byte) *Metadata {
 	if len(packet) == 0 {
 		return nil
 	}
@@ -678,13 +566,6 @@ func appendPDFXMPText(values []string, text string) []string {
 	return append(values, text)
 }
 
-func pdfXMPPacket(b []byte) []byte {
-	if packet := pdfXMLPacket(b); len(packet) > 0 {
-		return packet
-	}
-	return pdfXMPPacketFromMetadataStreams(b)
-}
-
 func pdfXMPPacketReader(r io.ReaderAt, size int64) []byte {
 	for _, localName := range []string{"xmpmeta", "RDF"} {
 		if offset, ok := pdfXMLStartReader(r, size, localName); ok {
@@ -699,11 +580,14 @@ func pdfXMPPacketReader(r io.ReaderAt, size int64) []byte {
 
 func pdfXMLStartReader(r io.ReaderAt, size int64, localName string) (int64, bool) {
 	const xmlNameOverlap = 256
+	buffer := make([]byte, pdfMetadataScanChunk)
 	for offset := int64(0); offset < size; {
-		window := pdfReadWindow(r, size, offset, pdfMetadataScanChunk)
-		if len(window) == 0 {
+		window := buffer[:min(int64(len(buffer)), size-offset)]
+		n, err := r.ReadAt(window, offset)
+		if n == 0 || err != nil && err != io.EOF {
 			return 0, false
 		}
+		window = window[:n]
 		searchAt := 0
 		for {
 			idx := bytes.IndexByte(window[searchAt:], '<')
@@ -726,74 +610,62 @@ func pdfXMLStartReader(r io.ReaderAt, size int64, localName string) (int64, bool
 }
 
 func pdfXMPPacketFromMetadataStreamsReader(r io.ReaderAt, size int64) []byte {
-	needle := []byte("/Type")
-	searchAt := int64(0)
-	for {
-		typeOffset := pdfIndexReader(r, size, needle, searchAt)
-		if typeOffset < 0 {
-			return nil
-		}
-		if packet := pdfMetadataStreamPacketAt(r, size, typeOffset); len(packet) > 0 {
+	// /Type occurs in almost every page and resource dictionary. Look for the
+	// much narrower Metadata name before reading a candidate stream header.
+	for offset := range pdfTokenOffsetsReader(r, size, []byte("/Metadata"), false) {
+		if packet := pdfMetadataStreamPacketAt(r, size, offset); len(packet) > 0 {
 			return packet
 		}
-		searchAt = typeOffset + int64(len(needle))
 	}
+	return nil
 }
 
-func pdfMetadataStreamPacketAt(r io.ReaderAt, size, typeOffset int64) []byte {
-	headerStart := max(typeOffset-maxPDFMetadataDictSize, 0)
+func pdfMetadataStreamPacketAt(r io.ReaderAt, size, metadataOffset int64) []byte {
+	headerStart := max(metadataOffset-maxPDFMetadataDictSize, 0)
 	header := pdfReadWindow(r, size, headerStart, maxPDFMetadataDictSize*2)
-	typeIndex := int(typeOffset - headerStart)
-	if typeIndex < 0 || typeIndex >= len(header) {
+	metadataIndex := int(metadataOffset - headerStart)
+	if metadataIndex < 0 || metadataIndex >= len(header) {
 		return nil
 	}
-	dictStart := bytes.LastIndex(header[:typeIndex+1], []byte("<<"))
+	dictStart := bytes.LastIndex(header[:metadataIndex+1], []byte("<<"))
 	if dictStart < 0 {
 		return nil
 	}
-	streamRelative := bytes.Index(header[typeIndex:], []byte("stream"))
-	if streamRelative < 0 {
+	parser := pdfSyntax{data: header, pos: dictStart}
+	dict := parser.dictionary()
+	if dict == nil || string(parser.next()) != "stream" || !parser.lineEnd() {
 		return nil
 	}
-	streamIndex := typeIndex + streamRelative
-	dict := header[dictStart:streamIndex]
-	if !pdfDictNameValueEquals(dict, "Type", "Metadata") || !pdfDictNameValueEquals(dict, "Subtype", "XML") {
-		return nil
-	}
+	return pdfMetadataStreamPacket(r, size, pdfObject{dict: dict, streamOffset: headerStart + int64(parser.pos)})
+}
 
-	dataOffset := headerStart + int64(streamIndex+len("stream"))
-	lineStart := pdfReadWindow(r, size, dataOffset, 2)
-	if len(lineStart) > 0 && lineStart[0] == '\r' {
-		dataOffset++
-		if len(lineStart) > 1 && lineStart[1] == '\n' {
-			dataOffset++
-		}
-	} else if len(lineStart) > 0 && lineStart[0] == '\n' {
-		dataOffset++
-	}
-
-	var streamData []byte
-	if length, ok := pdfDictIntValue(dict, "Length"); ok {
-		if length < 0 || length > maxPDFMetadataStream {
-			return nil
-		}
-		streamData = pdfReadWindow(r, size, dataOffset, length)
-		if len(streamData) != length {
-			return nil
-		}
-	} else {
-		window := pdfReadWindow(r, size, dataOffset, maxPDFMetadataStream+len("endstream"))
-		before, _, ok := bytes.Cut(window, []byte("endstream"))
-		if !ok {
-			return nil
-		}
-		streamData = trimPDFStreamEOL(before)
-	}
-	decoded, ok := pdfDecodeStream(dict, streamData)
-	if !ok {
+func pdfMetadataStreamPacket(r io.ReaderAt, size int64, object pdfObject) []byte {
+	if object.streamOffset == 0 || pdfName(object.dict["Type"]) != "Metadata" || pdfName(object.dict["Subtype"]) != "XML" {
 		return nil
 	}
-	return pdfXMLPacket(decoded)
+	// XMP has its own compressed and decoded size limit, separate from the
+	// small xref/object lookup budget. Recover an indirect or incorrect Length
+	// within this stream without searching unrelated objects in the file.
+	if length, ok := pdfInteger(object.dict["Length"]); ok && length > 0 && length <= maxPDFMetadataStream && length <= size-object.streamOffset {
+		data := pdfReadWindow(r, size, object.streamOffset, int(length))
+		if packet := pdfDecodeXMPStream(object.dict, data); len(packet) > 0 {
+			return packet
+		}
+	}
+	// Most XMP packets are small. Grow the buffer as needed instead of reading
+	// the full limit for every stream whose Length is an indirect reference.
+	scanner := bufio.NewScanner(io.NewSectionReader(r, object.streamOffset, size-object.streamOffset))
+	scanner.Buffer(nil, maxPDFMetadataStream+len("endstream"))
+	scanner.Split(func(data []byte, _ bool) (int, []byte, error) {
+		if end := bytes.Index(data, []byte("endstream")); end >= 0 {
+			return end + len("endstream"), data[:end], bufio.ErrFinalToken
+		}
+		return 0, nil, nil
+	})
+	if scanner.Scan() {
+		return pdfDecodeXMPStream(object.dict, trimPDFStreamEOL(scanner.Bytes()))
+	}
+	return nil
 }
 
 func pdfXMLPacket(b []byte) []byte {
@@ -801,72 +673,6 @@ func pdfXMLPacket(b []byte) []byte {
 		return packet
 	}
 	return pdfXMLPacketByLocalName(b, "RDF")
-}
-
-func pdfXMPPacketFromMetadataStreams(b []byte) []byte {
-	offset := 0
-	for {
-		streamIdx := bytes.Index(b[offset:], []byte("stream"))
-		if streamIdx == -1 {
-			return nil
-		}
-		streamIdx += offset
-
-		nextOffset := streamIdx + len("stream")
-		dictStart := bytes.LastIndex(b[:streamIdx], []byte("<<"))
-		if dictStart == -1 {
-			offset = nextOffset
-			continue
-		}
-		dict := b[dictStart:streamIdx]
-		if !pdfDictNameValueEquals(dict, "Type", "Metadata") || !pdfDictNameValueEquals(dict, "Subtype", "XML") {
-			offset = nextOffset
-			continue
-		}
-
-		streamData, nextOffset, ok := pdfStreamData(b, streamIdx, dict)
-		if !ok {
-			offset = nextOffset
-			continue
-		}
-		offset = nextOffset
-
-		decoded, ok := pdfDecodeStream(dict, streamData)
-		if !ok {
-			continue
-		}
-		if packet := pdfXMLPacket(decoded); len(packet) > 0 {
-			return packet
-		}
-	}
-}
-
-func pdfStreamData(b []byte, streamIdx int, dict []byte) ([]byte, int, bool) {
-	dataStart := streamIdx + len("stream")
-	if dataStart < len(b) && b[dataStart] == '\r' {
-		dataStart++
-		if dataStart < len(b) && b[dataStart] == '\n' {
-			dataStart++
-		}
-	} else if dataStart < len(b) && b[dataStart] == '\n' {
-		dataStart++
-	}
-
-	if length, ok := pdfDictIntValue(dict, "Length"); ok && length >= 0 && length <= len(b)-dataStart {
-		dataEnd := dataStart + length
-		next := dataEnd
-		if endstream := bytes.Index(b[dataEnd:], []byte("endstream")); endstream >= 0 {
-			next = dataEnd + endstream + len("endstream")
-		}
-		return b[dataStart:dataEnd], next, true
-	}
-
-	endstream := bytes.Index(b[dataStart:], []byte("endstream"))
-	if endstream == -1 {
-		return nil, dataStart, false
-	}
-	dataEnd := dataStart + endstream
-	return trimPDFStreamEOL(b[dataStart:dataEnd]), dataEnd + len("endstream"), true
 }
 
 func trimPDFStreamEOL(b []byte) []byte {
@@ -879,20 +685,31 @@ func trimPDFStreamEOL(b []byte) []byte {
 	return b
 }
 
-func pdfDecodeStream(dict, data []byte) ([]byte, bool) {
-	if !pdfDictHasName(dict, "Filter") {
-		if len(data) > maxPDFMetadataStream {
-			return nil, false
-		}
-		return data, true
+func pdfDecodeXMPStream(dict pdfDictionary, data []byte) []byte {
+	if len(data) > maxPDFMetadataStream {
+		return nil
 	}
-	if !pdfDictHasName(dict, "FlateDecode") {
-		return nil, false
+	if dict["Filter"] == nil {
+		return pdfXMLPacket(data)
+	}
+	parser := pdfSyntax{data: dict["Filter"]}
+	name := parser.next()
+	if string(name) == "[" {
+		name = parser.next()
+		if string(parser.next()) != "]" {
+			return nil
+		}
+	}
+	if pdfName(name) != "FlateDecode" || len(parser.next()) != 0 {
+		return nil
 	}
 	if decoded, ok := pdfInflateZlib(data); ok {
-		return decoded, true
+		return pdfXMLPacket(decoded)
 	}
-	return pdfInflateRaw(data)
+	if decoded, ok := pdfInflateRaw(data); ok {
+		return pdfXMLPacket(decoded)
+	}
+	return nil
 }
 
 func pdfInflateZlib(data []byte) ([]byte, bool) {
@@ -916,74 +733,6 @@ func readPDFMetadataStream(r io.Reader) ([]byte, bool) {
 		return nil, false
 	}
 	return data, true
-}
-
-func pdfDictNameValueEquals(dict []byte, key, value string) bool {
-	offset := 0
-	needle := []byte("/" + key)
-	for {
-		idx := bytes.Index(dict[offset:], needle)
-		if idx == -1 {
-			return false
-		}
-		idx += offset
-		nameEnd := idx + len(needle)
-		if nameEnd < len(dict) && !isPDFDelimiter(dict[nameEnd]) {
-			offset = nameEnd
-			continue
-		}
-		rest := skipPDFWhitespace(dict[nameEnd:])
-		if len(rest) == 0 || rest[0] != '/' {
-			offset = nameEnd
-			continue
-		}
-		end := 1
-		for end < len(rest) && !isPDFDelimiter(rest[end]) {
-			end++
-		}
-		if string(rest[1:end]) == value {
-			return true
-		}
-		offset = nameEnd
-	}
-}
-
-func pdfDictIntValue(dict []byte, key string) (int, bool) {
-	offset := 0
-	needle := []byte("/" + key)
-	for {
-		idx := bytes.Index(dict[offset:], needle)
-		if idx == -1 {
-			return 0, false
-		}
-		idx += offset
-		nameEnd := idx + len(needle)
-		if nameEnd < len(dict) && !isPDFDelimiter(dict[nameEnd]) {
-			offset = nameEnd
-			continue
-		}
-		if value, _, ok := readPDFInt(dict[nameEnd:]); ok {
-			return value, true
-		}
-		offset = nameEnd
-	}
-}
-
-func pdfDictHasName(dict []byte, name string) bool {
-	offset := 0
-	needle := []byte("/" + name)
-	for {
-		idx := bytes.Index(dict[offset:], needle)
-		if idx == -1 {
-			return false
-		}
-		idx += offset
-		nameEnd := idx + len(needle)
-		if nameEnd == len(dict) || isPDFDelimiter(dict[nameEnd]) {
-			return true
-		}
-		offset = nameEnd
-	}
 }
 
 func isPDFDelimiter(b byte) bool {

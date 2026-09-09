@@ -268,7 +268,7 @@ func TestExtractODTCoverHonorsOPFNoCover(t *testing.T) {
 }
 
 func TestExtractRTFMetadata(t *testing.T) {
-	data := []byte(`{\rtf1\ansi\ansicpg1251{\info{\title Unicode \u1046? title}{\author Ada Lovelace, Charles Babbage}{\subject RTF subject}{\category Math, Engines}{\manager RTF Press}}Body}`)
+	data := []byte(`{\rtf1\ansi\ansicpg1251{\info{\title Unicode \u1046? title}{\author Ada Lovelace, Charles Babbage}{\subject RTF subject}{\category Math, Engines}{\manager RTF Press}{\nofpages27}}Body}`)
 	r := bytes.NewReader(data)
 	meta, err := ExtractRTFMetadata(r, r.Size())
 	if err != nil {
@@ -282,6 +282,9 @@ func TestExtractRTFMetadata(t *testing.T) {
 	}
 	if meta.Description != "RTF subject" || meta.Publisher != "RTF Press" {
 		t.Fatalf("Metadata = %+v; want subject and publisher", meta)
+	}
+	if meta.PageCount != 27 {
+		t.Fatalf("PageCount = %d; want declared count", meta.PageCount)
 	}
 	wantTags := []string{"Math", "Engines"}
 	if !equalStrings(meta.Tags, wantTags) {

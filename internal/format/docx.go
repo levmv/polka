@@ -55,6 +55,7 @@ type docxCoreProperties struct {
 
 type docxAppProperties struct {
 	Company string `xml:"Company"`
+	Pages   string `xml:"Pages"`
 }
 
 func isDOCX(r io.ReaderAt, size int64) bool {
@@ -404,6 +405,7 @@ func docxMergeAppProperties(meta *Metadata, raw []byte) {
 	if company := strings.TrimSpace(props.Company); company != "" {
 		meta.Publisher = company
 	}
+	meta.PageCount = positivePageCount(props.Pages)
 }
 
 func docxDefaultLanguage(raw []byte) string {

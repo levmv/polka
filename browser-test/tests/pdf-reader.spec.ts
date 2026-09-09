@@ -22,7 +22,9 @@ test('PDF reader behavior', async ({
     }
   });
   const title = `PDF Reader ${stamp}`;
-  const bookId = await importTestBook(page, pdf(title, 'PDF Fixture Author', `pdf-reader-${stamp}`));
+  const file = pdf(title, 'PDF Fixture Author', `pdf-reader-${stamp}`);
+  file.name = file.name.toUpperCase();
+  const bookId = await importTestBook(page, file);
   const reader = page.locator('.reader-page');
   const stage = page.locator('.reader-pdf-stage');
 
@@ -168,6 +170,8 @@ test('PDF reader behavior', async ({
       await expect(page).toHaveURL(new RegExp(`/read/${bookId}$`));
       await page.keyboard.press('Escape');
       await expect(page).toHaveURL(new RegExp(`/book/${bookId}$`));
+      await expect(page.locator('.detail-page-count')).toHaveText('3 pages');
+      await page.screenshot({ path: `screenshots/book-pdf-${browserName}.png`, fullPage: true });
     });
   } finally {
     const trash = await page.request.post('/api/books/bulk/trash', {

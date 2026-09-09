@@ -1644,6 +1644,9 @@ func TestResolveCBZMetadataAndCover(t *testing.T) {
 	if plan.Format != format.FormatCBZ {
 		t.Fatalf("Format = %v; want FormatCBZ", plan.Format)
 	}
+	if plan.PageCount != 1 {
+		t.Fatalf("PageCount = %d; want one image page", plan.PageCount)
+	}
 	if !plan.CanRead {
 		t.Fatalf("CanRead = false; want true for CBZ foliate reader")
 	}

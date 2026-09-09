@@ -298,11 +298,29 @@ func TestServiceRunOnceWritesOnlyInAutoMode(t *testing.T) {
 	database, root, assetID, relPath := setupWritebackEPUB(t, "Old Title", "Old Author")
 	defer database.Close()
 
-	if _, err := database.Write(t.Context()).Exec("UPDATE books SET title = 'Auto Title', metadata_rev = 1 WHERE id = 1"); err != nil {
-		t.Fatalf("mark book dirty: %v", err)
+	original, err := os.ReadFile(root.Abs(relPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved, err := db.StorePageCount(database.Write(t.Context()), assetID, sha256ForTest(original), 123); err != nil || !saved {
+		t.Fatalf("store page count: saved=%v, %v", saved, err)
 	}
 	svc := NewService(database, root, ServiceOptions{BatchLimit: 1})
 	svc.now = func() time.Time { return time.Unix(200, 0) }
+	if err := SaveMode(database.Write(t.Context()), ModeAuto); err != nil {
+		t.Fatal(err)
+	}
+	afterCount, err := svc.RunOnce(t.Context())
+	if err != nil || afterCount.Planned != 0 {
+		t.Fatalf("page counting scheduled writeback: %+v, %v", afterCount, err)
+	}
+	if err := SaveMode(database.Write(t.Context()), ModeManual); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := database.Write(t.Context()).Exec("UPDATE books SET title = 'Auto Title', metadata_rev = 1 WHERE id = 1"); err != nil {
+		t.Fatalf("mark book dirty: %v", err)
+	}
 
 	manual, err := svc.RunOnce(context.Background())
 	if err != nil {
@@ -337,8 +355,8 @@ func TestServiceRunOnceWritesOnlyInAutoMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExtractMetadata EPUB: %v", err)
 	}
-	if meta == nil || meta.Title != "Auto Title" {
-		t.Fatalf("auto metadata = %+v; want Auto Title", meta)
+	if meta == nil || meta.Title != "Auto Title" || meta.PageCount != 123 {
+		t.Fatalf("auto metadata = %+v; want Auto Title and 123 pages", meta)
 	}
 }
 

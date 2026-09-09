@@ -2,8 +2,8 @@ package format
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
-	"image"
 	"io"
 	"sort"
 	"strings"
@@ -15,212 +15,190 @@ import (
 )
 
 const (
-	maxCBREntries               = 4096
-	maxCBRDecodedBytes    int64 = 1 << 30
-	comicImageHeaderBytes       = 512
+	maxCBREntries            = 4096
+	maxCBRDecodedBytes int64 = 1 << 30
 )
 
-type comicArchiveScanResult struct {
-	pages          []ComicPage
-	comicInfo      []byte
-	comicInfoName  string
-	comicInfoErr   error
-	cover          []byte
-	coverExtension string
-	coverName      string
-}
-
 func isCBR(r io.ReaderAt, size int64) bool {
-	result, err := scanCBR(r, size, true)
-	return err == nil && len(result.pages) > 0
+	index, err := readCBRIndex(r, size)
+	return err == nil && len(index.pages) > 0
 }
 
-// ListCBRPages returns valid image pages in natural archive-path order.
-func ListCBRPages(r io.ReaderAt, size int64) ([]ComicPage, error) {
-	result, err := scanCBR(r, size, false)
-	if err != nil {
-		return nil, err
-	}
-	return result.pages, nil
-}
-
-// ExtractCBRMetadataAndCover scans a RAR archive once for both ComicInfo.xml
-// metadata and the first naturally sorted page. A metadata error does not
-// discard a cover that was extracted successfully.
+// ExtractCBRMetadataAndCover reads ComicInfo.xml and the first usable cover.
+// Errors preserve any available results, including the count from file headers.
 func ExtractCBRMetadataAndCover(r io.ReaderAt, size int64) (*Metadata, []byte, string, error) {
-	result, err := scanCBR(r, size, false)
+	index, err := readCBRIndex(r, size)
 	if err != nil {
 		return nil, nil, "", err
 	}
-	meta := &Metadata{}
-	if result.comicInfoErr != nil {
-		return meta, result.cover, result.coverExtension, result.comicInfoErr
+	var meta *Metadata
+	var metadataErr error
+	// Read targets in archive order when possible so a solid decoder can
+	// continue forward without replaying the preceding pages.
+	if index.comicInfo != nil && (len(index.pages) == 0 || index.comicInfo.order < index.pages[0].order) {
+		meta, metadataErr = index.metadata()
 	}
-	if result.comicInfo != nil {
-		meta, err = parseComicInfoMetadata(result.comicInfo)
-		if err != nil {
-			return &Metadata{}, result.cover, result.coverExtension, err
-		}
+	cover, extension, coverErr := index.cover()
+	if meta == nil {
+		meta, metadataErr = index.metadata()
 	}
-	return meta, result.cover, result.coverExtension, nil
+	return meta, cover, extension, errors.Join(metadataErr, coverErr)
 }
 
-// ExtractCBRMetadata extracts ComicInfo.xml metadata from a CBR archive.
+// ExtractCBRMetadata extracts ComicInfo.xml metadata and the archive page count.
 func ExtractCBRMetadata(r io.ReaderAt, size int64) (*Metadata, error) {
-	meta, _, _, err := ExtractCBRMetadataAndCover(r, size)
-	return meta, err
-}
-
-// ExtractCBRCover returns the first valid naturally sorted comic page.
-func ExtractCBRCover(r io.ReaderAt, size int64) ([]byte, string, error) {
-	result, err := scanCBR(r, size, false)
-	if err != nil {
-		return nil, "", err
-	}
-	return result.cover, result.coverExtension, nil
-}
-
-func scanCBR(src io.ReaderAt, size int64, firstPageOnly bool) (comicArchiveScanResult, error) {
-	var result comicArchiveScanResult
-	if src == nil || size <= 0 {
-		return result, fmt.Errorf("CBR archive is empty")
-	}
-	rr, err := comicarchive.NewRARReader(src, size)
-	if err != nil {
-		return result, fmt.Errorf("open CBR archive: %w", err)
-	}
-
-	var declaredBytes int64
-	entryCount := 0
-	for {
-		header, err := rr.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return result, fmt.Errorf("read CBR archive: %w", err)
-		}
-		entryCount++
-		if entryCount > maxCBREntries {
-			return result, fmt.Errorf("CBR archive has more than %d entries", maxCBREntries)
-		}
-		if !header.UnKnownSize {
-			if header.UnPackedSize < 0 || header.UnPackedSize > maxCBRDecodedBytes-declaredBytes {
-				return result, fmt.Errorf("CBR archive expands beyond %d bytes", maxCBRDecodedBytes)
-			}
-			declaredBytes += header.UnPackedSize
-		}
-		if header.IsDir {
-			continue
-		}
-		if header.Encrypted || header.HeaderEncrypted {
-			return result, fmt.Errorf("encrypted CBR entries are not supported")
-		}
-
-		name := NormalizeZipName(header.Name)
-		if name == "" || isIgnoredComicEntry(name) {
-			continue
-		}
-		if isComicInfoName(name) {
-			if betterComicInfoName(name, result.comicInfoName) {
-				result.comicInfoName = name
-				result.comicInfo, result.comicInfoErr = readComicEntryLimited(rr, nil, maxCBZComicInfoBytes)
-				if result.comicInfoErr != nil {
-					result.comicInfoErr = fmt.Errorf("read %s: %w", name, result.comicInfoErr)
-				}
-			}
-			continue
-		}
-
-		prefix, err := readComicEntryPrefix(rr, comicImageHeaderBytes)
-		if err != nil {
-			return result, fmt.Errorf("read CBR entry %s: %w", name, err)
-		}
-		if _, _, ok := ComicImageTypeFromBytes(prefix); !ok && !isComicImageName(name) {
-			continue
-		}
-
-		page, raw, err := cbrPageFromEntry(rr, header, name, prefix)
-		if err != nil {
-			return result, fmt.Errorf("read CBR page %s: %w", name, err)
-		}
-		if page == nil {
-			continue
-		}
-		result.pages = append(result.pages, *page)
-		if firstPageOnly {
-			return result, nil
-		}
-		if raw != nil && validCBZCoverDimensions(page.Width, page.Height) && betterComicPageName(name, result.coverName) {
-			result.cover = raw
-			result.coverExtension = page.Extension
-			result.coverName = name
-		}
-	}
-
-	sort.Slice(result.pages, func(i, j int) bool {
-		return naturalLess(strings.ToLower(result.pages[i].Name), strings.ToLower(result.pages[j].Name))
-	})
-	for i := range result.pages {
-		result.pages[i].Index = i
-	}
-	return result, nil
-}
-
-func cbrPageFromEntry(rr io.Reader, header *rardecode.FileHeader, name string, prefix []byte) (*ComicPage, []byte, error) {
-	var (
-		cfg        image.Config
-		formatName string
-		raw        []byte
-		err        error
-	)
-	if !header.UnKnownSize && header.UnPackedSize <= maxCBZCoverBytes {
-		raw, err = readComicEntryLimited(rr, prefix, maxCBZCoverBytes)
-		if err != nil {
-			return nil, nil, err
-		}
-		cfg, formatName, err = imagecodec.DecodeConfig(bytes.NewReader(raw))
-	} else {
-		cfg, formatName, err = imagecodec.DecodeConfig(io.LimitReader(io.MultiReader(bytes.NewReader(prefix), rr), maxCBZCoverBytes+1))
-	}
-	if err != nil {
-		return nil, nil, nil
-	}
-	extension, ok := cbzImageExtension(formatName)
-	if !ok {
-		return nil, nil, nil
-	}
-	size := uint64(0)
-	if !header.UnKnownSize && header.UnPackedSize >= 0 {
-		size = uint64(header.UnPackedSize)
-	} else if raw != nil {
-		size = uint64(len(raw))
-	}
-	return &ComicPage{
-		Name:      name,
-		Extension: extension,
-		Size:      size,
-		Width:     cfg.Width,
-		Height:    cfg.Height,
-	}, raw, nil
-}
-
-func readComicEntryPrefix(r io.Reader, maxBytes int64) ([]byte, error) {
-	return io.ReadAll(io.LimitReader(r, maxBytes))
-}
-
-func readComicEntryLimited(r io.Reader, prefix []byte, maxBytes int64) ([]byte, error) {
-	if int64(len(prefix)) > maxBytes {
-		return nil, fmt.Errorf("entry exceeds %d bytes", maxBytes)
-	}
-	rest, err := io.ReadAll(io.LimitReader(r, maxBytes-int64(len(prefix))+1))
+	index, err := readCBRIndex(r, size)
 	if err != nil {
 		return nil, err
 	}
-	if int64(len(prefix)+len(rest)) > maxBytes {
-		return nil, fmt.Errorf("entry exceeds %d bytes", maxBytes)
+	return index.metadata()
+}
+
+// ExtractCBRCover returns the first usable cover among entries with supported
+// image extensions, in natural path order.
+func ExtractCBRCover(r io.ReaderAt, size int64) ([]byte, string, error) {
+	index, err := readCBRIndex(r, size)
+	if err != nil {
+		return nil, "", err
 	}
-	return append(prefix, rest...), nil
+	return index.cover()
+}
+
+type cbrEntry struct {
+	file  *rardecode.File
+	name  string
+	order int
+}
+
+type cbrIndex struct {
+	src       io.ReaderAt
+	size      int64
+	pages     []cbrEntry
+	comicInfo *cbrEntry
+	solid     bool
+	reader    *rardecode.Reader
+	next      int
+}
+
+func readCBRIndex(src io.ReaderAt, size int64) (*cbrIndex, error) {
+	if src == nil || size <= 0 {
+		return nil, fmt.Errorf("CBR archive is empty")
+	}
+	files, err := comicarchive.ListRAR(src, size)
+	if err != nil {
+		return nil, fmt.Errorf("open CBR archive: %w", err)
+	}
+	if len(files) > maxCBREntries {
+		return nil, fmt.Errorf("CBR archive has more than %d entries", maxCBREntries)
+	}
+	index := &cbrIndex{src: src, size: size}
+	var declaredBytes int64
+	for order, file := range files {
+		if !file.UnKnownSize {
+			if file.UnPackedSize < 0 || file.UnPackedSize > maxCBRDecodedBytes-declaredBytes {
+				return nil, fmt.Errorf("CBR archive expands beyond %d bytes", maxCBRDecodedBytes)
+			}
+			declaredBytes += file.UnPackedSize
+		}
+		if file.Encrypted || file.HeaderEncrypted {
+			return nil, fmt.Errorf("encrypted CBR entries are not supported")
+		}
+		index.solid = index.solid || file.Solid
+		if !file.Mode().IsRegular() {
+			continue
+		}
+		name := NormalizeZipName(file.Name)
+		if name == "" || isIgnoredComicEntry(name) {
+			continue
+		}
+		entry := cbrEntry{file: file, name: name, order: order}
+		if isComicInfoName(name) {
+			if index.comicInfo == nil || betterComicInfoName(name, index.comicInfo.name) {
+				index.comicInfo = &entry
+			}
+		} else if isComicImageName(name) {
+			index.pages = append(index.pages, entry)
+		}
+	}
+	sort.Slice(index.pages, func(i, j int) bool {
+		return naturalLess(strings.ToLower(index.pages[i].name), strings.ToLower(index.pages[j].name))
+	})
+	return index, nil
+}
+
+func (index *cbrIndex) metadata() (*Metadata, error) {
+	meta := &Metadata{PageCount: len(index.pages)}
+	if index.comicInfo == nil {
+		return meta, nil
+	}
+	raw, err := index.readEntry(*index.comicInfo, maxCBZComicInfoBytes)
+	if err != nil {
+		return meta, err
+	}
+	parsed, err := parseComicInfoMetadata(raw)
+	if err != nil {
+		return meta, err
+	}
+	parsed.PageCount = meta.PageCount
+	return parsed, nil
+}
+
+func (index *cbrIndex) cover() ([]byte, string, error) {
+	for _, entry := range index.pages {
+		if !entry.file.UnKnownSize && entry.file.UnPackedSize > maxCBZCoverBytes {
+			continue
+		}
+		raw, err := index.readEntry(entry, maxCBZCoverBytes)
+		if err != nil {
+			return nil, "", err
+		}
+		cfg, formatName, err := imagecodec.DecodeConfig(bytes.NewReader(raw))
+		if err != nil || !validCBZCoverDimensions(cfg.Width, cfg.Height) {
+			continue
+		}
+		if extension, ok := cbzImageExtension(formatName); ok {
+			return raw, extension, nil
+		}
+	}
+	return nil, "", nil
+}
+
+func (index *cbrIndex) readEntry(entry cbrEntry, maxBytes int64) ([]byte, error) {
+	if !entry.file.UnKnownSize && entry.file.UnPackedSize > maxBytes {
+		return nil, fmt.Errorf("read %s: entry exceeds %d bytes", entry.name, maxBytes)
+	}
+	rc, err := index.openEntry(entry)
+	if err != nil {
+		return nil, fmt.Errorf("open CBR entry %s: %w", entry.name, err)
+	}
+	raw, readErr := readAllLimited(rc, "entry", maxBytes)
+	closeErr := rc.Close()
+	if err := errors.Join(readErr, closeErr); err != nil {
+		return nil, fmt.Errorf("read CBR entry %s: %w", entry.name, err)
+	}
+	return raw, nil
+}
+
+func (index *cbrIndex) openEntry(entry cbrEntry) (io.ReadCloser, error) {
+	if !index.solid {
+		return entry.file.Open()
+	}
+	// Solid entries depend on preceding data. Use one sequential decoder for
+	// selected targets; listing and counting never create this decoder.
+	if index.reader == nil || entry.order < index.next {
+		reader, err := comicarchive.NewRARReader(index.src, index.size)
+		if err != nil {
+			return nil, err
+		}
+		index.reader, index.next = reader, 0
+	}
+	for index.next <= entry.order {
+		if _, err := index.reader.Next(); err != nil {
+			return nil, err
+		}
+		index.next++
+	}
+	return io.NopCloser(index.reader), nil
 }
 
 func betterComicInfoName(candidate, current string) bool {
@@ -232,8 +210,4 @@ func betterComicInfoName(candidate, current string) bool {
 		return candidateRank < currentRank
 	}
 	return naturalLess(strings.ToLower(candidate), strings.ToLower(current))
-}
-
-func betterComicPageName(candidate, current string) bool {
-	return current == "" || naturalLess(strings.ToLower(candidate), strings.ToLower(current))
 }

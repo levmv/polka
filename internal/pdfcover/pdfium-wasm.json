@@ -18,8 +18,8 @@
   },
   "output": {
     "path": "internal/pdfcover/pdfium-cover.wasm",
-    "bytes": 4151530,
-    "sha256": "a2b7ed5a089f3955a4ba4752d36d66960a705c7edf9f19d400187969a2f054fb"
+    "bytes": 4151595,
+    "sha256": "9340d7b954d9755cc5d5710bff0229538a4e9b2429d56a33ac8042b9a6f7be54"
   },
   "imports": [
     "env.FPDF_FILEACCESS_CB",
@@ -83,6 +83,7 @@
     "FPDF_ClosePage",
     "FPDF_FILEACCESS_Create",
     "FPDF_GetLastError",
+    "FPDF_GetPageCount",
     "FPDF_GetPageHeight",
     "FPDF_GetPageWidth",
     "FPDF_InitLibrary",

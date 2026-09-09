@@ -245,7 +245,7 @@ func TestRepairMergedWritebackAttemptLeavesSurvivorMetadataPending(t *testing.T)
 			if _, err := database.Write(t.Context()).Exec(`UPDATE books SET publisher = ?, metadata_rev = metadata_rev + 1 WHERE id = ?`, "Former publisher", row.BookID); err != nil {
 				t.Fatal(err)
 			}
-			snapshot, err := db.LoadMetadataWritebackSnapshot(database.Read(t.Context()), row.BookID)
+			snapshot, err := db.LoadMetadataWritebackSnapshot(database.Read(t.Context()), row.AssetID)
 			if err != nil {
 				t.Fatal(err)
 			}

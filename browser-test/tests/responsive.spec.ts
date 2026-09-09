@@ -206,8 +206,8 @@ test.describe('Responsive layout (iPad viewport)', () => {
         ...book,
         tags: tags.join(', '),
         assets: [
-          { ...book.assets[0], size: 768 * 1024 },
-          { id: 999999, extension: '.pdf', size: 12.5 * 1024 * 1024, is_primary: false, can_read: true },
+          { ...book.assets[0], size: 768 * 1024, page_count: 920 },
+          { id: 999999, extension: '.pdf', size: 12.5 * 1024 * 1024, page_count: 48, is_primary: false, can_read: true },
         ],
       } });
     });
@@ -216,7 +216,8 @@ test.describe('Responsive layout (iPad viewport)', () => {
     await expect(card).toBeVisible();
     await card.locator('.book-title').click();
     await expect(page.locator('.detail-title')).toBeVisible();
-    await expect(page.locator('.detail-meta-bottom')).toHaveText(/^EPUB \(768 KB\), PDF \(12\.5 MB\) · Added /);
+    await expect(page.locator('.detail-file')).toHaveText(['EPUB (768 KB, ≈ 920 pages)', 'PDF (12.5 MB)']);
+    await expect(page.locator('.detail-meta-bottom')).toHaveText(/^Added /);
 
     const download = page.locator('.detail-actions a.detail-action[href^="/download/"]').first();
     await expect(download).toBeVisible();

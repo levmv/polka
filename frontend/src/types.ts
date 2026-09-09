@@ -144,6 +144,8 @@ export interface Asset {
     id: number;
     extension: string;
     size?: number;
+    page_count?: number;
+    page_count_approximate: boolean;
     is_primary: boolean;
     can_read: boolean;
     download_as?: DownloadAsOption[];

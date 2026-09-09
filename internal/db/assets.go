@@ -17,6 +17,7 @@ type AssetRow struct {
 	BookID           int64
 	IsPrimary        bool
 	CanRead          bool
+	PageCount        int
 	// Size is COALESCE(current_size, original_size, 0) from the row, so UI/list
 	// paths report byte sizes without a per-asset os.Stat (matters on a NAS root).
 	Size int64
@@ -112,7 +113,7 @@ func AssetsByBookIDs(queryer Queryer, bookIDs []int64) ([]AssetRow, error) {
 
 	query := `
 				SELECT a.book_id, a.id, a.extension, a.format, a.storage_path, a.original_filename, a.is_primary, a.can_read,
-				       COALESCE(a.current_size, a.original_size, 0)
+				       COALESCE(a.current_size, a.original_size, 0), COALESCE(a.page_count, 0)
 			FROM assets a
 			WHERE a.book_id IN (` + placeholders + `)
 			ORDER BY a.book_id, a.is_primary DESC, a.extension COLLATE NOCASE ASC, a.id ASC
@@ -130,7 +131,7 @@ func AssetsByBookIDs(queryer Queryer, bookIDs []int64) ([]AssetRow, error) {
 func AssetsForTrashedBooks(queryer Queryer) ([]AssetRow, error) {
 	rows, err := queryer.Query(`
 		SELECT a.book_id, a.id, a.extension, a.format, a.storage_path, a.original_filename, a.is_primary, a.can_read,
-		       COALESCE(a.current_size, a.original_size, 0)
+		       COALESCE(a.current_size, a.original_size, 0), COALESCE(a.page_count, 0)
 		FROM assets a
 		JOIN books b ON b.id = a.book_id
 		WHERE b.deleted_at IS NOT NULL
@@ -150,7 +151,7 @@ func scanAssetRows(rows *sql.Rows, operation string) ([]AssetRow, error) {
 		var a AssetRow
 		var formatKey string
 		var isPrimary, canRead int
-		if err := rows.Scan(&a.BookID, &a.ID, &a.Extension, &formatKey, &a.StoragePath, &a.OriginalFilename, &isPrimary, &canRead, &a.Size); err != nil {
+		if err := rows.Scan(&a.BookID, &a.ID, &a.Extension, &formatKey, &a.StoragePath, &a.OriginalFilename, &isPrimary, &canRead, &a.Size, &a.PageCount); err != nil {
 			return nil, fmt.Errorf("%s scan: %w", operation, err)
 		}
 		a.Format = format.FormatFromKey(formatKey)

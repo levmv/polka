@@ -97,6 +97,10 @@ func convertEPUBToKEPUB(ctx context.Context, w io.Writer, src io.ReaderAt, size 
 	if err != nil {
 		return err
 	}
+	pkg.opfBytes, err = format.NormalizeEPUBPageCountMetadata(zr, pkg.opfPath, pkg.opfBytes)
+	if err != nil {
+		return err
+	}
 	contentDocs, err := kepubContentDocuments(pkg.opfPath, pkg.opfBytes)
 	if err != nil {
 		return err

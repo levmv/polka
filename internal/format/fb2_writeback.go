@@ -20,7 +20,7 @@ import (
 // <body> and <binary> blobs byte-untouched. Polka owns <title-info> and
 // <publish-info>, so those are regenerated from the durable metadata snapshot;
 // the description children Polka does not model (<src-title-info>,
-// <document-info>, <custom-info>, and any unknown children) are preserved
+// <document-info>, unrelated <custom-info>, and unknown children) are preserved
 // verbatim, mirroring how EPUB write-back keeps foreign OPF records. The
 // existing cover reference (title-info/coverpage) is carried through so the
 // embedded cover binary stays linked. This renderer never adds or replaces
@@ -216,7 +216,10 @@ func rewriteFB2XMLBytes(raw []byte, meta bookmeta.Metadata) ([]byte, error) {
 				docInfo = region
 			}
 		case "custom-info":
-			customInfos = append(customInfos, region)
+			tag := region[:opfTagEnd(region, 0)]
+			if meta.PageCount == 0 || !isCanonicalPageCountKey(opfAttrs(string(tag))["info-type"]) {
+				customInfos = append(customInfos, region)
+			}
 		default:
 			others = append(others, region)
 		}
@@ -235,6 +238,9 @@ func rewriteFB2XMLBytes(raw []byte, meta bookmeta.Metadata) ([]byte, error) {
 	}
 	if publish := buildFB2PublishInfo(meta, newline, childIndent); publish != "" {
 		segments = append(segments, fb2Segment{gen: publish})
+	}
+	if meta.PageCount > 0 {
+		segments = append(segments, fb2Segment{gen: fmt.Sprintf(`<custom-info info-type="schema:numberOfPages">%d</custom-info>`, meta.PageCount)})
 	}
 	for _, ci := range customInfos {
 		segments = append(segments, fb2Segment{raw: ci})

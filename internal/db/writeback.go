@@ -240,22 +240,24 @@ func scanMetadataWritebackAsset(row rowScanner) (MetadataWritebackAssetRow, erro
 	return asset, nil
 }
 
-func LoadMetadataWritebackSnapshot(queryer Queryer, bookID int64) (MetadataWritebackSnapshot, error) {
+// LoadMetadataWritebackSnapshot combines shared book fields with this asset's
+// page count. Sibling formats can have different counts at the same book revision.
+func LoadMetadataWritebackSnapshot(queryer Queryer, assetID int64) (MetadataWritebackSnapshot, error) {
 	var snap MetadataWritebackSnapshot
 	var tags string
 	err := queryer.QueryRow(`
-		SELECT id, title, sort_title, COALESCE(series, ''), COALESCE(series_index, 0),
+		SELECT b.id, b.title, b.sort_title, COALESCE(series, ''), COALESCE(series_index, 0),
 		       COALESCE(description, ''), COALESCE(tags, ''),
 		       COALESCE(publisher, ''), COALESCE(published_date, ''),
-		       COALESCE(language, ''), COALESCE(identifiers, ''), metadata_rev, cover_version, updated_at
-		FROM books
-		WHERE id = ? AND deleted_at IS NULL
-	`, bookID).Scan(
+		       COALESCE(language, ''), COALESCE(identifiers, ''), b.metadata_rev, b.cover_version, b.updated_at, COALESCE(a.page_count, 0)
+		FROM books b JOIN assets a ON a.book_id = b.id
+		WHERE a.id = ? AND b.deleted_at IS NULL
+	`, assetID).Scan(
 		&snap.BookID, &snap.Metadata.Title, &snap.Metadata.SortTitle,
 		&snap.Metadata.Series, &snap.Metadata.SeriesIndex,
 		&snap.Metadata.Description, &tags, &snap.Metadata.Publisher,
 		&snap.Metadata.Date, &snap.Metadata.Language, &snap.Metadata.Identifier,
-		&snap.MetadataRev, &snap.CoverVersion, &snap.UpdatedAt,
+		&snap.MetadataRev, &snap.CoverVersion, &snap.UpdatedAt, &snap.Metadata.PageCount,
 	)
 	if err != nil {
 		return MetadataWritebackSnapshot{}, err

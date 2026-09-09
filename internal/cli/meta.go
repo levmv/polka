@@ -43,6 +43,7 @@ type metaMetadata struct {
 	Series      string       `json:"series,omitempty"`
 	SeriesIndex float64      `json:"series_index,omitzero"`
 	Tags        []string     `json:"tags,omitempty"`
+	PageCount   int          `json:"page_count,omitzero"`
 }
 
 type metaAuthor struct {
@@ -345,6 +346,7 @@ func metadataForReport(meta *bookmeta.Metadata) *metaMetadata {
 		Identifier:  strings.TrimSpace(meta.Identifier),
 		Series:      strings.TrimSpace(meta.Series),
 		SeriesIndex: meta.SeriesIndex,
+		PageCount:   meta.PageCount,
 	}
 	for _, author := range meta.Authors {
 		name := strings.TrimSpace(author.Name)
@@ -383,16 +385,16 @@ func metaFormatDetails(path string, f *os.File, size int64, kind format.Format) 
 	}
 	switch kind {
 	case format.FormatCBZ:
-		if pages, err := format.ListCBZPages(f, size); err == nil {
-			details.CBZPageCount = len(pages)
+		if pages, err := format.ReadyPageCount(f, size, kind); err == nil {
+			details.CBZPageCount = pages
 		}
 	case format.FormatCBR:
-		if pages, err := format.ListCBRPages(f, size); err == nil {
-			details.CBRPageCount = len(pages)
+		if pages, err := format.ReadyPageCount(f, size, kind); err == nil {
+			details.CBRPageCount = pages
 		}
 	case format.FormatCB7:
-		if pages, err := format.ListCB7Pages(f, size); err == nil {
-			details.CB7PageCount = len(pages)
+		if pages, err := format.ReadyPageCount(f, size, kind); err == nil {
+			details.CB7PageCount = pages
 		}
 	case format.FormatFB2:
 		if container := format.FB2ContainerForExtension(format.BookExtension(path)); container != format.FB2ContainerNone {
@@ -584,6 +586,9 @@ func printMetaMetadata(meta metaMetadata) {
 	}
 	if len(meta.Tags) > 0 {
 		fmt.Printf("  tags: %s\n", strings.Join(meta.Tags, ", "))
+	}
+	if meta.PageCount > 0 {
+		fmt.Printf("  page_count: %d\n", meta.PageCount)
 	}
 	if meta.Description != "" {
 		fmt.Printf("  description: %s\n", meta.Description)

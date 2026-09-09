@@ -128,6 +128,10 @@ func rebuildEPUB(ctx context.Context, w io.Writer, src io.ReaderAt, size int64) 
 		return err
 	}
 	pkg.opfBytes = addMissingSVGProperties(pkg.opfPath, pkg.opfBytes, inlineSVGDocuments)
+	pkg.opfBytes, err = format.NormalizeEPUBPageCountMetadata(zr, pkg.opfPath, pkg.opfBytes)
+	if err != nil {
+		return err
+	}
 	if err := format.ValidateEPUBRewriteSafety(zr, sourceOPFBytes, pkg.opfBytes); err != nil {
 		return err
 	}

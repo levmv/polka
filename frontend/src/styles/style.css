@@ -2746,6 +2746,12 @@ body.has-library-jump-rail #app-content {
     font-size: 0.9rem;
     color: var(--text-muted);
 }
+.detail-file {
+    display: block;
+}
+.detail-page-count {
+    white-space: nowrap;
+}
 .detail-tags {
     margin-bottom: 1rem;
     display: flex;
