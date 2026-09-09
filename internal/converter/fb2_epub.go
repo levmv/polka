@@ -33,19 +33,15 @@ func convertFB2SourceToEPUB(ctx context.Context, w io.Writer, src io.ReaderAt, s
 	if err != nil {
 		return err
 	}
-	meta, err := format.ExtractFB2MetadataFromXMLBytes(raw)
+	meta, coverRef, err := format.ExtractFB2Description(raw)
 	if err != nil {
 		return fmt.Errorf("extract FB2 metadata: %w", err)
-	}
-	coverID, err := fb2EPUBCoverID(raw)
-	if err != nil {
-		return err
 	}
 	assets, imageRefs, fallbackCoverHref, err := fb2EPUBImageAssets(raw)
 	if err != nil {
 		return err
 	}
-	coverHref := imageRefs[coverID]
+	coverHref := imageRefs[fb2RefID(coverRef)]
 	if coverHref == "" {
 		coverHref = fallbackCoverHref
 	}
@@ -71,48 +67,6 @@ func readFB2SourceBytes(ctx context.Context, src io.ReaderAt, size int64) ([]byt
 		return nil, fmt.Errorf("read FB2 source: %w", err)
 	}
 	return raw, nil
-}
-
-func fb2EPUBCoverID(raw []byte) (string, error) {
-	decoder := xml.NewDecoder(bytes.NewReader(raw))
-	decoder.CharsetReader = charset.NewReaderLabel
-	titleInfoDepth := 0
-	coverpageDepth := 0
-	for {
-		token, err := decoder.Token()
-		if err == io.EOF {
-			return "", nil
-		}
-		if err != nil {
-			return "", fmt.Errorf("decode FB2 coverpage: %w", err)
-		}
-		switch token := token.(type) {
-		case xml.StartElement:
-			switch token.Name.Local {
-			case "title-info":
-				titleInfoDepth++
-			case "coverpage":
-				if titleInfoDepth > 0 {
-					coverpageDepth++
-				}
-			case "image":
-				if coverpageDepth > 0 {
-					return fb2RefID(xmlAttr(token, "href")), nil
-				}
-			}
-		case xml.EndElement:
-			switch token.Name.Local {
-			case "coverpage":
-				if coverpageDepth > 0 {
-					coverpageDepth--
-				}
-			case "title-info":
-				if titleInfoDepth > 0 {
-					titleInfoDepth--
-				}
-			}
-		}
-	}
 }
 
 func fb2MarkEPUBCoverAsset(assets []epubAsset, coverHref string) {
@@ -194,7 +148,7 @@ func decodeFB2EPUBImage(bin fb2EPUBBinary) ([]byte, string, string) {
 }
 
 func fb2BodyToEPUB(raw []byte, imageRefs map[string]string) (string, []epubNavItem, error) {
-	noteTargets, err := fb2EPUBNoteTargets(raw)
+	index, err := indexFB2Body(raw)
 	if err != nil {
 		return "", nil, err
 	}
@@ -202,8 +156,8 @@ func fb2BodyToEPUB(raw []byte, imageRefs map[string]string) (string, []epubNavIt
 	decoder.CharsetReader = charset.NewReaderLabel
 	renderer := fb2EPUBRenderer{
 		imageRefs:   imageRefs,
-		usedIDs:     fb2ExistingIDs(raw),
-		noteTargets: noteTargets,
+		usedIDs:     index.usedIDs,
+		noteTargets: index.noteTargets,
 	}
 	for {
 		token, err := decoder.Token()
@@ -223,7 +177,7 @@ func fb2BodyToEPUB(raw []byte, imageRefs map[string]string) (string, []epubNavIt
 			}
 			renderer.start(token)
 		case xml.EndElement:
-			renderer.end(token)
+			renderer.end()
 		case xml.CharData:
 			renderer.text(string(token))
 		}
@@ -235,22 +189,47 @@ func fb2BodyToEPUB(raw []byte, imageRefs map[string]string) (string, []epubNavIt
 	return body + "\n", renderer.nav, nil
 }
 
-func fb2EPUBNoteTargets(raw []byte) (map[string]bool, error) {
+type fb2BodyIndex struct {
+	usedIDs     map[string]bool
+	noteTargets map[string]bool
+}
+
+// Index before rendering: links can precede notes, and generated heading IDs
+// must avoid existing IDs even in later bodies.
+func indexFB2Body(raw []byte) (fb2BodyIndex, error) {
 	decoder := xml.NewDecoder(bytes.NewReader(raw))
 	decoder.CharsetReader = charset.NewReaderLabel
-	targets := map[string]bool{}
+	index := fb2BodyIndex{
+		usedIDs:     map[string]bool{},
+		noteTargets: map[string]bool{},
+	}
+	bodyDepth := 0
+	skipIDsDepth := 0
 	noteBodyDepth := 0
 	for {
 		token, err := decoder.Token()
 		if err == io.EOF {
-			return targets, nil
+			return index, nil
 		}
 		if err != nil {
-			return nil, fmt.Errorf("decode FB2 note bodies: %w", err)
+			return fb2BodyIndex{}, fmt.Errorf("index FB2 body: %w", err)
 		}
 		switch token := token.(type) {
 		case xml.StartElement:
 			name := token.Name.Local
+			// Metadata and binaries outside bodies do not reserve heading IDs.
+			// Track their depth without skipping the independent note scan.
+			switch {
+			case skipIDsDepth > 0:
+				skipIDsDepth++
+			case bodyDepth > 0 || name == "body":
+				bodyDepth++
+				if id := strings.TrimSpace(xmlAttr(token, "id")); id != "" {
+					index.usedIDs[id] = true
+				}
+			case name == "description" || name == "binary":
+				skipIDsDepth = 1
+			}
 			if name == "body" {
 				role := strings.ToLower(strings.TrimSpace(xmlAttr(token, "name")))
 				if role == "notes" || role == "comments" {
@@ -266,10 +245,15 @@ func fb2EPUBNoteTargets(raw []byte) (map[string]bool, error) {
 			noteBodyDepth++
 			if name == "section" {
 				if id := strings.TrimSpace(xmlAttr(token, "id")); id != "" {
-					targets[id] = true
+					index.noteTargets[id] = true
 				}
 			}
 		case xml.EndElement:
+			if skipIDsDepth > 0 {
+				skipIDsDepth--
+			} else if bodyDepth > 0 {
+				bodyDepth--
+			}
 			if noteBodyDepth > 0 {
 				noteBodyDepth--
 			}
@@ -278,21 +262,25 @@ func fb2EPUBNoteTargets(raw []byte) (map[string]bool, error) {
 }
 
 type fb2EPUBRenderer struct {
-	out                  strings.Builder
-	imageRefs            map[string]string
-	noteTargets          map[string]bool
-	nav                  []epubNavItem
-	fb2Stack             []string
-	outputStack          []string
-	contentStack         []bool
-	footnoteElementStack []bool
-	bodyDepth            int
-	footnoteDepth        int
-	headingSeq           int
-	usedIDs              map[string]bool
-	heading              *fb2HeadingCapture
-	titleNav             *fb2TitleNavCapture
-	pendingSpace         bool
+	out           strings.Builder
+	imageRefs     map[string]string
+	noteTargets   map[string]bool
+	nav           []epubNavItem
+	stack         []fb2RenderFrame
+	bodyDepth     int
+	footnoteDepth int
+	headingSeq    int
+	usedIDs       map[string]bool
+	heading       *fb2HeadingCapture
+	titleNav      *fb2TitleNavCapture
+	pendingSpace  bool
+}
+
+type fb2RenderFrame struct {
+	name       string
+	close      string
+	hasContent bool
+	footnote   bool
 }
 
 type fb2HeadingCapture struct {
@@ -329,47 +317,31 @@ func (r *fb2EPUBRenderer) start(el xml.StartElement) {
 	r.push(name, close)
 	if name == "section" && r.noteTargets[strings.TrimSpace(xmlAttr(el, "id"))] {
 		r.footnoteDepth++
-		r.footnoteElementStack[len(r.footnoteElementStack)-1] = true
+		r.stack[len(r.stack)-1].footnote = true
 	}
 	if name == "image" && open != "" {
 		r.markContent()
 	}
 }
 
-func (r *fb2EPUBRenderer) end(el xml.EndElement) {
+func (r *fb2EPUBRenderer) end() {
 	if r.bodyDepth == 0 {
 		return
 	}
-	close := ""
-	if len(r.outputStack) > 0 {
-		close = r.outputStack[len(r.outputStack)-1]
-		r.outputStack = r.outputStack[:len(r.outputStack)-1]
-	}
-	name := ""
-	if len(r.fb2Stack) > 0 {
-		name = r.fb2Stack[len(r.fb2Stack)-1]
-		r.fb2Stack = r.fb2Stack[:len(r.fb2Stack)-1]
-	}
-	if len(r.contentStack) > 0 {
-		r.contentStack = r.contentStack[:len(r.contentStack)-1]
-	}
-	endsFootnote := false
-	if len(r.footnoteElementStack) > 0 {
-		endsFootnote = r.footnoteElementStack[len(r.footnoteElementStack)-1]
-		r.footnoteElementStack = r.footnoteElementStack[:len(r.footnoteElementStack)-1]
-	}
+	frame := r.stack[len(r.stack)-1]
+	r.stack = r.stack[:len(r.stack)-1]
 	r.pendingSpace = false
-	r.out.WriteString(close)
-	if r.heading != nil && name == r.heading.fb2Name {
+	r.out.WriteString(frame.close)
+	if r.heading != nil && frame.name == r.heading.fb2Name {
 		r.finishHeading()
 	}
-	if name == "title" {
+	if frame.name == "title" {
 		r.finishTitleNav()
 	}
-	if name == "body" {
+	if frame.name == "body" {
 		r.bodyDepth--
 	}
-	if endsFootnote {
+	if frame.footnote {
 		r.footnoteDepth--
 	}
 }
@@ -394,10 +366,7 @@ func (r *fb2EPUBRenderer) text(text string) {
 }
 
 func (r *fb2EPUBRenderer) push(fb2Name, outputClose string) {
-	r.fb2Stack = append(r.fb2Stack, fb2Name)
-	r.outputStack = append(r.outputStack, outputClose)
-	r.contentStack = append(r.contentStack, false)
-	r.footnoteElementStack = append(r.footnoteElementStack, false)
+	r.stack = append(r.stack, fb2RenderFrame{name: fb2Name, close: outputClose})
 }
 
 func (r *fb2EPUBRenderer) emitPendingSpace() {
@@ -410,8 +379,8 @@ func (r *fb2EPUBRenderer) emitPendingSpace() {
 }
 
 func (r *fb2EPUBRenderer) markContent() {
-	for i := range r.contentStack {
-		r.contentStack[i] = true
+	for i := range r.stack {
+		r.stack[i].hasContent = true
 	}
 }
 
@@ -419,8 +388,8 @@ func (r *fb2EPUBRenderer) inlineTextHasContent() bool {
 	// A newly opened inline wrapper can start with whitespace after content in
 	// its parent. Stop at a block boundary so indentation between paragraphs is
 	// still ignored.
-	for i := len(r.fb2Stack) - 1; i >= 0 && isFB2InlineText(r.fb2Stack[i]); i-- {
-		if r.contentStack[i] {
+	for i := len(r.stack) - 1; i >= 0 && isFB2InlineText(r.stack[i].name); i-- {
+		if r.stack[i].hasContent {
 			return true
 		}
 	}
@@ -587,8 +556,8 @@ func (r *fb2EPUBRenderer) nextHeadingID() string {
 }
 
 func (r *fb2EPUBRenderer) inFB2(name string) bool {
-	for _, value := range slices.Backward(r.fb2Stack) {
-		if value == name {
+	for _, frame := range slices.Backward(r.stack) {
+		if frame.name == name {
 			return true
 		}
 	}
@@ -633,48 +602,6 @@ func fb2OpenTagWithIDAndEPUBType(tag string, el xml.StartElement, id, epubType s
 		}
 	}
 	return "<" + tag + attrs.String() + ">"
-}
-
-func fb2ExistingIDs(raw []byte) map[string]bool {
-	decoder := xml.NewDecoder(bytes.NewReader(raw))
-	decoder.CharsetReader = charset.NewReaderLabel
-	ids := map[string]bool{}
-	bodyDepth := 0
-	for {
-		token, err := decoder.Token()
-		if err == io.EOF {
-			return ids
-		}
-		if err != nil {
-			return ids
-		}
-		switch token := token.(type) {
-		case xml.StartElement:
-			name := token.Name.Local
-			if bodyDepth == 0 {
-				switch name {
-				case "body":
-					bodyDepth = 1
-				case "description", "binary":
-					if err := decoder.Skip(); err != nil {
-						return ids
-					}
-					continue
-				default:
-					continue
-				}
-			} else {
-				bodyDepth++
-			}
-			if id := strings.TrimSpace(xmlAttr(token, "id")); id != "" {
-				ids[id] = true
-			}
-		case xml.EndElement:
-			if bodyDepth > 0 {
-				bodyDepth--
-			}
-		}
-	}
 }
 
 func fb2SafeLinkHref(el xml.StartElement) string {

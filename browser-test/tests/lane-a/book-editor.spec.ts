@@ -444,8 +444,15 @@ test.describe('Book editor', () => {
     expect(appliedCoverURL).toBe('https://covers.openlibrary.org/b/id/1-L.jpg?default=false');
   });
 
-  test('Edit cover upload is staged until Save', async ({ page }) => {
+  test('Edit cover upload is staged and can retry after metadata saves', async ({ page, browserErrors }) => {
+    browserErrors.allow(
+      message => message.includes('/cover]') && message.includes('503 (Service Unavailable)'),
+    );
     let uploadRequests = 0;
+    let metadataRequests = 0;
+    page.on('request', request => {
+      if (request.method() === 'PATCH' && /\/api\/books\/[^/]+$/.test(request.url())) metadataRequests++;
+    });
     const pendingCover = {
       name: 'pending-cover.png',
       mimeType: 'image/png',
@@ -457,6 +464,10 @@ test.describe('Book editor', () => {
 
     await page.route(/\/api\/books\/[^/]+\/cover$/, async route => {
       if (route.request().method() === 'POST') uploadRequests++;
+      if (uploadRequests === 1) {
+        await route.fulfill({ status: 503, contentType: 'text/plain', body: 'Cover storage unavailable' });
+        return;
+      }
       const reqURL = new URL(route.request().url());
       const bookPath = reqURL.pathname.replace(/\/cover$/, '');
       const bookRes = await page.request.get(`${reqURL.origin}${bookPath}`);
@@ -470,11 +481,11 @@ test.describe('Book editor', () => {
         body: JSON.stringify(book),
       });
     });
-    await page.goto('/');
-    const card = page.locator('.book-card', { hasText: 'With Cover Book' });
+    const title = await importDisposableBook(page, 'Cover Retry');
+    const card = page.locator('.book-card', { hasText: title });
     await expect(card).toBeVisible();
     await card.locator('.book-title').click();
-    await expect(page.locator('.detail-title')).toContainText('With Cover Book');
+    await expect(page.locator('.detail-title')).toContainText(title);
 
     await page.locator('#btn-edit-book').click();
     await expect(page.locator('.edit-modal')).toBeVisible();
@@ -503,11 +514,24 @@ test.describe('Book editor', () => {
 
     await uploadInput.setInputFiles(pendingCover);
     await coverPicker.getByLabel('Close').click();
+    const publisherInput = page.locator('.edit-modal input[name="publisher"]');
+    await publisherInput.fill('Cover Retry Press');
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+    await expect(page.locator('.toast:not(.toast-leaving) .toast-text')).toHaveText(
+      'Cover save failed: Cover storage unavailable',
+    );
+    await expect(publisherInput).toHaveValue('Cover Retry Press');
+    await expect(page.locator('.edit-modal .save-indicator')).toContainText('1 unsaved change');
+    await expect(coverContainer).toHaveClass(/is-dirty/);
+    await expect(coverContainer.locator('img')).toHaveAttribute('src', /^blob:/);
+    expect(metadataRequests).toBe(1);
+
     await page.getByRole('button', { name: 'Save', exact: true }).click();
     await expect(page.locator('.edit-modal .save-indicator')).toContainText('Saved');
     await expect(coverContainer).not.toHaveClass(/is-dirty/);
     await expect(page.locator('.edit-cover-revert')).toBeHidden();
-    expect(uploadRequests).toBe(1);
+    expect(uploadRequests).toBe(2);
+    expect(metadataRequests).toBe(1);
   });
 
   test('Generated cover is staged until Save', async ({ page }) => {

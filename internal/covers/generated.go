@@ -48,7 +48,8 @@ func GeneratedStyled(title, author string, variant Variant, opts Options, seed i
 		seed = 0
 	}
 
-	img := image.NewNRGBA(image.Rect(0, 0, w, h))
+	// The cover is opaque; RGBA also lets JPEG encoding avoid per-pixel allocations.
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
 	hue := math.Mod(hueFromText(title, author)+float64((seed%97)*37), 360)
 	switch normalizeGeneratedStyle(style) {
 	case GeneratedStyleBands:
@@ -89,7 +90,7 @@ func normalizeGeneratedStyle(style string) string {
 	}
 }
 
-func drawGeneratedClassic(img *image.NRGBA, title, author string, hue float64, seed int) error {
+func drawGeneratedClassic(img *image.RGBA, title, author string, hue float64, seed int) error {
 	b := img.Bounds()
 	w, h := b.Dx(), b.Dy()
 	top := hslToNRGBA(hue, 0.40, 0.31)
@@ -124,7 +125,7 @@ func drawGeneratedClassic(img *image.NRGBA, title, author string, hue float64, s
 	})
 }
 
-func drawGeneratedBands(img *image.NRGBA, title, author string, hue float64, seed int) error {
+func drawGeneratedBands(img *image.RGBA, title, author string, hue float64, seed int) error {
 	b := img.Bounds()
 	w, h := b.Dx(), b.Dy()
 	bg := hslToNRGBA(math.Mod(hue+16, 360), 0.28, 0.88)
@@ -156,7 +157,7 @@ func drawGeneratedBands(img *image.NRGBA, title, author string, hue float64, see
 	})
 }
 
-func drawGeneratedLabel(img *image.NRGBA, title, author string, hue float64, seed int) error {
+func drawGeneratedLabel(img *image.RGBA, title, author string, hue float64, seed int) error {
 	b := img.Bounds()
 	w, h := b.Dx(), b.Dy()
 	top := hslToNRGBA(math.Mod(hue+8, 360), 0.46, 0.28)
@@ -191,7 +192,7 @@ func drawGeneratedLabel(img *image.NRGBA, title, author string, hue float64, see
 	})
 }
 
-func drawGeneratedQuiet(img *image.NRGBA, title, author string, hue float64, seed int) error {
+func drawGeneratedQuiet(img *image.RGBA, title, author string, hue float64, seed int) error {
 	b := img.Bounds()
 	w, h := b.Dx(), b.Dy()
 	bg := hslToNRGBA(math.Mod(hue+218, 360), 0.24, 0.18)
@@ -349,19 +350,19 @@ func drawGeneratedLine(dst draw.Image, face font.Face, line string, block genera
 	d.DrawString(line)
 }
 
-func fillVerticalGradient(img *image.NRGBA, top, bottom color.NRGBA) {
+func fillVerticalGradient(img *image.RGBA, top, bottom color.NRGBA) {
 	b := img.Bounds()
 	h := max(1, b.Dy()-1)
 	for y := b.Min.Y; y < b.Max.Y; y++ {
 		t := float64(y-b.Min.Y) / float64(h)
-		c := color.NRGBA{
+		c := color.RGBA{
 			R: lerp8(top.R, bottom.R, t),
 			G: lerp8(top.G, bottom.G, t),
 			B: lerp8(top.B, bottom.B, t),
 			A: 255,
 		}
 		for x := b.Min.X; x < b.Max.X; x++ {
-			img.SetNRGBA(x, y, c)
+			img.SetRGBA(x, y, c)
 		}
 	}
 }

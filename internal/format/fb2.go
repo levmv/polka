@@ -136,11 +136,19 @@ func ExtractFB2MetadataAndCover(r io.ReaderAt, size int64) (*Metadata, []byte, s
 // XML bytes. Callers that have not already opened and normalized the source
 // should use ExtractFB2Metadata instead.
 func ExtractFB2MetadataFromXMLBytes(raw []byte) (*Metadata, error) {
+	meta, _, err := ExtractFB2Description(raw)
+	return meta, err
+}
+
+// ExtractFB2Description reads metadata and the preferred cover reference from
+// already-normalized FB2 XML. It stops after the description element; image
+// bytes are decoded separately by the caller.
+func ExtractFB2Description(raw []byte) (*Metadata, string, error) {
 	doc, err := decodeFB2MetadataXML(raw)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return metadataFromFB2(doc), nil
+	return metadataFromFB2(doc), fb2CoverReference(doc), nil
 }
 
 // ExtractFB2Cover extracts the cover image referenced by title-info/coverpage.
@@ -154,20 +162,19 @@ func ExtractFB2Cover(r io.ReaderAt, size int64) ([]byte, string, error) {
 	return fb2Cover(doc)
 }
 
-func fb2Cover(doc *fb2Doc) ([]byte, string, error) {
-	wantID := ""
+func fb2CoverReference(doc *fb2Doc) string {
 	for _, titleInfo := range fb2TitleInfoFallbacks(doc) {
 		for _, img := range titleInfo.Coverpage.Images {
-			if id := fb2BinaryID(img.Href); id != "" {
-				wantID = id
-				break
+			if fb2BinaryID(img.Href) != "" {
+				return img.Href
 			}
 		}
-		if wantID != "" {
-			break
-		}
 	}
+	return ""
+}
 
+func fb2Cover(doc *fb2Doc) ([]byte, string, error) {
+	wantID := fb2BinaryID(fb2CoverReference(doc))
 	var fallback []byte
 	fallbackExt := ""
 	for i := range doc.Binaries {

@@ -6,11 +6,13 @@ import (
 	"database/sql"
 	"encoding/json/v2"
 	"encoding/xml"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/levmv/polka/internal/db"
@@ -61,8 +63,12 @@ func TestAPIImportUploadImportsAndDuplicates(t *testing.T) {
 	if err := database.Read(req.Context()).QueryRow("SELECT storage_path FROM assets WHERE id = ?", got.AssetID).Scan(&storagePath); err != nil {
 		t.Fatalf("query asset path: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dataDir, storagePath)); err != nil {
-		t.Fatalf("stored upload missing: %v", err)
+	stored, err := os.ReadFile(filepath.Join(dataDir, storagePath))
+	if err != nil {
+		t.Fatalf("read stored upload: %v", err)
+	}
+	if !bytes.Equal(stored, epub) {
+		t.Fatal("stored upload differs from the original file")
 	}
 
 	req = uploadBookRequest(t, "uploaded.epub", epub)
@@ -87,6 +93,13 @@ func TestAPIImportUploadImportsAndDuplicates(t *testing.T) {
 	}
 	if assets != 1 {
 		t.Fatalf("asset count = %d, want 1 after duplicate upload", assets)
+	}
+	entries, err := os.ReadDir(filepath.Join(dataDir, "tmp", "uploads"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("successful uploads left %d temporary files", len(entries))
 	}
 }
 
@@ -205,7 +218,7 @@ func TestAPIImportUploadAcceptsZippedFB2(t *testing.T) {
 	}
 }
 
-func TestAPIImportUploadRejectsUnsupportedFilename(t *testing.T) {
+func TestAPIImportUploadRejectsInvalidRequests(t *testing.T) {
 	dataDir := t.TempDir()
 	database, err := db.InitPath(filepath.Join(dataDir, "library.db"))
 	if err != nil {
@@ -221,20 +234,66 @@ func TestAPIImportUploadRejectsUnsupportedFilename(t *testing.T) {
 		t.Fatalf("issue session: %v", err)
 	}
 
-	req := uploadBookRequest(t, "notes.xyz", []byte("not a book"))
-	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sid})
-	w := httptest.NewRecorder()
-	testRoutes(t, s).ServeHTTP(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusBadRequest, w.Body.String())
-	}
-	var books int
-	if err := database.Read(req.Context()).QueryRow("SELECT COUNT(*) FROM books").Scan(&books); err != nil {
-		t.Fatalf("count books: %v", err)
-	}
-	if books != 0 {
-		t.Fatalf("books = %d, want 0", books)
+	handler := testRoutes(t, s)
+	for _, tc := range []struct {
+		name        string
+		filename    string
+		truncate    bool
+		limitOffset int64
+		status      int
+	}{
+		{name: "unsupported filename", filename: "notes.xyz", status: http.StatusBadRequest},
+		{name: "interrupted upload", filename: "book.txt", truncate: true, status: http.StatusBadRequest},
+		{name: "oversized book", filename: "book.txt", limitOffset: -128, status: http.StatusRequestEntityTooLarge},
+		{name: "oversized trailing field", filename: "book.txt", limitOffset: 256, status: http.StatusRequestEntityTooLarge},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var body bytes.Buffer
+			form := multipart.NewWriter(&body)
+			part, err := form.CreateFormFile("book", tc.filename)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := io.WriteString(part, strings.Repeat("Book text.\n", 64)); err != nil {
+				t.Fatal(err)
+			}
+			bookEnd := int64(body.Len())
+			if err := form.WriteField("extra", strings.Repeat("x", 1024)); err != nil {
+				t.Fatal(err)
+			}
+			if err := form.Close(); err != nil {
+				t.Fatal(err)
+			}
+			req := httptest.NewRequest(http.MethodPost, "/api/import", &body)
+			req.Header.Set("Content-Type", form.FormDataContentType())
+			req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sid})
+			req.ContentLength = -1
+			w := httptest.NewRecorder()
+			if tc.truncate {
+				req.Body = io.NopCloser(io.LimitReader(req.Body, bookEnd-128))
+			} else if tc.limitOffset != 0 {
+				// Exercise the production error path with a small request limit.
+				req.Body = http.MaxBytesReader(w, req.Body, bookEnd+tc.limitOffset)
+			}
+			handler.ServeHTTP(w, req)
+			if w.Code != tc.status {
+				t.Fatalf("status = %d, want %d; body: %s", w.Code, tc.status, w.Body.String())
+			}
+			var books int
+			if err := database.Read(req.Context()).QueryRow("SELECT COUNT(*) FROM books").Scan(&books); err != nil {
+				t.Fatalf("count books: %v", err)
+			}
+			if books != 0 {
+				t.Fatalf("books = %d, want 0", books)
+			}
+			entries, err := os.ReadDir(filepath.Join(dataDir, "tmp", "uploads"))
+			if err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+			if len(entries) != 0 {
+				t.Fatalf("failed upload left %d temporary files", len(entries))
+			}
+		})
 	}
 }
 

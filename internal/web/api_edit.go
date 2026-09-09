@@ -67,6 +67,14 @@ type bookEditState struct {
 	Identifiers  sql.NullString
 }
 
+type bookEditChanges struct {
+	Authors    bool
+	PathInputs bool
+	Metadata   bool
+	// Manual overrides can change without changing the file metadata.
+	Overrides bool
+}
+
 func loadBookEditState(queryer db.Queryer, bookID int64) (bookEditState, error) {
 	b, err := db.GetBook(queryer, db.FullVisibilityScope(), bookID)
 	if err != nil {
@@ -100,6 +108,122 @@ func loadBookEditState(queryer db.Queryer, bookID int64) (bookEditState, error) 
 		Date:         b.Date,
 		Identifiers:  b.Identifiers,
 	}, nil
+}
+
+// applyBookPatch merges a validated request with the current state. The caller
+// loads that state inside the transaction that will persist the result.
+func applyBookPatch(existing bookEditState, req BookPatch) (bookEditState, bookEditChanges) {
+	next := existing
+	overrides := bookmeta.ParseOverrides(existing.OverridesStr)
+	beforeOverrides := bookmeta.MarshalOverrides(overrides)
+
+	if req.Title.Present {
+		next.Title = req.Title.Value
+		overrides["title"] = true
+	}
+	titleChanged := next.Title != existing.Title
+
+	if req.SortTitle.Present {
+		sortTitle := strings.TrimSpace(req.SortTitle.Value)
+		if req.SortTitle.Null || sortTitle == "" {
+			next.SortTitle = next.Title
+			delete(overrides, "sort_title")
+		} else {
+			next.SortTitle = sortTitle
+			overrides["sort_title"] = true
+		}
+	} else if titleChanged && existing.SortTitle == existing.Title {
+		// Equality is the persisted "sort title follows title" state. A title-only
+		// patch keeps following without requiring the stale form to send sort_title.
+		next.SortTitle = next.Title
+	}
+
+	if req.Series.Present {
+		next.Series = sql.NullString{}
+		if !req.Series.Null {
+			next.Series = trimmedNullableText(req.Series.Value)
+		}
+		overrides["series"] = true
+	}
+	if req.SeriesIndex.Present {
+		next.SeriesIndex = sql.NullFloat64{}
+		if !req.SeriesIndex.Null {
+			next.SeriesIndex = sql.NullFloat64{Float64: req.SeriesIndex.Value, Valid: true}
+		}
+		overrides["series_index"] = true
+	}
+	if req.Description.Present {
+		next.Description = sql.NullString{}
+		if !req.Description.Null {
+			next.Description = nullableText(req.Description.Value)
+		}
+		overrides["description"] = true
+	}
+	if req.Tags.Present {
+		next.Tags = sql.NullString{}
+		if !req.Tags.Null {
+			next.Tags = trimmedNullableText(req.Tags.Value)
+		}
+		overrides["tags"] = true
+	}
+	if req.Language.Present {
+		next.Language = sql.NullString{}
+		if !req.Language.Null {
+			// Match import normalization so "eng", "en_US", and "en" converge.
+			next.Language = trimmedNullableText(bookmeta.NormalizeLanguage(req.Language.Value))
+		}
+		overrides["language"] = true
+	}
+	if req.Publisher.Present {
+		next.Publisher = sql.NullString{}
+		if !req.Publisher.Null {
+			next.Publisher = trimmedNullableText(req.Publisher.Value)
+		}
+		overrides["publisher"] = true
+	}
+	if req.Date.Present {
+		next.Date = sql.NullString{}
+		if !req.Date.Null {
+			date := strings.TrimSpace(req.Date.Value)
+			if normalized, _ := bookmeta.ParseDate(date); normalized != "" {
+				date = normalized
+			}
+			next.Date = nullableText(date)
+		}
+		overrides["date"] = true
+	}
+	if req.Identifiers.Present {
+		next.Identifiers = sql.NullString{}
+		if !req.Identifiers.Null {
+			formatted := bookmeta.FormatIdentifiers(bookmeta.ParseIdentifiers(req.Identifiers.Value))
+			next.Identifiers = nullableText(formatted)
+		}
+		overrides["identifiers"] = true
+	}
+	if req.Authors.Present {
+		next.Authors = ""
+		if !req.Authors.Null {
+			next.Authors = bookmeta.FormatAuthorList(bookmeta.ParseAuthorList(req.Authors.Value))
+		}
+		overrides["authors"] = true
+	}
+	next.OverridesStr = bookmeta.MarshalOverrides(overrides)
+
+	changes := bookEditChanges{
+		Authors:   next.Authors != existing.Authors,
+		Overrides: next.OverridesStr != beforeOverrides,
+	}
+	changes.PathInputs = titleChanged || next.SortTitle != existing.SortTitle || changes.Authors ||
+		!sameNullableText(next.Series, existing.Series) ||
+		!sameNullableNumber(next.SeriesIndex, existing.SeriesIndex)
+	changes.Metadata = changes.PathInputs ||
+		!sameNullableText(next.Description, existing.Description) ||
+		!sameNullableText(next.Tags, existing.Tags) ||
+		!sameNullableText(next.Language, existing.Language) ||
+		!sameNullableText(next.Publisher, existing.Publisher) ||
+		!sameNullableText(next.Date, existing.Date) ||
+		!sameNullableText(next.Identifiers, existing.Identifiers)
+	return next, changes
 }
 
 func nullableText(value string) sql.NullString {
@@ -161,120 +285,8 @@ func (s *Server) handleAPIEditBook(w http.ResponseWriter, r *http.Request, bookI
 			return relayout.Changed{}, err
 		}
 
-		next := existing
-		overrides := bookmeta.ParseOverrides(existing.OverridesStr)
-		beforeOverrides := bookmeta.MarshalOverrides(overrides)
-
-		if req.Title.Present {
-			next.Title = req.Title.Value
-			overrides["title"] = true
-		}
-		titleChanged := next.Title != existing.Title
-
-		if req.SortTitle.Present {
-			sortTitle := strings.TrimSpace(req.SortTitle.Value)
-			if req.SortTitle.Null || sortTitle == "" {
-				next.SortTitle = next.Title
-				delete(overrides, "sort_title")
-			} else {
-				next.SortTitle = sortTitle
-				overrides["sort_title"] = true
-			}
-		} else if titleChanged && existing.SortTitle == existing.Title {
-			// Equality is the persisted "sort title follows title" state. A title-only
-			// patch keeps following without requiring the stale form to send sort_title.
-			next.SortTitle = next.Title
-		}
-
-		if req.Series.Present {
-			next.Series = sql.NullString{}
-			if !req.Series.Null {
-				next.Series = trimmedNullableText(req.Series.Value)
-			}
-			overrides["series"] = true
-		}
-		if req.SeriesIndex.Present {
-			next.SeriesIndex = sql.NullFloat64{}
-			if !req.SeriesIndex.Null {
-				next.SeriesIndex = sql.NullFloat64{Float64: req.SeriesIndex.Value, Valid: true}
-			}
-			overrides["series_index"] = true
-		}
-		if req.Description.Present {
-			next.Description = sql.NullString{}
-			if !req.Description.Null {
-				next.Description = nullableText(req.Description.Value)
-			}
-			overrides["description"] = true
-		}
-		if req.Tags.Present {
-			next.Tags = sql.NullString{}
-			if !req.Tags.Null {
-				next.Tags = trimmedNullableText(req.Tags.Value)
-			}
-			overrides["tags"] = true
-		}
-		if req.Language.Present {
-			next.Language = sql.NullString{}
-			if !req.Language.Null {
-				// Match import normalization so "eng", "en_US", and "en" converge.
-				next.Language = trimmedNullableText(bookmeta.NormalizeLanguage(req.Language.Value))
-			}
-			overrides["language"] = true
-		}
-		if req.Publisher.Present {
-			next.Publisher = sql.NullString{}
-			if !req.Publisher.Null {
-				next.Publisher = trimmedNullableText(req.Publisher.Value)
-			}
-			overrides["publisher"] = true
-		}
-		if req.Date.Present {
-			next.Date = sql.NullString{}
-			if !req.Date.Null {
-				date := strings.TrimSpace(req.Date.Value)
-				if normalized, _ := bookmeta.ParseDate(date); normalized != "" {
-					date = normalized
-				}
-				next.Date = nullableText(date)
-			}
-			overrides["date"] = true
-		}
-		if req.Identifiers.Present {
-			next.Identifiers = sql.NullString{}
-			if !req.Identifiers.Null {
-				formatted := bookmeta.FormatIdentifiers(bookmeta.ParseIdentifiers(req.Identifiers.Value))
-				next.Identifiers = nullableText(formatted)
-			}
-			overrides["identifiers"] = true
-		}
-
-		authorsChanged := false
-		nextAuthors := existing.Authors
-		if req.Authors.Present {
-			nextAuthors = ""
-			if !req.Authors.Null {
-				nextAuthors = bookmeta.FormatAuthorList(bookmeta.ParseAuthorList(req.Authors.Value))
-			}
-			authorsChanged = nextAuthors != existing.Authors
-			overrides["authors"] = true
-		}
-
-		sortTitleChanged := next.SortTitle != existing.SortTitle
-		seriesChanged := !sameNullableText(next.Series, existing.Series)
-		seriesIndexChanged := !sameNullableNumber(next.SeriesIndex, existing.SeriesIndex)
-		pathInputsChanged := titleChanged || sortTitleChanged || seriesChanged || seriesIndexChanged || authorsChanged
-		metadataChanged := pathInputsChanged ||
-			!sameNullableText(next.Description, existing.Description) ||
-			!sameNullableText(next.Tags, existing.Tags) ||
-			!sameNullableText(next.Language, existing.Language) ||
-			!sameNullableText(next.Publisher, existing.Publisher) ||
-			!sameNullableText(next.Date, existing.Date) ||
-			!sameNullableText(next.Identifiers, existing.Identifiers)
-		overridesJSON := bookmeta.MarshalOverrides(overrides)
-		overridesChanged := overridesJSON != beforeOverrides
-
-		if !metadataChanged && !overridesChanged {
+		next, changes := applyBookPatch(existing, req)
+		if !changes.Metadata && !changes.Overrides {
 			return relayout.Changed{}, nil
 		}
 
@@ -285,14 +297,14 @@ func (s *Server) handleAPIEditBook(w http.ResponseWriter, r *http.Request, bookI
 				language = ?, publisher = ?, published_date = ?, identifiers = ?,
 				updated_at = unixepoch()
 			WHERE id = ?
-		`, next.Title, next.SortTitle, next.Series, next.SeriesIndex, next.Description, next.Tags, overridesJSON,
+		`, next.Title, next.SortTitle, next.Series, next.SeriesIndex, next.Description, next.Tags, next.OverridesStr,
 			next.Language, next.Publisher, next.Date, next.Identifiers, bookID)
 		if err != nil {
 			return relayout.Changed{}, fmt.Errorf("update book: %w", err)
 		}
 
-		if authorsChanged {
-			if err := replaceBookAuthors(tx, bookID, nextAuthors); err != nil {
+		if changes.Authors {
+			if err := replaceBookAuthors(tx, bookID, next.Authors); err != nil {
 				return relayout.Changed{}, fmt.Errorf("replace book authors: %w", err)
 			}
 			if _, err := db.DeleteOrphanAuthors(tx); err != nil {
@@ -301,10 +313,10 @@ func (s *Server) handleAPIEditBook(w http.ResponseWriter, r *http.Request, bookI
 		}
 
 		changed := relayout.Changed{}
-		if metadataChanged {
+		if changes.Metadata {
 			changed.BumpMetadataRev = []int64{bookID}
 		}
-		if pathInputsChanged {
+		if changes.PathInputs {
 			changed.Relayout = []int64{bookID}
 		}
 		return changed, nil

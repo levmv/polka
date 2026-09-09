@@ -254,9 +254,7 @@ export function initLibrary(root: HTMLElement): RouteController {
             container: libraryGrid,
             getBooks: () => state.books,
             canWriteback: () => state.canWriteback,
-            onApplied: (updated) => {
-                for (const b of updated) replaceRenderedBook(state, b);
-            },
+            onApplied: (updated) => replaceRenderedBooks(state, updated),
             onRemoved: (ids) => removeRenderedBooks(state, ids),
         });
         addCleanup(() => state.selection?.destroy());
@@ -313,7 +311,8 @@ export function initLibrary(root: HTMLElement): RouteController {
             return;
         }
         if (change?.kind === 'books-updated') {
-            for (const book of change.books) replaceRenderedBook(state, book);
+            replaceRenderedBooks(state, change.books);
+            state.selection?.syncAfterRender();
             syncContinueReading(state);
             return;
         }
@@ -941,24 +940,21 @@ function sampleBookJumps(jumps: BookJump[], capacity: number): BookJump[] {
     return out;
 }
 
-// Swap only the edited book's element so an edit never re-renders (and reflows
-// the covers of) every other book on screen. Both views carry the book id on
-// their element; if it isn't currently rendered, there is nothing to do.
-function replaceRenderedBook(state: LibraryViewState, updated: BookSummary): void {
-    state.books = state.books.map((book) => (book.id === updated.id ? updated : book));
+// Keep untouched rows/cards in place. Callers restore selection after the batch.
+function replaceRenderedBooks(state: LibraryViewState, updates: BookSummary[]): void {
+    if (updates.length === 0) return;
+    const byID = new Map(updates.map((book) => [book.id, book]));
+    state.books = state.books.map((book) => byID.get(book.id) ?? book);
 
-    if (state.view === 'table') {
-        const row = state.root.querySelector<HTMLTableRowElement>(
-            `.table-row[data-id="${updated.id}"]`,
+    for (const element of state.root.querySelectorAll<HTMLElement>(renderedBookSelector(state))) {
+        const updated = byID.get(Number(element.dataset.id));
+        if (!updated) continue;
+        element.replaceWith(
+            state.view === 'table'
+                ? createBookRow(state, updated)
+                : createBookCard(updated, currentLibraryContext(state)),
         );
-        row?.replaceWith(createBookRow(state, updated));
-        state.selection?.syncAfterRender();
-        return;
     }
-
-    const card = state.root.querySelector<HTMLElement>(`.book-card[data-id="${updated.id}"]`);
-    card?.replaceWith(createBookCard(updated, currentLibraryContext(state)));
-    state.selection?.syncAfterRender();
 }
 
 // removeRenderedBooks drops the given books from view state and the DOM without

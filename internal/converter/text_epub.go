@@ -107,20 +107,20 @@ func cleanTextForEPUB(text string) string {
 }
 
 func stripEPUBControlChars(text string) string {
-	var out strings.Builder
-	for _, r := range text {
+	return strings.Map(func(r rune) rune {
 		if r == '\n' || r == '\t' || r >= 0x20 {
-			out.WriteRune(r)
+			return r
 		}
-	}
-	return out.String()
+		return -1
+	}, text)
 }
 
 func collapseBlankLineRuns(text string, maxBlankLines int) string {
-	lines := strings.Split(text, "\n")
-	var out []string
+	var out strings.Builder
+	out.Grow(len(text))
+	separator := ""
 	blankRun := 0
-	for _, line := range lines {
+	for line := range strings.SplitSeq(text, "\n") {
 		if strings.TrimSpace(line) == "" {
 			blankRun++
 			if blankRun > maxBlankLines {
@@ -129,9 +129,11 @@ func collapseBlankLineRuns(text string, maxBlankLines int) string {
 		} else {
 			blankRun = 0
 		}
-		out = append(out, line)
+		out.WriteString(separator)
+		out.WriteString(line)
+		separator = "\n"
 	}
-	return strings.Join(out, "\n")
+	return out.String()
 }
 
 func plainTextBody(text string) string {
@@ -167,7 +169,6 @@ func plainTextBody(text string) string {
 }
 
 func plainTextLooksLineParagraphs(lines []string) bool {
-	var nonEmpty []string
 	start := 0
 	for start < len(lines) && strings.TrimSpace(lines[start]) == "" {
 		start++
@@ -176,23 +177,20 @@ func plainTextLooksLineParagraphs(lines []string) bool {
 	for end > start && strings.TrimSpace(lines[end-1]) == "" {
 		end--
 	}
+	if end-start < 6 {
+		return false
+	}
+	punctuated := 0
 	for _, line := range lines[start:end] {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			return false
 		}
-		nonEmpty = append(nonEmpty, line)
-	}
-	if len(nonEmpty) < 6 {
-		return false
-	}
-	punctuated := 0
-	for _, line := range nonEmpty {
 		if plainTextLineEndsSentence(line) {
 			punctuated++
 		}
 	}
-	return punctuated*3 >= len(nonEmpty)*2
+	return punctuated*3 >= (end-start)*2
 }
 
 func plainTextLineEndsSentence(line string) bool {
@@ -243,7 +241,6 @@ func escapePlainText(text string) string {
 }
 
 func markdownDocument(text string) epubTextDocument {
-	lines := strings.Split(normalizeLineEndings(text), "\n")
 	var out strings.Builder
 	var paragraph []string
 	var list *markdownList
@@ -293,7 +290,7 @@ func markdownDocument(text string) epubTextDocument {
 		flushQuote()
 	}
 
-	for _, line := range lines {
+	for line := range strings.SplitSeq(normalizeLineEndings(text), "\n") {
 		trimmed := strings.TrimSpace(line)
 		if fence != "" {
 			if strings.HasPrefix(trimmed, fence) && strings.Trim(trimmed, fence[:1]+" \t") == "" {
