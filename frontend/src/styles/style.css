@@ -1694,6 +1694,11 @@ body.busy .busy__loader {
     overflow-x: auto;
 }
 
+/* Align checkboxes with the toolbar without moving the table's right edge. */
+body.can-curate .library-table-container {
+    margin-inline-start: -0.5rem;
+}
+
 .library-results-loading {
     opacity: 0.58;
     transition: opacity 0.14s ease;
@@ -1761,14 +1766,21 @@ body.busy .busy__loader {
     text-decoration: underline;
 }
 
-/* Author values are interactive (click = filter) but not styled as links at
-   rest — only a quiet hover hint — to keep the table free of visual noise. */
-.table-author-link {
+/* Table filters stay quiet until hovered or focused. */
+.table-author-link,
+.table-series-link,
+.table-tag-text {
+    color: inherit;
+    text-decoration: none;
     cursor: pointer;
 }
 
 .table-author-link:hover,
-.table-author-link:focus-visible {
+.table-author-link:focus-visible,
+.table-series-link:hover,
+.table-series-link:focus-visible,
+.table-tag-text:hover,
+.table-tag-text:focus-visible {
     text-decoration: underline;
     outline: 0;
 }
@@ -1825,10 +1837,10 @@ body.busy .busy__loader {
 .table-tags-text {
     color: var(--text-muted);
     font-size: 0.85rem;
+    overflow-wrap: normal;
 }
 
 .table-tag-sep {
-    padding: 0 0.3rem;
     opacity: 0.5;
 }
 
@@ -7209,10 +7221,10 @@ body.can-curate.has-selection .table-row {
 /* Table selection: a leading checkbox column, shown only for curators so its
    presence never shifts the reader layout. Both th and td share .col-select, so
    toggling the column keeps the header and body aligned. */
-.col-select {
+.library-table .col-select {
     display: none;
     width: 40px;
-    padding: 0;
+    padding-inline: 0.5rem 0.7rem;
 }
 
 body.can-curate .col-select,
@@ -7225,7 +7237,7 @@ body.can-curate .col-actions {
 .table-select-label {
     display: flex;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-start;
     min-height: 44px;
     margin: 0;
     cursor: pointer;
@@ -7235,6 +7247,7 @@ body.can-curate .col-actions {
 .table-select-row {
     width: 17px;
     height: 17px;
+    margin: 0;
     accent-color: var(--accent);
     cursor: pointer;
 }

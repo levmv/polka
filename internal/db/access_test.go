@@ -131,11 +131,11 @@ func TestVisibilityScopeQueryShelf(t *testing.T) {
 	database := newTestDB(t)
 	seedAccessBooks(t, database)
 	user := mustUser(t, database, "reader", RoleReader)
-	shelf, err := database.CreateShelf(t.Context(), user.ID, ShelfShared, "Kids query", ShelfQuery, "tag:kid")
+	shelf, err := database.CreateShelf(t.Context(), user.ID, ShelfShared, "Kids query", ShelfQuery, "k tag:kid")
 	if err != nil {
 		t.Fatalf("create query shelf: %v", err)
 	}
-	overlapShelf, err := database.CreateShelf(t.Context(), user.ID, ShelfShared, "Kid title query", ShelfQuery, `title:"Kid Book"`)
+	overlapShelf, err := database.CreateShelf(t.Context(), user.ID, ShelfShared, "Kid title query", ShelfQuery, `bo title:"Kid Book"`)
 	if err != nil {
 		t.Fatalf("create overlapping query shelf: %v", err)
 	}

@@ -77,8 +77,11 @@ func TestBookSearchConsumersSelectTheSameBooks(t *testing.T) {
 		{query: "need", want: []int64{1, 2}},
 		{query: "no:cover", want: []int64{1, 3}},
 		{query: "no:cover need", want: []int64{1}},
+		{query: "need no:cover", want: []int64{1}},
 		{query: "status:finished need", want: []int64{2}},
+		{query: "need status:finished", want: []int64{2}},
 		{query: `tag:"science fiction"`, want: []int64{1}},
+		{query: `need tag:"science fiction"`, want: []int64{1}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.query, func(t *testing.T) {
@@ -152,12 +155,14 @@ func TestSearchPrefixMatching(t *testing.T) {
 	mustExec(t, database, `
 		INSERT INTO books (id, title, sort_title) VALUES
 			(146, 'Foundation Base', 'Foundation Base'),
+			(144, 'Я, робот', 'Я, робот'),
 			(137, '地球往事', '地球往事'),
 			(139, 'ねこ物語', 'ねこ物語');
-		INSERT INTO search (rowid, title) VALUES
-			(146, 'Foundation Base'),
-			(137, '地球往事'),
-			(139, 'ねこ物語');
+		INSERT INTO search (rowid, title, authors) VALUES
+			(146, 'Foundation Base', 'Isaac Asimov'),
+			(144, 'Я, робот', ''),
+			(137, '地球往事', ''),
+			(139, 'ねこ物語', '');
 	`)
 
 	tests := []struct {
@@ -165,12 +170,19 @@ func TestSearchPrefixMatching(t *testing.T) {
 		query string
 		want  []int64
 	}{
-		{name: "single Latin character stays exact", query: "f"},
+		{name: "single Latin character prefix", query: "f", want: []int64{146}},
 		{name: "Latin prefix", query: "fo", want: []int64{146}},
-		{name: "trailing word prefix", query: "foundation ba", want: []int64{146}},
+		{name: "trailing word prefix", query: "foundation b", want: []int64{146}},
+		{name: "author filter after prefix", query: `f author:"Isaac Asimov"`, want: []int64{146}},
+		{name: "author filter between words", query: "foundation author:a ba", want: []int64{146}},
+		{name: "earlier free-text words stay exact", query: `f ba author:"Isaac Asimov"`},
+		{name: "quoted free-text stays exact before a filter", query: `"f" author:"Isaac Asimov"`},
 		{name: "completed phrase stays exact", query: `"foundation ba"`},
+		{name: "single Cyrillic character prefix", query: "р", want: []int64{144}},
+		{name: "single-letter word before prefix", query: "я р", want: []int64{144}},
 		{name: "single Han character prefix", query: "地", want: []int64{137}},
 		{name: "single kana character prefix", query: "ね", want: []int64{139}},
+		{name: "punctuation has no words", query: "..."},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
