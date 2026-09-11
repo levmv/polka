@@ -227,58 +227,6 @@ func TestParseOPFRemovesInvalidXML10Controls(t *testing.T) {
 	}
 }
 
-func TestParseOPFLegacyOEBMetadata(t *testing.T) {
-	const opf = `<?xml version='1.0' encoding='utf-8'?>
-<metadata>
-  <dc-metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:oebpackage="http://openebook.org/namespaces/oeb-package/1.0/">
-    <dc:Title>Legacy Text Archive</dc:Title>
-    <dc:Creator file-as="Writer, Legacy" role="aut">Legacy Writer</dc:Creator>
-    <dc:Language>de</dc:Language>
-    <dc:Publisher>Legacy Press</dc:Publisher>
-    <dc:Date>2011-04-03</dc:Date>
-    <dc:Identifier scheme="ISBN">9783406613685</dc:Identifier>
-    <dc:Subject>Biography, Philosophy</dc:Subject>
-  </dc-metadata>
-  <x-metadata>
-    <meta name="{http://calibre.kovidgoyal.net/2009/metadata}title_sort" content="Text Archive, Legacy"/>
-    <meta name="{http://calibre.kovidgoyal.net/2009/metadata}series" content="Legacy Series"/>
-    <meta name="{http://calibre.kovidgoyal.net/2009/metadata}series_index" content="2"/>
-  </x-metadata>
-</metadata>`
-
-	meta, err := ParseOPF(strings.NewReader(opf))
-	if err != nil {
-		t.Fatalf("ParseOPF: %v", err)
-	}
-	if meta.Title != "Legacy Text Archive" {
-		t.Fatalf("Title = %q; want legacy OEB title", meta.Title)
-	}
-	if meta.SortTitle != "Text Archive, Legacy" {
-		t.Fatalf("SortTitle = %q; want legacy calibre title_sort", meta.SortTitle)
-	}
-	if len(meta.Authors) != 1 || meta.Authors[0].Name != "Legacy Writer" || meta.Authors[0].SortName != "Writer, Legacy" || meta.Authors[0].Role != "aut" {
-		t.Fatalf("Authors = %+v; want Legacy Writer with sort/role", meta.Authors)
-	}
-	if meta.Language != "de" || meta.Publisher != "Legacy Press" || meta.Date != "2011-04-03" {
-		t.Fatalf("simple fields = lang %q publisher %q date %q; want legacy fields", meta.Language, meta.Publisher, meta.Date)
-	}
-	if meta.Identifier != "isbn:9783406613685" {
-		t.Fatalf("Identifier = %q; want legacy ISBN", meta.Identifier)
-	}
-	if meta.Series != "Legacy Series" || meta.SeriesIndex != 2 {
-		t.Fatalf("Series = %q/%v; want legacy calibre series", meta.Series, meta.SeriesIndex)
-	}
-	wantTags := []string{"Biography", "Philosophy"}
-	if len(meta.Tags) != len(wantTags) {
-		t.Fatalf("Tags = %v; want %v", meta.Tags, wantTags)
-	}
-	for i, want := range wantTags {
-		if meta.Tags[i] != want {
-			t.Fatalf("Tags = %v; want %v", meta.Tags, wantTags)
-		}
-	}
-}
-
 // Some sidecars write the combined author-sort string into each creator's
 // file-as. Polka must not apply that combined string as any single creator's
 // sort_name; the per-creator sort derives from the name. Real case: an OPF

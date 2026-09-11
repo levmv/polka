@@ -72,16 +72,27 @@ func WriteAdjacentTemp(root Root, finalRelPath, label string, data []byte) (stri
 // atomic same-directory rename; the recognizable name lets recovery find an
 // orphan if the caller's durable workflow is interrupted. The caller owns its
 // DB-before-replace ordering and removal when it abandons a successful temp.
+// Replacements retain the destination's permission bits; new files use 0644
+// subject to umask.
 func WriteAdjacentTempWith(root Root, finalRelPath, label string, write func(io.Writer) error) (string, error) {
-	relPath := WritebackTempRelPath(finalRelPath, label)
-	fullPath, err := root.Resolve(relPath)
+	finalPath, err := root.Resolve(finalRelPath)
 	if err != nil {
 		return "", err
 	}
+	info, err := os.Stat(finalPath)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("stat destination: %w", err)
+	}
+	mode := os.FileMode(0o644)
+	if info != nil {
+		mode = info.Mode().Perm()
+	}
+	relPath := WritebackTempRelPath(finalRelPath, label)
+	fullPath := root.Abs(relPath)
 	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
 		return "", fmt.Errorf("mkdir adjacent temp: %w", err)
 	}
-	f, err := os.OpenFile(fullPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	f, err := os.OpenFile(fullPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
 	if err != nil {
 		return "", fmt.Errorf("create adjacent temp: %w", err)
 	}
@@ -92,6 +103,12 @@ func WriteAdjacentTempWith(root Root, finalRelPath, label string, write func(io.
 			_ = os.Remove(fullPath)
 		}
 	}()
+	if info != nil {
+		// OpenFile applies umask even when preserving an existing mode.
+		if err := f.Chmod(mode); err != nil {
+			return "", fmt.Errorf("preserve destination permissions: %w", err)
+		}
+	}
 	if err := write(f); err != nil {
 		return "", fmt.Errorf("write adjacent temp: %w", err)
 	}

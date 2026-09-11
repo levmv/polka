@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/base64"
+	"encoding/xml"
 	"image/color"
 	"io"
 	"strings"
@@ -507,9 +508,14 @@ func TestRewriteEPUBMetadataEPUB3RefinementsAndDeterminism(t *testing.T) {
     <dc:title id="old-main">Old Main</dc:title>
     <dc:creator id="old-creator">Old Creator</dc:creator>
     <meta refines="#old-main" property="title-type">main</meta>
+    <meta refines="#old-title-fr" property="alternate-script" xml:lang="de">Alter Titel</meta>
+    <meta id="old-title-fr" refines="#old-main" property="alternate-script" xml:lang="fr">Ancien titre</meta>
     <meta refines="#old-creator" property="role">aut</meta>
     <meta property="belongs-to-collection" id="old-series">Old Collection</meta>
     <meta refines="#old-series" property="collection-type">series</meta>
+    <dc:rights id="rights" xml:lang="en">Synthetic rights</dc:rights>
+    <meta id="rights-fr" refines="#rights" property="alternate-script" xml:lang="fr">Droits</meta>
+    <meta refines="#rights-fr" property="alternate-script" xml:lang="de">Rechte</meta>
     <meta property="dcterms:modified">2000-01-01T00:00:00Z</meta>
   </metadata>
   <manifest><item id="chap" href="chap.xhtml" media-type="application/xhtml+xml"/></manifest>
@@ -542,6 +548,7 @@ func TestRewriteEPUBMetadataEPUB3RefinementsAndDeterminism(t *testing.T) {
 	}
 
 	opf := testZipEntryString(t, out, "EPUB/package.opf")
+	assertOPFReferences(t, opf)
 	for _, want := range []string{
 		`<dc:title id="polka-title">Modern Title</dc:title>`,
 		`<meta refines="#polka-title" property="title-type">main</meta>`,
@@ -555,6 +562,9 @@ func TestRewriteEPUBMetadataEPUB3RefinementsAndDeterminism(t *testing.T) {
 		`<meta property="belongs-to-collection" id="polka-series">Modern Series</meta>`,
 		`<meta refines="#polka-series" property="group-position">4</meta>`,
 		`<meta property="dcterms:modified">2026-07-06T09:34:56Z</meta>`,
+		`<dc:rights id="rights" xml:lang="en">Synthetic rights</dc:rights>`,
+		`<meta id="rights-fr" refines="#rights" property="alternate-script" xml:lang="fr">Droits</meta>`,
+		`<meta refines="#rights-fr" property="alternate-script" xml:lang="de">Rechte</meta>`,
 	} {
 		if !strings.Contains(opf, want) {
 			t.Fatalf("rewritten EPUB3 OPF missing %q:\n%s", want, opf)
@@ -577,6 +587,151 @@ func TestRewriteEPUBMetadataEPUB3RefinementsAndDeterminism(t *testing.T) {
 	}
 	if extracted.Identifier != "url:https://example.org/books/modern, google:modern-id" {
 		t.Fatalf("identifiers = %q", extracted.Identifier)
+	}
+}
+
+func TestRewriteOPFMetadataPreservesUnchangedCreatorRoles(t *testing.T) {
+	raw := []byte(`<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="uid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:identifier id="uid">urn:uuid:example</dc:identifier>
+    <dc:title>Original</dc:title>
+    <dc:creator id="writer">Jane Writer</dc:creator>
+    <meta refines="#writer" property="role" scheme="marc:relators">ill</meta>
+    <meta refines="#writer" property="role" scheme="marc:relators">aut</meta>
+    <meta refines="#writer" property="file-as">Old sort name</meta>
+  </metadata>
+</package>`)
+	for _, tc := range []struct {
+		name   string
+		author bookmeta.AuthorMeta
+		keep   bool
+	}{
+		{"unchanged author", bookmeta.AuthorMeta{Name: "Jane Writer"}, true},
+		{"renamed author", bookmeta.AuthorMeta{Name: "Jane Editor"}, false},
+		{"changed primary role", bookmeta.AuthorMeta{Name: "Jane Writer", Role: "edt"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.author.SortName = "Updated sort name"
+			meta := Metadata{Title: "Revised", Authors: []bookmeta.AuthorMeta{tc.author}}
+			out, err := rewriteOPFMetadata(raw, meta, time.Time{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertOPFReferences(t, string(out))
+			illustrator := `<meta refines="#polka-creator-1" property="role" scheme="marc:relators">ill</meta>`
+			if kept := strings.Contains(string(out), illustrator); kept != tc.keep {
+				t.Fatalf("illustrator role retained = %v, want %v:\n%s", kept, tc.keep, out)
+			}
+			wantRoles := 1
+			if tc.keep {
+				wantRoles++
+			}
+			if strings.Count(string(out), `property="role"`) != wantRoles {
+				t.Fatalf("unexpected or duplicate creator roles:\n%s", out)
+			}
+			primaryRole := tc.author.Role
+			if primaryRole == "" {
+				primaryRole = "aut"
+			}
+			extracted, err := ParseOPF(bytes.NewReader(out))
+			if err != nil || extracted.Title != meta.Title || len(extracted.Authors) != 1 ||
+				extracted.Authors[0].Name != tc.author.Name || extracted.Authors[0].SortName != tc.author.SortName || extracted.Authors[0].Role != primaryRole {
+				t.Fatalf("catalog metadata changed: %+v, %v", extracted, err)
+			}
+			again, err := rewriteOPFMetadata(out, meta, time.Time{})
+			if err != nil || !bytes.Equal(out, again) {
+				t.Fatalf("repeated write changed metadata: %v\n%s", err, again)
+			}
+		})
+	}
+}
+
+func TestRewriteOPFMetadataAvoidsIDCollisions(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		contributor string
+		manifestID  string
+	}{
+		{"reordered identifiers", "editor", "chapter"},
+		{"preserved IDs", "polka-title", "polka-identifier-2"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := []byte(`<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="bookid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:identifier id="bookid">urn:uuid:11111111-2222-3333-4444-555555555555</dc:identifier>
+    <dc:title>Book</dc:title>
+    <dc:contributor id="` + tc.contributor + `">Editor</dc:contributor>
+    <meta refines="#` + tc.contributor + `" property="role" scheme="marc:relators">edt</meta>
+  </metadata>
+  <manifest><item id="` + tc.manifestID + `" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest>
+  <spine><itemref idref="` + tc.manifestID + `"/></spine>
+</package>`)
+			meta := Metadata{Title: "Book", Identifier: "isbn:9780306406157, doi:10.1000/example"}
+			first, err := rewriteOPFMetadata(raw, meta, time.Time{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertOPFReferences(t, string(first))
+			meta.Identifier = "doi:10.1000/example, isbn:9780140449136"
+			next, err := rewriteOPFMetadata(first, meta, time.Time{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertOPFReferences(t, string(next))
+			if !strings.Contains(string(next), "isbn:9780140449136") || !strings.Contains(string(next), "doi:10.1000/example") || strings.Contains(string(next), "9780306406157") {
+				t.Fatalf("rewritten identifiers do not match the requested metadata:\n%s", next)
+			}
+			if !strings.Contains(string(next), `<dc:contributor id="`+tc.contributor+`">Editor</dc:contributor>`) {
+				t.Fatalf("lost contributor identity:\n%s", next)
+			}
+			again, err := rewriteOPFMetadata(next, meta, time.Time{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(next, again) {
+				t.Fatalf("repeated write changed OPF:\n%s\n%s", next, again)
+			}
+		})
+	}
+}
+
+func assertOPFReferences(t *testing.T, opf string) {
+	t.Helper()
+	ids := make(map[string]bool)
+	var refs []string
+	decoder := xml.NewDecoder(strings.NewReader(opf))
+	for {
+		token, err := decoder.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("parse OPF: %v", err)
+		}
+		element, ok := token.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		for _, attr := range element.Attr {
+			switch attr.Name.Local {
+			case "id":
+				if ids[attr.Value] {
+					t.Fatalf("duplicate OPF ID %q:\n%s", attr.Value, opf)
+				}
+				ids[attr.Value] = true
+			case "refines":
+				if id, ok := strings.CutPrefix(attr.Value, "#"); ok {
+					refs = append(refs, id)
+				}
+			case "idref", "unique-identifier":
+				refs = append(refs, attr.Value)
+			}
+		}
+	}
+	for _, ref := range refs {
+		if !ids[ref] {
+			t.Fatalf("unresolved OPF reference %q:\n%s", ref, opf)
+		}
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -80,6 +81,39 @@ func TestRunWritesDirtyEPUBAndUpdatesAssetIdentity(t *testing.T) {
 	}
 	if rerun.Written != 0 || rerun.Unchanged != 1 || rerun.Failed != 0 {
 		t.Fatalf("second pass summary = %+v; want one unchanged", rerun)
+	}
+}
+
+func TestRunPreservesFilePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix permission bits")
+	}
+	for _, tc := range []struct {
+		name string
+		mode os.FileMode
+	}{
+		{"group writable", 0o664},
+		{"private", 0o600},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			database, root, _, relPath := setupWritebackEPUB(t, "Book", "Author")
+			defer database.Close()
+			path := root.Abs(relPath)
+			if err := os.Chmod(path, tc.mode); err != nil {
+				t.Fatal(err)
+			}
+			summary, err := Run(t.Context(), database, root, Options{All: true})
+			if err != nil || summary.Written != 1 || summary.Failed != 0 {
+				t.Fatalf("write-back = %+v, %v; want one written", summary, err)
+			}
+			info, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := info.Mode().Perm(); got != tc.mode {
+				t.Fatalf("permissions = %04o; want %04o", got, tc.mode)
+			}
+		})
 	}
 }
 
