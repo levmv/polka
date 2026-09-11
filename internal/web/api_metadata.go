@@ -153,7 +153,7 @@ func metadataCandidateDTO(c metalookup.Candidate, providerName string) MetadataC
 		ProviderID:   c.ProviderID,
 		CoverURL:     c.CoverURL,
 		Title:        c.Title,
-		Authors:      strings.Join(authors, ", "),
+		Authors:      bookmeta.FormatAuthorList(authors),
 		Series:       c.Series,
 		SeriesIndex:  seriesIndex,
 		Description:  c.Description,

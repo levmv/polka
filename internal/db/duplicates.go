@@ -242,7 +242,7 @@ func MergeDuplicateBooks(tx *Tx, scope VisibilityScope, req DuplicateMergeReques
 
 	result := DuplicateMergeResult{
 		SurvivorID: req.SurvivorID,
-		TrashedIDs: append([]int64(nil), loserIDs...),
+		TrashedIDs: loserIDs,
 	}
 
 	survivor := set.books[req.SurvivorID]
@@ -318,7 +318,6 @@ func MergeDuplicateBooks(tx *Tx, scope VisibilityScope, req DuplicateMergeReques
 		return DuplicateMergeResult{}, fmt.Errorf("ensure duplicate survivor primary asset: %w", err)
 	}
 
-	args = append([]any{req.SurvivorID}, loserArgs...)
 	if _, err := tx.Exec(`
 		INSERT OR IGNORE INTO shelf_books (shelf_id, book_id, position, added_at)
 		SELECT shelf_id, ?, position, added_at
@@ -334,7 +333,6 @@ func MergeDuplicateBooks(tx *Tx, scope VisibilityScope, req DuplicateMergeReques
 		return DuplicateMergeResult{}, fmt.Errorf("delete duplicate loser shelf memberships: %w", err)
 	}
 
-	args = append([]any{req.SurvivorID}, loserArgs...)
 	if _, err := tx.Exec(`
 		UPDATE delivery_jobs
 		SET book_id = ?, updated_at = unixepoch()

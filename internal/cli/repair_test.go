@@ -48,9 +48,9 @@ func TestRepairReconciliation(t *testing.T) {
 	}
 	defer database.Close()
 
-	var assetID int64
+	var assetID, bookID int64
 	var currentPath string
-	if err := database.Read(t.Context()).QueryRow("SELECT id, storage_path FROM assets LIMIT 1").Scan(&assetID, &currentPath); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT id, book_id, storage_path FROM assets LIMIT 1").Scan(&assetID, &bookID, &currentPath); err != nil {
 		t.Fatalf("query asset: %v", err)
 	}
 	root, err := storage.OpenRoot(database.Read(t.Context()), dataDir)
@@ -76,8 +76,13 @@ func TestRepairReconciliation(t *testing.T) {
 
 	// b) make DB storage_path stale (something else)
 	staleRelPath := "books/stale/path.epub"
-	if _, err := database.Write(t.Context()).Exec("UPDATE assets SET storage_path = ? WHERE id = ?", staleRelPath, assetID); err != nil {
-		t.Fatalf("update storage_path: %v", err)
+	if err := database.Transact(t.Context(), func(tx *db.Tx) error {
+		if _, err := tx.Exec("UPDATE assets SET storage_path = ?, filename = 'stale-filename.epub' WHERE id = ?", staleRelPath, assetID); err != nil {
+			return err
+		}
+		return db.UpdateSearchIndex(tx, bookID)
+	}); err != nil {
+		t.Fatalf("set stale asset path and filename: %v", err)
 	}
 
 	if err := runRepair(context.Background(), dataDir, nil); err != nil {
@@ -112,6 +117,15 @@ func TestRepairReconciliation(t *testing.T) {
 	}
 	first := loadAsset()
 	newPath := first.StoragePath
+	for query, want := range map[string]int{`filename:"stale"`: 0, `filename:"test"`: 1} {
+		var count int
+		if err := database.Read(t.Context()).QueryRow("SELECT COUNT(*) FROM search WHERE rowid = ? AND search MATCH ?", bookID, query).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != want {
+			t.Fatalf("search %q after repair matched %d books; want %d", query, count, want)
+		}
+	}
 
 	if newPath == staleRelPath {
 		t.Fatalf("repair did not update storage_path in DB")

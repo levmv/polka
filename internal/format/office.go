@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"image"
 	"io"
+	"maps"
 	"path"
 	"regexp"
 	"slices"
@@ -366,13 +367,8 @@ func identifiersFromODTJSON(raw string) []bookmeta.Identifier {
 	if err := json.Unmarshal([]byte(raw), &values, jsontext.AllowDuplicateNames(true)); err != nil {
 		return nil
 	}
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	slices.Sort(keys)
 	var ids []bookmeta.Identifier
-	for _, key := range keys {
+	for _, key := range slices.Sorted(maps.Keys(values)) {
 		id := bookmeta.IdentifierFromOPF(key, values[key])
 		if id.Value != "" && !bookmeta.IsInternalIdentifier(id) {
 			ids = append(ids, id)

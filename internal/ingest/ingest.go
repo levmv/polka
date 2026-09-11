@@ -451,7 +451,7 @@ func findCandidates(root string) ([]candidate, []error, error) {
 		if !d.Type().IsRegular() {
 			return nil
 		}
-		if isIgnoredFile(d.Name()) || isSidecarFile(d.Name()) {
+		if isIgnoredFile(d.Name()) || importer.IsSidecarFile(d.Name()) {
 			return nil
 		}
 
@@ -596,14 +596,6 @@ func isIgnoredFile(name string) bool {
 		if strings.HasSuffix(lower, suffix) {
 			return true
 		}
-	}
-	return false
-}
-
-func isSidecarFile(name string) bool {
-	switch strings.ToLower(name) {
-	case "metadata.opf", "cover.jpg", "cover.jpeg", "cover.png":
-		return true
 	}
 	return false
 }

@@ -25,7 +25,7 @@ func runLibrary(ctx context.Context, dataDir string, args []string) error {
 		return runLibraryWriteback(ctx, dataDir, rest)
 	default:
 		printLibraryUsage()
-		return reportedErrorf("unknown library command: %s", sub)
+		return fmt.Errorf("unknown library command: %s", sub)
 	}
 }
 

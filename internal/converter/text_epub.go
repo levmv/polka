@@ -9,6 +9,7 @@ import (
 	"html"
 	"io"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -28,7 +29,6 @@ func convertTextSourceToEPUB(ctx context.Context, w io.Writer, src io.ReaderAt, 
 	meta = epubMetadataWithFallback(meta, opts)
 
 	text := format.DecodeTextToUTF8(raw)
-	text = cleanTextForEPUB(text)
 	doc, err := epubDocumentForText(sourceFormat, text)
 	if err != nil {
 		return err
@@ -101,9 +101,7 @@ func epubDocumentForText(sourceFormat format.Format, text string) (epubTextDocum
 }
 
 func cleanTextForEPUB(text string) string {
-	text = normalizeLineEndings(text)
-	text = stripEPUBControlChars(text)
-	return collapseBlankLineRuns(text, 2)
+	return stripEPUBControlChars(normalizeLineEndings(text))
 }
 
 func stripEPUBControlChars(text string) string {
@@ -115,29 +113,8 @@ func stripEPUBControlChars(text string) string {
 	}, text)
 }
 
-func collapseBlankLineRuns(text string, maxBlankLines int) string {
-	var out strings.Builder
-	out.Grow(len(text))
-	separator := ""
-	blankRun := 0
-	for line := range strings.SplitSeq(text, "\n") {
-		if strings.TrimSpace(line) == "" {
-			blankRun++
-			if blankRun > maxBlankLines {
-				continue
-			}
-		} else {
-			blankRun = 0
-		}
-		out.WriteString(separator)
-		out.WriteString(line)
-		separator = "\n"
-	}
-	return out.String()
-}
-
 func plainTextBody(text string) string {
-	lines := strings.Split(normalizeLineEndings(text), "\n")
+	lines := strings.Split(cleanTextForEPUB(text), "\n")
 	if plainTextLooksLineParagraphs(lines) {
 		return plainTextLineParagraphBody(lines)
 	}
@@ -290,7 +267,7 @@ func markdownDocument(text string) epubTextDocument {
 		flushQuote()
 	}
 
-	for line := range strings.SplitSeq(normalizeLineEndings(text), "\n") {
+	for line := range strings.SplitSeq(cleanTextForEPUB(text), "\n") {
 		trimmed := strings.TrimSpace(line)
 		if fence != "" {
 			if strings.HasPrefix(trimmed, fence) && strings.Trim(trimmed, fence[:1]+" \t") == "" {
@@ -701,13 +678,13 @@ func fillEPUBMetadataGaps(meta *epubMetadata, fallback epubMetadata) {
 		meta.SeriesIndex = fallback.SeriesIndex
 	}
 	if len(meta.Authors) == 0 {
-		meta.Authors = append([]string(nil), fallback.Authors...)
+		meta.Authors = slices.Clone(fallback.Authors)
 	}
 	if len(meta.ExtraIdentifiers) == 0 {
-		meta.ExtraIdentifiers = append([]string(nil), fallback.ExtraIdentifiers...)
+		meta.ExtraIdentifiers = slices.Clone(fallback.ExtraIdentifiers)
 	}
 	if len(meta.Tags) == 0 {
-		meta.Tags = append([]string(nil), fallback.Tags...)
+		meta.Tags = slices.Clone(fallback.Tags)
 	}
 }
 
@@ -884,7 +861,8 @@ func addEPUBTextXHTML(zw *zip.Writer, name string, body string, meta epubMetadat
 	if _, err := io.WriteString(w, epubTextXHTMLPrefix(meta, stylesheets, strings.Contains(body, `epub:type="`))); err != nil {
 		return err
 	}
-	if err := writeIndentedEPUBBody(w, body); err != nil {
+	// Whitespace in preformatted text is significant.
+	if _, err := io.WriteString(w, body); err != nil {
 		return err
 	}
 	_, err = io.WriteString(w, epubTextXHTMLSuffix())
@@ -1034,24 +1012,4 @@ func epubTextXHTMLSuffix() string {
 	return `  </body>
 </html>
 `
-}
-
-func writeIndentedEPUBBody(w io.Writer, body string) error {
-	for len(body) > 0 {
-		line := body
-		body = ""
-		if i := strings.IndexByte(line, '\n'); i >= 0 {
-			line, body = line[:i+1], line[i+1:]
-		}
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		if _, err := io.WriteString(w, "    "); err != nil {
-			return err
-		}
-		if _, err := io.WriteString(w, line); err != nil {
-			return err
-		}
-	}
-	return nil
 }

@@ -400,22 +400,28 @@ func replaceUserScopeShelves(tx *Tx, userID, shelfViewerID int64, contentScope s
 	return nil
 }
 
-// SetUserPassword replaces the stored password hash for an account.
-func (db *DB) SetUserPassword(ctx context.Context, userID int64, password string) error {
+// SetUserPassword replaces the password and revokes browser sessions atomically.
+// keepSessionHash preserves the session initiating a self-change; nil revokes
+// every session. Device credentials are unaffected.
+func (db *DB) SetUserPassword(ctx context.Context, userID int64, password string, keepSessionHash []byte) error {
 	hash, err := hashPassword(password)
 	if err != nil {
 		return err
 	}
-	res, err := db.Write(ctx).Exec("UPDATE users SET password_hash = ?, updated_at = unixepoch() WHERE id = ?",
-		hash, userID,
-	)
-	if err != nil {
-		return fmt.Errorf("set password: %w", err)
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return sql.ErrNoRows
-	}
-	return nil
+	return db.Transact(ctx, func(tx *Tx) error {
+		res, err := tx.Exec("UPDATE users SET password_hash = ?, updated_at = unixepoch() WHERE id = ?", hash, userID)
+		if err != nil {
+			return fmt.Errorf("set password: %w", err)
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return sql.ErrNoRows
+		}
+		if _, err := tx.Exec("DELETE FROM sessions WHERE user_id = ? AND (? IS NULL OR token_hash <> ?)",
+			userID, keepSessionHash, keepSessionHash); err != nil {
+			return fmt.Errorf("revoke user sessions: %w", err)
+		}
+		return nil
+	})
 }
 
 // DeleteUser removes an account by id.

@@ -14,7 +14,7 @@ func runStorageRoot(ctx context.Context, dataDir string, args []string) error {
 	if len(args) == 0 || helpRequested(args) {
 		printStorageRootUsage()
 		if len(args) == 0 {
-			return reportedErrorf("missing storage root command")
+			return errors.New("missing storage root command")
 		}
 		return nil
 	}
@@ -28,7 +28,7 @@ func runStorageRoot(ctx context.Context, dataDir string, args []string) error {
 		return runStorageRootSet(ctx, dataDir, args[1:])
 	default:
 		printStorageRootUsage()
-		return reportedErrorf("unknown storage root command: %s", args[0])
+		return fmt.Errorf("unknown storage root command: %s", args[0])
 	}
 }
 

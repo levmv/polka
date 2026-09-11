@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -164,7 +165,7 @@ func ExtractKindleDocument(r io.ReaderAt, size int64, kind Format) (*KindleDocum
 		CoverResourceID:     coverID,
 		Navigation:          nav,
 		Guide:               extractMOBI6GuideReferences(text),
-		UnsupportedFeatures: append([]string(nil), info.UnsupportedFeatures...),
+		UnsupportedFeatures: slices.Clone(info.UnsupportedFeatures),
 	}, nil
 }
 
@@ -297,7 +298,7 @@ func extractPalmDOCDocument(r io.ReaderAt, size int64, info *KindleInspection) (
 		Flows:               []KindleTextFlow{text},
 		Resources:           resources,
 		Guide:               guide,
-		UnsupportedFeatures: append([]string(nil), info.UnsupportedFeatures...),
+		UnsupportedFeatures: slices.Clone(info.UnsupportedFeatures),
 	}, nil
 }
 
@@ -440,7 +441,7 @@ func extractKF8DocumentFromRanges(r io.ReaderAt, ranges []mobiRecordRange, recor
 		Resources:           resources,
 		CoverResourceID:     coverID,
 		Navigation:          nav,
-		UnsupportedFeatures: append([]string(nil), info.UnsupportedFeatures...),
+		UnsupportedFeatures: slices.Clone(info.UnsupportedFeatures),
 	}, nil
 }
 
@@ -626,7 +627,7 @@ func assembleKF8Text(raw []byte, info *KindleInspection) (KindleTextFlow, error)
 		}
 		start := int(skeleton.Start)
 		end := int(end64)
-		body := append([]byte(nil), raw[start:end]...)
+		body := slices.Clone(raw[start:end])
 		fragments := kindleFragmentsForSkeleton(info.KF8Fragments, uint32(skeleton.Index), skeleton.FragmentCount)
 		for _, fragment := range fragments {
 			fragmentStart64 := uint64(skeleton.Start) + uint64(skeleton.Length) + uint64(fragment.Start)
@@ -1025,13 +1026,13 @@ func kindleWrappedFontResource(data []byte) ([]byte, string, string, bool, error
 	if dataStart < 24 || dataStart > len(data) {
 		return nil, "", "", false, fmt.Errorf("invalid FONT data offset %d", dataStart)
 	}
-	fontData := append([]byte(nil), data[dataStart:]...)
+	fontData := slices.Clone(data[dataStart:])
 	if flags&0x0002 != 0 {
 		if xorLength <= 0 || xorStart < 0 || xorStart+xorLength > len(data) {
 			return nil, "", "", false, fmt.Errorf("invalid FONT xor range %d..%d", xorStart, xorStart+xorLength)
 		}
 		key := data[xorStart : xorStart+xorLength]
-		for i, end := 0, min(len(fontData), 1040); i < end; i++ {
+		for i := range min(len(fontData), 1040) {
 			fontData[i] ^= key[i%xorLength]
 		}
 	}

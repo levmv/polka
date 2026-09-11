@@ -52,7 +52,7 @@ func TestUserLifecycle(t *testing.T) {
 		t.Errorf("authenticate unknown user: got %v, want nil", got)
 	}
 
-	if err := database.SetUserPassword(t.Context(), u.ID, "newpass"); err != nil {
+	if err := database.SetUserPassword(t.Context(), u.ID, "newpass", nil); err != nil {
 		t.Fatalf("set password: %v", err)
 	}
 	if got, _ := Authenticate(database.Read(t.Context()), "alice", "s3cret"); got != nil {
@@ -77,8 +77,38 @@ func TestUserLifecycle(t *testing.T) {
 	if replacement.ID == u.ID {
 		t.Fatal("deleted account identity was reused")
 	}
-	if err := database.SetUserPassword(t.Context(), u.ID, "stale request"); !errors.Is(err, sql.ErrNoRows) {
+	if err := database.SetUserPassword(t.Context(), u.ID, "stale request", nil); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("password change for a deleted identity: %v", err)
+	}
+}
+
+func TestPasswordChangeRollsBackIfSessionRevocationFails(t *testing.T) {
+	database := newTestDB(t)
+	user, err := database.CreateUser(t.Context(), "alice", "original", RoleMember)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Write(t.Context()).Exec(`
+		INSERT INTO sessions (token_hash, user_id, created_at, last_seen_at, expires_at)
+		VALUES (zeroblob(32), ?, 0, 0, 1)
+	`, user.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Write(t.Context()).Exec(`
+		CREATE TRIGGER fail_session_revocation BEFORE DELETE ON sessions
+		BEGIN SELECT RAISE(ABORT, 'test revocation failure'); END
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.SetUserPassword(t.Context(), user.ID, "replacement", nil); err == nil {
+		t.Fatal("password change succeeded despite failed session revocation")
+	}
+	got, err := GetUserByID(database.Read(t.Context()), user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.PasswordHash != user.PasswordHash {
+		t.Fatal("password changed despite failed session revocation")
 	}
 }
 

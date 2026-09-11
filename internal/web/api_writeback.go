@@ -63,12 +63,7 @@ func (s *Server) handleAPIBookWriteback(w http.ResponseWriter, r *http.Request) 
 	}
 
 	root := s.managedRoot()
-	catalogHasBooks, err := db.HasAnyAsset(s.db.Read(r.Context()))
-	if err != nil {
-		serverError(w, r, err)
-		return
-	}
-	if err := storage.RequireWritableRoot(root, catalogHasBooks); err != nil {
+	if err := writeback.RequireWritableRoot(s.db.Read(r.Context()), root); err != nil {
 		serverError(w, r, err)
 		return
 	}
@@ -147,7 +142,7 @@ func (s *Server) handleAPIBulkWriteback(w http.ResponseWriter, r *http.Request) 
 	statusCode := http.StatusOK
 	if len(assetRows) > 0 {
 		root := s.managedRoot()
-		if err := requireWritebackRoot(s.db.Read(r.Context()), root); err != nil {
+		if err := writeback.RequireWritableRoot(s.db.Read(r.Context()), root); err != nil {
 			serverError(w, r, err)
 			return
 		}
@@ -181,7 +176,7 @@ func (s *Server) handleAPIAdminWritebackRetry(w http.ResponseWriter, r *http.Req
 	}
 	if counts.Failed > 0 {
 		root := s.managedRoot()
-		if err := requireWritebackRoot(s.db.Read(r.Context()), root); err != nil {
+		if err := writeback.RequireWritableRoot(s.db.Read(r.Context()), root); err != nil {
 			serverError(w, r, err)
 			return
 		}
@@ -216,12 +211,4 @@ func (s *Server) startWritebackRun(root storage.Root, opts writeback.Options) bo
 		return false
 	}
 	return true
-}
-
-func requireWritebackRoot(queryer db.Queryer, root storage.Root) error {
-	catalogHasBooks, err := db.HasAnyAsset(queryer)
-	if err != nil {
-		return err
-	}
-	return storage.RequireWritableRoot(root, catalogHasBooks)
 }

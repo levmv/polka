@@ -129,12 +129,9 @@ func Stage(root Root, label string, src io.Reader) (StagedFile, error) {
 		return StagedFile{}, fmt.Errorf("create staged file: %w", err)
 	}
 	staged := StagedFile{tmpPath: tmpPath}
-	closed := false
 	cleanup := true
 	defer func() {
-		if !closed {
-			_ = f.Close()
-		}
+		_ = f.Close()
 		if cleanup {
 			staged.Cleanup()
 		}
@@ -146,10 +143,8 @@ func Stage(root Root, label string, src io.Reader) (StagedFile, error) {
 		return StagedFile{}, fmt.Errorf("sync staged file: %w", err)
 	}
 	if err := f.Close(); err != nil {
-		closed = true
 		return StagedFile{}, fmt.Errorf("close staged file: %w", err)
 	}
-	closed = true
 
 	cleanup = false
 	return staged, nil
@@ -191,9 +186,10 @@ func (s StagedFile) Cleanup() {
 }
 
 // Place writes and fsyncs a temp beside relPath, calls the optional commitDB,
-// then moves the complete file to relPath. Label lets repair identify the temp
-// if placement fails after commit. Cross-device moves copy through a destination
-// temp; a failed source cleanup can leave a complete orphan for check/repair.
+// then installs the complete file, replacing any existing destination.
+// If placement fails after commit, the labeled temp is kept for repair.
+// Cross-device moves copy through a destination temp; a failed source cleanup
+// can leave a complete orphan for check/repair.
 // The parent directory is not fsynced, so a power loss after rename can lose
 // the directory entry.
 func Place(root Root, relPath, label string, src io.Reader, commitDB func() error) error {
@@ -301,12 +297,9 @@ func copyFileToDestination(src, dst string) error {
 	if err != nil {
 		return fmt.Errorf("create destination temp: %w", err)
 	}
-	closed := false
 	cleanup := true
 	defer func() {
-		if !closed {
-			_ = out.Close()
-		}
+		_ = out.Close()
 		if cleanup {
 			_ = os.Remove(tmpPath)
 		}
@@ -321,7 +314,6 @@ func copyFileToDestination(src, dst string) error {
 	if err := out.Close(); err != nil {
 		return fmt.Errorf("close destination temp: %w", err)
 	}
-	closed = true
 
 	if err := os.Rename(tmpPath, dst); err != nil {
 		return fmt.Errorf("rename destination temp: %w", err)

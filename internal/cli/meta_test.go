@@ -27,6 +27,25 @@ var metaTinyPNG = []byte{
 	0x44, 0xae, 0x42, 0x60, 0x82,
 }
 
+func TestRunMetaTreatsArgumentsAfterDoubleDashAsFilenames(t *testing.T) {
+	t.Chdir(t.TempDir())
+	name := "--data=notes.txt"
+	if err := os.WriteFile(name, []byte("A small synthetic book.\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output, err := captureStdout(t, func() error { return Run([]string{"meta", "--json", "--", name}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reports []metaFileReport
+	if err := json.Unmarshal([]byte(output), &reports); err != nil {
+		t.Fatal(err)
+	}
+	if len(reports) != 1 || reports[0].Path != name || reports[0].Format != "txt" {
+		t.Fatalf("reports = %+v; want the literal filename %q", reports, name)
+	}
+}
+
 func TestRunMetaJSONEPUB(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "book.epub")

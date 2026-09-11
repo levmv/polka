@@ -1,6 +1,7 @@
 package ingest
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -9,10 +10,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/levmv/polka/internal/covers"
 	"github.com/levmv/polka/internal/db"
 	"github.com/levmv/polka/internal/importer"
 	"github.com/levmv/polka/internal/pdfcover"
 	"github.com/levmv/polka/internal/storage"
+	"github.com/levmv/polka/internal/testfixture"
 )
 
 func TestServiceWaitsForStableFileThenImports(t *testing.T) {
@@ -43,6 +46,10 @@ func TestServiceWaitsForStableFileThenImports(t *testing.T) {
 	if err := os.WriteFile(src, []byte("opaque epub bytes"), 0o644); err != nil {
 		t.Fatalf("write source: %v", err)
 	}
+	coverData := testfixture.WebP()
+	if err := os.WriteFile(filepath.Join(ingestDir, "cover.webp"), coverData, 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	first, err := service.ScanOnce(context.Background(), false)
 	if err != nil {
@@ -63,12 +70,16 @@ func TestServiceWaitsForStableFileThenImports(t *testing.T) {
 		t.Fatalf("source was not left in place after import: %v", err)
 	}
 
+	var bookID int64
 	var storagePath string
-	if err := database.Read(t.Context()).QueryRow("SELECT storage_path FROM assets LIMIT 1").Scan(&storagePath); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT book_id, storage_path FROM assets LIMIT 1").Scan(&bookID, &storagePath); err != nil {
 		t.Fatalf("query storage_path: %v", err)
 	}
 	if _, err := os.Stat(root.Abs(storagePath)); err != nil {
 		t.Fatalf("managed file missing: %v", err)
+	}
+	if cover, err := os.ReadFile(root.Abs(covers.OriginalPath(bookID))); err != nil || !bytes.Equal(cover, coverData) {
+		t.Fatalf("imported cover = %x, %v; want sidecar image", cover, err)
 	}
 
 	third, err := service.ScanOnce(context.Background(), false)

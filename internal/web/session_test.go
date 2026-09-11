@@ -138,7 +138,7 @@ func TestSessionStoreAbsoluteExpiry(t *testing.T) {
 	assertSessionRows(t, database, sid, 0)
 }
 
-func TestSessionStoreRevokesOtherUserSessions(t *testing.T) {
+func TestPasswordChangeRevokesUserSessions(t *testing.T) {
 	database, _ := setupTestDB(t)
 	defer database.Close()
 
@@ -159,15 +159,15 @@ func TestSessionStoreRevokesOtherUserSessions(t *testing.T) {
 		t.Fatalf("issue other session: %v", err)
 	}
 
-	if err := store.revokeUserExcept(t.Context(), u.ID, keepSID); err != nil {
-		t.Fatalf("revoke other sessions: %v", err)
+	if err := database.SetUserPassword(t.Context(), u.ID, "self-change", sessionTokenHash(keepSID)); err != nil {
+		t.Fatalf("change password keeping current session: %v", err)
 	}
 	assertSessionLive(t, store, keepSID, true)
 	assertSessionLive(t, store, dropSID, false)
 	assertSessionLive(t, store, otherSID, true)
 
-	if err := store.revokeUser(t.Context(), u.ID); err != nil {
-		t.Fatalf("revoke user: %v", err)
+	if err := database.SetUserPassword(t.Context(), u.ID, "reset", nil); err != nil {
+		t.Fatalf("reset password: %v", err)
 	}
 	assertSessionLive(t, store, keepSID, false)
 	assertSessionLive(t, store, otherSID, true)

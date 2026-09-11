@@ -5,6 +5,7 @@ package kobo
 
 import (
 	"crypto/sha1"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -167,7 +168,7 @@ func BuildMetadata(publication Publication, baseURL string) Metadata {
 	if language == "" {
 		language = "en"
 	}
-	contributors := append([]string(nil), publication.Authors...)
+	contributors := slices.Clone(publication.Authors)
 	roles := make([]ContributorRole, 0, len(contributors))
 	for _, author := range contributors {
 		roles = append(roles, ContributorRole{Name: author})

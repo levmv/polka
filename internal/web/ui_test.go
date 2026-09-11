@@ -120,12 +120,11 @@ func TestAppPageContentSecurityPolicy(t *testing.T) {
 	const hostileUsername = `</script><script>alert(1)</script>`
 	mustExec(t, database, "UPDATE users SET username = ? WHERE id = ?", hostileUsername, user.ID)
 
-	s := &Server{db: database, dataDir: dir}
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req = req.WithContext(withUserID(req.Context(), user.ID))
+	s := newTestServer(database, dir)
+	req := jsonRequest(t, s, user.ID, http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
 
-	s.handleApp(w, req)
+	testRoutes(t, s).ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("app page status = %d, want 200; body: %s", w.Code, w.Body.String())

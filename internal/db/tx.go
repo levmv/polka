@@ -33,9 +33,10 @@ func (db *DB) BeginWrite(ctx context.Context) (*Tx, error) {
 	}
 	return &Tx{
 		tx: tx, conn: conn, ctx: ctx,
-		// database/sql rolls back the transaction on cancellation. Close also
-		// returns our reserved connection to the pool, even if the caller has
-		// not yet reached its deferred Rollback. Close waits for that rollback.
+		// database/sql rolls back the transaction on cancellation. Close returns
+		// our reserved connection to the pool even before the caller reaches its
+		// deferred Rollback. sql.Conn.Close waits for active operations and is safe
+		// to call concurrently with the Commit/Rollback cleanup below.
 		stopClose: context.AfterFunc(ctx, func() { conn.Close() }),
 	}, nil
 }

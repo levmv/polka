@@ -3,11 +3,10 @@ package metalookup
 import (
 	"context"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/levmv/polka/internal/bookmeta"
 )
 
 const (
@@ -180,21 +179,14 @@ func searchCacheKey(q Query) string {
 }
 
 func cloneCandidates(in []Candidate) []Candidate {
-	out := make([]Candidate, len(in))
+	out := slices.Clone(in)
 	for i, candidate := range in {
-		out[i] = candidate
-		out[i].Authors = append([]bookmeta.AuthorMeta(nil), candidate.Authors...)
-		out[i].Tags = append([]string(nil), candidate.Tags...)
+		out[i].Authors = slices.Clone(candidate.Authors)
+		out[i].Tags = slices.Clone(candidate.Tags)
 	}
 	return out
 }
 
 func removeCacheKey(keys []string, key string) []string {
-	out := keys[:0]
-	for _, existing := range keys {
-		if existing != key {
-			out = append(out, existing)
-		}
-	}
-	return out
+	return slices.DeleteFunc(keys, func(existing string) bool { return existing == key })
 }

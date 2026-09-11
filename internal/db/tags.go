@@ -2,6 +2,7 @@ package db
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"unicode"
@@ -64,11 +65,7 @@ func ListTags(queryer Queryer, scope VisibilityScope, q string, limit int) ([]st
 		return nil, fmt.Errorf("list tags rows: %w", err)
 	}
 
-	tags := make([]string, 0, len(seen))
-	for key := range seen {
-		tags = append(tags, key)
-	}
-	slices.Sort(tags)
+	tags := slices.Sorted(maps.Keys(seen))
 	if limit > 0 && len(tags) > limit {
 		tags = tags[:limit]
 	}

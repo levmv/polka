@@ -27,8 +27,7 @@ func IsInternalIdentifier(id Identifier) bool {
 
 func ParseIdentifiers(s string) []Identifier {
 	var ids []Identifier
-	parts := strings.SplitSeq(s, ",")
-	for p := range parts {
+	for p := range strings.SplitSeq(s, ",") {
 		p = strings.TrimSpace(p)
 		if p == "" {
 			continue
@@ -59,17 +58,15 @@ func identifierFromUserToken(value string) Identifier {
 		return Identifier{Type: "isbn", Value: value}
 	}
 
-	typ := strings.TrimSpace(before)
+	typ := strings.ToLower(strings.TrimSpace(before))
 	val := strings.TrimSpace(after)
-	typLower := strings.ToLower(typ)
-	if typLower == "urn" {
-		nextIdx := strings.Index(val, ":")
-		if nextIdx != -1 {
-			typLower = strings.ToLower(strings.TrimSpace(val[:nextIdx]))
-			val = strings.TrimSpace(val[nextIdx+1:])
+	if typ == "urn" {
+		if before, after, ok := strings.Cut(val, ":"); ok {
+			typ = strings.ToLower(strings.TrimSpace(before))
+			val = strings.TrimSpace(after)
 		}
 	}
-	return Identifier{Type: typLower, Value: val}
+	return Identifier{Type: typ, Value: val}
 }
 
 func identifierFromLabelledToken(value string) (Identifier, bool) {
@@ -147,7 +144,7 @@ func ValidISBN(value string) bool {
 		} else {
 			return false
 		}
-		sum += check * 1
+		sum += check
 		return sum%11 == 0
 	} else if len(clean) == 13 {
 		var sum int
@@ -173,48 +170,16 @@ func IdentifierFromOPF(scheme, value string) Identifier {
 		return Identifier{}
 	}
 
-	var typ string
-	if scheme != "" {
-		typ = strings.ToLower(strings.TrimSpace(scheme))
+	typ := strings.ToLower(strings.TrimSpace(scheme))
+	prefixType, value := splitOPFIdentifierPrefix(value)
+	if typ == "" {
+		typ = prefixType
 	}
-
-	lower := strings.ToLower(value)
-	if strings.HasPrefix(lower, "urn:isbn:") {
-		if typ == "" {
-			typ = "isbn"
-		}
-		value = strings.TrimSpace(value[9:])
-	} else if strings.HasPrefix(lower, "isbn:") {
-		if typ == "" {
-			typ = "isbn"
-		}
-		value = strings.TrimSpace(value[5:])
-	} else if strings.HasPrefix(lower, "urn:doi:") {
-		if typ == "" {
-			typ = "doi"
-		}
-		value = strings.TrimSpace(value[8:])
-	} else if strings.HasPrefix(lower, "doi:") {
-		if typ == "" {
-			typ = "doi"
-		}
-		value = strings.TrimSpace(value[4:])
-	} else if strings.HasPrefix(lower, "amazon:") {
-		if typ == "" {
-			typ = "amazon"
-		}
-		value = strings.TrimSpace(value[7:])
-	} else if strings.HasPrefix(lower, "asin:") {
-		if typ == "" {
-			typ = "amazon"
-		}
-		value = strings.TrimSpace(value[5:])
-	} else if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
-		if typ == "" {
+	if typ == "" {
+		lower := strings.ToLower(value)
+		if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
 			typ = "url"
-		}
-	} else if typ == "" {
-		if labelled := identifierFromPlainOPFValue(value); labelled.Type != "" {
+		} else if labelled := identifierFromPlainOPFValue(value); labelled.Type != "" {
 			typ = labelled.Type
 			value = labelled.Value
 		}
@@ -231,16 +196,33 @@ func IdentifierFromOPF(scheme, value string) Identifier {
 	return Identifier{Type: typ, Value: value}
 }
 
+func splitOPFIdentifierPrefix(value string) (typ, rest string) {
+	lower := strings.ToLower(value)
+	for _, alias := range []struct{ prefix, typ string }{
+		{"urn:isbn:", "isbn"},
+		{"isbn:", "isbn"},
+		{"urn:doi:", "doi"},
+		{"doi:", "doi"},
+		{"amazon:", "amazon"},
+		{"asin:", "amazon"},
+	} {
+		if strings.HasPrefix(lower, alias.prefix) {
+			return alias.typ, strings.TrimSpace(value[len(alias.prefix):])
+		}
+	}
+	return "", value
+}
+
 func identifierFromPlainOPFValue(value string) Identifier {
-	idx := strings.IndexByte(value, ':')
-	if idx <= 0 {
+	typ, rest, ok := strings.Cut(value, ":")
+	if !ok {
 		return Identifier{}
 	}
-	typ := strings.ToLower(strings.TrimSpace(value[:idx]))
+	typ = strings.ToLower(strings.TrimSpace(typ))
 	if !validIdentifierType(typ) || typ == "urn" || typ == "http" || typ == "https" {
 		return Identifier{}
 	}
-	rest := strings.TrimSpace(value[idx+1:])
+	rest = strings.TrimSpace(rest)
 	if rest == "" {
 		return Identifier{}
 	}

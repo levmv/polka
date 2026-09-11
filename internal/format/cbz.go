@@ -354,7 +354,7 @@ func validCBZCoverDimensions(width, height int) bool {
 	if width <= 0 || height <= 0 {
 		return false
 	}
-	return uint64(width) <= uint64(maxCBZCoverPixels)/uint64(height)
+	return width <= maxCBZCoverPixels/height
 }
 
 func metadataFromComicInfo(info comicInfoXML) *Metadata {

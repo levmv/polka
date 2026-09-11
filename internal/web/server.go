@@ -42,9 +42,7 @@ type Server struct {
 	coverClient        *http.Client
 	coverSearchClient  *http.Client
 	publicImageClient  *http.Client
-	passwordAuthOnce   sync.Once
 	passwordAuthSlots  chan struct{}
-	conversionOnce     sync.Once
 	conversionSlots    chan struct{}
 	pageCountRenderer  *pdfcover.Renderer
 	pageCountCooldown  map[int64]pageCountRetry // Access requires the storage slot.
@@ -110,6 +108,8 @@ func koboConnectionID(ctx context.Context) int64 {
 	return connectionID
 }
 
+// Serve runs the HTTP server and background workers until ctx is canceled or
+// serving fails. It returns the shutdown error or the context cause.
 func Serve(ctx context.Context, cfg Config) error {
 	if err := context.Cause(ctx); err != nil {
 		return err
@@ -157,6 +157,8 @@ func Serve(ctx context.Context, cfg Config) error {
 		dataDir:           cfg.DataDir,
 		storageRoot:       root,
 		storageQueue:      storageQueue,
+		passwordAuthSlots: make(chan struct{}, maxConcurrentPasswordAuth),
+		conversionSlots:   make(chan struct{}, maxConcurrentConversions),
 		background:        background,
 		deliveryWake:      make(chan struct{}, 1),
 		deliveryTransport: smtpDeliveryTransport{},
@@ -284,10 +286,7 @@ func Serve(ctx context.Context, cfg Config) error {
 	if shutdownErr != nil {
 		return shutdownErr
 	}
-	if err := context.Cause(ctx); err != nil {
-		return err
-	}
-	return nil
+	return context.Cause(ctx)
 }
 
 func openServeBooksRoot(ctx context.Context, database *db.DB, dataDir string) (storage.Root, error) {
@@ -705,25 +704,17 @@ const (
 var errPasswordAuthBusy = errors.New("password authentication is busy")
 
 func (s *Server) authenticatePassword(ctx context.Context, username, password string) (*db.User, error) {
-	slots := s.passwordAuthGate()
 	timer := time.NewTimer(passwordAuthWaitTimeout)
 	defer timer.Stop()
 	select {
-	case slots <- struct{}{}:
-		defer func() { <-slots }()
+	case s.passwordAuthSlots <- struct{}{}:
+		defer func() { <-s.passwordAuthSlots }()
 	case <-timer.C:
 		return nil, errPasswordAuthBusy
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
 	return db.Authenticate(s.db.Read(ctx), username, password)
-}
-
-func (s *Server) passwordAuthGate() chan struct{} {
-	s.passwordAuthOnce.Do(func() {
-		s.passwordAuthSlots = make(chan struct{}, maxConcurrentPasswordAuth)
-	})
-	return s.passwordAuthSlots
 }
 
 func writePasswordAuthBusy(w http.ResponseWriter) {

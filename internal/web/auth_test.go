@@ -131,7 +131,7 @@ func TestPasswordAuthenticationWaitsForSlotAndHonorsContext(t *testing.T) {
 	_ = mustUser(t, database, "alice", "admin")
 	s := newTestServer(database, dir)
 
-	slots := s.passwordAuthGate()
+	slots := s.passwordAuthSlots
 	for range cap(slots) {
 		slots <- struct{}{}
 	}

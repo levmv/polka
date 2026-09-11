@@ -398,7 +398,7 @@ func isKEPUBContentDocument(item kepubManifestItem) bool {
 
 func transformKEPUBOPF(raw []byte) ([]byte, error) {
 	coverID := kepubCoverID(raw)
-	out := append([]byte(nil), raw...)
+	out := slices.Clone(raw)
 	matches := kepubOPFItemTagRe.FindAllIndex(raw, -1)
 	for _, match := range slices.Backward(matches) {
 		start, end := match[0], match[1]

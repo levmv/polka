@@ -105,31 +105,6 @@ func (s *sessionStore) revoke(ctx context.Context, sid string) error {
 	return s.deleteByHash(ctx, sessionTokenHash(sid))
 }
 
-// revokeUser drops every live browser session for userID. Admin password resets
-// use this to force the target user to log in again on every device.
-func (s *sessionStore) revokeUser(ctx context.Context, userID int64) error {
-	if _, err := s.db.Write(ctx).Exec("DELETE FROM sessions WHERE user_id = ?", userID); err != nil {
-		return fmt.Errorf("revoke user sessions: %w", err)
-	}
-	return nil
-}
-
-// revokeUserExcept drops every session for userID except keepSID. Password
-// self-change uses this to preserve the browser that initiated the change while
-// invalidating other devices.
-func (s *sessionStore) revokeUserExcept(ctx context.Context, userID int64, keepSID string) error {
-	if keepSID == "" {
-		return s.revokeUser(ctx, userID)
-	}
-	if _, err := s.db.Write(ctx).Exec("DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?",
-		userID,
-		sessionTokenHash(keepSID),
-	); err != nil {
-		return fmt.Errorf("revoke other user sessions: %w", err)
-	}
-	return nil
-}
-
 func (s *sessionStore) cleanupExpired(ctx context.Context, now int64) error {
 	if _, err := s.db.Write(ctx).Exec(`
 		DELETE FROM sessions

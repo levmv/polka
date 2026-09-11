@@ -385,7 +385,10 @@ func (s *Server) writeOPDSPagedAcquisition(w http.ResponseWriter, r *http.Reques
 }
 
 func opdsPageQuery(base url.Values, limit, offset int) url.Values {
-	q := cloneValues(base)
+	q := base.Clone()
+	if q == nil {
+		q = url.Values{}
+	}
 	q.Set("limit", strconv.Itoa(limit))
 	q.Set("offset", strconv.Itoa(offset))
 	return q
@@ -531,7 +534,7 @@ func opdsCoverLinks(r *http.Request, bookID int64, coverVersion int) []opds.Link
 	if coverVersion > 0 {
 		q.Set("v", strconv.Itoa(coverVersion))
 	}
-	thumbQ := cloneValues(q)
+	thumbQ := q.Clone()
 	thumbQ.Set("variant", "thumb")
 
 	coverPath := "/covers/" + strconv.FormatInt(bookID, 10)
@@ -539,16 +542,6 @@ func opdsCoverLinks(r *http.Request, bookID int64, coverVersion int) []opds.Link
 		{Rel: opds.ImageRel, Href: absoluteURL(r, coverPath, q), Type: "image/jpeg"},
 		{Rel: opds.ThumbnailRel, Href: absoluteURL(r, coverPath, thumbQ), Type: "image/jpeg"},
 	}
-}
-
-func cloneValues(values url.Values) url.Values {
-	out := url.Values{}
-	for key, items := range values {
-		for _, item := range items {
-			out.Add(key, item)
-		}
-	}
-	return out
 }
 
 func opdsAuthorNames(rows []db.AuthorRow) []string {
@@ -562,9 +555,8 @@ func opdsAuthorNames(rows []db.AuthorRow) []string {
 }
 
 func opdsCategories(raw string) []string {
-	parts := strings.Split(raw, ",")
-	categories := make([]string, 0, len(parts))
-	for _, part := range parts {
+	var categories []string
+	for part := range strings.SplitSeq(raw, ",") {
 		if part = strings.TrimSpace(part); part != "" {
 			categories = append(categories, part)
 		}
@@ -616,7 +608,8 @@ func requestScheme(r *http.Request) string {
 	// X-Forwarded-Proto value is pragmatic reverse-proxy compatibility: it only
 	// shapes absolute links in this authenticated feed and never grants access.
 	if proto := r.Header.Get("X-Forwarded-Proto"); proto != "" {
-		proto = strings.ToLower(strings.TrimSpace(strings.Split(proto, ",")[0]))
+		proto, _, _ = strings.Cut(proto, ",")
+		proto = strings.ToLower(strings.TrimSpace(proto))
 		if proto == "http" || proto == "https" {
 			return proto
 		}

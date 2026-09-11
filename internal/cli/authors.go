@@ -32,7 +32,7 @@ func runLibraryAuthors(ctx context.Context, dataDir string, args []string) error
 		return renameAuthor(ctx, dataDir, rest, "library authors merge", "polka library authors merge [--force] <old name> <new name>")
 	default:
 		printLibraryAuthorsUsage()
-		return reportedErrorf("unknown library authors command: %s", sub)
+		return fmt.Errorf("unknown library authors command: %s", sub)
 	}
 }
 

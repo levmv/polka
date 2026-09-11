@@ -11,6 +11,7 @@ import (
 	"image"
 	"io"
 	"regexp"
+	"slices"
 	"strings"
 
 	"golang.org/x/net/html/charset"
@@ -626,7 +627,7 @@ func fb2Tags(doc *fb2Doc) []string {
 }
 
 func fb2TagsFromTitleInfo(titleInfo fb2TitleInfo) []string {
-	tags := append([]string(nil), titleInfo.Genres...)
+	tags := slices.Clone(titleInfo.Genres)
 	for _, keyword := range strings.FieldsFunc(titleInfo.Keywords, func(r rune) bool {
 		return r == ',' || r == ';'
 	}) {

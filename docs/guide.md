@@ -25,6 +25,8 @@ can create an empty library, and you can add books from the browser.
 
 Library commands use `--data <dir>` or the `POLKA_DATA` environment variable to
 find the library. The flag can appear before or after the command.
+Command flags can also follow filenames: `polka meta book.epub --json`.
+For filenames starting with `-`, put `--` before them: `polka meta -- -draft.epub`.
 
 If the book files should live on another disk, set their location before the
 first import:
@@ -81,6 +83,9 @@ book's *Added* date may come from calibre's timestamp or the earliest source
 file modification time, so it can be older than the import itself. This keeps
 an existing collection in order instead of every book appearing new on the
 same day.
+
+To supply a separate cover during import, place an image named `cover` next to
+the book. It takes precedence over the embedded cover.
 
 Source deletion must be enabled explicitly for the incoming folder or with
 `--delete-sources`. A source is removed only after it is imported or recognized
@@ -249,6 +254,10 @@ reader settings, personal shelves, and app passwords belong to an account.
 A Reader account can be restricted to selected shelves. Those shelves then
 become the account's entire visible library, which is useful for children or
 guests.
+
+Changing your password signs out your other browsers. An admin reset, including
+`polka user passwd <username>`, signs out all browsers for that account. Reading
+apps keep working until you revoke their app password or Kobo connection.
 
 ## Maintenance and recovery
 

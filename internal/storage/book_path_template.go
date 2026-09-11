@@ -93,7 +93,7 @@ func DetectBookPathCollisions(candidates []BookPathCandidate) []BookPathCollisio
 
 	collisions := make([]BookPathCollision, 0, len(paths))
 	for _, rel := range paths {
-		ids := append([]int64(nil), byPath[rel]...)
+		ids := byPath[rel]
 		slices.Sort(ids)
 		collisions = append(collisions, BookPathCollision{
 			Path:     rel,

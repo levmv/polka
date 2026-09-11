@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"slices"
 )
 
 const (
@@ -132,7 +133,7 @@ func (d *kindleHUFFCDICDecoder) appendCDICRecord(record []byte) error {
 			return fmt.Errorf("invalid CDIC entry length")
 		}
 		d.dictionary = append(d.dictionary, kindleHUFFDictionaryEntry{
-			data:         append([]byte(nil), buffer[offset+2:end]...),
+			data:         slices.Clone(buffer[offset+2 : end]),
 			decompressed: prefix&0x8000 != 0,
 		})
 	}

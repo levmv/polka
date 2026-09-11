@@ -29,13 +29,11 @@ func PartialMD5(r io.ReadSeeker) (string, error) {
 		if _, err := r.Seek(offset, io.SeekStart); err != nil {
 			return "", fmt.Errorf("seek sample: %w", err)
 		}
-		n, err := r.Read(buf)
+		n, err := io.ReadFull(r, buf)
 		if n > 0 {
-			if _, writeErr := h.Write(buf[:n]); writeErr != nil {
-				return "", fmt.Errorf("hash sample: %w", writeErr)
-			}
+			h.Write(buf[:n])
 		}
-		if err == io.EOF || n == 0 {
+		if err == io.EOF || err == io.ErrUnexpectedEOF {
 			break
 		}
 		if err != nil {

@@ -269,7 +269,12 @@ func repairAssets(ctx context.Context, database *db.DB, root storage.Root, templ
 		}
 
 		if asset.StoragePath != canonicalPath {
-			_, err = writer.Exec("UPDATE assets SET storage_path = ?, filename = ? WHERE id = ?", canonicalPath, filepath.Base(canonicalPath), asset.ID)
+			err = database.Transact(ctx, func(tx *db.Tx) error {
+				if _, err := tx.Exec("UPDATE assets SET storage_path = ?, filename = ? WHERE id = ?", canonicalPath, filepath.Base(canonicalPath), asset.ID); err != nil {
+					return err
+				}
+				return db.UpdateSearchIndex(tx, asset.BookID)
+			})
 			if err != nil {
 				fmt.Printf("Failed to update database for %d: %v\n", asset.ID, err)
 				continue

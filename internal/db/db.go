@@ -115,19 +115,19 @@ func errorWithDetail(class error, detail string) error {
 // Read binds query helpers to the caller's context without reserving a connection.
 // Inside a transaction, pass Tx instead; it already owns the caller's context.
 func (db *DB) Read(ctx context.Context) Queryer {
-	return contextReader{pool: db.reader, ctx: ctx}
+	return contextQueryer{pool: db.reader, ctx: ctx}
 }
 
-type contextReader struct {
+type contextQueryer struct {
 	pool *sql.DB
 	ctx  context.Context
 }
 
-func (r contextReader) Query(query string, args ...any) (*sql.Rows, error) {
+func (r contextQueryer) Query(query string, args ...any) (*sql.Rows, error) {
 	return r.pool.QueryContext(r.ctx, query, args...)
 }
 
-func (r contextReader) QueryRow(query string, args ...any) *sql.Row {
+func (r contextQueryer) QueryRow(query string, args ...any) *sql.Row {
 	return r.pool.QueryRowContext(r.ctx, query, args...)
 }
 

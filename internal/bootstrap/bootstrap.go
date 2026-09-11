@@ -38,6 +38,8 @@ func ensureLibrary(ctx context.Context, dataDir string, ensureBooksRoot bool) (*
 		return nil, fmt.Errorf("create data directory %s: %w", dataDir, err)
 	}
 	databasePath := DatabasePath(dataDir)
+	// Create new databases with owner-only access even when dataDir already has
+	// broader permissions. SQLite defaults to 0644 before umask.
 	f, err := os.OpenFile(databasePath, os.O_RDWR|os.O_CREATE, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("create sqlite database %s: %w", databasePath, err)
@@ -87,33 +89,34 @@ func requireDatabaseFile(dataDir string) error {
 }
 
 func ensureDefaults(ctx context.Context, database *db.DB, dataDir string, ensureBooksRoot bool) error {
-	rootConfigured, err := storage.RootConfigured(database.Read(ctx))
-	if err != nil {
-		return err
-	}
-	fresh := !rootConfigured
-
-	if ensureBooksRoot && !rootConfigured {
-		root, err := storage.SaveRoot(database.Write(ctx), dataDir, "")
+	var newRoot storage.Root
+	err := database.Transact(ctx, func(tx *db.Tx) error {
+		configured, err := storage.RootConfigured(tx)
 		if err != nil {
 			return err
 		}
-		if err := storage.EnsureLayout(root); err != nil {
-			return err
+		if configured {
+			return nil
 		}
-	}
 
-	if fresh {
-		if _, err := storage.SaveBookPathTemplate(database.Write(ctx), ""); err != nil {
+		// The books-root row marks initialization complete, so commit it with
+		// every default. A failed write must leave bootstrap safe to retry.
+		if _, err := storage.SaveBookPathTemplate(tx, ""); err != nil {
 			return err
 		}
-		if err := ingest.SaveEnabled(database.Write(ctx), true); err != nil {
+		if _, err := ingest.SaveConfig(tx, dataDir, ingest.Config{Enabled: true}); err != nil {
 			return err
 		}
-		if err := ingest.SaveDeleteSources(database.Write(ctx), false); err != nil {
-			return err
+		if ensureBooksRoot {
+			newRoot, err = storage.SaveRoot(tx, dataDir, "")
 		}
-		if _, err := ingest.SavePath(database.Write(ctx), dataDir, ""); err != nil {
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	if newRoot.Path != "" {
+		if err := storage.EnsureLayout(newRoot); err != nil {
 			return err
 		}
 	}
@@ -123,9 +126,7 @@ func ensureDefaults(ctx context.Context, database *db.DB, dataDir string, ensure
 		return err
 	}
 	if cfg.Enabled {
-		if err := ingest.EnsureLayout(cfg.Path); err != nil {
-			return err
-		}
+		return ingest.EnsureLayout(cfg.Path)
 	}
 	return nil
 }

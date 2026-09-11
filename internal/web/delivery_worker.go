@@ -179,16 +179,10 @@ func (s *Server) prepareDeliveryCopy(ctx context.Context, job db.DeliveryJob) (d
 	if err != nil {
 		return delivery.DeliveryCopy{}, func() {}, err
 	}
-	sourceOwned := true
-	defer func() {
-		if sourceOwned {
-			_ = src.Close()
-		}
-	}()
+	defer src.Close()
 
 	if !job.Target.Valid || job.Target.String == "" {
-		sourceOwned = false
-		tmpPath, size, cleanup, err := s.prepareDeliveryTemp(src, asset.Extension, func(dst, src *os.File) error {
+		tmpPath, size, cleanup, err := s.prepareDeliveryTemp(asset.Extension, func(dst *os.File) error {
 			_, err := io.Copy(dst, src)
 			return err
 		})
@@ -212,8 +206,7 @@ func (s *Server) prepareDeliveryCopy(ctx context.Context, job db.DeliveryJob) (d
 	if err != nil {
 		return delivery.DeliveryCopy{}, func() {}, newDeliveryPrepError(deliveryMessagePrepareFailed, err)
 	}
-	sourceOwned = false
-	tmpPath, size, cleanup, err := s.prepareDeliveryTemp(src, converter.TargetExtension(target), func(dst, src *os.File) error {
+	tmpPath, size, cleanup, err := s.prepareDeliveryTemp(converter.TargetExtension(target), func(dst *os.File) error {
 		info, err := src.Stat()
 		if err != nil {
 			return newDeliveryPrepError(deliveryMessagePrepareFailed, fmt.Errorf("stat source file for conversion: %w", err))
@@ -277,52 +270,42 @@ func (s *Server) openDeliverySourceOnce(ctx context.Context, assetID int64) (ass
 	return asset, src, nil
 }
 
-// prepareDeliveryTemp takes ownership of src and closes it before returning.
-func (s *Server) prepareDeliveryTemp(src *os.File, ext string, write func(dst, src *os.File) error) (string, int64, func(), error) {
-	tmp, tmpPath, cleanup, err := s.createDeliveryTempFile(ext)
-	if err != nil {
-		_ = src.Close()
-		return "", 0, func() {}, newDeliveryPrepError(deliveryMessagePrepareFailed, fmt.Errorf("create delivery temp file: %w", err))
-	}
-
-	writeErr := write(tmp, src)
-	srcErr := src.Close()
-	closeErr := tmp.Close()
-	if writeErr != nil {
-		cleanup()
-		return "", 0, func() {}, wrapDeliveryPrepError(deliveryMessagePrepareFailed, writeErr)
-	}
-	if srcErr != nil {
-		cleanup()
-		return "", 0, func() {}, newDeliveryPrepError(deliveryMessagePrepareFailed, fmt.Errorf("close source file: %w", srcErr))
-	}
-	if closeErr != nil {
-		cleanup()
-		return "", 0, func() {}, newDeliveryPrepError(deliveryMessagePrepareFailed, fmt.Errorf("close delivery temp file: %w", closeErr))
-	}
-	info, err := os.Stat(tmpPath)
-	if err != nil {
-		cleanup()
-		return "", 0, func() {}, newDeliveryPrepError(deliveryMessagePrepareFailed, fmt.Errorf("stat delivery temp file: %w", err))
-	}
-	return tmpPath, info.Size(), cleanup, nil
-}
-
-func (s *Server) createDeliveryTempFile(ext string) (*os.File, string, func(), error) {
+// prepareDeliveryTemp writes and closes a temporary copy. The caller removes it
+// with the returned cleanup function after sending.
+func (s *Server) prepareDeliveryTemp(ext string, write func(*os.File) error) (string, int64, func(), error) {
 	tmpDir := filepath.Join(s.dataDir, "tmp", "delivery")
 	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
-		return nil, "", func() {}, err
+		return "", 0, func() {}, newDeliveryPrepError(deliveryMessagePrepareFailed, fmt.Errorf("create delivery temp directory: %w", err))
 	}
 	if ext != "" && !strings.HasPrefix(ext, ".") {
 		ext = "." + ext
 	}
 	tmp, err := os.CreateTemp(tmpDir, "delivery-*"+ext)
 	if err != nil {
-		return nil, "", func() {}, err
+		return "", 0, func() {}, newDeliveryPrepError(deliveryMessagePrepareFailed, fmt.Errorf("create delivery temp file: %w", err))
 	}
 	tmpPath := tmp.Name()
 	cleanup := func() { _ = os.Remove(tmpPath) }
-	return tmp, tmpPath, cleanup, nil
+	ready := false
+	defer func() {
+		_ = tmp.Close()
+		if !ready {
+			cleanup()
+		}
+	}()
+
+	if err := write(tmp); err != nil {
+		return "", 0, func() {}, wrapDeliveryPrepError(deliveryMessagePrepareFailed, err)
+	}
+	info, err := tmp.Stat()
+	if err != nil {
+		return "", 0, func() {}, newDeliveryPrepError(deliveryMessagePrepareFailed, fmt.Errorf("stat delivery temp file: %w", err))
+	}
+	if err := tmp.Close(); err != nil {
+		return "", 0, func() {}, newDeliveryPrepError(deliveryMessagePrepareFailed, fmt.Errorf("close delivery temp file: %w", err))
+	}
+	ready = true
+	return tmpPath, info.Size(), cleanup, nil
 }
 
 func (s *Server) failDeliveryJob(ctx context.Context, jobID int64, message string) error {

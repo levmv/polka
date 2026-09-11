@@ -81,7 +81,7 @@ func walkRebuildXML(raw []byte, visit func(rebuildXMLNode)) bool {
 			stack = append(stack, rebuildXMLNode{
 				Name:        token.Name,
 				Parent:      parent,
-				Attrs:       append([]xml.Attr(nil), token.Attr...),
+				Attrs:       slices.Clone(token.Attr),
 				Start:       start,
 				StartTagEnd: int(decoder.InputOffset()),
 				Simple:      true,

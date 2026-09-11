@@ -14,11 +14,6 @@ const maxConcurrentConversions = 2
 // independently from serialized storage mutations. Waiting observes the caller
 // context so a closed browser tab does not leave queued work behind.
 func (s *Server) withConversionSlot(ctx context.Context, convert func() error) error {
-	s.conversionOnce.Do(func() {
-		if s.conversionSlots == nil {
-			s.conversionSlots = make(chan struct{}, maxConcurrentConversions)
-		}
-	})
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -46,6 +41,12 @@ func (s *Server) stageConvertedDownload(ctx context.Context, ext string, convert
 			_ = os.Remove(tmpPath)
 		}
 	}
+	cleanupOnReturn := true
+	defer func() {
+		if cleanupOnReturn {
+			cleanup()
+		}
+	}()
 
 	err := s.withConversionSlot(ctx, func() error {
 		tmpDir := filepath.Join(s.dataDir, "tmp", "conversion")
@@ -62,15 +63,14 @@ func (s *Server) stageConvertedDownload(ctx context.Context, ext string, convert
 		if err != nil {
 			return fmt.Errorf("create conversion temp file: %w", err)
 		}
+		defer tmp.Close()
 		tmpPath = tmp.Name()
 
-		convertErr := convert(tmp)
-		closeErr := tmp.Close()
-		if convertErr != nil {
-			return convertErr
+		if err := convert(tmp); err != nil {
+			return err
 		}
-		if closeErr != nil {
-			return fmt.Errorf("close converted download: %w", closeErr)
+		if err := tmp.Close(); err != nil {
+			return fmt.Errorf("close converted download: %w", err)
 		}
 
 		ready, err = os.Open(tmpPath)
@@ -80,13 +80,12 @@ func (s *Server) stageConvertedDownload(ctx context.Context, ext string, convert
 		return nil
 	})
 	if err != nil {
-		cleanup()
 		return nil, 0, func() {}, err
 	}
 	info, err := ready.Stat()
 	if err != nil {
-		cleanup()
 		return nil, 0, func() {}, fmt.Errorf("stat converted download: %w", err)
 	}
+	cleanupOnReturn = false
 	return ready, info.Size(), cleanup, nil
 }

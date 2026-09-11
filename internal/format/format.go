@@ -495,20 +495,21 @@ func normalizeBookExtension(ext string) string {
 // except that PalmDOC content in a .mobi or .prc file returns FormatPDB.
 func DetectFormat(p string, r io.ReaderAt, size int64) Format {
 	formatInfo, ext, known := bookFormatByExtension(BookExtension(p))
-
-	if known && IsEPUBContainerFormat(formatInfo.Format) {
-		if isEPUB(r, size) {
-			return formatInfo.Format
-		}
+	if !known {
+		return FormatUnknown
 	}
 
-	if ext == ".pdf" {
+	kind := formatInfo.Format
+	switch kind {
+	case FormatEPUB, FormatKEPUB:
+		if isEPUB(r, size) {
+			return kind
+		}
+	case FormatPDF:
 		if isPDF(r) {
 			return FormatPDF
 		}
-	}
-
-	if known && formatInfo.Format == FormatFB2 {
+	case FormatFB2:
 		switch formatInfo.FB2Containers[ext] {
 		case FB2ContainerNone:
 			// Bare .fb2 is accepted by extension without a content signature; it
@@ -523,21 +524,16 @@ func DetectFormat(p string, r io.ReaderAt, size int64) Format {
 				return FormatFB2
 			}
 		}
+	case FormatMOBI, FormatAZW, FormatAZW3, FormatAZW4, FormatPRC:
+		if isMOBI(r, size) {
+			return kind
+		}
+		if (kind == FormatMOBI || kind == FormatPRC) && isPalmDOC(r, size) {
+			return FormatPDB
+		}
 	}
-
-	if known {
-		switch formatInfo.Format {
-		case FormatMOBI, FormatAZW, FormatAZW3, FormatAZW4, FormatPRC:
-			if isMOBI(r, size) {
-				return formatInfo.Format
-			}
-			if isPalmDOCContainerExtension(ext) && isPalmDOC(r, size) {
-				return FormatPDB
-			}
-		}
-		if formatInfo.Verify != nil && formatInfo.Verify(r, size) {
-			return formatInfo.Format
-		}
+	if formatInfo.Verify != nil && formatInfo.Verify(r, size) {
+		return kind
 	}
 
 	return FormatUnknown
@@ -547,15 +543,6 @@ func isPDF(r io.ReaderAt) bool {
 	var head [5]byte
 	n, _ := r.ReadAt(head[:], 0)
 	return n == len(head) && string(head[:]) == "%PDF-"
-}
-
-func isPalmDOCContainerExtension(ext string) bool {
-	switch ext {
-	case ".mobi", ".prc":
-		return true
-	default:
-		return false
-	}
 }
 
 // IsEPUBContainerFormat reports whether a format is physically an EPUB ZIP
