@@ -97,7 +97,7 @@ test.describe('Catalog', () => {
 
     await page.screenshot({ path: 'screenshots/no-results.png', fullPage: true });
 
-    await empty.getByRole('button', { name: 'Clear search' }).click();
+    await page.locator('#search-input').fill('');
     await expect(page).not.toHaveURL(/q=zzzz-no-such-book/);
     await expect(page.locator('.book-card').first()).toBeVisible();
 

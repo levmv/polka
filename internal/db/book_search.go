@@ -126,9 +126,8 @@ type searchFilter struct {
 	value string
 }
 
-// parsedSearchQuery is the semantic form of the mini-language. Parsing owns
-// syntax only: it does not carry SQL snippets or know which catalog projection
-// will consume the query.
+// parsedSearchQuery is the semantic form of the mini-language. It carries
+// matching rules without SQL snippets or catalog state.
 type parsedSearchQuery struct {
 	terms   []searchTerm
 	filters []searchFilter
@@ -219,60 +218,12 @@ func parseSearchQuery(q string, lenient bool) (parsedSearchQuery, error) {
 	tokenQuoted := false
 	var key string
 
-	flushToken := func(prefix bool) error {
-		value := currentToken.String()
+	flushToken := func() error {
+		err := parsed.addClause(key, currentToken.String(), tokenQuoted && !inQuote, lenient)
 		currentToken.Reset()
-		quoted := tokenQuoted && !inQuote
-		prefix = prefix && !quoted && searchPrefixEligible(value)
-		tokenQuoted = false
-		if value == "" {
-			if key == "" {
-				return nil
-			}
-			missingKey := key
-			key = ""
-			if lenient {
-				return nil
-			}
-			return fmt.Errorf("%s: requires a value", missingKey)
-		}
-
-		switch key {
-		case "author":
-			parsed.terms = append(parsed.terms, searchTerm{field: searchAuthors, value: value, prefix: prefix})
-		case "series":
-			parsed.terms = append(parsed.terms, searchTerm{field: searchSeries, value: value, prefix: prefix})
-		case "tag":
-			field := searchTags
-			if quoted {
-				field = searchExactTags
-			}
-			parsed.terms = append(parsed.terms, searchTerm{field: field, value: value, prefix: prefix})
-		case "title":
-			parsed.terms = append(parsed.terms, searchTerm{field: searchTitle, value: value, prefix: prefix})
-		case "no":
-			kind, ok := missingFilterKind(value)
-			if ok {
-				parsed.filters = append(parsed.filters, searchFilter{kind: kind})
-			} else if lenient {
-				parsed.terms = append(parsed.terms, searchTerm{value: "no:" + value, prefix: prefix})
-			} else {
-				return fmt.Errorf("no:%s is not a supported filter", value)
-			}
-		case "status":
-			status := strings.ToLower(strings.TrimSpace(value))
-			if ValidReadingStatus(status) {
-				parsed.filters = append(parsed.filters, searchFilter{kind: searchReadingStatus, value: status})
-			} else if lenient {
-				parsed.terms = append(parsed.terms, searchTerm{value: "status:" + value, prefix: prefix})
-			} else {
-				return fmt.Errorf("status:%s is not a supported status", value)
-			}
-		default:
-			parsed.terms = append(parsed.terms, searchTerm{value: value, prefix: prefix})
-		}
 		key = ""
-		return nil
+		tokenQuoted = false
+		return err
 	}
 
 	runes := []rune(q)
@@ -292,7 +243,7 @@ func parseSearchQuery(q string, lenient bool) (parsedSearchQuery, error) {
 		}
 
 		if unicode.IsSpace(r) && !inQuote {
-			if err := flushToken(false); err != nil && !lenient {
+			if err := flushToken(); err != nil {
 				return parsedSearchQuery{}, err
 			}
 			continue
@@ -312,42 +263,66 @@ func parseSearchQuery(q string, lenient bool) (parsedSearchQuery, error) {
 	if inQuote && !lenient {
 		return parsedSearchQuery{}, errors.New("Close the quote")
 	}
-	// Only the trailing term uses prefix matching; completed and explicitly
-	// quoted terms remain exact.
-	if err := flushToken(true); err != nil && !lenient {
+	if err := flushToken(); err != nil {
 		return parsedSearchQuery{}, err
+	}
+	// Qualifiers match independently. Only the last free-text term can use a
+	// prefix, regardless of where qualifiers appear in the query.
+	lastFreeTerm := -1
+	for i, term := range parsed.terms {
+		if term.field == searchEverywhere {
+			if lastFreeTerm >= 0 {
+				parsed.terms[lastFreeTerm].prefix = false
+			}
+			lastFreeTerm = i
+		}
 	}
 	return parsed, nil
 }
 
-func searchPrefixEligible(value string) bool {
-	count := 0
-	var only rune
-	started := false
-	runes := []rune(value)
-	for i := len(runes) - 1; i >= 0; i-- {
-		r := runes[i]
-		switch {
-		case unicode.IsLetter(r) || unicode.IsNumber(r):
-			started = true
-			count++
-			only = r
-			if count >= 2 {
-				return true
-			}
-		case unicode.IsMark(r):
-			// Combining marks belong to the adjacent base character and do not
-			// make a one-letter prefix more selective.
-			continue
-		case started:
-			return count == 1 && isSingleCharacterPrefixScript(only)
+func (q *parsedSearchQuery) addClause(key, value string, quoted, lenient bool) error {
+	if value == "" {
+		if key != "" && !lenient {
+			return fmt.Errorf("%s: requires a value", key)
 		}
+		return nil
 	}
-	return count == 1 && isSingleCharacterPrefixScript(only)
-}
 
-func isSingleCharacterPrefixScript(r rune) bool {
-	return unicode.In(r, unicode.Han, unicode.Hiragana, unicode.Katakana)
+	term := searchTerm{value: value, prefix: !quoted}
+	switch key {
+	case "author":
+		term.field = searchAuthors
+	case "series":
+		term.field = searchSeries
+	case "tag":
+		term.field = searchTags
+		if quoted {
+			term.field = searchExactTags
+		}
+	case "title":
+		term.field = searchTitle
+	case "no":
+		if kind, ok := missingFilterKind(value); ok {
+			q.filters = append(q.filters, searchFilter{kind: kind})
+			return nil
+		}
+		if !lenient {
+			return fmt.Errorf("no:%s is not a supported filter", value)
+		}
+		term.value = "no:" + value
+	case "status":
+		status := strings.ToLower(strings.TrimSpace(value))
+		if ValidReadingStatus(status) {
+			q.filters = append(q.filters, searchFilter{kind: searchReadingStatus, value: status})
+			return nil
+		}
+		if !lenient {
+			return fmt.Errorf("status:%s is not a supported status", value)
+		}
+		term.value = "status:" + value
+	}
+	q.terms = append(q.terms, term)
+	return nil
 }
 
 func isSearchQualifier(value string) bool {

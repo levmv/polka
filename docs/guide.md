@@ -109,8 +109,8 @@ no:cover                  books without a selected cover
 no:author                 books with no author recorded
 ```
 
-Search completes the final unquoted word as you type, so `author:herb` finds
-Herbert. Quote a complete term or phrase to keep it exact.
+Search completes the final word as you type: `fo` finds Foundation and
+`author:herb` finds Herbert. Quote a term or phrase to keep it exact.
 For tags, quotes select the whole tag, ignoring letter case; clicking a tag uses
 this exact match. Leave a tag query unquoted to search its words as you type.
 

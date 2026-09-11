@@ -14,7 +14,7 @@ export function renderLibraryPage(): string {
         <div class="search-container">
             <div class="search-row">
                 <div class="search-field">
-                    <input type="text" id="search-input" placeholder="Search library..." autocomplete="off" aria-label="Search library" aria-keyshortcuts="/" title="Search library (/)">
+                    <input type="search" id="search-input" placeholder="Search library..." autocomplete="off" aria-label="Search library" aria-keyshortcuts="/" title="Search library (/)">
                     <button id="save-search-btn" class="search-icon-btn" type="button" aria-label="Save search as shelf" title="Save search as shelf" hidden>
                         ${icon('bookmark', 20)}
                     </button>

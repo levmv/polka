@@ -99,6 +99,7 @@ test.describe('Polka read-only browser tests', () => {
     await page.keyboard.type('No Cov');
     await relevanceRequest;
     await expect(input).toHaveValue('No Cov');
+    await expect(page).toHaveURL((url) => url.searchParams.get('q') === 'No Cov');
     await expect(sort).toContainText('Relevance');
     await expect(page.locator('.book-card', { hasText: 'No Cover Book' })).toBeVisible();
     await expect(page.locator('.book-card')).toHaveCount(1);
@@ -142,6 +143,11 @@ test.describe('Polka read-only browser tests', () => {
     await expect(grid).toHaveAttribute('aria-busy', 'false');
     await expect(cards).toHaveCount(1);
     await expect(cards.first()).toContainText('No Cover Book');
+    await expect(page).toHaveURL((url) => url.searchParams.get('q') === 'No Cover');
+
+    await input.fill('');
+    await expect(page).toHaveURL((url) => !url.searchParams.has('q'));
+    await expect(cards).toHaveCount(previousCount);
   });
 
   test('Internal cover drags do not trigger book upload', async ({ page }) => {
@@ -574,7 +580,7 @@ test.describe('Polka read-only browser tests', () => {
     );
   });
 
-  test('Table author click filters the search and reveals save-search', async ({ page }) => {
+  test('Table author click filters the search, preserves prefixes, and can be saved', async ({ page }) => {
     await page.goto('/');
     await page.locator('#view-table-btn').click();
     await expect(page.locator('.library-table')).toBeVisible();
@@ -592,5 +598,14 @@ test.describe('Polka read-only browser tests', () => {
     await expect(dialog.getByLabel('Name')).toHaveValue(name);
     await expect(dialog.getByLabel('Search query')).toHaveValue(`author:"${name}"`);
     await dialog.getByRole('button', { name: 'Cancel' }).click();
+
+    await page.locator('#search-input').fill('co');
+    const selected = page.locator('.table-row', { hasText: 'No Cover Book' });
+    await expect(selected).toBeVisible();
+    await expect(page.locator('.table-row', { hasText: 'With Cover Book' })).toBeVisible();
+    await selected.locator('.table-author-link').click();
+    await expect(page.locator('.table-row')).toHaveCount(1);
+    await expect(selected).toBeVisible();
+    await page.screenshot({ path: 'screenshots/table-author-search.png', fullPage: true });
   });
 });

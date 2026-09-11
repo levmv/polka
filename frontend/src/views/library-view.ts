@@ -27,7 +27,7 @@ import {
     replaceLocationURL,
     type ScrollPosition,
 } from '../router';
-import { queryTerm } from '../search-query';
+import { queryTerm, seriesLibraryURL } from '../search-query';
 import { openSettingsModal } from '../settings';
 import { openCreateShelfDialog } from '../shelf-dialog';
 import { notifyShelvesChanged } from '../sidebar-shelves';
@@ -183,16 +183,12 @@ export function initLibrary(root: HTMLElement): RouteController {
 
     const reload = (offset = 0) => {
         if (state.phase !== 'active') return;
-        if (shelfId !== 0 && searchInput?.value.trim()) {
-            shelfId = 0;
-            const url = new URL(window.location.href);
-            url.searchParams.delete('shelf');
-            url.searchParams.set('q', searchInput.value.trim());
-            replaceLocationURL(url);
-        }
-        updateLibraryBrowseURL(sortOverridden ? sortValue : '', offset);
+        const query = searchInput?.value.trim() || '';
+        if (query) shelfId = 0;
+        const next = { query, sort: sortValue, shelfId, offset };
+        updateLibraryBrowseURL({ ...next, sort: sortOverridden ? sortValue : '' });
         return loadBooks(state, {
-            query: { query: searchInput?.value || '', sort: sortValue, shelfId, offset },
+            query: next,
             count: PAGE_SIZE,
             refresh: false,
         });
@@ -256,7 +252,7 @@ export function initLibrary(root: HTMLElement): RouteController {
         const handleSearchInput = debounce((_e: Event) => {
             syncSearchSort();
             reload();
-        }, 200);
+        }, 250);
         cancelPendingSearch = () => handleSearchInput.cancel();
         searchInput.addEventListener('input', handleSearchInput);
         addCleanup(() => {
@@ -537,8 +533,18 @@ function initialLibraryOffset(params: URLSearchParams, sort: string, shelfId: nu
     return Number.isSafeInteger(value) && value >= 0 ? value : 0;
 }
 
-function updateLibraryBrowseURL(sort: string, offset: number): void {
+function updateLibraryBrowseURL({ query, sort, shelfId, offset }: LibraryQuery): void {
     const url = new URL(window.location.href);
+    if (query) {
+        url.searchParams.set('q', query);
+    } else {
+        url.searchParams.delete('q');
+    }
+    if (shelfId) {
+        url.searchParams.set('shelf', String(shelfId));
+    } else {
+        url.searchParams.delete('shelf');
+    }
     if (!sort) {
         url.searchParams.delete('sort');
     } else {
@@ -573,7 +579,8 @@ function setupLibrarySearchShortcuts(
         if (event.key !== 'Escape') return;
         event.preventDefault();
         if (searchInput.value !== '') {
-            clearLibrarySearch(searchInput);
+            searchInput.value = '';
+            searchInput.dispatchEvent(new Event('input', { bubbles: true }));
             return;
         }
         searchInput.blur();
@@ -584,14 +591,6 @@ function setupLibrarySearchShortcuts(
         document.removeEventListener('keydown', handleDocumentKeydown);
         searchInput.removeEventListener('keydown', handleSearchKeydown);
     };
-}
-
-function clearLibrarySearch(searchInput: HTMLInputElement): void {
-    const url = new URL(window.location.href);
-    url.searchParams.delete('q');
-    replaceLocationURL(url);
-    searchInput.value = '';
-    searchInput.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
 function setupSaveSearchButton(
@@ -1000,10 +999,11 @@ function renderBookJumpRail(state: LibraryViewState): void {
         button.setAttribute('aria-current', jump.offset === activeOffset ? 'true' : 'false');
         button.addEventListener('click', () => {
             if (jump.offset === state.current.offset || state.replacement) return;
-            updateLibraryBrowseURL(state.current.sort, jump.offset);
+            const query = { ...state.current, offset: jump.offset };
+            updateLibraryBrowseURL(query);
             window.scrollTo({ top: 0, behavior: 'auto' });
             void loadBooks(state, {
-                query: { ...state.current, offset: jump.offset },
+                query,
                 count: PAGE_SIZE,
                 refresh: false,
             });
@@ -1158,17 +1158,6 @@ function createLibraryEmptyState(state: LibraryViewState): HTMLElement {
     if (query) {
         title.textContent = 'No matches';
         body.textContent = `No books match “${query}”.`;
-        action.textContent = 'Clear search';
-        action.addEventListener('click', () => {
-            const input = state.root.querySelector<HTMLInputElement>('#search-input');
-            if (!input) return;
-            const url = new URL(window.location.href);
-            url.searchParams.delete('q');
-            replaceLocationURL(url);
-            input.value = '';
-            input.dispatchEvent(new Event('input'));
-            input.focus();
-        });
     } else if (state.current.shelfId !== 0) {
         title.textContent = 'Shelf is empty';
         body.textContent = 'No books are on this shelf.';
@@ -1176,6 +1165,7 @@ function createLibraryEmptyState(state: LibraryViewState): HTMLElement {
         action.addEventListener('click', () => {
             navigateApp('/');
         });
+        actions.append(action);
     } else {
         title.textContent = 'No books yet';
         if (state.canCurateCatalog) {
@@ -1204,11 +1194,9 @@ function createLibraryEmptyState(state: LibraryViewState): HTMLElement {
             }
         } else {
             body.textContent = 'No books are available in this library yet.';
-            action.hidden = true;
         }
     }
 
-    if (!actions.childElementCount && !action.hidden) actions.append(action);
     el.append(title, body);
     if (actions.childElementCount) el.append(actions);
     return el;
@@ -1217,12 +1205,10 @@ function createLibraryEmptyState(state: LibraryViewState): HTMLElement {
 // How many tags a table row shows before collapsing the rest behind a "+N".
 const TABLE_TAG_LIMIT = 3;
 
-// Add (or keep) an author:"Name" filter on the current search and reload. The
-// author cells are clickable but not styled as links, to avoid table noise.
-function applyAuthorFilter(state: LibraryViewState, name: string): void {
+// Add a table filter to the current search without repeating it.
+function applyTableFilter(state: LibraryViewState, token: string): void {
     const input = state.root.querySelector<HTMLInputElement>('#search-input');
     if (!input) return;
-    const token = queryTerm('author', name);
     const current = input.value.trim();
     const next = !current ? token : current.includes(token) ? current : `${current} ${token}`;
     if (next === input.value) return;
@@ -1236,7 +1222,7 @@ function authorCellHtml(b: BookSummary): string {
     return names
         .map(
             (n) =>
-                `<span class="table-author-link" role="button" tabindex="0" data-author="${escapeHtml(n)}">${escapeHtml(n)}</span>`,
+                `<span class="table-author-link" role="button" tabindex="0" data-filter="${escapeHtml(queryTerm('author', n))}">${escapeHtml(n)}</span>`,
         )
         .join(' &amp; ');
 }
@@ -1254,8 +1240,9 @@ function tagsCellHtml(b: BookSummary): string {
     const hidden = tags.slice(TABLE_TAG_LIMIT);
     // Plain, compact text — a table row isn't the book page, so no pills. Each
     // hidden tag carries its own leading separator so revealing reads cleanly.
-    const sep = '<span class="table-tag-sep">·</span>';
-    const tag = (t: string) => `<span class="table-tag-text">${escapeHtml(t)}</span>`;
+    const sep = ' <span class="table-tag-sep">·</span> ';
+    const tag = (t: string) =>
+        `<span class="table-tag-text" role="button" tabindex="0" data-filter="${escapeHtml(queryTerm('tag', t))}">${escapeHtml(t)}</span>`;
 
     let html = `<span class="table-tags-text">${shown.map(tag).join(sep)}`;
     html += hidden
@@ -1278,7 +1265,7 @@ function createBookRow(state: LibraryViewState, b: BookSummary): HTMLTableRowEle
 
     let seriesHtml = '';
     if (b.series) {
-        seriesHtml = escapeHtml(b.series);
+        seriesHtml = `<a class="table-series-link" href="${escapeHtml(seriesLibraryURL(b.series))}">${escapeHtml(b.series)}</a>`;
         if (b.series_index) {
             seriesHtml += ` #${b.series_index}`;
         }
@@ -1308,13 +1295,13 @@ function createBookRow(state: LibraryViewState, b: BookSummary): HTMLTableRowEle
             </button>
         </td>
     `;
-    for (const el of tr.querySelectorAll<HTMLElement>('.table-author-link')) {
-        const author = el.dataset.author || '';
-        el.addEventListener('click', () => applyAuthorFilter(state, author));
+    for (const el of tr.querySelectorAll<HTMLElement>('[data-filter]')) {
+        const token = el.dataset.filter!;
+        el.addEventListener('click', () => applyTableFilter(state, token));
         el.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault();
-                applyAuthorFilter(state, author);
+                applyTableFilter(state, token);
             }
         });
     }
