@@ -225,11 +225,12 @@ func bookSortFromParams(q, sortParam string) db.BookSort {
 	return sort
 }
 
-// maxBooksLimit caps ?limit on /api/books the way opdsMaxLimit does for OPDS,
-// so a huge value can't force a scan where every row runs the correlated author
-// subquery.
+// Bound list responses while allowing retained views to refresh in larger
+// batches, without reevaluating the same search for every small browse page.
 const (
-	maxBooksLimit    = 200
+	// Must allow REFRESH_PAGE_SIZE in frontend/src/views/library-view.ts;
+	// the client treats a shorter response as the end of the list.
+	maxBooksLimit    = 1000
 	minBookJumpTotal = 500
 )
 
@@ -262,6 +263,7 @@ func (s *Server) handleAPIBooks(w http.ResponseWriter, r *http.Request) {
 	sort := bookSortFromParams(q, sortParam)
 
 	var bookRows []db.BookSummaryRow
+	manualShelf := false
 	if shelfID != 0 {
 		shelf, gerr := db.GetShelfForUser(s.db.Read(r.Context()), shelfID, UserID(r.Context()))
 		if errors.Is(gerr, db.ErrShelfNotFound) {
@@ -273,6 +275,7 @@ func (s *Server) handleAPIBooks(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if shelf.Kind == db.ShelfQuery {
+			q = shelf.Query
 			// A query shelf is a saved search; default it to relevance order
 			// unless the request explicitly asked for another sort.
 			if sortParam == "" && shelf.Query != "" {
@@ -280,6 +283,8 @@ func (s *Server) handleAPIBooks(w http.ResponseWriter, r *http.Request) {
 			}
 			bookRows, err = db.ListBooks(s.db.Read(r.Context()), scope, UserID(r.Context()), shelf.Query, sort, limit, offset)
 		} else {
+			q = ""
+			manualShelf = true
 			bookRows, err = db.ListBooksInManualShelf(s.db.Read(r.Context()), scope, shelf.ID, sort, limit, offset)
 		}
 	} else {
@@ -296,6 +301,9 @@ func (s *Server) handleAPIBooks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Response metadata lets the retained catalog recognize safe in-place edits
+	// without duplicating the search parser or making an additional request.
+	w.Header().Set("X-Polka-List-Dependencies", strings.Join(db.BookListDependencies(scope, q, sort, manualShelf), ","))
 	writeJSON(w, http.StatusOK, books)
 }
 

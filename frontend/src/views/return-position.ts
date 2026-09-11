@@ -1,19 +1,7 @@
 import type { ScrollPosition } from '../router';
 
-// Putting the reader back where they were, for a list that was detached and
-// then brought back. It is a unit of its own because none of it is about
-// listing books: it needs only the route root, the selector for a rendered
-// book, and whether that root is on screen.
-//
-// The window position alone cannot do this. Detaching shortens the document and
-// the browser clamps the scroll away, and by the time the list is back its
-// geometry may have changed — a resize, a font or theme change, covers that
-// settled late, a book removed while the reader was away. So the position is
-// remembered in the list's own terms and recomputed from them on return.
-
-// Where the reader was: the first book at least partly on screen, and where its
-// top sat in the viewport. It records the neighbourhood that was visible, not a
-// book to chase — if that book is gone, the saved pixels are the better answer.
+// Retained navigation and same-query refreshes preserve the visible neighbourhood.
+// Several visible books are recorded so removing one need not lose the anchor.
 interface ReturnAnchor {
     id: string;
     viewportOffset: number;
@@ -31,13 +19,8 @@ export interface ReturnPosition {
     stop(): void;
 }
 
-// A rebuilt list is rendered before its covers are: the cards start at the
-// placeholder ratio and take their real height only as each image decodes, so
-// the anchored book keeps moving for as long as that takes. Re-applying the
-// position on every size change keeps that book under the reader's eye instead
-// of letting the list slide past it, and stops once the list has been quiet
-// long enough to call the covers arrived — or as soon as the reader scrolls,
-// whose position always wins.
+// Covers may change card heights after rendering. Preserve the neighbourhood
+// until layout settles, but let user scrolling take over immediately.
 const QUIET_MS = 250;
 const MAX_MS = 5000;
 
@@ -49,18 +32,17 @@ export function createReturnPosition(opts: {
     isActive: () => boolean;
 }): ReturnPosition {
     const { root, isActive } = opts;
-    let anchor: ReturnAnchor | null = null;
+    let anchors: ReturnAnchor[] = [];
+    let capturedPixels: ScrollPosition | null = null;
     let focusedSelector: string | null = null;
     let settleCleanup: (() => void) | null = null;
 
     const bookSelector = () => opts.renderedBookSelector();
 
-    // An anchored book that is still rendered wins: pixels are only exact while
-    // the geometry is unchanged. A book that is gone leaves the saved pixel
-    // position, which keeps the viewport in the old neighbourhood instead of
-    // chasing it.
+    // Prefer a surviving visible book. If none remain, fall back to pixels
+    // rather than chasing a book that has left the browsed range.
     const target = (pixelFallback: ScrollPosition | null): ScrollPosition | null => {
-        if (anchor) {
+        for (const anchor of anchors) {
             const el = root.querySelector<HTMLElement>(
                 `${bookSelector()}[data-id=${CSS.escape(anchor.id)}]`,
             );
@@ -69,10 +51,10 @@ export function createReturnPosition(opts: {
                     0,
                     el.getBoundingClientRect().top + window.scrollY - anchor.viewportOffset,
                 );
-                return { x: pixelFallback?.x ?? 0, y };
+                return { x: pixelFallback?.x ?? capturedPixels?.x ?? 0, y };
             }
         }
-        return pixelFallback;
+        return pixelFallback ?? capturedPixels;
     };
 
     const apply = (pixelFallback: ScrollPosition | null): void => {
@@ -99,14 +81,16 @@ export function createReturnPosition(opts: {
         return control ? `${book} .${CSS.escape(control)}` : `${book} a`;
     };
 
-    const captureAnchor = (): ReturnAnchor | null => {
+    const captureAnchors = (): ReturnAnchor[] => {
+        const found: ReturnAnchor[] = [];
         for (const el of root.querySelectorAll<HTMLElement>(bookSelector())) {
             const rect = el.getBoundingClientRect();
             if (rect.bottom <= 0) continue;
+            if (rect.top >= window.innerHeight) break;
             const id = el.dataset.id;
-            if (id) return { id, viewportOffset: rect.top };
+            if (id) found.push({ id, viewportOffset: rect.top });
         }
-        return null;
+        return found;
     };
 
     const stop = (): void => {
@@ -115,7 +99,8 @@ export function createReturnPosition(opts: {
 
     return {
         capture(): void {
-            anchor = captureAnchor();
+            anchors = captureAnchors();
+            capturedPixels = { x: window.scrollX, y: window.scrollY };
             focusedSelector = captureFocus();
             stop();
         },

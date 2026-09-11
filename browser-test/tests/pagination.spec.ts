@@ -162,6 +162,57 @@ test.describe('Library pagination', () => {
     expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
   });
 
+  test('Duplicate-only pages advance the server offset without ending the list', async ({ page }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(window, 'IntersectionObserver', { value: undefined });
+    });
+    const source = await page.request.get('/api/books?limit=50');
+    const first = await source.json();
+    const offsets: number[] = [];
+    await page.route('**/api/books?*', async (route) => {
+      const offset = Number(new URL(route.request().url()).searchParams.get('offset') || 0);
+      offsets.push(offset);
+      const books = offset < 100 ? first : [{ ...first[0], id: 1000000, title: 'Final unique book' }];
+      await route.fulfill({ json: books });
+    });
+    await page.route('**/covers/1000000?*', (route) => route.fulfill({
+      contentType: 'image/svg+xml',
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="120"/>',
+    }));
+    await page.goto('/');
+    await expect(page.locator('.book-card')).toHaveCount(50);
+    await page.getByRole('button', { name: 'Load more', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Load more', exact: true })).toBeEnabled();
+    await expect(page.locator('.book-card')).toHaveCount(50);
+    await page.getByRole('button', { name: 'Load more', exact: true }).click();
+    await expect(page.locator('.book-card')).toHaveCount(51);
+    expect(offsets).toEqual([0, 50, 100]);
+    await expect(page.locator('#load-more-container')).toBeHidden();
+  });
+
+  test('Paging after bulk removal does not skip the next book', async ({ page }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(window, 'IntersectionObserver', { value: undefined });
+    });
+    await page.goto('/');
+    await expect(page.locator('.book-card')).toHaveCount(50);
+    const card = page.locator('.book-card').first();
+    const id = Number(await card.getAttribute('data-id'));
+    try {
+      await card.hover();
+      await card.locator('.card-select').click();
+      await page.locator('.bulk-bar-action[data-action="delete"]').click();
+      await page.locator('.modal-confirm')
+        .getByRole('button', { name: 'Remove', exact: true }).click();
+      await expect(page.locator('.book-card')).toHaveCount(49);
+      await page.getByRole('button', { name: 'Load more', exact: true }).click();
+      await expect(page.locator('.book-card')).toHaveCount(54);
+      await expect(page.locator(`.book-card[data-id="${id}"]`)).toHaveCount(0);
+    } finally {
+      await page.request.post(`/api/books/${id}/restore`);
+    }
+  });
+
   test('Title jump replaces the page at its bounded offset and hides for search', async ({
     page,
   }) => {

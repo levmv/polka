@@ -15,8 +15,7 @@ const MIN_VISIBLE_PROGRESS_PERCENT = 3;
 export interface ContinueReadingRail {
     // Show or hide the rail, fetching its items the first time they are needed.
     sync(shouldShow: boolean): void;
-    // The items are derived from reading state and are not addressed by book
-    // id, so any catalog change simply drops them.
+    // Cancel obsolete reads and refresh items on the next sync.
     invalidate(): void;
     destroy(): void;
 }
@@ -27,7 +26,7 @@ export function createContinueReadingRail(
 ): ContinueReadingRail {
     let items: ContinueReadingItem[] = [];
     let loaded = false;
-    let loading = false;
+    let request: AbortController | null = null;
     let visible = false;
     let destroyed = false;
 
@@ -40,13 +39,15 @@ export function createContinueReadingRail(
         try {
             const settings = await saveUserSettings({ show_continue_reading: false });
             window.dispatchEvent(new CustomEvent('polka:user-settings', { detail: settings }));
+            if (destroyed) return;
             visible = false;
             loaded = true;
             items = [];
             section.hidden = true;
         } catch (e) {
             console.error('Failed to hide Continue reading:', e);
-            button.disabled = false;
+        } finally {
+            if (!destroyed) button.disabled = false;
         }
     };
     button?.addEventListener('click', dismiss);
@@ -77,33 +78,37 @@ export function createContinueReadingRail(
                 render();
                 return;
             }
-            if (loading) return;
+            if (request) return;
 
-            loading = true;
-            fetchContinueReading(CONTINUE_READING_LIMIT)
+            const abort = new AbortController();
+            request = abort;
+            fetchContinueReading(CONTINUE_READING_LIMIT, abort.signal)
                 .then((nextItems) => {
-                    if (destroyed) return;
+                    if (destroyed || request !== abort) return;
                     items = nextItems;
                     loaded = true;
                     render();
                 })
                 .catch((e) => {
-                    if (destroyed) return;
+                    if (destroyed || request !== abort) return;
                     if (!isExpectedFetchCancel(e)) {
                         console.error('Failed to fetch continue reading:', e);
                     }
                     section.hidden = true;
                 })
                 .finally(() => {
-                    loading = false;
+                    if (request === abort) request = null;
                 });
         },
         invalidate(): void {
+            request?.abort();
+            request = null;
             loaded = false;
-            items = [];
         },
         destroy(): void {
             destroyed = true;
+            request?.abort();
+            request = null;
             button?.removeEventListener('click', dismiss);
         },
     };

@@ -204,8 +204,7 @@ test.describe('Retained library navigation', () => {
       });
 
       await page.goBack();
-      // The card is updated where it stood: an edit does not reorder or refilter
-      // the sequence the reader was browsing, and does not refetch it.
+      // Recently added order is independent of the changed title.
       await expect(page.locator('.book-card').nth(3).locator('.book-title')).toHaveText(renamed);
       await expect(page.locator('.book-card')).toHaveCount(extent);
       expect(listRequests).toBe(0);
@@ -216,10 +215,17 @@ test.describe('Retained library navigation', () => {
     }
   });
 
-  test('A coarse change rebuilds the retained view without shrinking or jumping it', async ({
+  test('A retained refresh preserves the range and follows scrolling while it loads', async ({
     page,
   }) => {
-    await page.goto('/');
+    await page.route('**/api/books/jumps?sort=title', (route) => route.fulfill({
+      json: {
+        total: 55,
+        items: [{ label: 'F', offset: 0 }, { label: 'G', offset: 40 }],
+      },
+    }));
+    await page.goto('/?sort=title');
+    await expect(page.locator('#library-jump-rail')).toBeVisible();
     await expect(page.locator('.book-card').first()).toBeVisible();
     await page.locator('.book-card').last().scrollIntoViewIfNeeded();
     await expect(page.locator('.book-card')).toHaveCount(55);
@@ -232,27 +238,44 @@ test.describe('Retained library navigation', () => {
     await expect(page.locator('#book-detail-container')).toBeVisible();
 
     let listRequests = 0;
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     await page.route('**/api/books?*', async (route) => {
       listRequests += 1;
-      await route.continue();
+      const response = await route.fetch();
+      await pending;
+      await route.fulfill({ response });
     });
+    let currentAnchor = anchor;
+    try {
+      // A change the detached library cannot place in its sequence.
+      await page.evaluate(() =>
+        document.dispatchEvent(
+          new CustomEvent('polka:catalog-changed', { detail: { kind: 'coarse' } }),
+        ),
+      );
+      expect(listRequests).toBe(0);
 
-    // A change the detached library cannot place in its sequence.
-    await page.evaluate(() =>
-      document.dispatchEvent(
-        new CustomEvent('polka:catalog-changed', { detail: { kind: 'coarse' } }),
-      ),
-    );
-    // Nothing is fetched while the library is not on screen.
-    expect(listRequests).toBe(0);
+      await page.goBack();
+      await expect.poll(() => listRequests).toBe(1);
+      await expect(page.locator('#library-grid')).toHaveAttribute('aria-busy', 'true');
+      await expect(page.locator('.book-card')).toHaveCount(extent);
+      expect(Math.abs((await bookTop(page, '.book-card', anchor.id)) - anchor.top)).toBeLessThan(2);
+      await page.locator('.book-card').nth(15).scrollIntoViewIfNeeded();
+      currentAnchor = await firstVisibleBook(page, '.book-card');
+      expect(currentAnchor.id).not.toBe(anchor.id);
+    } finally {
+      release();
+    }
 
-    await page.goBack();
-    // Retained cards already have the right count. Wait for the deferred rebuild
-    // before checking that it preserves the loaded extent and scroll position.
-    await expect.poll(() => listRequests).toBeGreaterThan(0);
     await expect(page.locator('#library-grid')).toHaveAttribute('aria-busy', 'false');
     await expect(page.locator('.book-card')).toHaveCount(extent);
-    expect(Math.abs((await bookTop(page, '.book-card', anchor.id)) - anchor.top)).toBeLessThan(2);
+    expect(
+      Math.abs((await bookTop(page, '.book-card', currentAnchor.id)) - currentAnchor.top),
+    ).toBeLessThan(2);
+    await page.screenshot({ path: 'screenshots/retained-refresh.png' });
   });
 
   test('A retained list beyond the API cap survives a failed refresh and continues after retry', async ({ page, browserErrors }) => {
@@ -264,12 +287,12 @@ test.describe('Retained library navigation', () => {
     });
     const response = await page.request.get('/api/books?limit=1');
     const [sample] = await response.json() as BookSummary[];
-    const books = Array.from({ length: 260 }, (_, index) => ({
+    const books = Array.from({ length: 1260 }, (_, index) => ({
       ...sample,
-      id: index === 225 ? sample.id : 1000000 + index,
+      id: index === 1125 ? sample.id : 1000000 + index,
       title: `Retained book ${String(index).padStart(3, '0')}`,
     }));
-    await page.route('**/covers/1000*', (route) => route.fulfill({
+    await page.route('**/covers/100*', (route) => route.fulfill({
       contentType: 'image/svg+xml',
       body: '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="120"/>',
     }));
@@ -279,7 +302,7 @@ test.describe('Retained library navigation', () => {
       const params = new URL(route.request().url()).searchParams;
       const offset = Number(params.get('offset') || 0);
       // Match the server's cap, including when the caller requests more.
-      const limit = Math.min(Number(params.get('limit') || 50), 200);
+      const limit = Math.min(Number(params.get('limit') || 50), 1000);
       if (refreshing && !failed && offset > 0) {
         failed = true;
         await route.fulfill({ status: 503, body: 'Unavailable' });
@@ -289,12 +312,13 @@ test.describe('Retained library navigation', () => {
     });
     await page.goto('/?sort=added');
     const cards = page.locator('.book-card');
-    for (let count = 50; count < 250; count += 50) {
+    for (let count = 50; count < 1250; count += 50) {
       await expect(cards).toHaveCount(count);
-      await page.getByRole('button', { name: 'Load more', exact: true }).click();
+      await page.getByRole('button', { name: 'Load more', exact: true })
+        .evaluate((button: HTMLButtonElement) => button.click());
     }
-    await expect(cards).toHaveCount(250);
-    await cards.nth(225).locator('.book-title-link').click();
+    await expect(cards).toHaveCount(1250);
+    await cards.nth(1125).locator('.book-title-link').click();
     await expect(page.locator('#book-detail-container')).toBeVisible();
     refreshing = true;
     books[0].title = 'Updated retained book';
@@ -305,13 +329,13 @@ test.describe('Retained library navigation', () => {
     const retry = page.getByRole('button', { name: 'Try again', exact: true });
     await expect(retry).toBeVisible();
     // A failed intermediate page must leave the entire previous range intact.
-    await expect(cards).toHaveCount(250);
+    await expect(cards).toHaveCount(1250);
     await expect(cards.first().locator('.book-title')).toHaveText('Retained book 000');
     await retry.click();
     await expect(cards.first().locator('.book-title')).toHaveText('Updated retained book');
-    await expect(cards).toHaveCount(250);
+    await expect(cards).toHaveCount(1250);
     await page.getByRole('button', { name: 'Load more', exact: true }).click();
-    await expect(cards).toHaveCount(260);
+    await expect(cards).toHaveCount(1260);
     await expect(page.locator('#load-more-container')).toBeHidden();
     const ids = await cards.evaluateAll((elements) => elements.map((el) => el.getAttribute('data-id')));
     expect(ids).toEqual(books.map((book) => String(book.id)));

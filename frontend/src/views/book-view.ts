@@ -648,7 +648,7 @@ function renderBookDetail(
         if (canCurate) {
             items.push({
                 label: 'Remove from library',
-                action: () => void removeBook(b),
+                action: () => void removeBook(view, b),
             });
         }
         const menu = createMenu(menuBtn, items);
@@ -696,7 +696,7 @@ async function loadPageCount(view: BookDetailView): Promise<void> {
         current.page_count = result.page_count;
         const el = view.root.querySelector<HTMLElement>(`[data-file-asset="${current.id}"]`);
         if (el) el.innerHTML = assetDetailsHtml(current, true, view.book.assets.length > 1);
-        notifyCatalogChanged({ kind: 'books-updated', books: [view.book] });
+        notifyCatalogChanged({ kind: 'books-updated', books: [view.book], fields: [] });
     } catch {
         // Length is optional; opening and reading the book remain available.
     } finally {
@@ -1120,12 +1120,17 @@ async function changeBookReadingStatus(
     opts: { loadReaderProgress?: boolean; canCurate?: boolean },
 ): Promise<void> {
     try {
+        const previousStatus = book.reading_status.status;
         const saved = await setReadingStatus(book.id, status);
         showToast(`Marked as ${readingStatusLabel(status).toLowerCase()}`);
+        notifyCatalogChanged({
+            kind: 'books-updated',
+            books: [],
+            fields: previousStatus === saved.status ? [] : ['reading_status'],
+        });
         if (view.phase !== 'active' || view.book?.id !== book.id) return;
         view.book.reading_status = saved;
         renderBookDetail(view, container, opts);
-        notifyCatalogChanged({ kind: 'books-updated', books: [view.book] });
     } catch (err) {
         showToast(errorMessage(err, 'Failed to change reading status'), { type: 'error' });
     }
@@ -1142,7 +1147,7 @@ async function resetBookReaderPosition(container: HTMLElement, asset: Asset): Pr
 
     try {
         await resetReaderState(asset.id);
-        notifyCatalogChanged();
+        notifyCatalogChanged({ kind: 'reading-state' });
         const progressEl = container.querySelector<HTMLElement>(
             `[data-reader-progress-asset="${asset.id}"]`,
         );
@@ -1199,7 +1204,7 @@ async function writeBookMetadata(
 // library that is being held for this page has already dropped the book by the
 // time it is shown again — and Back returns through that instance rather than
 // reloading the document out from under it.
-async function removeBook(b: Book): Promise<void> {
+async function removeBook(view: BookDetailView, b: Book): Promise<void> {
     const ok = await confirmModal({
         title: 'Remove from library?',
         body: `“${b.title}” moves to Trash. You can restore it later; the files are kept until it is permanently deleted.`,
@@ -1210,6 +1215,7 @@ async function removeBook(b: Book): Promise<void> {
     try {
         await deleteBook(b.id);
         notifyCatalogChanged({ kind: 'books-removed', ids: [b.id] });
+        if (view.phase !== 'active' || view.book?.id !== b.id) return;
         if (readPredecessorURL(window.history.state)) window.history.back();
         else navigateApp('/');
     } catch (e) {

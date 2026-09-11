@@ -1,5 +1,6 @@
 import { type BookListContext, bookListContextParams } from './book-list-context';
 import { takeBootstrapCurrentUser, takeBootstrapUserSettings } from './bootstrap';
+import { notifyCatalogChanged } from './catalog-events';
 import { browserTimeZone } from './time-zone';
 import type {
     AdminStorageStatus,
@@ -324,11 +325,15 @@ export async function saveUserSettings(payload: UserSettingsUpdate): Promise<Use
     return saved;
 }
 
-export async function fetchContinueReading(limit: number = 8): Promise<ContinueReadingItem[]> {
+export async function fetchContinueReading(
+    limit: number = 8,
+    signal?: AbortSignal,
+): Promise<ContinueReadingItem[]> {
     const params = new URLSearchParams({ limit: String(limit) });
     return await fetchJSON<ContinueReadingItem[]>(
         `/api/reader/continue?${params.toString()}`,
         'Failed to fetch continue reading',
+        { signal },
     );
 }
 
@@ -611,7 +616,7 @@ export async function fetchBooks(
     offset?: number,
     shelfId = 0,
     signal?: AbortSignal,
-): Promise<BookSummary[]> {
+): Promise<{ books: BookSummary[]; dependencies: string[] | null }> {
     let url = '/api/books';
     const params = new URLSearchParams();
     if (query) params.set('q', query);
@@ -623,8 +628,13 @@ export async function fetchBooks(
     if (params.toString()) {
         url += `?${params.toString()}`;
     }
-    return await fetchJSON<BookSummary[]>(url, (res) => `HTTP error! status: ${res.status}`, {
-        signal,
+    return await requestResult(url, { signal }, async (res) => {
+        if (!res.ok) throw await responseError(res, 'Failed to fetch books');
+        const dependencies = res.headers.get('X-Polka-List-Dependencies');
+        return {
+            books: (await res.json()) as BookSummary[],
+            dependencies: dependencies ? dependencies.split(',') : null,
+        };
     });
 }
 
@@ -1158,17 +1168,22 @@ export interface AuthorOpResult {
 }
 
 export async function renameAuthor(oldName: string, newName: string): Promise<AuthorOpResult> {
-    return await fetchJSON<AuthorOpResult>(
+    const result = await fetchJSON<AuthorOpResult>(
         '/api/authors/rename',
         'Rename failed',
         jsonBody('POST', { old: oldName, new: newName }),
     );
+    if (result.affected > 0) notifyCatalogChanged();
+    return result;
 }
 
 export async function setAuthorSortName(name: string, sortName: string): Promise<AuthorOpResult> {
-    return await fetchJSON<AuthorOpResult>(
+    const result = await fetchJSON<AuthorOpResult>(
         '/api/authors/sort-name',
         'Update failed',
         jsonBody('POST', { name, sort_name: sortName }),
     );
+    if (result.affected > 0)
+        notifyCatalogChanged({ kind: 'author-sort', name: name.trim(), sortName: sortName.trim() });
+    return result;
 }

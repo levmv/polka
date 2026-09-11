@@ -117,6 +117,16 @@ test.describe('Library workflows', () => {
         })
         .toBe(false);
 
+      await page.locator('.account-settings').click();
+      await page.getByRole('switch', { name: 'Show Continue reading rail' }).click();
+      await expect(rail).toBeVisible();
+      await page.keyboard.press('Escape');
+      await expect(page.locator('.settings-modal')).toHaveCount(0);
+      const dismiss = page.getByRole('button', { name: 'Hide Continue reading' });
+      await expect(dismiss).toBeEnabled();
+      await dismiss.click();
+      await expect(rail).toBeHidden();
+
       await expect(page).toHaveURL(
         (url) => url.pathname === '/',
       );
