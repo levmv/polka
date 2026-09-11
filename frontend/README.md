@@ -64,13 +64,20 @@ visible page or URL. `history-state.ts` decides when to retain or resume it;
   and errors. Pass an owner's `AbortSignal` to reads that can outlive it.
 - `BookSummary` is the list projection; `Book` adds detail fields. Fetch the
   single-book endpoint when a workflow needs the full record.
-- Use `catalog-events.ts` to notify other views after a successful catalog
-  mutation, so they can patch or refresh their results.
+- Use `catalog-events.ts` to notify other views after each confirmed catalog
+  mutation, including completion after its initiating UI closes.
 - Account and reader preferences share one settings record. Save only changed
   fields to avoid overwriting another surface's choices.
 - Use `textContent` or `escapeHtml()` for external text. Insert HTML only from
   trusted renderers or server-sanitized fields. Display book descriptions from
   `description_html`; `description_source` belongs to editing.
+
+## Catalog refresh
+
+The library patches edits unrelated to its filter or sort; other changes refresh
+the browsed range while preserving position and selection. See
+[library-view.ts](src/views/library-view.ts) for loading and pagination, and
+[BookListDependencies](../internal/db/book_list_dependencies.go) for query dependencies.
 
 ## UI conventions
 

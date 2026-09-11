@@ -1,5 +1,6 @@
 import { bulkEditBooks, bulkShelfBooks, fetchShelves } from '../api';
 import { formatAuthorList, parseAuthorList } from '../authors';
+import { notifyBooksUpdated, notifyCatalogChanged } from '../catalog-events';
 import {
     attachAuthorAutocomplete,
     attachSeriesAutocomplete,
@@ -534,6 +535,8 @@ export function openBulkShelvesDialog(
                     books.map((b) => b.id),
                     op,
                 );
+                if (result.changed > 0)
+                    notifyCatalogChanged({ kind: 'shelf-membership', shelfId: shelf.id });
                 onDone({ changed: result.changed, op, shelfName: shelf.name });
                 modal.close();
             } catch (e) {
@@ -588,6 +591,7 @@ async function runBulk(
     footer.status.classList.remove('is-error');
     try {
         const result = await bulkEditBooks({ ids: books.map((b) => b.id), operations });
+        notifyBooksUpdated(books, result.books);
         onApplied(result);
         close();
     } catch (e) {

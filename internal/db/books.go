@@ -194,12 +194,8 @@ func bookJumpLabel(sortValue string) string {
 
 func manualShelfOrderBy(sort BookSort) string {
 	switch sort {
-	case SortTitle:
-		return "b.sort_title COLLATE NOCASE ASC, b.title COLLATE NOCASE ASC"
-	case SortAuthor:
-		return "b.primary_author_sort ASC, b.sort_title COLLATE NOCASE ASC, b.title COLLATE NOCASE ASC"
-	case SortYear:
-		return "b.published_date DESC NULLS LAST, b.added_at DESC"
+	case SortTitle, SortAuthor, SortYear, SortSeries:
+		return bookOrderBy(sort, false)
 	default:
 		return "sb.position ASC, sb.added_at DESC, b.added_at DESC"
 	}

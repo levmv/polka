@@ -1,6 +1,7 @@
 // Library bulk selection uses direct checkboxes and a bottom floating action
 // panel; only curators can select.
 import { bulkTrashBooks, bulkWritebackBooks } from '../api';
+import { notifyCatalogChanged } from '../catalog-events';
 import { errorMessage } from '../errors';
 import { icon } from '../icons';
 import { confirmModal } from '../modal';
@@ -18,8 +19,7 @@ export interface LibrarySelection {
     // Turn selection on/off for the current user (catalog curators only). When
     // disabled the checkboxes stay hidden and any selection is dropped.
     setEnabled(on: boolean): void;
-    // Drop the current selection (also how the bar's ✕ exits). Kept when the
-    // underlying list changes so stale ids never linger.
+    // Clear the selection (also the bulk bar's close action).
     clearSelection(): void;
     // Re-apply selected styling/checkbox state after the grid/table re-rendered
     // or a row was swapped, and prune ids no longer loaded.
@@ -37,10 +37,6 @@ export interface SelectionOptions {
     container: HTMLElement;
     getBooks(): BookSummary[];
     canWriteback(): boolean;
-    // Patch the rendered rows (and view state) for the returned summaries.
-    onApplied(updated: BookSummary[]): void;
-    // Drop the given books from the rendered list and view state (bulk trash).
-    onRemoved(ids: number[]): void;
 }
 
 export function createLibrarySelection(opts: SelectionOptions): LibrarySelection {
@@ -55,8 +51,6 @@ export function createLibrarySelection(opts: SelectionOptions): LibrarySelection
     const selectedBooks = (): BookSummary[] => opts.getBooks().filter((b) => selected.has(b.id));
 
     const handleApplied = (result: BulkEditResult) => {
-        opts.onApplied(result.books);
-        updateUI();
         let message: string;
         if (result.changed === 0) {
             message = 'No changes';
@@ -70,8 +64,6 @@ export function createLibrarySelection(opts: SelectionOptions): LibrarySelection
         showToast(message);
     };
 
-    // Shelving does not change the books themselves (per-user membership), so it
-    // just reports the delta; the selection stays put for a follow-up action.
     const handleShelved = ({ changed, op, shelfName }: BulkShelfOutcome) => {
         let message: string;
         if (changed === 0) {
@@ -102,9 +94,7 @@ export function createLibrarySelection(opts: SelectionOptions): LibrarySelection
         if (!ok) return;
         try {
             const result = await bulkTrashBooks(books.map((b) => b.id));
-            for (const id of result.ids) selected.delete(id);
-            opts.onRemoved(result.ids);
-            updateUI();
+            notifyCatalogChanged({ kind: 'books-removed', ids: result.ids });
             const t = result.trashed;
             showToast(t === 1 ? 'Moved 1 book to Trash' : `Moved ${t} books to Trash`);
         } catch (e) {
@@ -182,7 +172,7 @@ export function createLibrarySelection(opts: SelectionOptions): LibrarySelection
     // checkbox once a selection exists, and the floating bar.
     function updateUI(): void {
         const showSelection = active && enabled && selected.size > 0;
-        document.body.classList.toggle('has-selection', showSelection);
+        if (active) document.body.classList.toggle('has-selection', showSelection);
 
         for (const card of opts.container.querySelectorAll<HTMLElement>('.book-card')) {
             const on = selected.has(Number(card.dataset.id));
@@ -311,11 +301,12 @@ export function createLibrarySelection(opts: SelectionOptions): LibrarySelection
     return {
         setEnabled: (on) => {
             enabled = on;
-            document.body.classList.toggle('can-curate', active && on);
+            if (active) document.body.classList.toggle('can-curate', on);
             if (!on) selected.clear();
             updateUI();
         },
         setActive: (on) => {
+            if (!on) document.body.classList.remove('has-selection');
             active = on;
             document.body.classList.toggle('can-curate', active && enabled);
             updateUI();
@@ -330,7 +321,7 @@ export function createLibrarySelection(opts: SelectionOptions): LibrarySelection
             opts.container.removeEventListener('click', onClick, true);
             opts.container.removeEventListener('change', onChange);
             document.removeEventListener('keydown', onKeydown);
-            document.body.classList.remove('has-selection', 'can-curate');
+            if (active) document.body.classList.remove('has-selection', 'can-curate');
             removeBar();
         },
     };

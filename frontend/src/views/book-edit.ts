@@ -1,7 +1,7 @@
 import { fetchAuthorInfo, fetchBook, renameAuthor, setAuthorSortName, updateBook } from '../api';
 import { authorSort, formatAuthorsForEdit, parseAuthorList } from '../authors';
 import { type BookListContext, readBookListContextFromLocation } from '../book-list-context';
-import { notifyCatalogChanged } from '../catalog-events';
+import { notifyBooksUpdated } from '../catalog-events';
 import {
     attachAuthorAutocomplete,
     attachSeriesAutocomplete,
@@ -470,6 +470,7 @@ function openLoadedEditModal(
         (coverDraft?.hasPending() ? 1 : 0) +
         (authorSortDirty() ? 1 : 0);
     const updateDirtyState = () => {
+        if (closed) return;
         const dirty = isDirty();
         const titleValid = validateTitle(form, uiID);
         const generatingCover = coverDraft?.isGenerating() ?? false;
@@ -610,12 +611,13 @@ function openLoadedEditModal(
         const authorChange = { changed: false, previous: '', next: '' };
         // Each successful step becomes the saved baseline even if a later step fails.
         const acceptSavedBook = (updated: Book) => {
+            notifyBooksUpdated([b], [updated]);
+            if (closed) return;
             host?.applySaved(updated);
             Object.assign(b, updated);
             syncEditFormFromBook(form, b, uiID);
             coverDraft?.renderPending();
             savedState = readEditForm(form);
-            notifyCatalogChanged({ kind: 'books-updated', books: [updated] });
             if (savedFlashTimer) window.clearTimeout(savedFlashTimer);
             savedFlashTimer = undefined;
             if (flash && !coverDraft?.hasPending()) {
@@ -636,6 +638,7 @@ function openLoadedEditModal(
             try {
                 const updated = await updateBook(b.id, payload);
                 acceptSavedBook(updated);
+                if (closed) return updated;
                 fetchedFieldSources.clear();
                 titleSortControls.close();
                 titleSortControls.resetFollow();
@@ -652,9 +655,11 @@ function openLoadedEditModal(
                 showToast(`Save failed: ${errorMessage(err)}`, { type: 'error' });
             } finally {
                 saving = false;
-                updateIdentifiersValidation();
-                renderDateHint(document.getElementById(`date-validation-${uiID}`), b);
-                updateDirtyState();
+                if (!closed) {
+                    updateIdentifiersValidation();
+                    renderDateHint(document.getElementById(`date-validation-${uiID}`), b);
+                    updateDirtyState();
+                }
             }
             if (!saved) return null;
         }
@@ -664,11 +669,31 @@ function openLoadedEditModal(
             updateDirtyState();
             try {
                 await setAuthorSortName(authorSortChange.name, authorSortChange.sortName);
-                const updated = await fetchBook(b.id);
-                if (closed) return null;
-                acceptSavedBook(updated);
+                // The shared write is already committed. Its baseline must not
+                // depend on a follow-up read succeeding or the editor surviving.
+                saved = {
+                    ...b,
+                    authors_list: b.authors_list.map((author) =>
+                        author.name === authorSortChange.name
+                            ? { ...author, sort_name: authorSortChange.sortName }
+                            : author,
+                    ),
+                };
+                if (closed) return saved;
+                Object.assign(b, saved);
+                host?.applySaved(saved);
                 resetAuthorSortFromBook(b);
-                saved = updated;
+                try {
+                    const updated = await fetchBook(b.id);
+                    if (closed) return saved;
+                    acceptSavedBook(updated);
+                    saved = updated;
+                } catch {
+                    if (closed) return saved;
+                    showToast('Author sort saved, but book details could not be refreshed.', {
+                        type: 'error',
+                    });
+                }
             } catch (err) {
                 authorSortState = {
                     ...authorSortState,
@@ -677,7 +702,7 @@ function openLoadedEditModal(
                 return null;
             } finally {
                 saving = false;
-                updateDirtyState();
+                if (!closed) updateDirtyState();
             }
         }
         if (coverDraft?.hasPending()) {
@@ -686,6 +711,7 @@ function openLoadedEditModal(
             try {
                 const updated = await coverDraft.savePending(b.id);
                 acceptSavedBook(updated);
+                if (closed) return updated;
                 fetchedFieldSources.clear();
                 titleSortControls.close();
                 titleSortControls.resetFollow();
@@ -695,12 +721,14 @@ function openLoadedEditModal(
                 return null;
             } finally {
                 saving = false;
-                updateIdentifiersValidation();
-                renderDateHint(document.getElementById(`date-validation-${uiID}`), b);
-                updateDirtyState();
+                if (!closed) {
+                    updateIdentifiersValidation();
+                    renderDateHint(document.getElementById(`date-validation-${uiID}`), b);
+                    updateDirtyState();
+                }
             }
         }
-        if (saved && authorChange.changed) {
+        if (saved && !closed && authorChange.changed) {
             await maybeOfferAuthorConvergence(b, authorChange.previous, authorChange.next, uiID);
         }
         return saved;
@@ -713,7 +741,7 @@ function openLoadedEditModal(
             const saved = await commitCurrent(false);
             if (!saved) return;
         }
-        void switchToBook(resolvedTarget);
+        if (!closed) void switchToBook(resolvedTarget);
     };
 
     form.addEventListener('submit', (e) => {
@@ -1206,7 +1234,6 @@ async function maybeOfferAuthorConvergence(
 
     try {
         await renameAuthor(oldName, newName);
-        notifyCatalogChanged();
         flashSaved(uiID);
     } catch (err) {
         showToast(`Rename failed: ${errorMessage(err)}`, { type: 'error' });

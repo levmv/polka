@@ -148,7 +148,7 @@ function shelfPickerRow(membership: BookShelfMembership, bookId: number): HTMLEl
             }
             // A shelf-scoped list may no longer contain this book, and only that
             // list knows which shelf it shows.
-            notifyCatalogChanged();
+            notifyCatalogChanged({ kind: 'shelf-membership', shelfId: membership.id });
         } catch (e) {
             console.error('Failed to update shelf membership:', e);
             checkbox.checked = !checked;
@@ -188,7 +188,7 @@ function buildCreateRow(popover: ManagedPopover, bookId: number): HTMLElement {
             if (!shelf) return;
             await addBookToShelf(shelf.id, bookId);
             notifyShelvesChanged();
-            notifyCatalogChanged();
+            notifyCatalogChanged({ kind: 'shelf-membership', shelfId: shelf.id });
         } catch (e) {
             console.error('Failed to create shelf:', e);
             showToast(errorMessage(e, 'Shelf update failed'), { type: 'error' });

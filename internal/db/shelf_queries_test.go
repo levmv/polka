@@ -4,8 +4,8 @@ import "testing"
 
 func TestShelvesVisibilityAndMembership(t *testing.T) {
 	database := newTestDB(t)
-	mustExec(t, database, "INSERT INTO books (id, title, sort_title, added_at) VALUES (1, 'One', 'One', 1)")
-	mustExec(t, database, "INSERT INTO books (id, title, sort_title, added_at) VALUES (2, 'Two', 'Two', 2)")
+	mustExec(t, database, "INSERT INTO books (id, title, sort_title, series, series_index, added_at) VALUES (1, 'One', 'One', 'Series', 1, 2)")
+	mustExec(t, database, "INSERT INTO books (id, title, sort_title, series, series_index, added_at) VALUES (2, 'Two', 'Two', 'Series', 2, 1)")
 	mustExec(t, database, "INSERT INTO authors (id, name, sort_name) VALUES (1, 'Author', 'Author')")
 	mustExec(t, database, "INSERT INTO book_authors (book_id, author_id, author_order) VALUES (1, 1, 0)")
 	mustExec(t, database, "INSERT INTO book_authors (book_id, author_id, author_order) VALUES (2, 1, 0)")
@@ -40,6 +40,7 @@ func TestShelvesVisibilityAndMembership(t *testing.T) {
 		t.Fatalf("user-visible shelves = %d, want 4", len(visibleToUser))
 	}
 
+	// Shelf position takes precedence over when a book was added to the library.
 	if err := database.AddBookToShelf(t.Context(), private.ID, user.ID, 2); err != nil {
 		t.Fatalf("AddBookToShelf 2: %v", err)
 	}
@@ -47,12 +48,20 @@ func TestShelvesVisibilityAndMembership(t *testing.T) {
 		t.Fatalf("AddBookToShelf 1: %v", err)
 	}
 
-	books, err := ListBooksInManualShelf(database.Read(t.Context()), FullVisibilityScope(), private.ID, SortAdded, 10, 0)
-	if err != nil {
-		t.Fatalf("ListBooksInManualShelf: %v", err)
-	}
-	if len(books) != 2 || books[0].ID != 2 || books[1].ID != 1 {
-		t.Fatalf("manual shelf order = %+v, want [2 1]", books)
+	for _, tt := range []struct {
+		sort BookSort
+		want [2]int64
+	}{
+		{SortAdded, [2]int64{2, 1}},
+		{SortSeries, [2]int64{1, 2}},
+	} {
+		books, err := ListBooksInManualShelf(database.Read(t.Context()), FullVisibilityScope(), private.ID, tt.sort, 10, 0)
+		if err != nil {
+			t.Fatalf("ListBooksInManualShelf: %v", err)
+		}
+		if len(books) != 2 || books[0].ID != tt.want[0] || books[1].ID != tt.want[1] {
+			t.Fatalf("manual shelf order by %s = %+v, want %v", tt.sort, books, tt.want)
+		}
 	}
 
 	memberships, err := ListBookShelfMemberships(database.Read(t.Context()), user.ID, 2)
