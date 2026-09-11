@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,7 +24,7 @@ func TestArgumentDiagnostics(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			stderr, err := runCapturingStderr(func() error { return Run(tc.args) })
+			stderr, err := captureStderr(t, func() error { return Run(tc.args) })
 			if err == nil {
 				t.Fatal("Run returned nil error")
 			}
@@ -59,7 +58,7 @@ func TestHelpIsSelfContainedAndDoesNotRequireLibrary(t *testing.T) {
 		t.Run(strings.Join(args, "_"), func(t *testing.T) {
 			dataDir := filepath.Join(t.TempDir(), "missing-library")
 			fullArgs := append([]string{"--data", dataDir}, args...)
-			stderr, err := runCapturingStderr(func() error { return Run(fullArgs) })
+			stderr, err := captureStderr(t, func() error { return Run(fullArgs) })
 			if err != nil {
 				t.Fatalf("Run(%q) returned error: %v", strings.Join(fullArgs, " "), err)
 			}
@@ -71,27 +70,4 @@ func TestHelpIsSelfContainedAndDoesNotRequireLibrary(t *testing.T) {
 			}
 		})
 	}
-}
-
-func runCapturingStderr(fn func() error) (string, error) {
-	oldStderr := os.Stderr
-	stderrR, stderrW, err := os.Pipe()
-	if err != nil {
-		return "", err
-	}
-
-	stderrDone := make(chan string, 1)
-	go func() {
-		var output strings.Builder
-		_, _ = io.Copy(&output, stderrR)
-		stderrR.Close()
-		stderrDone <- output.String()
-	}()
-
-	os.Stderr = stderrW
-	runErr := fn()
-	stderrW.Close()
-	os.Stderr = oldStderr
-	stderr := <-stderrDone
-	return stderr, runErr
 }

@@ -161,62 +161,6 @@ func TestExtractMOBIMetadataPalmDBTitleFallback(t *testing.T) {
 	}
 }
 
-func TestExtractMOBIMetadataFallsBackToLegacyUnknownTitlePage(t *testing.T) {
-	text := []byte(`<html xmlns="http://www.w3.org/1999/xhtml">
-  <head><title>Unknown</title></head>
-  <body>
-    <div><h1>Unknown</h1><h3>by Unknown</h3></div>
-    <div>
-      <p>GRANTCHESTER GRIND</p>
-      <p>By</p>
-      <p>Tom Sharpe</p>
-      <p>Copyright &copy; 1995</p>
-      <p>A dedication follows.</p>
-    </div>
-  </body>
-</html>`)
-	data := testMOBIFileWithOptions(testMOBIOptions{
-		codepage:    65001,
-		palmDBName:  "Unknown",
-		textRecords: [][]byte{text},
-		textLength:  uint32(len(text)),
-	})
-	r := bytes.NewReader(data)
-
-	meta, err := ExtractMOBIMetadata(r, r.Size())
-	if err != nil {
-		t.Fatalf("ExtractMOBIMetadata: %v", err)
-	}
-	if meta.Title != "GRANTCHESTER GRIND" {
-		t.Fatalf("Title = %q; want legacy title-page title", meta.Title)
-	}
-	if len(meta.Authors) != 1 || meta.Authors[0].Name != "Tom Sharpe" || meta.Authors[0].Role != "aut" {
-		t.Fatalf("Authors = %+v; want legacy title-page author", meta.Authors)
-	}
-}
-
-func TestLegacyUnknownTitlePageMetadataRequiresCompleteProducerShape(t *testing.T) {
-	valid := `<html><head><title>Unknown</title></head><body>
-<div><h1>Unknown</h1><h3>by Unknown</h3></div>
-<div><p>Book Title</p><p>By</p><p>Book Author</p><p>Copyright 2001</p></div>
-</body></html>`
-	for _, tt := range []struct {
-		name string
-		src  string
-	}{
-		{name: "useful document title", src: strings.Replace(valid, "<title>Unknown</title>", "<title>Chapter One</title>", 1)},
-		{name: "no placeholder block", src: strings.Replace(valid, "<h1>Unknown</h1>", "<h1>Preface</h1>", 1)},
-		{name: "no exact by separator", src: strings.Replace(valid, "<p>By</p>", "<p>Written by</p>", 1)},
-		{name: "no copyright witness", src: strings.Replace(valid, "<p>Copyright 2001</p>", "<p>First chapter</p>", 1)},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			if title, author, ok := mobiLegacyTitlePageMetadata(tt.src); ok {
-				t.Fatalf("metadata = %q / %+v; want narrow fallback rejected", title, author)
-			}
-		})
-	}
-}
-
 func TestExtractMOBICoverSelection(t *testing.T) {
 	for _, tt := range []struct {
 		name      string

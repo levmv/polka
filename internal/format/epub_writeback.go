@@ -894,9 +894,31 @@ func rewriteOPFMetadata(raw []byte, meta Metadata, modified time.Time) ([]byte, 
 		return nil, err
 	}
 
-	preserved := opfPreservedMetadataChildren(children, uniqueID, bookmeta.ParseIdentifiers(meta.Identifier), meta.PageCount > 0)
+	var creatorRoles map[int]string
+	if epub3 {
+		creatorRoles = opfRetainedCreatorRoles(children, meta.Authors)
+	}
+	preserved := opfPreservedMetadataChildren(children, uniqueID, bookmeta.ParseIdentifiers(meta.Identifier), meta.PageCount > 0, creatorRoles)
+	// IDs share one namespace across metadata and the rest of the package.
+	ids := make(opfIDSet)
+	ids.add(raw[:metadataTag.end])
+	ids.add(raw[endStart:])
+	for _, child := range preserved.Children {
+		ids.add(child)
+	}
+	for _, roles := range preserved.CreatorRoles {
+		for _, role := range roles {
+			ids.add(role)
+		}
+	}
+	for _, identifier := range preserved.Identifiers {
+		ids.add(identifier.Raw)
+	}
+	for _, id := range preserved.GeneratedIdentifierIDs {
+		ids[id] = true
+	}
 	generatedUsesOPFAttrs := opfGeneratedUsesOPFAttrs(meta, epub3)
-	generated := renderOPFMetadataChildren(raw, string(metadataTag.raw), meta, preserved.Identifiers, modified, epub3, generatedUsesOPFAttrs, preserved.GeneratedIdentifierIDs)
+	generated := renderOPFMetadataChildren(raw, string(metadataTag.raw), meta, preserved, ids, modified, epub3, generatedUsesOPFAttrs)
 	nextInner := assembleOPFMetadataInner(inner, generated, preserved.Children)
 
 	out := make([]byte, 0, len(raw)-len(inner)+len(nextInner))
@@ -910,6 +932,36 @@ func rewriteOPFMetadata(raw []byte, meta Metadata, modified time.Time) ([]byte, 
 		}
 	}
 	return out, nil
+}
+
+type opfIDSet map[string]bool
+
+func (ids opfIDSet) add(raw []byte) {
+	for pos := 0; pos < len(raw); {
+		start := bytes.IndexByte(raw[pos:], '<')
+		if start < 0 {
+			break
+		}
+		start += pos
+		end := opfTagEnd(raw, start)
+		if end < 0 {
+			break
+		}
+		tag := opfParseTag(raw[start:end])
+		if id := strings.TrimSpace(tag.attrs["id"]); id != "" {
+			ids[id] = true
+		}
+		pos = end
+	}
+}
+
+func (ids opfIDSet) unique(base string) string {
+	id := base
+	for suffix := 2; ids[id]; suffix++ {
+		id = fmt.Sprintf("%s-%d", base, suffix)
+	}
+	ids[id] = true
+	return id
 }
 
 type opfTagRange struct {
@@ -1141,6 +1193,7 @@ func opfMetadataChildren(raw []byte, includeLegacy bool) ([]opfMetadataChild, er
 
 type opfPreservedMetadata struct {
 	Children               [][]byte
+	CreatorRoles           map[string][][]byte
 	GeneratedIdentifierIDs map[string]string
 	Identifiers            []opfOutputIdentifier
 }
@@ -1150,7 +1203,59 @@ type opfOutputIdentifier struct {
 	Raw        []byte
 }
 
-func opfPreservedMetadataChildren(children []opfMetadataChild, uniqueID string, polkaIDs []bookmeta.Identifier, replacePageCount bool) opfPreservedMetadata {
+// Extra roles belong to an unchanged, unambiguous person. Names alone cannot
+// carry them across a rename, duplicate name, or explicit primary-role change.
+func opfRetainedCreatorRoles(children []opfMetadataChild, authors []bookmeta.AuthorMeta) map[int]string {
+	authorCounts := make(map[string]int)
+	rolesByName := make(map[string]string)
+	for _, author := range authors {
+		name := strings.TrimSpace(author.Name)
+		authorCounts[name]++
+		role := opfRole(author.Role)
+		if role == "" {
+			role = "aut"
+		}
+		rolesByName[name] = role
+	}
+	creatorCounts := make(map[string]int)
+	idCounts := make(map[string]int)
+	rolesByID := make(map[string][]int)
+	for i, child := range children {
+		if child.local == "creator" {
+			creatorCounts[strings.TrimSpace(child.text)]++
+		}
+		idCounts[strings.TrimSpace(child.attrs["id"])]++
+		if child.local == "meta" && strings.TrimSpace(child.attrs["property"]) == "role" {
+			if target, ok := strings.CutPrefix(strings.TrimSpace(child.attrs["refines"]), "#"); ok && target != "" {
+				rolesByID[target] = append(rolesByID[target], i)
+			}
+		}
+	}
+	retained := make(map[int]string)
+	for _, child := range children {
+		if child.local != "creator" {
+			continue
+		}
+		name := strings.TrimSpace(child.text)
+		id := strings.TrimSpace(child.attrs["id"])
+		if name == "" || id == "" || authorCounts[name] != 1 || creatorCounts[name] != 1 || idCounts[id] != 1 {
+			continue
+		}
+		var roles []string
+		for _, i := range rolesByID[id] {
+			roles = append(roles, children[i].text)
+		}
+		if opfCreatorRole(child.attrs["role"], roles) != rolesByName[name] {
+			continue
+		}
+		for _, i := range rolesByID[id] {
+			retained[i] = name
+		}
+	}
+	return retained
+}
+
+func opfPreservedMetadataChildren(children []opfMetadataChild, uniqueID string, polkaIDs []bookmeta.Identifier, replacePageCount bool, creatorRoles map[int]string) opfPreservedMetadata {
 	// Generated Polka records replace the fields in bookmeta.Metadata; unrelated
 	// metadata, cover hints, manifest refinements, and internal package ids survive.
 	var desired []bookmeta.Identifier
@@ -1239,31 +1344,43 @@ func opfPreservedMetadataChildren(children []opfMetadataChild, uniqueID string, 
 		}
 		return opfChildOwnedByPolka(child, uniqueID, polkaTypes, uniqueIDPolkaTypes, seriesCollectionIDs)
 	}
-	removedIDs := make(map[string]bool)
+	removed := make([]bool, len(children))
+	refinements := make(map[string][]int)
+	var pending []int
 	for childIndex, child := range children {
 		if matchedChildren[childIndex] {
 			continue
 		}
 		if owned(child) {
-			if id := strings.TrimSpace(child.attrs["id"]); id != "" {
-				removedIDs[id] = true
+			removed[childIndex] = true
+			pending = append(pending, childIndex)
+		}
+		if target := strings.TrimPrefix(strings.TrimSpace(child.attrs["refines"]), "#"); target != "" {
+			refinements[target] = append(refinements[target], childIndex)
+		}
+	}
+	// Refinements can themselves be refined, in any document order.
+	for i := 0; i < len(pending); i++ {
+		id := strings.TrimSpace(children[pending[i]].attrs["id"])
+		for _, childIndex := range refinements[id] {
+			if !removed[childIndex] && creatorRoles[childIndex] == "" {
+				removed[childIndex] = true
+				pending = append(pending, childIndex)
 			}
 		}
 	}
 
 	var preserved [][]byte
+	roles := make(map[string][][]byte)
 	for childIndex, child := range children {
-		if matchedChildren[childIndex] {
+		if matchedChildren[childIndex] || removed[childIndex] {
 			continue
 		}
-		if owned(child) {
-			continue
+		if name := creatorRoles[childIndex]; name != "" {
+			roles[name] = append(roles[name], bytes.TrimSpace(child.raw))
+		} else {
+			preserved = append(preserved, bytes.TrimSpace(child.raw))
 		}
-		target := strings.TrimPrefix(strings.TrimSpace(child.attrs["refines"]), "#")
-		if target != "" && removedIDs[target] {
-			continue
-		}
-		preserved = append(preserved, bytes.TrimSpace(child.raw))
 	}
 	identifiers := make([]opfOutputIdentifier, 0, len(desired))
 	for i, id := range desired {
@@ -1275,6 +1392,7 @@ func opfPreservedMetadataChildren(children []opfMetadataChild, uniqueID string, 
 	}
 	return opfPreservedMetadata{
 		Children:               preserved,
+		CreatorRoles:           roles,
 		GeneratedIdentifierIDs: generatedIdentifierIDs,
 		Identifiers:            identifiers,
 	}
@@ -1331,7 +1449,7 @@ func opfGeneratedUsesOPFAttrs(meta Metadata, epub3 bool) bool {
 	return false
 }
 
-func renderOPFMetadataChildren(raw []byte, metadataTag string, meta Metadata, identifiers []opfOutputIdentifier, modified time.Time, epub3 bool, generatedUsesOPFAttrs bool, generatedIdentifierIDs map[string]string) []string {
+func renderOPFMetadataChildren(raw []byte, metadataTag string, meta Metadata, preserved opfPreservedMetadata, ids opfIDSet, modified time.Time, epub3 bool, generatedUsesOPFAttrs bool) []string {
 	dc := "dc:"
 	if !opfHasNamespacePrefix(raw, metadataTag, "dc") {
 		dc = ""
@@ -1342,16 +1460,16 @@ func renderOPFMetadataChildren(raw []byte, metadataTag string, meta Metadata, id
 	}
 
 	var out []string
-	titleWritten := false
+	titleID := ""
 	if title := strings.TrimSpace(meta.Title); title != "" {
-		attrs := ` id="polka-title"`
+		titleID = ids.unique("polka-title")
+		attrs := fmt.Sprintf(` id="%s"`, titleID)
 		out = append(out, fmt.Sprintf("<%stitle%s>%s</%stitle>", dc, attrs, opfEscapeText(title), dc))
-		titleWritten = true
 	}
-	if epub3 && titleWritten {
-		out = append(out, `<meta refines="#polka-title" property="title-type">main</meta>`)
+	if epub3 && titleID != "" {
+		out = append(out, fmt.Sprintf(`<meta refines="#%s" property="title-type">main</meta>`, titleID))
 		if sortTitle := strings.TrimSpace(meta.SortTitle); sortTitle != "" {
-			out = append(out, fmt.Sprintf(`<meta refines="#polka-title" property="file-as">%s</meta>`, opfEscapeText(sortTitle)))
+			out = append(out, fmt.Sprintf(`<meta refines="#%s" property="file-as">%s</meta>`, titleID, opfEscapeText(sortTitle)))
 		}
 	}
 	if sortTitle := strings.TrimSpace(meta.SortTitle); sortTitle != "" {
@@ -1365,7 +1483,7 @@ func renderOPFMetadataChildren(raw []byte, metadataTag string, meta Metadata, id
 			continue
 		}
 		authorSeq++
-		id := fmt.Sprintf("polka-creator-%d", authorSeq)
+		id := ids.unique(fmt.Sprintf("polka-creator-%d", authorSeq))
 		role := strings.TrimSpace(author.Role)
 		if role == "" {
 			role = "aut"
@@ -1382,7 +1500,22 @@ func renderOPFMetadataChildren(raw []byte, metadataTag string, meta Metadata, id
 			if sortName := strings.TrimSpace(author.SortName); sortName != "" {
 				out = append(out, fmt.Sprintf(`<meta refines="#%s" property="file-as">%s</meta>`, id, opfEscapeText(sortName)))
 			}
-			out = append(out, fmt.Sprintf(`<meta refines="#%s" property="role" scheme="marc:relators">%s</meta>`, id, opfEscapeText(role)))
+			roles := preserved.CreatorRoles[name]
+			hasPrimaryRole := false
+			for _, rawRole := range roles {
+				if opfRole(opfElementText(rawRole)) == opfRole(role) {
+					hasPrimaryRole = true
+				}
+			}
+			if !hasPrimaryRole {
+				out = append(out, fmt.Sprintf(`<meta refines="#%s" property="role" scheme="marc:relators">%s</meta>`, id, opfEscapeText(role)))
+			}
+			for _, rawRole := range roles {
+				end := opfTagEnd(rawRole, 0)
+				rebound := opfSetTagAttr(rawRole[:end], "refines", "#"+id)
+				rebound = append(rebound, rawRole[end:]...)
+				out = append(out, string(rebound))
+			}
 			out = append(out, fmt.Sprintf(`<meta refines="#%s" property="display-seq">%d</meta>`, id, authorSeq))
 		}
 	}
@@ -1405,7 +1538,7 @@ func renderOPFMetadataChildren(raw []byte, metadataTag string, meta Metadata, id
 		}
 	}
 	identifierSeq := 0
-	for _, output := range identifiers {
+	for _, output := range preserved.Identifiers {
 		id := output.Identifier
 		scheme, value := opfIdentifierParts(id)
 		if value == "" || bookmeta.IsInternalIdentifier(id) {
@@ -1416,11 +1549,11 @@ func renderOPFMetadataChildren(raw []byte, metadataTag string, meta Metadata, id
 			out = append(out, string(output.Raw))
 			continue
 		}
-		elementID := strings.TrimSpace(generatedIdentifierIDs[scheme])
+		elementID := strings.TrimSpace(preserved.GeneratedIdentifierIDs[scheme])
 		if elementID != "" {
-			delete(generatedIdentifierIDs, scheme)
+			delete(preserved.GeneratedIdentifierIDs, scheme)
 		} else {
-			elementID = fmt.Sprintf("polka-identifier-%d", identifierSeq)
+			elementID = ids.unique(fmt.Sprintf("polka-identifier-%d", identifierSeq))
 		}
 		attrs := fmt.Sprintf(` id="%s"`, opfEscapeAttr(elementID))
 		if scheme != "" && !epub3 {
@@ -1434,10 +1567,11 @@ func renderOPFMetadataChildren(raw []byte, metadataTag string, meta Metadata, id
 			out = append(out, fmt.Sprintf(`<meta name="calibre:series_index" content="%s"/>`, opfEscapeAttr(strconv.FormatFloat(meta.SeriesIndex, 'f', -1, 64))))
 		}
 		if epub3 {
-			out = append(out, fmt.Sprintf(`<meta property="belongs-to-collection" id="polka-series">%s</meta>`, opfEscapeText(series)))
-			out = append(out, `<meta refines="#polka-series" property="collection-type">series</meta>`)
+			seriesID := ids.unique("polka-series")
+			out = append(out, fmt.Sprintf(`<meta property="belongs-to-collection" id="%s">%s</meta>`, seriesID, opfEscapeText(series)))
+			out = append(out, fmt.Sprintf(`<meta refines="#%s" property="collection-type">series</meta>`, seriesID))
 			if meta.SeriesIndex != 0 {
-				out = append(out, fmt.Sprintf(`<meta refines="#polka-series" property="group-position">%s</meta>`, opfEscapeText(strconv.FormatFloat(meta.SeriesIndex, 'f', -1, 64))))
+				out = append(out, fmt.Sprintf(`<meta refines="#%s" property="group-position">%s</meta>`, seriesID, opfEscapeText(strconv.FormatFloat(meta.SeriesIndex, 'f', -1, 64))))
 			}
 		}
 	}
