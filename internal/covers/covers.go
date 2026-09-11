@@ -145,8 +145,7 @@ func Inspect(src []byte) (Info, error) {
 	if cfg.Width <= 0 || cfg.Height <= 0 {
 		return Info{}, errors.New("invalid image dimensions")
 	}
-	pixels := uint64(cfg.Width) * uint64(cfg.Height)
-	if pixels > MaxCoverPixels {
+	if cfg.Width > MaxCoverPixels/cfg.Height {
 		return Info{}, fmt.Errorf("image dimensions %dx%d exceed %d pixels", cfg.Width, cfg.Height, MaxCoverPixels)
 	}
 	return Info{Width: cfg.Width, Height: cfg.Height, Ratio: float64(cfg.Width) / float64(cfg.Height)}, nil

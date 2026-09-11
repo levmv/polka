@@ -61,11 +61,16 @@ func TestKindleFileposPreservesCharacterReferencesAndUTF8(t *testing.T) {
 
 func TestMarkdownFencesPreserveCodeAndWhitespace(t *testing.T) {
 	for _, fence := range []string{"```", "~~~~"} {
-		source := fence + "go\n  value_name := 2 * 3\n\n  print(\"<tag>\")\n" + fence + "\n"
-		doc := markdownDocument(source)
-		want := "<pre><code>  value_name := 2 * 3\n\n  print(&#34;&lt;tag&gt;&#34;)\n</code></pre>"
-		if !strings.Contains(doc.Body, want) {
-			t.Fatalf("fence=%q output=%s", fence, doc.Body)
+		source := fence + "go\n  value_name := 2 * 3\n\n \t\n\n  print(\"<tag>\")\n" + fence + "\n"
+		raw := []byte(strings.ReplaceAll(source, "\n", "\r\n"))
+		var out bytes.Buffer
+		if err := ConvertContext(t.Context(), &out, bytes.NewReader(raw), format.FormatMarkdown, int64(len(raw)), TargetEPUB); err != nil {
+			t.Fatal(err)
+		}
+		xhtml := zipEntry(t, out.Bytes(), "OEBPS/text.xhtml")
+		want := "<pre><code>  value_name := 2 * 3\n\n \t\n\n  print(&#34;&lt;tag&gt;&#34;)\n</code></pre>"
+		if !strings.Contains(xhtml, want) {
+			t.Fatalf("fence=%q output=%s", fence, xhtml)
 		}
 	}
 }

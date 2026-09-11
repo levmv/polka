@@ -86,11 +86,7 @@ func (s *Service) RunOnce(ctx context.Context) (Summary, error) {
 	if len(rows) == 0 {
 		return summary, nil
 	}
-	catalogHasBooks, err := db.HasAnyAsset(s.db.Read(ctx))
-	if err != nil {
-		return summary, err
-	}
-	if err := storage.RequireWritableRoot(s.root, catalogHasBooks); err != nil {
+	if err := RequireWritableRoot(s.db.Read(ctx), s.root); err != nil {
 		return summary, err
 	}
 	for _, row := range rows {

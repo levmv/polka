@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -86,7 +85,7 @@ func runMetaSet(args []string) error {
 	fs.Var(&opts.Date, "date", "set published date; empty clears")
 	fs.Var(&opts.Language, "language", "set language; empty clears")
 	fs.Var(&opts.Identifiers, "identifiers", "set comma-separated identifiers; empty clears")
-	if help, err := parseCommandFlags(fs, normalizeMetaSetArgs(args)); help || err != nil {
+	if help, err := parseCommandFlags(fs, args); help || err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
@@ -95,7 +94,7 @@ func runMetaSet(args []string) error {
 	}
 	if !opts.hasChanges() {
 		fs.Usage()
-		return reportedErrorf("meta set requires at least one field flag")
+		return errors.New("meta set requires at least one field flag")
 	}
 
 	result, err := setMetaFile(fs.Arg(0), opts)
@@ -108,53 +107,6 @@ func runMetaSet(args []string) error {
 		fmt.Printf("Updated metadata: %s\n", result.Path)
 	}
 	return nil
-}
-
-func normalizeMetaSetArgs(args []string) []string {
-	valueFlags := map[string]bool{
-		"authors":      true,
-		"date":         true,
-		"description":  true,
-		"identifiers":  true,
-		"language":     true,
-		"publisher":    true,
-		"series":       true,
-		"series-index": true,
-		"sort-title":   true,
-		"tags":         true,
-		"title":        true,
-	}
-	var flags []string
-	var files []string
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		if arg == "--" {
-			files = append(files, args[i+1:]...)
-			break
-		}
-		if !strings.HasPrefix(arg, "-") || arg == "-" {
-			files = append(files, arg)
-			continue
-		}
-		flags = append(flags, arg)
-		name, hasValue := metaSetFlagName(arg)
-		if !valueFlags[name] || hasValue {
-			continue
-		}
-		if i+1 < len(args) {
-			flags = append(flags, args[i+1])
-			i++
-		}
-	}
-	return append(flags, files...)
-}
-
-func metaSetFlagName(arg string) (name string, hasValue bool) {
-	arg = strings.TrimLeft(arg, "-")
-	if idx := strings.IndexByte(arg, '='); idx >= 0 {
-		return arg[:idx], true
-	}
-	return arg, false
 }
 
 func (opts metaSetOptions) hasChanges() bool {
@@ -217,10 +169,6 @@ func metaSetAuthors(raw string) []bookmeta.AuthorMeta {
 	names := bookmeta.ParseAuthorList(raw)
 	authors := make([]bookmeta.AuthorMeta, 0, len(names))
 	for _, name := range names {
-		name = strings.TrimSpace(name)
-		if name == "" {
-			continue
-		}
 		authors = append(authors, bookmeta.AuthorMeta{
 			Name:     name,
 			SortName: bookmeta.AuthorSort(name),
@@ -290,10 +238,10 @@ func setMetaFile(path string, opts metaSetOptions) (metaSetResult, error) {
 	if err != nil {
 		return result, fmt.Errorf("hash source before replace: %w", err)
 	}
-	if latestInfo.Size() != info.Size() || !bytes.Equal(latestHash[:], currentHash[:]) {
+	if latestInfo.Size() != info.Size() || latestHash != currentHash {
 		return result, errors.New("source file changed during metadata write")
 	}
-	if renderedSize == info.Size() && bytes.Equal(renderedHash[:], currentHash[:]) {
+	if renderedSize == info.Size() && renderedHash == currentHash {
 		result.Unchanged = true
 		return result, nil
 	}
@@ -314,11 +262,8 @@ func renderMetaSetTemp(path string, mode os.FileMode, kind format.Format, src io
 	}
 	tempPath := tmp.Name()
 	cleanup := true
-	closed := false
 	defer func() {
-		if !closed {
-			_ = tmp.Close()
-		}
+		_ = tmp.Close()
 		if cleanup {
 			_ = os.Remove(tempPath)
 		}
@@ -340,10 +285,8 @@ func renderMetaSetTemp(path string, mode os.FileMode, kind format.Format, src io
 		return "", [32]byte{}, 0, fmt.Errorf("sync temp output: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		closed = true
 		return "", [32]byte{}, 0, fmt.Errorf("close temp output: %w", err)
 	}
-	closed = true
 
 	cleanup = false
 	var sum [32]byte

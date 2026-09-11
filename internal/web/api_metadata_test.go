@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 
 	"github.com/levmv/polka/internal/bookmeta"
@@ -33,7 +34,7 @@ func (p *fakeMetadataProvider) Search(_ context.Context, q metalookup.Query) ([]
 		Score:       42,
 		CoverURL:    "https://example.test/cover.jpg",
 		Title:       "Fetched Hobbit",
-		Authors:     []bookmeta.AuthorMeta{{Name: "J. R. R. Tolkien", SortName: "Tolkien, J. R. R."}},
+		Authors:     []bookmeta.AuthorMeta{{Name: "J. R. R. Tolkien", SortName: "Tolkien, J. R. R."}, {Name: "Research & Editing"}},
 		Publisher:   "Fetched Press",
 		Date:        "1937",
 		Identifier:  "isbn:9780000000002",
@@ -78,8 +79,25 @@ func TestAPIMetadataCandidates(t *testing.T) {
 	if c.Provider != "fake" || c.ProviderName != "Fake Metadata" || c.Title != "Fetched Hobbit" {
 		t.Fatalf("candidate = %+v", c)
 	}
-	if c.Authors != "J. R. R. Tolkien" || c.Tags != "Fantasy, Classic" || c.Identifiers != "isbn:9780000000002, fake:fake-1" {
+	if c.Tags != "Fantasy, Classic" || c.Identifiers != "isbn:9780000000002, fake:fake-1" {
 		t.Fatalf("candidate fields = %+v", c)
+	}
+	patch := jsonRequest(t, s, u.ID, http.MethodPatch, "/api/books/1", map[string]string{"authors": c.Authors})
+	w = httptest.NewRecorder()
+	testRoutes(t, s).ServeHTTP(w, patch)
+	if w.Code != http.StatusOK {
+		t.Fatalf("apply candidate authors: status %d: %s", w.Code, w.Body.String())
+	}
+	byBook, err := db.AuthorsByBookIDs(database.Read(t.Context()), []int64{1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, author := range byBook[1] {
+		names = append(names, author.Name)
+	}
+	if !slices.Equal(names, []string{"J. R. R. Tolkien", "Research & Editing"}) {
+		t.Fatalf("applied authors = %q", names)
 	}
 }
 

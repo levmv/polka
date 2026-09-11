@@ -16,6 +16,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -153,21 +154,21 @@ type contextFile struct {
 }
 
 func (f contextFile) Read(p []byte) (int, error) {
-	if err := importContextError(f.ctx); err != nil {
+	if err := context.Cause(f.ctx); err != nil {
 		return 0, err
 	}
 	return f.file.Read(p)
 }
 
 func (f contextFile) ReadAt(p []byte, offset int64) (int, error) {
-	if err := importContextError(f.ctx); err != nil {
+	if err := context.Cause(f.ctx); err != nil {
 		return 0, err
 	}
 	return f.file.ReadAt(p, offset)
 }
 
 func (f contextFile) Seek(offset int64, whence int) (int64, error) {
-	if err := importContextError(f.ctx); err != nil {
+	if err := context.Cause(f.ctx); err != nil {
 		return 0, err
 	}
 	return f.file.Seek(offset, whence)
@@ -179,19 +180,10 @@ type contextReader struct {
 }
 
 func (r contextReader) Read(p []byte) (int, error) {
-	if err := importContextError(r.ctx); err != nil {
+	if err := context.Cause(r.ctx); err != nil {
 		return 0, err
 	}
 	return r.r.Read(p)
-}
-
-func importContextError(ctx context.Context) error {
-	select {
-	case <-ctx.Done():
-		return context.Cause(ctx)
-	default:
-		return nil
-	}
 }
 
 // ImportFile imports srcPath using the file's own name for detection/fallbacks.
@@ -244,7 +236,7 @@ func ImportGroup(ctx context.Context, database *db.DB, root storage.Root, source
 	var existingBookID int64
 
 	for i, src := range sources {
-		if err := importContextError(ctx); err != nil {
+		if err := context.Cause(ctx); err != nil {
 			return GroupResult{}, err
 		}
 		info, err := fingerprintSource(ctx, src)
@@ -340,7 +332,7 @@ func ProbeSource(ctx context.Context, database db.Queryer, src Source) (SourcePr
 // Persist writes a resolved plan to SQLite and managed storage. It re-checks
 // duplicates so callers that use Resolve/Persist directly still get idempotency.
 func Persist(ctx context.Context, database *db.DB, root storage.Root, plan Plan, opts Options) (Result, error) {
-	if err := importContextError(ctx); err != nil {
+	if err := context.Cause(ctx); err != nil {
 		return Result{}, err
 	}
 	if existing, found, err := findDuplicate(database.Read(ctx), plan.SourceSHA256); err != nil {
@@ -758,7 +750,7 @@ func stageAssets(ctx context.Context, root storage.Root, infos []sourceInfo, ind
 	}()
 
 	for _, idx := range indexes {
-		if err := importContextError(ctx); err != nil {
+		if err := context.Cause(ctx); err != nil {
 			return nil, nil, err
 		}
 		stagedFile, err := stageSource(ctx, root, infos[idx])
@@ -832,8 +824,10 @@ func cleanupIfUncommitted(committed bool, files []storage.StagedFile) {
 	}
 }
 
+// resolveFromInfo accepts partial metadata and missing covers. Explicit context
+// checks keep suppressed extraction errors from hiding cancellation.
 func resolveFromInfo(ctx context.Context, info sourceInfo, renderer *pdfcover.Renderer) (Plan, error) {
-	if err := importContextError(ctx); err != nil {
+	if err := context.Cause(ctx); err != nil {
 		return Plan{}, err
 	}
 	f, err := os.Open(info.Path)
@@ -857,14 +851,15 @@ func resolveFromInfo(ctx context.Context, info sourceInfo, renderer *pdfcover.Re
 	contextSource := contextFile{ctx: ctx, file: f}
 	coverBytes := readSidecarCover(ctx, info.Source)
 	sidecarMeta := readSidecarOPF(ctx, info.Source)
-	if err := importContextError(ctx); err != nil {
+	if err := context.Cause(ctx); err != nil {
 		return Plan{}, err
 	}
 	sidecarComplete := sidecarMetadataComplete(sidecarMeta)
 	var embedded *bookmeta.Metadata
 	var extractErr error
-	// EPUB/FB2 supply a count while parsing the cover. For comics, a complete
-	// sidecar makes ComicInfo unnecessary; reaching it can decode a solid archive.
+	// Share parsing work between metadata, cover and page-count extraction.
+	// A complete comic sidecar lets us skip ComicInfo, which can require decoding
+	// a solid archive.
 	coverChecked := false
 	if len(coverBytes) == 0 {
 		switch {
@@ -887,7 +882,7 @@ func resolveFromInfo(ctx context.Context, info sourceInfo, renderer *pdfcover.Re
 		embedded, extractErr = format.ExtractMetadata(contextSource, info.Size, info.Format)
 		metadataRead = true
 	}
-	if err := importContextError(ctx); err != nil {
+	if err := context.Cause(ctx); err != nil {
 		return Plan{}, err
 	}
 	if extractErr != nil {
@@ -899,7 +894,7 @@ func resolveFromInfo(ctx context.Context, info sourceInfo, renderer *pdfcover.Re
 		} else {
 			coverBytes = b
 		}
-		if err := importContextError(ctx); err != nil {
+		if err := context.Cause(ctx); err != nil {
 			return Plan{}, err
 		}
 	}
@@ -932,19 +927,19 @@ func resolveFromInfo(ctx context.Context, info sourceInfo, renderer *pdfcover.Re
 		} else {
 			coverBytes = rendered
 		}
-		if err := importContextError(ctx); err != nil {
+		if err := context.Cause(ctx); err != nil {
 			return Plan{}, err
 		}
 	}
 	if len(coverBytes) > 0 {
-		if err := importContextError(ctx); err != nil {
+		if err := context.Cause(ctx); err != nil {
 			return Plan{}, err
 		}
 		if _, err := covers.Validate(coverBytes); err != nil {
 			plan.Warnings = append(plan.Warnings, fmt.Errorf("skip invalid cover for %s: %w", info.Path, err))
 			coverBytes = nil
 		}
-		if err := importContextError(ctx); err != nil {
+		if err := context.Cause(ctx); err != nil {
 			return Plan{}, err
 		}
 	}
@@ -952,61 +947,62 @@ func resolveFromInfo(ctx context.Context, info sourceInfo, renderer *pdfcover.Re
 		if pages, _ := renderer.CountPages(ctx, contextSource, info.Size); pages > 0 {
 			filePages = pages
 		}
-		if err := importContextError(ctx); err != nil {
+		if err := context.Cause(ctx); err != nil {
 			return Plan{}, err
 		}
 	}
 	plan.PageCount = selectPageCount(info.Format, filePages, fixedLayout, sidecarMeta)
+	plan.CoverBytes = coverBytes
+	plan.applyMetadata(embedded, sidecarMeta)
+	plan.AddedAt = addedAtForSources(plan.Metadata.CalibreTimestamp, []sourceInfo{info}, time.Now())
+	return plan, nil
+}
 
+func (p *Plan) applyMetadata(embedded, sidecar *bookmeta.Metadata) {
 	meta := embedded
-	if sidecarComplete {
-		meta = sidecarMeta
+	if sidecarMetadataComplete(sidecar) {
+		meta = sidecar
 	}
 	if meta == nil {
 		meta = &bookmeta.Metadata{}
 	}
-	if sidecarMeta != nil && meta != sidecarMeta {
-		meta.Merge(sidecarMeta)
+	if meta != sidecar {
+		meta.Merge(sidecar)
 	}
 
-	if filenameMeta, ok := structuredFilenameMetadata(info.sourceName()); ok {
-		if meta.Title == "" && filenameMeta.Title != "" {
+	name := p.Source.sourceName()
+	if filenameMeta, ok := structuredFilenameMetadata(name); ok {
+		if meta.Title == "" {
 			meta.Title = filenameMeta.Title
 		}
-		if len(meta.Authors) == 0 && len(filenameMeta.Authors) > 0 {
+		if len(meta.Authors) == 0 {
 			meta.Authors = filenameMeta.Authors
 		}
-		if meta.Identifier == "" && filenameMeta.Identifier != "" {
+		if meta.Identifier == "" {
 			meta.Identifier = filenameMeta.Identifier
 		}
 	}
 
-	title := meta.Title
-	if title == "" {
-		base := filepath.Base(info.sourceName())
-		title = strings.TrimSuffix(base, format.BookExtension(base))
+	p.Title = meta.Title
+	if p.Title == "" {
+		base := filepath.Base(name)
+		p.Title = strings.TrimSuffix(base, format.BookExtension(base))
 	}
 
-	sortTitle := meta.SortTitle
-	if sortTitle == "" {
-		sortTitle = title
+	p.SortTitle = meta.SortTitle
+	if p.SortTitle == "" {
+		// Follow the display title unless the file supplies a sort title;
+		// article rules differ by language.
+		p.SortTitle = p.Title
 	}
 
-	authors := meta.Authors
-
-	for i := range authors {
-		if authors[i].SortName == "" {
-			authors[i].SortName = bookmeta.AuthorSort(authors[i].Name)
+	p.Authors = meta.Authors
+	for i := range p.Authors {
+		if p.Authors[i].SortName == "" {
+			p.Authors[i].SortName = bookmeta.AuthorSort(p.Authors[i].Name)
 		}
 	}
-
-	plan.Metadata = meta
-	plan.CoverBytes = coverBytes
-	plan.Title = title
-	plan.SortTitle = sortTitle
-	plan.Authors = authors
-	plan.AddedAt = addedAtForSources(meta.CalibreTimestamp, []sourceInfo{info}, time.Now())
-	return plan, nil
+	p.Metadata = meta
 }
 
 // Keep EPUB's layout information so the sidecar cannot override a spine count.
@@ -1094,7 +1090,7 @@ func structuredFilenameMetadata(name string) (*bookmeta.Metadata, bool) {
 			cleanParts = append(cleanParts, part)
 		}
 	}
-	if len(cleanParts) < 4 || cleanParts[0] == "" || cleanParts[1] == "" {
+	if len(cleanParts) < 4 {
 		return nil, false
 	}
 	if !structuredFilenameHasBibliographicSignal(cleanParts[2:]) {
@@ -1139,7 +1135,7 @@ func looksLikeFilenameYear(part string) bool {
 }
 
 func cleanStructuredFilenameField(value string) string {
-	return strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
+	return strings.Join(strings.Fields(value), " ")
 }
 
 func isbnIdentifierFromFilenamePart(part string) (bookmeta.Identifier, bool) {
@@ -1176,7 +1172,7 @@ func unknownStructuredFormatWarning(info sourceInfo) error {
 }
 
 func fingerprintSource(ctx context.Context, src Source) (sourceInfo, error) {
-	if err := importContextError(ctx); err != nil {
+	if err := context.Cause(ctx); err != nil {
 		return sourceInfo{}, err
 	}
 	if src.Path == "" {
@@ -1202,7 +1198,7 @@ func fingerprintSource(ctx context.Context, src Source) (sourceInfo, error) {
 	fileHash := h.Sum(nil)
 
 	kind := format.DetectFormat(src.sourceName(), contextSource, stat.Size())
-	if err := importContextError(ctx); err != nil {
+	if err := context.Cause(ctx); err != nil {
 		return sourceInfo{}, err
 	}
 	ext := format.BookExtension(src.sourceName())
@@ -1324,12 +1320,20 @@ func readSidecarOPF(ctx context.Context, src Source) *bookmeta.Metadata {
 	return meta
 }
 
-// readSidecarCover reads a sibling cover.jpg/cover.jpeg/cover.png sidecar.
-// Returns nil when none exists.
+var sidecarCoverNames = []string{"cover.jpg", "cover.jpeg", "cover.png", "cover.webp", "cover.gif"}
+
+// IsSidecarFile recognizes conventional metadata and cover sidecars for import.
+func IsSidecarFile(name string) bool {
+	name = strings.ToLower(name)
+	return name == "metadata.opf" || slices.Contains(sidecarCoverNames, name)
+}
+
+// readSidecarCover reads the first available conventional cover sidecar.
+// Returns nil when none can be read.
 func readSidecarCover(ctx context.Context, src Source) []byte {
 	dir := src.sidecarDir()
-	for _, name := range []string{"cover.jpg", "cover.jpeg", "cover.png"} {
-		if importContextError(ctx) != nil {
+	for _, name := range sidecarCoverNames {
+		if context.Cause(ctx) != nil {
 			return nil
 		}
 		f, err := os.Open(filepath.Join(dir, name))

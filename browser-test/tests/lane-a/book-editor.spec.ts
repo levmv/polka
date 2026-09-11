@@ -317,7 +317,7 @@ test.describe('Book editor', () => {
             provider_name: 'Open Library',
             provider_id: '/works/OL1W',
             title: 'Fetched Title',
-            authors: 'Fetched Author',
+            authors: 'Fetched Author; Research && Editing',
             publisher: 'Fetched Press',
             date: '2026',
             tags: 'Fetched, Metadata',
@@ -385,10 +385,14 @@ test.describe('Book editor', () => {
 
     await page.locator('.metadata-modal .metadata-fetch-action', { hasText: 'Fetch' }).click();
     await expect(page.locator('.metadata-candidate', { hasText: 'Fetched Title' })).toBeVisible();
+    await expect(page.locator('.metadata-candidate-main')).toContainText(
+      'Fetched Author, Research & Editing',
+    );
     await expect(page.locator('.metadata-status')).toContainText('1 candidate found.');
     await expect(page.locator('.metadata-candidate-fields')).toContainText('Cover');
     await expect(page.locator('.metadata-candidate-fields')).toContainText('Identifiers');
     await expect(page.locator('.metadata-candidate-impact')).toContainText('would replace');
+    await page.screenshot({ path: 'screenshots/metadata-candidates.png', fullPage: true });
 
     await page.locator('.metadata-replace-btn').click();
     await expect(page.locator('.metadata-modal')).toHaveCount(0);
@@ -397,7 +401,7 @@ test.describe('Book editor', () => {
     expect(coverApplyRequests).toBe(0);
 
     await expect(titleInput).toHaveValue('Fetched Title');
-    await expect(authorsInput).toHaveValue('Fetched Author');
+    await expect(authorsInput).toHaveValue('Fetched Author; Research && Editing');
     const titleField = page.locator('.edit-modal [data-edit-field="title"]');
     await expect(titleField).toHaveClass(/is-fetched/);
     await expect(titleField.locator('.edit-field-revert')).toHaveAttribute(

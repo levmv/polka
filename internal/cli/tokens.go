@@ -43,7 +43,7 @@ func runToken(ctx context.Context, dataDir string, args []string) error {
 		run = tokenRevoke
 	default:
 		printTokenUsage()
-		return reportedErrorf("unknown token subcommand: %s", sub)
+		return fmt.Errorf("unknown token subcommand: %s", sub)
 	}
 
 	database, err := openDatabase(dataDir)
@@ -76,16 +76,12 @@ func printTokenSubcommandUsage(sub string) {
 }
 
 func tokenAdd(ctx context.Context, database *db.DB, args []string) error {
-	flags, positional, err := splitTokenAddArgs(args)
-	if err != nil {
-		return err
-	}
 	fs := commandFlagSet("token add", "polka token add [--base-url <url>] <username> <name>")
 	baseURL := fs.String("base-url", os.Getenv("POLKA_BASE_URL"), "public polka base URL, e.g. https://books.example")
-	if help, err := parseCommandFlags(fs, flags); help || err != nil {
+	if help, err := parseCommandFlags(fs, args); help || err != nil {
 		return err
 	}
-	if len(positional) != 2 {
+	if fs.NArg() != 2 {
 		fs.Usage()
 		return reportedErrorf("usage: polka token add [--base-url <url>] <username> <name>")
 	}
@@ -93,45 +89,21 @@ func tokenAdd(ctx context.Context, database *db.DB, args []string) error {
 	if err != nil {
 		return err
 	}
-	user, err := resolveUser(database.Read(ctx), positional[0])
+	user, err := resolveUser(database.Read(ctx), fs.Arg(0))
 	if err != nil {
 		return err
 	}
 
-	token, err := database.CreateAppToken(ctx, user.ID, positional[1])
+	token, err := database.CreateAppToken(ctx, user.ID, fs.Arg(1))
 	if err != nil {
 		if errors.Is(err, db.ErrTokenNameExists) {
-			return fmt.Errorf("%q already has a token named %q", user.Username, positional[1])
+			return fmt.Errorf("%q already has a token named %q", user.Username, fs.Arg(1))
 		}
 		return err
 	}
 
 	printCreatedToken(os.Stdout, token.Name, user.Username, token.Token, base)
 	return nil
-}
-
-func splitTokenAddArgs(args []string) (flags, positional []string, err error) {
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		if a == "--base-url" || a == "-base-url" {
-			if i+1 >= len(args) {
-				return nil, nil, errors.New("missing value for --base-url")
-			}
-			flags = append(flags, a, args[i+1])
-			i++
-			continue
-		}
-		if strings.HasPrefix(a, "--base-url=") || strings.HasPrefix(a, "-base-url=") {
-			flags = append(flags, a)
-			continue
-		}
-		if strings.HasPrefix(a, "-") {
-			flags = append(flags, a)
-			continue
-		}
-		positional = append(positional, a)
-	}
-	return flags, positional, nil
 }
 
 func tokenBaseURL(baseURL string) (string, error) {

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -28,7 +29,7 @@ func runStorage(ctx context.Context, dataDir string, args []string) error {
 		return runStorageTemplate(ctx, dataDir, rest)
 	default:
 		printStorageUsage()
-		return reportedErrorf("unknown storage command: %s", sub)
+		return fmt.Errorf("unknown storage command: %s", sub)
 	}
 }
 
@@ -47,7 +48,7 @@ func runStorageTemplate(ctx context.Context, dataDir string, args []string) erro
 	if len(args) == 0 || helpRequested(args) {
 		printStorageTemplateUsage()
 		if len(args) == 0 {
-			return reportedErrorf("missing storage template command")
+			return errors.New("missing storage template command")
 		}
 		return nil
 	}
@@ -80,7 +81,7 @@ func runStorageTemplate(ctx context.Context, dataDir string, args []string) erro
 		return runStorageTemplateApply(ctx, dataDir, args[1:])
 	default:
 		printStorageTemplateUsage()
-		return reportedErrorf("unknown storage template command: %s", args[0])
+		return fmt.Errorf("unknown storage template command: %s", args[0])
 	}
 }
 

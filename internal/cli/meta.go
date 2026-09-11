@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/levmv/polka/internal/bookmeta"
@@ -156,7 +157,7 @@ func runMeta(_ string, args []string) error {
 	}
 	if *coverPath != "" && fs.NArg() != 1 {
 		fs.Usage()
-		return reportedErrorf("usage: polka meta --cover <path> accepts exactly one input file")
+		return errors.New("meta --cover accepts exactly one input file")
 	}
 
 	reports := make([]metaFileReport, 0, fs.NArg())
@@ -451,7 +452,7 @@ func kindleDetailForReport(info *format.KindleInspection) *metaKindleDetail {
 		MOBIVersion:              info.MOBIVersion,
 		TrailingFlags:            info.TrailingFlags,
 		HasEXTH:                  info.HasEXTH,
-		EXTHTypes:                append([]uint32(nil), info.EXTHTypes...),
+		EXTHTypes:                slices.Clone(info.EXTHTypes),
 		CDEType:                  info.CDEType,
 		PrimaryWritingMode:       info.PrimaryWritingMode,
 		PageProgressionDirection: info.PageProgressionDirection,
@@ -468,7 +469,7 @@ func kindleDetailForReport(info *format.KindleInspection) *metaKindleDetail {
 		BoundaryIndex:            info.BoundaryIndex,
 		Resources:                kindleResourceCountsForReport(info.ResourceCounts),
 		AZW4PDF:                  info.AZW4PDF,
-		UnsupportedFeatures:      append([]string(nil), info.UnsupportedFeatures...),
+		UnsupportedFeatures:      slices.Clone(info.UnsupportedFeatures),
 	}
 }
 

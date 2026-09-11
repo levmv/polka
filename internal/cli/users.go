@@ -46,7 +46,7 @@ func runUser(ctx context.Context, dataDir string, args []string) error {
 		run = userRemove
 	default:
 		printUserUsage()
-		return reportedErrorf("unknown user subcommand: %s", sub)
+		return fmt.Errorf("unknown user subcommand: %s", sub)
 	}
 
 	database, err := openDatabase(dataDir)
@@ -105,25 +105,13 @@ func runUserAdd(ctx context.Context, dataDir string, args []string) error {
 }
 
 func parseUserAddArgs(args []string) (userAddRequest, error) {
-	// Split positionals from flags so the username may appear before or after
-	// --admin/--member (stdlib flag otherwise stops parsing at the first
-	// positional).
-	var flags, positional []string
-	for _, a := range args {
-		if strings.HasPrefix(a, "-") {
-			flags = append(flags, a)
-		} else {
-			positional = append(positional, a)
-		}
-	}
-
 	fs := commandFlagSet("user add", "polka user add [--admin|--member] <username>")
 	admin := fs.Bool("admin", false, "create the account with the admin role")
 	member := fs.Bool("member", false, "create the account with the member role")
-	if help, err := parseCommandFlags(fs, flags); help || err != nil {
+	if help, err := parseCommandFlags(fs, args); help || err != nil {
 		return userAddRequest{}, err
 	}
-	if len(positional) != 1 {
+	if fs.NArg() != 1 {
 		fs.Usage()
 		return userAddRequest{}, reportedErrorf("usage: polka user add <username> [--admin|--member]")
 	}
@@ -137,7 +125,7 @@ func parseUserAddArgs(args []string) (userAddRequest, error) {
 	if *admin {
 		role = db.RoleAdmin
 	}
-	return userAddRequest{username: positional[0], role: role}, nil
+	return userAddRequest{username: fs.Arg(0), role: role}, nil
 }
 
 func createUser(ctx context.Context, database *db.DB, req userAddRequest, password string) error {
@@ -184,7 +172,7 @@ func userPasswd(ctx context.Context, database *db.DB, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := database.SetUserPassword(ctx, u.ID, password); err != nil {
+	if err := database.SetUserPassword(ctx, u.ID, password, nil); err != nil {
 		return err
 	}
 	fmt.Printf("Updated password for %q\n", u.Username)

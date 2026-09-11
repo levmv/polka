@@ -97,97 +97,76 @@ func (s *Server) handleAPIBulkEdit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := db.BooksForBulkEdit(s.db.Read(r.Context()), scope, ids)
+	releaseStorageSlot, err := s.acquireStorageWorkSlot(r.Context())
 	if err != nil {
 		serverError(w, r, err)
 		return
 	}
-	byID := make(map[int64]db.BulkEditRow, len(rows))
-	for _, row := range rows {
-		byID[row.ID] = row
-	}
+	defer releaseStorageSlot()
 
-	// Authors live in their own table, so the current value each author op
-	// compares against is loaded separately and passed into the plan.
-	authorsByBook, err := db.AuthorsByBookIDs(s.db.Read(r.Context()), ids)
-	if err != nil {
-		serverError(w, r, err)
-		return
-	}
-
-	// Walk ids in request (visible) order so "assign" numbering is stable and the
-	// selection count is well defined. Books no longer visible are skipped.
-	plans := make(map[int64]bulkWritePlan)
-	changedIDs := make([]int64, 0, len(ids))
 	selected := 0
-	position := 0
-	for _, id := range ids {
-		row, ok := byID[id]
-		if !ok {
-			continue
+	var changedIDs []int64
+	mutation, err := relayout.MutateBooks(r.Context(), s.db, s.managedRoot(), func(tx *db.Tx) (relayout.Changed, error) {
+		// Read current values inside the write transaction so concurrent edits
+		// cannot overwrite each other.
+		rows, err := db.BooksForBulkEdit(tx, scope, ids)
+		if err != nil {
+			return relayout.Changed{}, err
 		}
-		selected++
-		pos := position
-		position++
+		byID := make(map[int64]db.BulkEditRow, len(rows))
+		for _, row := range rows {
+			byID[row.ID] = row
+		}
+		authorsByBook, err := db.AuthorsByBookIDs(tx, ids)
+		if err != nil {
+			return relayout.Changed{}, err
+		}
 
-		curAuthors := formatAuthorRows(authorsByBook[id])
-		plan, changed := resolveBulkPlan(row, curAuthors, req.Operations, pos)
-		if !changed {
-			continue
+		var pathIDs []int64
+		authorsChanged := false
+		// Request order controls series numbering; skip books no longer visible.
+		for _, id := range ids {
+			row, ok := byID[id]
+			if !ok {
+				continue
+			}
+			p, changed := resolveBulkPlan(row, formatAuthorRows(authorsByBook[id]), req.Operations, selected)
+			selected++
+			if !changed {
+				continue
+			}
+			if _, err := tx.Exec(`
+				UPDATE books SET
+					tags = ?, series = ?, series_index = ?,
+					manual_overrides = ?, updated_at = unixepoch()
+				WHERE id = ?
+			`, p.tags, p.series, p.index, p.overrides, id); err != nil {
+				return relayout.Changed{}, fmt.Errorf("bulk update %d: %w", id, err)
+			}
+			if p.authors != nil {
+				if err := replaceBookAuthors(tx, id, *p.authors); err != nil {
+					return relayout.Changed{}, fmt.Errorf("bulk authors %d: %w", id, err)
+				}
+				authorsChanged = true
+			}
+			if p.relayout {
+				pathIDs = append(pathIDs, id)
+			}
+			changedIDs = append(changedIDs, id)
 		}
-		plans[id] = plan
-		changedIDs = append(changedIDs, id)
+		if authorsChanged {
+			if _, err := db.DeleteOrphanAuthors(tx); err != nil {
+				return relayout.Changed{}, err
+			}
+		}
+		return relayout.Changed{BumpMetadataRev: changedIDs, Relayout: pathIDs}, nil
+	})
+	if err != nil {
+		serverError(w, r, err)
+		return
 	}
-
-	relayoutWarnings := 0
-	if len(changedIDs) > 0 {
-		releaseStorageSlot, err := s.acquireStorageWorkSlot(r.Context())
-		if err != nil {
-			serverError(w, r, err)
-			return
-		}
-		defer releaseStorageSlot()
-
-		mutation, err := relayout.MutateBooks(r.Context(), s.db, s.managedRoot(), func(tx *db.Tx) (relayout.Changed, error) {
-			pathIDs := make([]int64, 0, len(changedIDs))
-			authorsChanged := false
-			for _, id := range changedIDs {
-				p := plans[id]
-				if _, err := tx.Exec(`
-					UPDATE books SET
-						tags = ?, series = ?, series_index = ?,
-						manual_overrides = ?, updated_at = unixepoch()
-					WHERE id = ?
-				`, p.tags, p.series, p.index, p.overrides, id); err != nil {
-					return relayout.Changed{}, fmt.Errorf("bulk update %d: %w", id, err)
-				}
-				// Re-link authors before reindexing so the search index picks up
-				// the new author names in the same pass.
-				if p.authors != nil {
-					if err := replaceBookAuthors(tx, id, *p.authors); err != nil {
-						return relayout.Changed{}, fmt.Errorf("bulk authors %d: %w", id, err)
-					}
-					authorsChanged = true
-				}
-				if p.relayout {
-					pathIDs = append(pathIDs, id)
-				}
-			}
-			if authorsChanged {
-				if _, err := db.DeleteOrphanAuthors(tx); err != nil {
-					return relayout.Changed{}, err
-				}
-			}
-			return relayout.Changed{BumpMetadataRev: changedIDs, Relayout: pathIDs}, nil
-		})
-		if err != nil {
-			serverError(w, r, err)
-			return
-		}
-		for _, warning := range mutation.Warnings {
-			log.Printf("relayout after bulk edit: %v", warning)
-		}
-		relayoutWarnings = len(mutation.Warnings)
+	for _, warning := range mutation.Warnings {
+		log.Printf("relayout after bulk edit: %v", warning)
 	}
 
 	// Return summaries only for books that actually changed; unchanged selected
@@ -208,7 +187,7 @@ func (s *Server) handleAPIBulkEdit(w http.ResponseWriter, r *http.Request) {
 		Selected:         selected,
 		Changed:          len(changedIDs),
 		Unchanged:        selected - len(changedIDs),
-		RelayoutWarnings: relayoutWarnings,
+		RelayoutWarnings: len(mutation.Warnings),
 		Books:            books,
 	})
 }

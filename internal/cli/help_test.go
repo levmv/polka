@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -9,15 +8,19 @@ import (
 	"testing"
 )
 
-func TestPrintedArgumentDiagnosticsAreMarkedReported(t *testing.T) {
+func TestArgumentDiagnostics(t *testing.T) {
 	cases := []struct {
-		name       string
-		args       []string
-		wantError  string
-		wantStderr string
+		name         string
+		args         []string
+		wantError    string
+		wantReported bool
 	}{
-		{name: "missing command", wantError: "no subcommand provided", wantStderr: "Usage:\n  polka <command> [arguments]"},
-		{name: "invalid flag", args: []string{"convert", "--bogus"}, wantError: "flag provided but not defined: -bogus", wantStderr: "flag provided but not defined: -bogus"},
+		{name: "missing command", wantError: "no subcommand provided", wantReported: true},
+		{name: "invalid flag", args: []string{"convert", "--bogus"}, wantError: "flag provided but not defined: -bogus", wantReported: true},
+		{name: "missing flag value", args: []string{"meta", "set", "book.epub", "--title"}, wantError: "flag needs an argument: -title", wantReported: true},
+		{name: "missing field flags", args: []string{"meta", "set", "book.epub"}, wantError: "meta set requires at least one field flag"},
+		{name: "unknown library command", args: []string{"library", "bogus"}, wantError: "unknown library command: bogus"},
+		{name: "missing template command", args: []string{"storage", "template"}, wantError: "missing storage template command"},
 	}
 
 	for _, tc := range cases {
@@ -29,20 +32,17 @@ func TestPrintedArgumentDiagnosticsAreMarkedReported(t *testing.T) {
 			if err.Error() != tc.wantError {
 				t.Fatalf("Run error = %q; want %q", err, tc.wantError)
 			}
-			if !IsReportedFailure(err) {
-				t.Fatalf("Run error %q was not marked as already reported", err)
+			if reported := IsReportedFailure(err); reported != tc.wantReported {
+				t.Fatalf("IsReportedFailure(%q) = %v; want %v", err, reported, tc.wantReported)
 			}
-			if count := strings.Count(stderr, tc.wantStderr); count != 1 {
-				t.Fatalf("stderr contains %q %d times; want once:\n%s", tc.wantStderr, count, stderr)
+			wantPrinted := 0
+			if tc.wantReported {
+				wantPrinted = 1
+			}
+			if count := strings.Count(stderr, tc.wantError); count != wantPrinted {
+				t.Fatalf("stderr contains %q %d times; want %d:\n%s", tc.wantError, count, wantPrinted, stderr)
 			}
 		})
-	}
-}
-
-func TestOrdinaryErrorStillNeedsDiagnostic(t *testing.T) {
-	err := errors.New("not printed")
-	if IsReportedFailure(err) {
-		t.Fatalf("ordinary error %q was marked as already reported", err)
 	}
 }
 

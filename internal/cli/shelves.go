@@ -42,7 +42,7 @@ func runLibraryShelves(ctx context.Context, dataDir string, args []string) error
 		run = shelfRemoveBook
 	default:
 		printShelfUsage()
-		return reportedErrorf("unknown shelf subcommand: %s", sub)
+		return fmt.Errorf("unknown shelf subcommand: %s", sub)
 	}
 
 	database, err := openDatabase(dataDir)

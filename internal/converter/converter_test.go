@@ -269,6 +269,36 @@ func TestConvertAZW4ToPDFOverwrite(t *testing.T) {
 	}
 }
 
+func TestWriteOutputFailurePreservesDestination(t *testing.T) {
+	dir := t.TempDir()
+	dst := filepath.Join(dir, "book.epub")
+	writeFile(t, dst, []byte("original"))
+	writeErr := errors.New("conversion failed")
+	err := writeOutput(dst, true, func(w io.Writer) error {
+		if _, err := io.WriteString(w, "partial output"); err != nil {
+			return err
+		}
+		return writeErr
+	})
+	if !errors.Is(err, writeErr) {
+		t.Fatalf("writeOutput error = %v; want %v", err, writeErr)
+	}
+	got, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "original" {
+		t.Fatalf("destination = %q; want original", got)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "book.epub" {
+		t.Fatalf("unexpected files after failed conversion: %v", entries)
+	}
+}
+
 func TestConvertRejectsMOBIToPDF(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "legacy.mobi")
@@ -402,16 +432,8 @@ func TestConvertTXTToEPUBDecodesLegacySingleByteText(t *testing.T) {
 	}
 }
 
-func TestCleanTextForEPUBStripsControlsAndCollapsesBlankRuns(t *testing.T) {
-	got := cleanTextForEPUB("a\x00b\x08\n\n\n\n\nc")
-	want := "ab\n\n\nc"
-	if got != want {
-		t.Fatalf("cleanTextForEPUB = %q; want %q", got, want)
-	}
-}
-
 func TestConvertTXTToEPUBCleansControlsAndPreservesIndentation(t *testing.T) {
-	src := []byte("  Indented <line>\x01\ncontinues\x02\n")
+	src := []byte("  Indented <line>\x01\r\ncontinues\x02\r\r\r\rNext paragraph.\r\n")
 	var out bytes.Buffer
 	if err := ConvertContext(context.Background(), &out, bytes.NewReader(src), format.FormatTXT, int64(len(src)), TargetEPUB); err != nil {
 		t.Fatalf("Convert TXT to EPUB: %v", err)
@@ -421,7 +443,10 @@ func TestConvertTXTToEPUBCleansControlsAndPreservesIndentation(t *testing.T) {
 	if !strings.Contains(xhtml, "<p>&#160;&#160;Indented &lt;line&gt; continues</p>") {
 		t.Fatalf("text.xhtml missing cleaned indented paragraph:\n%s", xhtml)
 	}
-	for _, forbidden := range []string{"\x01", "\x02"} {
+	if !strings.Contains(xhtml, "<p>Next paragraph.</p>") || strings.Count(xhtml, "<p>") != 2 {
+		t.Fatalf("text.xhtml did not preserve paragraph boundaries:\n%s", xhtml)
+	}
+	for _, forbidden := range []string{"\x01", "\x02", "\r"} {
 		if strings.Contains(xhtml, forbidden) {
 			t.Fatalf("text.xhtml retained control char %q:\n%s", forbidden, xhtml)
 		}

@@ -2,7 +2,6 @@ package cli
 
 import (
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -34,7 +33,7 @@ func TestTokenAddAndList(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			output, err := captureStdout(t, func() error {
-				return tokenAdd(t.Context(), database, []string{"--base-url", tt.baseURL, user.Username, tt.name})
+				return tokenAdd(t.Context(), database, []string{user.Username, "--base-url", tt.baseURL, tt.name})
 			})
 			defer database.RevokeAppToken(t.Context(), user.ID, tt.name)
 			if (err != nil) != tt.wantErr {
@@ -67,27 +66,5 @@ func TestTokenAddAndList(t *testing.T) {
 				t.Fatalf("token list = %q, err=%v", listed, err)
 			}
 		})
-	}
-}
-
-func TestSplitTokenAddArgs(t *testing.T) {
-	flags, positional, err := splitTokenAddArgs([]string{
-		"alice",
-		"--base-url",
-		"https://books.example",
-		"KOReader",
-	})
-	if err != nil {
-		t.Fatalf("splitTokenAddArgs: %v", err)
-	}
-	if !reflect.DeepEqual(flags, []string{"--base-url", "https://books.example"}) {
-		t.Fatalf("flags = %v", flags)
-	}
-	if !reflect.DeepEqual(positional, []string{"alice", "KOReader"}) {
-		t.Fatalf("positional = %v", positional)
-	}
-
-	if _, _, err := splitTokenAddArgs([]string{"alice", "--base-url"}); err == nil {
-		t.Fatalf("missing --base-url value returned nil error")
 	}
 }

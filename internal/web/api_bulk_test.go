@@ -10,8 +10,10 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+	"testing/synctest"
 
 	"github.com/levmv/polka/internal/db"
+	"github.com/levmv/polka/internal/workslot"
 )
 
 func newBulkTestServer(t *testing.T) *db.DB {
@@ -88,6 +90,46 @@ func bookMetadataRev(t *testing.T, database *db.DB, id int64) int {
 		t.Fatalf("query metadata_rev %d: %v", id, err)
 	}
 	return rev
+}
+
+func TestConcurrentBulkTagAdditionsPreserveBothChanges(t *testing.T) {
+	database := newBulkTestServer(t)
+	insertBook(t, database, 1, "One")
+	s := &Server{db: database, dataDir: t.TempDir()}
+	synctest.Test(t, func(t *testing.T) {
+		s.storageQueue = workslot.New()
+		release, err := s.storageQueue.Acquire(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		responses := make(chan *httptest.ResponseRecorder, 2)
+		for _, tag := range []string{"first", "second"} {
+			raw, err := json.Marshal(bulkEditRequest{
+				IDs: []int64{1}, Operations: []bulkOperation{{Type: "tags", Mode: "add", Values: []string{tag}}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			req := httptest.NewRequest(http.MethodPatch, "/api/books/bulk", bytes.NewReader(raw)).WithContext(t.Context())
+			go func() {
+				w := httptest.NewRecorder()
+				s.handleAPIBulkEdit(w, req)
+				responses <- w
+			}()
+		}
+		// Both edits wait behind existing storage work before either can write.
+		synctest.Wait()
+		release()
+		for range 2 {
+			w := <-responses
+			if w.Code != http.StatusOK {
+				t.Fatalf("bulk edit status = %d: %s", w.Code, w.Body.String())
+			}
+		}
+	})
+	if got := bookTags(t, database, 1); got != "first, second" && got != "second, first" {
+		t.Fatalf("concurrent tag additions = %q; want both tags", got)
+	}
 }
 
 func TestBulkEditTagsAdd(t *testing.T) {

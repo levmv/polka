@@ -10,18 +10,9 @@ import (
 type Metadata = bookmeta.Metadata
 
 // ExtractMetadata reads embedded metadata from an already-open book file.
-// Cover extraction is operationally separate, not a product statement that the
-// cover is outside metadata. Callers often need different fallback behavior,
-// byte handling, and error tolerance for embedded images.
+// Format parsers normalize language codes. Covers are extracted separately so
+// callers can choose their own image fallbacks and error handling.
 func ExtractMetadata(r io.ReaderAt, size int64, kind Format) (*Metadata, error) {
-	meta, err := extractMetadata(r, size, kind)
-	if meta != nil {
-		meta.Language = bookmeta.NormalizeLanguage(meta.Language)
-	}
-	return meta, err
-}
-
-func extractMetadata(r io.ReaderAt, size int64, kind Format) (*Metadata, error) {
 	switch kind {
 	case FormatEPUB, FormatKEPUB:
 		return ExtractEPUBMetadata(r, size)

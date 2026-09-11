@@ -1,3 +1,5 @@
+// Package appsettings reads and writes settings through caller-supplied SQL
+// handles. Callers choose defaults and transaction boundaries.
 package appsettings
 
 import (

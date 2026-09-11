@@ -125,9 +125,8 @@ func (l *WriterLease) Release(ctx context.Context) error {
 	return nil
 }
 
-// RunHeartbeat renews the lease until ctx is cancelled or ownership is lost.
-// It does not start a goroutine: the caller owns the heartbeat's lifecycle and
-// decides whether a renewal failure cancels a command or shuts down a server.
+// RunHeartbeat renews the lease until ctx is canceled or renewal fails.
+// It returns nil on cancellation.
 func (l *WriterLease) RunHeartbeat(ctx context.Context, interval time.Duration) error {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -137,6 +136,9 @@ func (l *WriterLease) RunHeartbeat(ctx context.Context, interval time.Duration) 
 			return nil
 		case <-ticker.C:
 			if err := l.Renew(ctx); err != nil {
+				if ctx.Err() != nil {
+					return nil
+				}
 				return err
 			}
 		}

@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/levmv/polka/internal/bookmeta"
@@ -84,12 +85,11 @@ func CanConvert(from format.Format, target Target) bool {
 }
 
 func TargetSpecsForFormat(from format.Format) []TargetSpec {
-	targets := targetSpecsBySourceFormat[from]
-	return append([]TargetSpec(nil), targets...)
+	return slices.Clone(targetSpecsBySourceFormat[from])
 }
 
 func SupportedTargetSpecs() []TargetSpec {
-	return append([]TargetSpec(nil), supportedTargetSpecs...)
+	return slices.Clone(supportedTargetSpecs)
 }
 
 func TargetExtension(target Target) string {
@@ -183,12 +183,7 @@ func convertSourceViaEPUBToKEPUB(ctx context.Context, w io.Writer, src io.Reader
 	}
 	tmpPath := tmp.Name()
 	defer os.Remove(tmpPath)
-	tmpClosed := false
-	defer func() {
-		if !tmpClosed {
-			_ = tmp.Close()
-		}
-	}()
+	defer tmp.Close()
 
 	// Reuse the same context so both stages draw from one aggregate decoded-data
 	// and resource-count budget. The intermediate also gets the normal output cap.
@@ -196,10 +191,8 @@ func convertSourceViaEPUBToKEPUB(ctx context.Context, w io.Writer, src io.Reader
 	if err := convertSourceToEPUB(ctx, stageWriter, src, from, size, opts); err != nil {
 		return fmt.Errorf("create intermediate EPUB: %w", err)
 	}
-	closeErr := tmp.Close()
-	tmpClosed = true
-	if closeErr != nil {
-		return fmt.Errorf("close intermediate EPUB: %w", closeErr)
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close intermediate EPUB: %w", err)
 	}
 
 	intermediate, err := os.Open(tmpPath)
@@ -271,17 +264,16 @@ func writeOutput(dstPath string, overwrite bool, write func(io.Writer) error) er
 	tmpPath := tmp.Name()
 	committed := false
 	defer func() {
+		_ = tmp.Close()
 		if !committed {
 			_ = os.Remove(tmpPath)
 		}
 	}()
 
 	if err := write(tmp); err != nil {
-		tmp.Close()
 		return err
 	}
 	if err := tmp.Chmod(0o644); err != nil {
-		tmp.Close()
 		return fmt.Errorf("chmod temp output: %w", err)
 	}
 	if err := tmp.Close(); err != nil {

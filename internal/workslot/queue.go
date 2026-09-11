@@ -13,7 +13,9 @@ func New() *Queue {
 	return &Queue{slot: make(chan struct{}, 1)}
 }
 
-func (q *Queue) Acquire(ctx context.Context) (func(), error) {
+// Acquire waits for exclusive access. On success, the caller must call release
+// exactly once, normally with defer.
+func (q *Queue) Acquire(ctx context.Context) (release func(), err error) {
 	select {
 	case q.slot <- struct{}{}:
 		return func() { <-q.slot }, nil

@@ -7,9 +7,57 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/levmv/polka/internal/db"
 	"github.com/levmv/polka/internal/ingest"
 	"github.com/levmv/polka/internal/storage"
 )
+
+func TestEnsureDefaultsRollsBackFailedInitialization(t *testing.T) {
+	dataDir := t.TempDir()
+	database, err := db.InitPath(DatabasePath(dataDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if _, err := database.Write(t.Context()).Exec(`
+		CREATE TRIGGER reject_ingest_path BEFORE INSERT ON app_settings
+		WHEN NEW.key = 'ingest.path'
+		BEGIN SELECT RAISE(ABORT, 'settings write failed'); END
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureDefaults(t.Context(), database, dataDir, true); err == nil {
+		t.Fatal("initialization succeeded despite failed settings write")
+	}
+	var count int
+	if err := database.Read(t.Context()).QueryRow("SELECT count(*) FROM app_settings").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("failed initialization left %d settings, want none", count)
+	}
+	if _, err := database.Write(t.Context()).Exec("DROP TRIGGER reject_ingest_path"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureDefaults(t.Context(), database, dataDir, true); err != nil {
+		t.Fatalf("retry initialization: %v", err)
+	}
+	if err := storage.RequireLayout(storage.NewRoot(filepath.Join(dataDir, "books"))); err != nil {
+		t.Fatal(err)
+	}
+
+	// Subsequent startup must retain settings chosen by the owner.
+	want := ingest.Config{Path: filepath.Join(dataDir, "incoming"), Enabled: false, DeleteSources: true}
+	if _, err := ingest.SaveConfig(database.Write(t.Context()), dataDir, want); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureDefaults(t.Context(), database, dataDir, true); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := ingest.OpenConfig(database.Read(t.Context()), dataDir); err != nil || got != want {
+		t.Fatalf("config after startup = %+v, %v; want %+v", got, err, want)
+	}
+}
 
 func TestEnsureLibraryCreatesDefaultLayout(t *testing.T) {
 	dataDir := filepath.Join(t.TempDir(), "library")

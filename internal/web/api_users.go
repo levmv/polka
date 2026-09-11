@@ -111,23 +111,7 @@ func (s *Server) requireRole(w http.ResponseWriter, r *http.Request, minRole str
 }
 
 func (s *Server) handleAPIMe(w http.ResponseWriter, r *http.Request) {
-	userID := UserID(r.Context())
-	if userID <= 0 {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	u, err := db.GetUserByID(s.db.Read(r.Context()), userID)
-	if err != nil {
-		serverError(w, r, err)
-		return
-	}
-	if u == nil {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	writeJSON(w, http.StatusOK, meDTO(*u))
+	writeJSON(w, http.StatusOK, meDTO(*contextUser(r.Context())))
 }
 
 func (s *Server) handleAPIUsers(w http.ResponseWriter, r *http.Request) {
@@ -284,7 +268,13 @@ func (s *Server) handleAPIUserPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.db.SetUserPassword(r.Context(), userID, req.Password); err != nil {
+	var keepSessionHash []byte
+	if current.ID == userID {
+		if c, err := r.Cookie(sessionCookieName); err == nil {
+			keepSessionHash = sessionTokenHash(c.Value)
+		}
+	}
+	if err := s.db.SetUserPassword(r.Context(), userID, req.Password, keepSessionHash); err != nil {
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
 			http.Error(w, "User not found", http.StatusNotFound)
@@ -296,21 +286,5 @@ func (s *Server) handleAPIUserPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Password changes revoke browser sessions. Device credentials stay active
-	// until explicitly revoked.
-	currentSID := ""
-	if c, err := r.Cookie(sessionCookieName); err == nil {
-		currentSID = c.Value
-	}
-	var revokeErr error
-	if current.ID == userID {
-		revokeErr = s.sessions.revokeUserExcept(r.Context(), userID, currentSID)
-	} else {
-		revokeErr = s.sessions.revokeUser(r.Context(), userID)
-	}
-	if revokeErr != nil {
-		serverError(w, r, revokeErr)
-		return
-	}
 	w.WriteHeader(http.StatusNoContent)
 }

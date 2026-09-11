@@ -1,4 +1,5 @@
 import { fetchMetadataCandidates, fetchMetadataDescription } from '../api';
+import { parseAuthorList } from '../authors';
 import { createSelect } from '../components/select';
 import { escapeHtml } from '../dom';
 import { errorMessage } from '../errors';
@@ -225,7 +226,9 @@ function renderMetadataCandidateList(args: {
         const cover = candidate.cover_url
             ? `<img src="${escapeHtml(candidate.cover_url)}" class="metadata-candidate-cover" alt="">`
             : '<div class="metadata-candidate-cover"></div>';
-        const authors = candidate.authors ? `<div>${escapeHtml(candidate.authors)}</div>` : '';
+        const authors = candidate.authors
+            ? `<div>${escapeHtml(parseAuthorList(candidate.authors).join(', '))}</div>`
+            : '';
         const facts = [candidate.publisher, candidate.date].filter(Boolean).join(' · ');
         const tags = candidate.tags
             ? `<div class="metadata-candidate-tags">${escapeHtml(candidate.tags)}</div>`

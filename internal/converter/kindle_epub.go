@@ -8,7 +8,7 @@ import (
 	"io"
 	"path"
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -81,8 +81,7 @@ func kindleEPUBBody(doc *format.KindleDocument, flow format.KindleTextFlow) (str
 		body, _, _, err := htmlBodyToEPUB(bodyRaw, "", resolvers)
 		return body, assets, err
 	case "text/plain":
-		text := cleanTextForEPUB(string(flow.Data))
-		return plainTextBody(text), nil, nil
+		return plainTextBody(string(flow.Data)), nil, nil
 	default:
 		return "", nil, fmt.Errorf("unsupported Kindle text flow media type %s", flow.MediaType)
 	}
@@ -119,7 +118,7 @@ func kindleReferencedFilepos(doc *format.KindleDocument, flow []byte) []int {
 		typ := z.Next()
 		switch typ {
 		case html.ErrorToken:
-			sort.Ints(refs)
+			slices.Sort(refs)
 			return refs
 		case html.StartTagToken, html.SelfClosingTagToken:
 			token := z.Token()
@@ -179,7 +178,7 @@ func insertKindleFileposAnchors(raw []byte, refs []int) []byte {
 }
 
 func kindleAnchorOffsets(raw []byte, refs []int) []int {
-	offsets := append([]int(nil), refs...)
+	offsets := slices.Clone(refs)
 	z := html.NewTokenizer(bytes.NewReader(raw))
 	start, index := 0, 0
 	for {

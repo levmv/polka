@@ -83,7 +83,13 @@ func mustUpdateSearchIndex(t *testing.T, database *db.DB, bookIDs ...int64) {
 }
 
 func newTestServer(database *db.DB, dataDir string) *Server {
-	return &Server{db: database, dataDir: dataDir, sessions: newSessionStore(database)}
+	return &Server{
+		db:                database,
+		dataDir:           dataDir,
+		sessions:          newSessionStore(database),
+		passwordAuthSlots: make(chan struct{}, maxConcurrentPasswordAuth),
+		conversionSlots:   make(chan struct{}, maxConcurrentConversions),
+	}
 }
 
 func mustUser(t *testing.T, database *db.DB, username, role string) *db.User {

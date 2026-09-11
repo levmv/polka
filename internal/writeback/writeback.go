@@ -116,16 +116,24 @@ func Run(ctx context.Context, database *db.DB, root storage.Root, opts Options) 
 	return summary, nil
 }
 
+// RequireWritableRoot rejects an unavailable books folder or an empty one
+// when the catalog still has assets.
+func RequireWritableRoot(queryer db.Queryer, root storage.Root) error {
+	catalogHasBooks, err := db.HasAnyAsset(queryer)
+	if err != nil {
+		return err
+	}
+	return storage.RequireWritableRoot(root, catalogHasBooks)
+}
+
 func writeAssetQueued(ctx context.Context, database *db.DB, root storage.Root, assetID int64, opts Options) (Result, error) {
-	releaseWork := func() {}
 	if opts.WorkQueue != nil {
 		release, err := opts.WorkQueue.Acquire(ctx)
 		if err != nil {
 			return Result{}, err
 		}
-		releaseWork = release
+		defer release()
 	}
-	defer releaseWork()
 	return writeAsset(ctx, database, root, assetID, opts)
 }
 
@@ -376,6 +384,8 @@ func (w *countingWriter) Write(p []byte) (int, error) {
 
 func fileSHA256(ctx context.Context, r io.Reader) ([]byte, error) {
 	h := sha256.New()
+	// Check cancellation between reads so slow storage does not delay shutdown
+	// for an entire hashing pass.
 	buf := make([]byte, 128<<10)
 	for {
 		if err := context.Cause(ctx); err != nil {

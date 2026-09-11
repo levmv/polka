@@ -257,27 +257,8 @@ func (a assetFileRow) conversionMetadata() *bookmeta.Metadata {
 		Identifier:  strings.TrimSpace(a.Identifier),
 		Series:      strings.TrimSpace(a.Series),
 		SeriesIndex: a.SeriesIndex,
-		Tags:        conversionTags(a.Tags),
+		Tags:        bookmeta.ParseTagList(a.Tags),
 	}
-}
-
-func conversionTags(raw string) []string {
-	parts := strings.Split(raw, ",")
-	tags := make([]string, 0, len(parts))
-	seen := map[string]bool{}
-	for _, part := range parts {
-		tag := strings.TrimSpace(part)
-		if tag == "" {
-			continue
-		}
-		key := strings.ToLower(tag)
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		tags = append(tags, tag)
-	}
-	return tags
 }
 
 func convertedDownloadFilename(filename string, target converter.Target) string {

@@ -371,7 +371,7 @@ func assetsByFormat(assets []Asset, f format.Format) []Asset {
 }
 
 func sortedAssets(assets []Asset) []Asset {
-	out := append([]Asset(nil), assets...)
+	out := slices.Clone(assets)
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].IsPrimary != out[j].IsPrimary {
 			return out[i].IsPrimary

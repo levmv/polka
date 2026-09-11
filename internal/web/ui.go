@@ -84,10 +84,6 @@ const appContentSecurityPolicy = "default-src 'self'; script-src 'self'; " +
 
 func (s *Server) appPageData(r *http.Request) (appPageData, error) {
 	userID := UserID(r.Context())
-	u, err := db.GetUserByID(s.db.Read(r.Context()), userID)
-	if err != nil {
-		return appPageData{}, err
-	}
 	settings, err := db.GetUserSettings(s.db.Read(r.Context()), userID)
 	if err != nil {
 		return appPageData{}, err
@@ -98,14 +94,9 @@ func (s *Server) appPageData(r *http.Request) (appPageData, error) {
 		return appPageData{}, err
 	}
 
-	var me *MeDTO
-	if u != nil {
-		dto := meDTO(*u)
-		me = &dto
-	}
-
+	me := meDTO(*contextUser(r.Context()))
 	payload, err := json.Marshal(appBootstrapDTO{
-		Me:          me,
+		Me:          &me,
 		Settings:    userSettingsDTO(settings),
 		Version:     version.Version,
 		SendEnabled: sendEnabled,
@@ -246,11 +237,14 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 
 		user, err := s.db.CreateInitialAdmin(r.Context(), username, password)
 		if err != nil {
-			if errors.Is(err, db.ErrSetupComplete) {
+			switch {
+			case errors.Is(err, db.ErrSetupComplete):
 				http.Redirect(w, r, "/login", http.StatusFound)
-				return
+			case errors.Is(err, db.ErrInvalidUserInput):
+				renderErr(err.Error())
+			default:
+				serverError(w, r, err)
 			}
-			renderErr(err.Error())
 			return
 		}
 

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/levmv/polka/internal/db"
 	"github.com/levmv/polka/internal/storage"
 	"github.com/levmv/polka/internal/writeback"
 )
@@ -40,11 +39,7 @@ func runLibraryWriteback(parent context.Context, dataDir string, args []string) 
 	}
 	ctx := parent
 	if !*dryRun {
-		hasAnyAsset, err := db.HasAnyAsset(database.Read(ctx))
-		if err != nil {
-			return err
-		}
-		if err := storage.RequireWritableRoot(root, hasAnyAsset); err != nil {
+		if err := writeback.RequireWritableRoot(database.Read(ctx), root); err != nil {
 			return err
 		}
 		noteStorageFilesystem(root)

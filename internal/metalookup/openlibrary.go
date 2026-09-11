@@ -1,6 +1,7 @@
 package metalookup
 
 import (
+	"cmp"
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
@@ -8,7 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -197,7 +198,7 @@ func parseOpenLibraryDescription(raw jsontext.Value) string {
 }
 
 func sortCandidates(candidates []Candidate) {
-	sort.SliceStable(candidates, func(i, j int) bool {
-		return candidates[i].Score > candidates[j].Score
+	slices.SortStableFunc(candidates, func(a, b Candidate) int {
+		return cmp.Compare(b.Score, a.Score)
 	})
 }
