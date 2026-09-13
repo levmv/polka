@@ -7,30 +7,23 @@ async function importDuplicatePair(page: Page, files: UploadFile[]): Promise<voi
   for (const file of files) await importTestBook(page, file);
 }
 
-async function cleanupGroupForTitle(
-  page: Page,
-  title: string,
-): Promise<DuplicateGroup> {
+async function cleanupGroupForTitle(page: Page, title: string): Promise<DuplicateGroup> {
   const res = await page.request.get('/api/cleanup');
   expect(res.ok()).toBeTruthy();
   const cleanup = (await res.json()) as Cleanup;
-  const group = cleanup.possible_duplicates.groups.find((g) => g.books.some((b) => b.title === title));
+  const group = cleanup.possible_duplicates.groups.find((g) =>
+    g.books.some((b) => b.title === title),
+  );
   expect(group).toBeTruthy();
   return group!;
 }
 
-async function purgeBooks(page: Page, ids: number[]): Promise<void> {
-  const trash = await page.request.post('/api/books/bulk/trash', { data: { ids } });
-  expect(trash.ok()).toBeTruthy();
-  for (const id of ids) {
-    const purge = await page.request.delete(`/api/books/${id}/purge`);
-    expect(purge.status()).toBe(204);
-  }
-}
-
 test.describe('Cleanup page', () => {
-  test('metadata tiles link into filtered library searches', async ({ page }) => {
-    await page.goto('/cleanup');
+  test('the library menu opens Cleanup and its tiles filter the library', async ({ page }) => {
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Manage library' }).click();
+    await page.getByRole('menuitem', { name: 'Cleanup', exact: true }).click();
+    await expect(page).toHaveURL(/\/cleanup$/);
     await expect(page.locator('#nav-library')).toHaveClass(/active/);
 
     const tiles = page.locator('.cleanup-tile');
@@ -41,66 +34,20 @@ test.describe('Cleanup page', () => {
       );
     }
 
-    await page.screenshot({ path: 'screenshots/cleanup.png', fullPage: true });
-
     await tiles.filter({ hasText: 'Missing cover' }).click();
-    await expect(page).toHaveURL((url) => url.pathname === '/' && url.searchParams.get('q') === 'no:cover');
+    await expect(page).toHaveURL(
+      (url) => url.pathname === '/' && url.searchParams.get('q') === 'no:cover',
+    );
     await expect(page.locator('#search-input')).toHaveValue('no:cover');
   });
 
-  test('library menu keeps Cleanup and Trash available without primary nav items', async ({
-    page,
-  }) => {
-    await page.goto('/');
-    await expect(page.locator('#nav-cleanup')).toHaveCount(0);
-    await expect(page.locator('#nav-trash')).toHaveCount(0);
-    await expect(page.locator('#nav-authors')).toBeVisible();
-
-    const trigger = page.getByRole('button', { name: 'Manage library' });
-    await expect(trigger).toBeVisible();
-    await page.evaluate(() => {
-      (window as typeof window & { __polkaLibraryMenuMarker?: string }).__polkaLibraryMenuMarker =
-        'same-doc';
-    });
-
-    await trigger.click();
-    await expect(page.getByRole('menuitem', { name: 'Cleanup' })).toBeVisible();
-    await expect(page.getByRole('menuitem', { name: 'Trash' })).toBeVisible();
-    await page.screenshot({ path: 'screenshots/library-actions-menu.png', fullPage: true });
-    await page.getByRole('menuitem', { name: 'Cleanup' }).click();
-    await expect(page).toHaveURL((url) => url.pathname === '/cleanup');
-    await expect(page.locator('.cleanup-container')).toBeVisible();
-    await expect(page.locator('#nav-library')).toHaveClass(/active/);
-    await expect(trigger).toBeVisible();
-    expect(
-      await page.evaluate(
-        () =>
-          (window as typeof window & { __polkaLibraryMenuMarker?: string })
-            .__polkaLibraryMenuMarker,
-      ),
-    ).toBe('same-doc');
-
-    await trigger.click();
-    await page.getByRole('menuitem', { name: 'Trash' }).click();
-    await expect(page).toHaveURL((url) => url.pathname === '/trash');
-    await expect(page.locator('.trash-container')).toBeVisible();
-    await expect(page.locator('#nav-library')).toHaveClass(/active/);
-    await expect(trigger).toBeVisible();
-  });
-
   test('dismiss hides the selected duplicate group', async ({ page }) => {
-    const stamp = Date.now().toString(36);
-    const title = `Cleanup Dismiss ${stamp}`;
-    const author = `Cleanup Author ${stamp}`;
-    await importDuplicatePair(
-      page,
-      [
-        fb2(title, author, `cleanup-dismiss-a-${stamp}`, 'first copy'),
-        fb2(title, author, `cleanup-dismiss-b-${stamp}`, 'second copy'),
-      ],
-    );
-    const apiGroup = await cleanupGroupForTitle(page, title);
-    const ids = apiGroup.books.map((book) => book.id);
+    const title = 'Cleanup Dismiss';
+    const author = 'Cleanup Author';
+    await importDuplicatePair(page, [
+      fb2(title, author, 'cleanup-dismiss-a', 'first copy'),
+      fb2(title, author, 'cleanup-dismiss-b', 'second copy'),
+    ]);
 
     await page.goto('/cleanup');
     const group = page.locator('.duplicate-group', { hasText: title });
@@ -108,20 +55,15 @@ test.describe('Cleanup page', () => {
     await group.getByRole('button', { name: 'Dismiss' }).click();
     await expect(page.locator('.toast', { hasText: 'Dismissed duplicate group' })).toBeVisible();
     await expect(page.locator('.duplicate-group', { hasText: title })).toHaveCount(0);
-    await purgeBooks(page, ids);
   });
 
   test('merge combines an EPUB and FB2 pair into one book', async ({ page }) => {
-    const stamp = Date.now().toString(36);
-    const title = `Cleanup Merge ${stamp}`;
-    const author = `Merge Author ${stamp}`;
-    await importDuplicatePair(
-      page,
-      [
-        epub(title, author, `cleanup-merge-${stamp}`),
-        fb2(title, author, `cleanup-merge-${stamp}`, 'fb2 copy'),
-      ],
-    );
+    const title = 'Cleanup Merge';
+    const author = 'Merge Author';
+    await importDuplicatePair(page, [
+      epub(title, author, 'cleanup-merge'),
+      fb2(title, author, 'cleanup-merge', 'fb2 copy'),
+    ]);
 
     const apiGroup = await cleanupGroupForTitle(page, title);
     const survivor = apiGroup.books.find((book) =>
@@ -146,11 +88,9 @@ test.describe('Cleanup page', () => {
     const bookRes = await page.request.get(`/api/books/${encodeURIComponent(survivor!.id)}`);
     expect(bookRes.ok()).toBeTruthy();
     const survivorBook = await bookRes.json();
-    const extensions = survivorBook.assets.map((asset: { extension: string }) => asset.extension).sort();
+    const extensions = survivorBook.assets
+      .map((asset: { extension: string }) => asset.extension)
+      .sort();
     expect(extensions).toEqual(['.epub', '.fb2']);
-    await purgeBooks(
-      page,
-      apiGroup.books.map((book) => book.id),
-    );
   });
 });

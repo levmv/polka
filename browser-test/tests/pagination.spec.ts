@@ -1,8 +1,7 @@
 import { expect, test } from './fixtures';
 
-// Runs against the filler-only library (:8098, 55 books) — see playwright.config
-// `pager-chromium` and the Makefile. The main fixture suite stays below the
-// 50/page threshold, so the pager can only be exercised here.
+test.use({ seed: 'pagination' });
+
 test.describe('Library pagination', () => {
   for (const view of ['grid', 'table'] as const) {
     test(`${view} automatically appends near the bottom without duplicate requests`, async ({
@@ -34,10 +33,8 @@ test.describe('Library pagination', () => {
             element.getBoundingClientRect().top + window.scrollY - window.innerHeight - 300,
           );
         });
+        await expect.poll(() => nextPageRequests).toBe(1);
         await expect(page.locator('#load-more-status')).toHaveText('Loading more books…');
-        await page.locator('#load-more-status').scrollIntoViewIfNeeded();
-        await page.screenshot({ path: `screenshots/automatic-pagination-${view}.png` });
-        expect(nextPageRequests).toBe(1);
       } finally {
         release();
       }
@@ -70,7 +67,6 @@ test.describe('Library pagination', () => {
     const retry = page.getByRole('button', { name: 'Try again', exact: true });
     await expect(retry).toBeVisible();
     await expect(page.locator('.book-card')).toHaveCount(50);
-    await page.screenshot({ path: 'screenshots/automatic-pagination-retry.png' });
     // Moving out and back into the margin must not retry a failed request.
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.locator('.book-card').last().scrollIntoViewIfNeeded();
@@ -83,7 +79,9 @@ test.describe('Library pagination', () => {
 
   test('Changing search cancels an automatic page still in flight', async ({ page }) => {
     let requestStarted!: () => void;
-    const inFlight = new Promise<void>((resolve) => { requestStarted = resolve; });
+    const inFlight = new Promise<void>((resolve) => {
+      requestStarted = resolve;
+    });
     let release!: () => void;
     const pending = new Promise<void>((resolve) => {
       release = resolve;
@@ -162,7 +160,9 @@ test.describe('Library pagination', () => {
     expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
   });
 
-  test('Duplicate-only pages advance the server offset without ending the list', async ({ page }) => {
+  test('Duplicate-only pages advance the server offset without ending the list', async ({
+    page,
+  }) => {
     await page.addInitScript(() => {
       Object.defineProperty(window, 'IntersectionObserver', { value: undefined });
     });
@@ -172,13 +172,16 @@ test.describe('Library pagination', () => {
     await page.route('**/api/books?*', async (route) => {
       const offset = Number(new URL(route.request().url()).searchParams.get('offset') || 0);
       offsets.push(offset);
-      const books = offset < 100 ? first : [{ ...first[0], id: 1000000, title: 'Final unique book' }];
+      const books =
+        offset < 100 ? first : [{ ...first[0], id: 1000000, title: 'Final unique book' }];
       await route.fulfill({ json: books });
     });
-    await page.route('**/covers/1000000?*', (route) => route.fulfill({
-      contentType: 'image/svg+xml',
-      body: '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="120"/>',
-    }));
+    await page.route('**/covers/1000000?*', (route) =>
+      route.fulfill({
+        contentType: 'image/svg+xml',
+        body: '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="120"/>',
+      }),
+    );
     await page.goto('/');
     await expect(page.locator('.book-card')).toHaveCount(50);
     await page.getByRole('button', { name: 'Load more', exact: true }).click();
@@ -198,19 +201,17 @@ test.describe('Library pagination', () => {
     await expect(page.locator('.book-card')).toHaveCount(50);
     const card = page.locator('.book-card').first();
     const id = Number(await card.getAttribute('data-id'));
-    try {
-      await card.hover();
-      await card.locator('.card-select').click();
-      await page.locator('.bulk-bar-action[data-action="delete"]').click();
-      await page.locator('.modal-confirm')
-        .getByRole('button', { name: 'Remove', exact: true }).click();
-      await expect(page.locator('.book-card')).toHaveCount(49);
-      await page.getByRole('button', { name: 'Load more', exact: true }).click();
-      await expect(page.locator('.book-card')).toHaveCount(54);
-      await expect(page.locator(`.book-card[data-id="${id}"]`)).toHaveCount(0);
-    } finally {
-      await page.request.post(`/api/books/${id}/restore`);
-    }
+    await card.hover();
+    await card.locator('.card-select').click();
+    await page.locator('.bulk-bar-action[data-action="delete"]').click();
+    await page
+      .locator('.modal-confirm')
+      .getByRole('button', { name: 'Remove', exact: true })
+      .click();
+    await expect(page.locator('.book-card')).toHaveCount(49);
+    await page.getByRole('button', { name: 'Load more', exact: true }).click();
+    await expect(page.locator('.book-card')).toHaveCount(54);
+    await expect(page.locator(`.book-card[data-id="${id}"]`)).toHaveCount(0);
   });
 
   test('Title jump replaces the page at its bounded offset and hides for search', async ({

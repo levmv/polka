@@ -1,33 +1,12 @@
 import { readFile } from 'node:fs/promises';
 import type { Annotation } from '../../frontend/src/types';
 import { expect, type Page, test } from './fixtures';
-import {
-  createReaderTestUser,
-  deleteTestUserAsAdmin,
-  loginByRequest,
-  readerMutationFields,
-  type TestUser,
-} from './helpers';
+import { openReader, readerMutationFields } from './helpers';
 
-// Reader selection actions exercise real in-iframe selections. Opening the
-// reader records per-user last-read state, so these tests use a temporary
-// reader account instead of the shared admin session.
+test.use({ account: 'reader' });
+
 test.describe('Reader selection toolbar', () => {
-  let readerUser: TestUser | null = null;
-
-  test.beforeEach(async ({ page }) => {
-    readerUser = await createReaderTestUser(page, 'reader-selection');
-    await loginByRequest(page, readerUser.username, readerUser.password);
-  });
-
-  test.afterEach(async ({ page }) => {
-    if (readerUser) {
-      await deleteTestUserAsAdmin(page, readerUser);
-      readerUser = null;
-    }
-  });
-
-  test('FB2 contents open and selections can be dismissed or copied', async ({ page }) => {
+  test('FB2 supports contents, copying and searching selected text', async ({ page }) => {
     await openReader(page, 'FB2 Reader Book');
     await expect(page.locator('.reader-page')).toHaveAttribute('data-reader-format', 'fb2');
     await page.locator('[data-reader-toc-toggle]').click();
@@ -45,7 +24,9 @@ test.describe('Reader selection toolbar', () => {
 
     await page.keyboard.press('Escape');
     await expect(toolbar).toBeHidden();
-    expect(await page.evaluate(() => (window as unknown as { __copiedText: string[] }).__copiedText)).toEqual([]);
+    expect(
+      await page.evaluate(() => (window as unknown as { __copiedText: string[] }).__copiedText),
+    ).toEqual([]);
     await selectFirstText(page);
     await toolbar.getByRole('button', { name: 'Copy' }).click();
     await expect(toolbar).toBeHidden();
@@ -65,6 +46,14 @@ test.describe('Reader selection toolbar', () => {
       );
     });
     expect(stillSelected).toBe(false);
+
+    await selectFirstText(page);
+    await toolbar.getByRole('button', { name: 'Search' }).click();
+    const search = page.locator('#reader-search-panel');
+    await expect(search.getByRole('searchbox', { name: 'Search this book' })).toHaveValue(
+      selected.replace(/\s+/g, ' ').trim().slice(0, 120),
+    );
+    await expect(search.locator('.reader-search-result-btn').first()).toBeVisible();
   });
 
   test('creates a persisted highlight from selected text', async ({ page }) => {
@@ -81,9 +70,7 @@ test.describe('Reader selection toolbar', () => {
 
     await expect
       .poll(async () => {
-        const res = await page.request.get(
-          `/api/reader/assets/${assetId}/annotations`,
-        );
+        const res = await page.request.get(`/api/reader/assets/${assetId}/annotations`);
         const rows = (await res.json()) as Array<{ id: number; quote: string }>;
         return rows.length;
       })
@@ -124,9 +111,9 @@ test.describe('Reader selection toolbar', () => {
     await popover.getByRole('radio', { name: 'Blue', exact: true }).check();
     await pointerDownInReaderDocument(page);
     await expect(popover).toBeHidden();
-    await expect.poll(async () => (await fetchAnnotations(page, assetId))[0]?.note).toBe(
-      'Reader note',
-    );
+    await expect
+      .poll(async () => (await fetchAnnotations(page, assetId))[0]?.note)
+      .toBe('Reader note');
     await expect.poll(async () => (await fetchAnnotations(page, assetId))[0]?.color).toBe('blue');
 
     await showAnnotationActions(page, annotation.locator.cfi);
@@ -148,9 +135,7 @@ test.describe('Reader selection toolbar', () => {
     await highlights.getByRole('button', { name: 'Export', exact: true }).click();
     const exportItem = page.getByRole('menuitem', { name: 'Export all as HTML' });
     await expect(exportItem).toBeVisible();
-    await expect(
-      page.getByRole('menuitem', { name: 'Export all as Markdown' }),
-    ).toBeVisible();
+    await expect(page.getByRole('menuitem', { name: 'Export all as Markdown' })).toBeVisible();
 
     const downloadPromise = page.waitForEvent('download');
     await exportItem.click();
@@ -169,34 +154,45 @@ test.describe('Reader selection toolbar', () => {
     // A different saved position makes the passage link exercise navigation.
     await page.setViewportSize({ width: 390, height: 600 });
     const saved = await page.request.put(`/api/reader/assets/${assetId}/state`, {
-      data: { ...await readerMutationFields(page, assetId), progress: 0.8, locator: {} },
+      data: { ...(await readerMutationFields(page, assetId)), progress: 0.8, locator: {} },
     });
     expect(saved.ok()).toBe(true);
     await highlights.locator('.book-annotation-quote').click();
-    await highlights.getByRole('textbox', { name: 'Note', exact: true }).fill('Updated from book page');
+    await highlights
+      .getByRole('textbox', { name: 'Note', exact: true })
+      .fill('Updated from book page');
     await highlights.getByRole('radio', { name: 'Green', exact: true }).check();
     await highlights.getByRole('button', { name: 'Open in reader' }).click();
     await expect(page).toHaveURL(new RegExp(`/read/asset/${assetId}#annotation=${annotation.id}$`));
     await expect(page.locator('.reader-epub-stage')).toHaveAttribute('data-reader-ready', 'true');
-    await expect.poll(() => page.evaluate((cfi) => {
-      const view = document.querySelector('foliate-view') as HTMLElement & {
-        lastLocation?: { range?: Range };
-        resolveNavigation: (cfi: string) => { index: number; anchor: (doc: Document) => Range };
-        renderer?: { getContents?: () => Array<{ index?: number; doc?: Document }> };
-      };
-      const target = view.resolveNavigation(cfi);
-      const doc = view.renderer?.getContents?.().find((content) => content.index === target.index)?.doc;
-      if (!doc || !view.lastLocation?.range) return false;
-      const range = target.anchor(doc);
-      return view.lastLocation.range.isPointInRange(range.startContainer, range.startOffset);
-    }, annotation.locator.cfi)).toBe(true);
+    await expect
+      .poll(() =>
+        page.evaluate((cfi) => {
+          const view = document.querySelector('foliate-view') as HTMLElement & {
+            lastLocation?: { range?: Range };
+            resolveNavigation: (cfi: string) => { index: number; anchor: (doc: Document) => Range };
+            renderer?: { getContents?: () => Array<{ index?: number; doc?: Document }> };
+          };
+          const target = view.resolveNavigation(cfi);
+          const doc = view.renderer
+            ?.getContents?.()
+            .find((content) => content.index === target.index)?.doc;
+          if (!doc || !view.lastLocation?.range) return false;
+          const range = target.anchor(doc);
+          return view.lastLocation.range.isPointInRange(range.startContainer, range.startOffset);
+        }, annotation.locator.cfi),
+      )
+      .toBe(true);
     await expect.poll(() => renderedHighlightCount(page)).toBeGreaterThan(0);
     await showAnnotationPopover(page, annotation.locator.cfi);
     await expect(popover.locator('.annotation-note-input')).toHaveValue('Updated from book page');
     await expect(popover.getByRole('radio', { name: 'Green', exact: true })).toBeChecked();
   });
 
-  test('saves a note deleted elsewhere before closing the reader', async ({ page, browserErrors }) => {
+  test('saves a note deleted elsewhere before closing the reader', async ({
+    page,
+    browserErrors,
+  }) => {
     browserErrors.allow((message) => message.includes('409'));
     const assetId = await openReader(page, 'With Cover Book');
     const selected = await selectFirstText(page);
@@ -232,9 +228,12 @@ test.describe('Reader selection toolbar', () => {
     });
 
     await popover.locator('.annotation-note-input').fill('Direct note');
-    const deleted = await page.request.delete(`/api/reader/assets/${assetId}/annotations/${annotation.id}`, {
-      data: { revision: annotation.revision },
-    });
+    const deleted = await page.request.delete(
+      `/api/reader/assets/${assetId}/annotations/${annotation.id}`,
+      {
+        data: { revision: annotation.revision },
+      },
+    );
     expect(deleted.ok()).toBe(true);
     const closeClick = page.locator('.reader-close').click();
     await expect.poll(() => noteRequestHeld).toBe(true);
@@ -243,12 +242,15 @@ test.describe('Reader selection toolbar', () => {
     releaseResponse();
     await closeClick;
     await expect(page.locator('.detail-title')).toHaveText('With Cover Book');
-    await expect.poll(async () => (await fetchAnnotations(page, assetId))[0]?.note).toBe(
-      'Direct note',
-    );
+    await expect
+      .poll(async () => (await fetchAnnotations(page, assetId))[0]?.note)
+      .toBe('Direct note');
   });
 
-  test('deletes a highlight only after confirming and reviewing a concurrent note change', async ({ page, browserErrors }) => {
+  test('deletes a highlight only after confirming and reviewing a concurrent note change', async ({
+    page,
+    browserErrors,
+  }) => {
     browserErrors.allow((message) => message.includes('409'));
     await page.setViewportSize({ width: 390, height: 600 });
     const assetId = await openReader(page, 'With Cover Book');
@@ -274,22 +276,35 @@ test.describe('Reader selection toolbar', () => {
     await expect.poll(async () => (await fetchAnnotations(page, assetId)).length).toBe(1);
     await showAnnotationActions(page, annotation.locator.cfi);
 
-    const updated = await page.request.patch(`/api/reader/assets/${assetId}/annotations/${annotation.id}`, {
-      data: { revision: annotation.revision, note: 'A newer note worth reviewing.' },
-    });
+    const updated = await page.request.patch(
+      `/api/reader/assets/${assetId}/annotations/${annotation.id}`,
+      {
+        data: { revision: annotation.revision, note: 'A newer note worth reviewing.' },
+      },
+    );
     expect(updated.ok()).toBe(true);
     page.once('dialog', (dialog) => dialog.accept());
     await deleteButton.click();
     await expect(toolbar).toBeHidden();
-    await expect(popover.getByRole('textbox', { name: 'Note', exact: true })).toHaveValue('A newer note worth reviewing.');
+    await expect(popover.getByRole('textbox', { name: 'Note', exact: true })).toHaveValue(
+      'A newer note worth reviewing.',
+    );
     page.once('dialog', (dialog) => dialog.accept());
     await popover.getByRole('button', { name: 'Delete', exact: true }).click();
     await expect.poll(async () => (await fetchAnnotations(page, assetId)).length).toBe(0);
     await expect.poll(() => renderedHighlightCount(page)).toBe(0);
   });
 
-  test('recovers highlights after a load failure without losing an open conflicting draft', async ({ page, browserErrors }) => {
-    browserErrors.allow((message) => message.includes('503') || message.includes('409') || message.includes('Failed to load annotations'));
+  test('recovers highlights after a load failure without losing an open conflicting draft', async ({
+    page,
+    browserErrors,
+  }) => {
+    browserErrors.allow(
+      (message) =>
+        message.includes('503') ||
+        message.includes('409') ||
+        message.includes('Failed to load annotations'),
+    );
     await page.setViewportSize({ width: 390, height: 600 });
     const assetId = await openReader(page, 'With Cover Book');
     const toolbar = page.locator('.reader-selection-toolbar');
@@ -305,14 +320,18 @@ test.describe('Reader selection toolbar', () => {
     await page.route(url, (route) => {
       if (route.request().method() !== 'GET') return route.continue();
       reads++;
-      return failLoad ? route.fulfill({ status: 503, body: 'Temporary failure' }) : route.continue();
+      return failLoad
+        ? route.fulfill({ status: 503, body: 'Temporary failure' })
+        : route.continue();
     });
     try {
       await page.reload();
       await expect(page.locator('.reader-epub-stage')).toHaveAttribute('data-reader-ready', 'true');
       await expect.poll(() => renderedHighlightCount(page)).toBe(0);
       await page.locator('.reader-annotations-toggle').click();
-      await expect(panel.locator('.reader-annotations-status')).toHaveText('Could not load all highlights.');
+      await expect(panel.locator('.reader-annotations-status')).toHaveText(
+        'Could not load all highlights.',
+      );
       const beforeRetry = reads;
       await panel.getByRole('button', { name: 'Try again' }).click();
       await expect.poll(() => reads).toBeGreaterThan(beforeRetry);
@@ -325,9 +344,12 @@ test.describe('Reader selection toolbar', () => {
       await toolbar.getByRole('button', { name: 'Add note' }).click();
       const note = popover.getByRole('textbox', { name: 'Note', exact: true });
       await note.fill('Keep this unsaved draft.');
-      const updated = await page.request.patch(`/api/reader/assets/${assetId}/annotations/${original.id}`, {
-        data: { revision: original.revision, note: 'A note from another reader.', color: 'blue' },
-      });
+      const updated = await page.request.patch(
+        `/api/reader/assets/${assetId}/annotations/${original.id}`,
+        {
+          data: { revision: original.revision, note: 'A note from another reader.', color: 'blue' },
+        },
+      );
       expect(updated.ok()).toBe(true);
       const remote = await updated.json();
       failLoad = false;
@@ -348,7 +370,11 @@ test.describe('Reader selection toolbar', () => {
       await popover.getByRole('button', { name: 'Overwrite', exact: true }).click();
       await expect(popover).toBeHidden();
       const [saved] = await fetchAnnotations(page, assetId);
-      expect(saved).toMatchObject({ id: original.id, note: 'Keep this unsaved draft.', color: 'blue' });
+      expect(saved).toMatchObject({
+        id: original.id,
+        note: 'Keep this unsaved draft.',
+        color: 'blue',
+      });
       await page.locator('.reader-close').click();
       await expect(page.locator('.detail-title')).toHaveText('With Cover Book');
       expect(await fetchAnnotations(page, assetId)).toEqual([saved]);
@@ -365,9 +391,9 @@ test.describe('Reader selection toolbar', () => {
       const toolbar = page.locator('.reader-selection-toolbar');
       await expect(toolbar).toBeVisible();
       await toolbar.getByRole('button', { name: 'Highlight', exact: true }).click();
-      await expect.poll(async () => (await fetchAnnotations(page, assetId)).length).toBe(
-        textIndex + 1,
-      );
+      await expect
+        .poll(async () => (await fetchAnnotations(page, assetId)).length)
+        .toBe(textIndex + 1);
       await expect.poll(() => renderedHighlightCount(page)).toBeGreaterThan(textIndex);
     }
 
@@ -429,25 +455,6 @@ test.describe('Reader selection toolbar', () => {
     expect(saved.find((annotation) => annotation.id === second.id)?.note || '').toBe('');
   });
 });
-
-async function openReader(page: Page, title: string): Promise<number> {
-  await page.goto('/');
-  const card = page.locator('.book-card', { hasText: title });
-  await expect(card).toBeVisible();
-  const href = await card.locator('.book-title-link').getAttribute('href');
-  const bookId = href?.split('/').pop()?.split('?')[0];
-  if (!bookId) throw new Error(`missing book id for ${title}`);
-
-  await page.goto(`/read/${bookId}`);
-  await expect(page.locator('.reader-epub-stage')).toBeVisible();
-  await expect
-    .poll(async () => page.locator('.reader-epub-stage').getAttribute('data-reader-ready'))
-    .toBe('true');
-
-  const assetId = Number(await page.locator('.reader-page').getAttribute('data-reader-asset-id'));
-  if (!assetId) throw new Error(`missing asset id for ${title}`);
-  return assetId;
-}
 
 async function stubClipboard(page: Page): Promise<void> {
   await page.evaluate(() => {
@@ -524,9 +531,7 @@ async function fetchAnnotations(
   page: Page,
   assetId: number,
 ): Promise<Array<Annotation & { locator: { cfi: string; path: string } }>> {
-  const res = await page.request.get(
-    `/api/reader/assets/${assetId}/annotations`,
-  );
+  const res = await page.request.get(`/api/reader/assets/${assetId}/annotations`);
   if (!res.ok()) throw new Error(`annotations status ${res.status()}`);
   return await res.json();
 }
@@ -558,8 +563,7 @@ async function renderedHighlightCount(page: Page): Promise<number> {
     let count = 0;
     for (const content of view.renderer?.getContents?.() || []) {
       count += content.overlayer?.element?.querySelectorAll('rect').length || 0;
-      count +=
-        content.doc?.querySelectorAll('svg[style*="pointer-events: none"] rect').length || 0;
+      count += content.doc?.querySelectorAll('svg[style*="pointer-events: none"] rect').length || 0;
     }
     return count;
   });

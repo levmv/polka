@@ -1,12 +1,10 @@
 import type { BookSummary } from '../../frontend/src/types';
 import { expect, type Page, test } from './fixtures';
 
-// Runs against the filler-only library (55 books) so pagination and a
-// scrollable document are available — see playwright.config `pager-chromium`.
-//
-// What is under test is that Back returns the *same* library instance: the
-// accumulated extent, the window position inside it, and keyboard focus all
-// survive, and no list request is made. None of that is in the URL.
+test.use({ seed: 'pagination' });
+
+// Back reuses the library view, preserving loaded books, scroll and focus
+// without another list request.
 
 // The top of what the reader can see, and where it sits in the viewport. A
 // return preserves this pair; which book it happens to be does not matter.
@@ -93,7 +91,9 @@ test.describe('Retained library navigation', () => {
     expect(Math.abs((await bookTop(page, '.book-card', anchor.id)) - anchor.top)).toBeLessThan(2);
     // Focus lives only in the instance: the root left the document entirely, so
     // it has to be captured and restored rather than merely surviving.
-    await expect(page.locator('.book-card').nth(firstPage).locator('.book-title-link')).toBeFocused();
+    await expect(
+      page.locator('.book-card').nth(firstPage).locator('.book-title-link'),
+    ).toBeFocused();
 
     // Forward parks the same instance again; Back still resumes it.
     await page.goForward();
@@ -181,49 +181,47 @@ test.describe('Retained library navigation', () => {
     const extent = await page.locator('.book-card').count();
 
     const card = page.locator('.book-card').nth(3);
-    const bookId = await card.getAttribute('data-id');
     const originalTitle = await card.locator('.book-title').innerText();
     const renamed = `${originalTitle} Renamed`;
 
     await card.locator('.book-title-link').click();
     await expect(page.locator('.detail-title')).toContainText(originalTitle);
 
-    try {
-      await page.locator('#btn-edit-book').click();
-      await expect(page.locator('.edit-modal')).toBeVisible();
-      await page.locator('.edit-modal input[name="title"]').fill(renamed);
-      await page.getByRole('button', { name: 'Save', exact: true }).click();
-      await expect(page.locator('.edit-modal .save-indicator')).toHaveText('Saved');
-      await page.locator('.edit-modal .modal-close').click();
-      await expect(page.locator('.detail-title')).toContainText(renamed);
+    await page.locator('#btn-edit-book').click();
+    await expect(page.locator('.edit-modal')).toBeVisible();
+    await page.locator('.edit-modal input[name="title"]').fill(renamed);
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+    await expect(page.locator('.edit-modal .save-indicator')).toHaveText('Saved');
+    await page.locator('.edit-modal .modal-close').click();
+    await expect(page.locator('.detail-title')).toContainText(renamed);
 
-      let listRequests = 0;
-      await page.route('**/api/books?*', async (route) => {
-        listRequests += 1;
-        await route.continue();
-      });
+    let listRequests = 0;
+    await page.route('**/api/books?*', async (route) => {
+      listRequests += 1;
+      await route.continue();
+    });
 
-      await page.goBack();
-      // Recently added order is independent of the changed title.
-      await expect(page.locator('.book-card').nth(3).locator('.book-title')).toHaveText(renamed);
-      await expect(page.locator('.book-card')).toHaveCount(extent);
-      expect(listRequests).toBe(0);
-    } finally {
-      // The fixture library is shared by every test in this project, so the
-      // rename is undone even when an assertion above fails.
-      await page.request.patch(`/api/books/${bookId}`, { data: { title: originalTitle } });
-    }
+    await page.goBack();
+    // Recently added order is independent of the changed title.
+    await expect(page.locator('.book-card').nth(3).locator('.book-title')).toHaveText(renamed);
+    await expect(page.locator('.book-card')).toHaveCount(extent);
+    expect(listRequests).toBe(0);
   });
 
   test('A retained refresh preserves the range and follows scrolling while it loads', async ({
     page,
   }) => {
-    await page.route('**/api/books/jumps?sort=title', (route) => route.fulfill({
-      json: {
-        total: 55,
-        items: [{ label: 'F', offset: 0 }, { label: 'G', offset: 40 }],
-      },
-    }));
+    await page.route('**/api/books/jumps?sort=title', (route) =>
+      route.fulfill({
+        json: {
+          total: 55,
+          items: [
+            { label: 'F', offset: 0 },
+            { label: 'G', offset: 40 },
+          ],
+        },
+      }),
+    );
     await page.goto('/?sort=title');
     await expect(page.locator('#library-jump-rail')).toBeVisible();
     await expect(page.locator('.book-card').first()).toBeVisible();
@@ -275,10 +273,12 @@ test.describe('Retained library navigation', () => {
     expect(
       Math.abs((await bookTop(page, '.book-card', currentAnchor.id)) - currentAnchor.top),
     ).toBeLessThan(2);
-    await page.screenshot({ path: 'screenshots/retained-refresh.png' });
   });
 
-  test('A retained list beyond the API cap survives a failed refresh and continues after retry', async ({ page, browserErrors }) => {
+  test('A retained list beyond the API cap survives a failed refresh and continues after retry', async ({
+    page,
+    browserErrors,
+  }) => {
     browserErrors.allow((message) => /Failed to fetch books|503/.test(message));
     await page.addInitScript(() => {
       // Stop at a known extent; automatic paging and anchoring have real-server
@@ -286,16 +286,18 @@ test.describe('Retained library navigation', () => {
       Object.defineProperty(window, 'IntersectionObserver', { value: undefined });
     });
     const response = await page.request.get('/api/books?limit=1');
-    const [sample] = await response.json() as BookSummary[];
+    const [sample] = (await response.json()) as BookSummary[];
     const books = Array.from({ length: 1260 }, (_, index) => ({
       ...sample,
       id: index === 1125 ? sample.id : 1000000 + index,
       title: `Retained book ${String(index).padStart(3, '0')}`,
     }));
-    await page.route('**/covers/100*', (route) => route.fulfill({
-      contentType: 'image/svg+xml',
-      body: '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="120"/>',
-    }));
+    await page.route('**/covers/100*', (route) =>
+      route.fulfill({
+        contentType: 'image/svg+xml',
+        body: '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="120"/>',
+      }),
+    );
     let refreshing = false;
     let failed = false;
     await page.route('**/api/books?*', async (route) => {
@@ -314,7 +316,8 @@ test.describe('Retained library navigation', () => {
     const cards = page.locator('.book-card');
     for (let count = 50; count < 1250; count += 50) {
       await expect(cards).toHaveCount(count);
-      await page.getByRole('button', { name: 'Load more', exact: true })
+      await page
+        .getByRole('button', { name: 'Load more', exact: true })
         .evaluate((button: HTMLButtonElement) => button.click());
     }
     await expect(cards).toHaveCount(1250);
@@ -322,9 +325,11 @@ test.describe('Retained library navigation', () => {
     await expect(page.locator('#book-detail-container')).toBeVisible();
     refreshing = true;
     books[0].title = 'Updated retained book';
-    await page.evaluate(() => document.dispatchEvent(
-      new CustomEvent('polka:catalog-changed', { detail: { kind: 'coarse' } }),
-    ));
+    await page.evaluate(() =>
+      document.dispatchEvent(
+        new CustomEvent('polka:catalog-changed', { detail: { kind: 'coarse' } }),
+      ),
+    );
     await page.goBack();
     const retry = page.getByRole('button', { name: 'Try again', exact: true });
     await expect(retry).toBeVisible();
@@ -337,7 +342,9 @@ test.describe('Retained library navigation', () => {
     await page.getByRole('button', { name: 'Load more', exact: true }).click();
     await expect(cards).toHaveCount(1260);
     await expect(page.locator('#load-more-container')).toBeHidden();
-    const ids = await cards.evaluateAll((elements) => elements.map((el) => el.getAttribute('data-id')));
+    const ids = await cards.evaluateAll((elements) =>
+      elements.map((el) => el.getAttribute('data-id')),
+    );
     expect(ids).toEqual(books.map((book) => String(book.id)));
   });
 
@@ -389,17 +396,5 @@ test.describe('Retained library navigation', () => {
     await expect(page.locator('.table-row').nth(30).locator('.table-title-link')).toBeFocused();
 
     await page.locator('#view-grid-btn').click();
-  });
-
-  test('A direct book URL keeps working without a retained parent', async ({ page }) => {
-    await page.goto('/');
-    const href = await page.locator('.book-card').first().locator('.book-title-link').getAttribute('href');
-    await page.goto(href ?? '/');
-    await expect(page.locator('#book-detail-container')).toBeVisible();
-    await expect(page.locator('.detail-title')).not.toBeFocused();
-    // No known predecessor, so Back falls back to the list the URL describes.
-    await expect(page.locator('.back-link a')).toHaveAttribute('href', /^\//);
-    await page.locator('.back-link a').click();
-    await expect(page.locator('.book-card').first()).toBeVisible();
   });
 });

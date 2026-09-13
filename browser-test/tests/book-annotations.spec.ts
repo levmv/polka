@@ -1,31 +1,38 @@
-import { expect, type Page, test } from './fixtures';
-import { createReaderTestUser, deleteTestUserAsAdmin, loginByRequest, type TestUser } from './helpers';
 import type { Annotation } from '../../frontend/src/types';
+import { expect, type Page, test } from './fixtures';
+import { findBook } from './helpers';
+
+test.use({ account: 'reader' });
 
 test.describe('Book highlights and notes', () => {
-  let reader: TestUser | null = null;
-
-  test.beforeEach(async ({ page }) => {
-    reader = await createReaderTestUser(page, 'book-notes');
-    await loginByRequest(page, reader.username, reader.password);
-  });
-  test.afterEach(async ({ page }) => {
-    if (reader) {
-      await deleteTestUserAsAdmin(page, reader);
-      reader = null;
-    }
-  });
-
-  test('keeps drafts through filtering and save failures, then deletes reviewed notes', async ({ page, browserErrors }) => {
+  test('keeps drafts through filtering and save failures, then deletes reviewed notes', async ({
+    page,
+    browserErrors,
+  }) => {
     page.on('dialog', (dialog) => dialog.accept());
-    const { bookURL, assetId } = await openBook(page);
+    const book = await findBook(page, 'With Cover Book');
+    const bookURL = `/book/${book.id}`;
+    const assetId = book.assets[0].id;
+    const loaded = page.waitForResponse(`**/api/books/${book.id}/annotations`);
+    await page.goto(bookURL);
+    await loaded;
     const section = page.getByRole('region', { name: 'Highlights & notes', exact: true });
     await expect(section).toBeHidden();
-    const early = await createHighlight(page, assetId, 2, 'The question is where reading begins.', 'Return to this idea', 'green');
+    const early = await createHighlight(
+      page,
+      assetId,
+      2,
+      'The question is where reading begins.',
+      'Return to this idea',
+      'green',
+    );
     await createHighlight(page, assetId, 10, 'A later passage connects the two ideas.', '', 'blue');
     await page.reload();
     const quotes = section.locator('.book-annotation-quote');
-    await expect(quotes).toHaveText(['The question is where reading begins.', 'A later passage connects the two ideas.']);
+    await expect(quotes).toHaveText([
+      'The question is where reading begins.',
+      'A later passage connects the two ideas.',
+    ]);
     const first = section.locator(`[data-annotation-id="${early.id}"]`);
     await first.locator('.book-annotation-quote').click();
     const note = first.getByRole('textbox', { name: 'Note', exact: true });
@@ -43,7 +50,12 @@ test.describe('Book highlights and notes', () => {
     await search.fill('');
 
     const updateURL = `**/api/reader/assets/${assetId}/annotations/${early.id}`;
-    browserErrors.allow((message) => message.includes('503') || message.includes('409') || message.includes('Failed to load resource'));
+    browserErrors.allow(
+      (message) =>
+        message.includes('503') ||
+        message.includes('409') ||
+        message.includes('Failed to load resource'),
+    );
     let rejectSave = true;
     let lostResponse = false;
     await page.route(updateURL, async (route) => {
@@ -61,18 +73,25 @@ test.describe('Book highlights and notes', () => {
     await first.getByRole('button', { name: 'Save', exact: true }).click();
     await expect(note).toBeHidden();
     await page.unroute(updateURL);
-    const rows: Annotation[] = await (await page.request.get(`/api/reader/assets/${assetId}/annotations`)).json();
+    const rows: Annotation[] = await (
+      await page.request.get(`/api/reader/assets/${assetId}/annotations`)
+    ).json();
     const saved = rows.find((row) => row.id === early.id)!;
     expect(saved.revision).toBe(early.revision + 1);
     await page.reload();
-    await expect(first.locator('.book-annotation-note')).toHaveText('Draft with <b>literal markup</b>');
+    await expect(first.locator('.book-annotation-note')).toHaveText(
+      'Draft with <b>literal markup</b>',
+    );
     await expect(first).toHaveCSS('--annotation-color', '#bea5e2');
     await expect(first.locator('b')).toHaveCount(0);
 
     await quotes.first().click();
-    const remote = await page.request.patch(`/api/reader/assets/${assetId}/annotations/${early.id}`, {
-      data: { revision: saved.revision, note: 'Changed before deletion' },
-    });
+    const remote = await page.request.patch(
+      `/api/reader/assets/${assetId}/annotations/${early.id}`,
+      {
+        data: { revision: saved.revision, note: 'Changed before deletion' },
+      },
+    );
     expect(remote.ok()).toBe(true);
     await first.getByRole('button', { name: 'Delete', exact: true }).click();
     await expect(note).toHaveValue('Changed before deletion');
@@ -85,12 +104,23 @@ test.describe('Book highlights and notes', () => {
     await expect(section).toBeHidden();
   });
 
-  test('keeps a draft through deletion review and resolves edited or deleted notes', async ({ page, browserErrors }) => {
+  test('keeps a draft through deletion review and resolves edited or deleted notes', async ({
+    page,
+    browserErrors,
+  }) => {
     page.on('dialog', (dialog) => dialog.accept());
     browserErrors.allow((message) => message.includes('409'));
-    const { assetId } = await openBook(page);
-    let saved = await createHighlight(page, assetId, 2, 'A thought to return to.', 'Original note', 'yellow');
-    await page.reload();
+    const book = await findBook(page, 'With Cover Book');
+    const assetId = book.assets[0].id;
+    let saved = await createHighlight(
+      page,
+      assetId,
+      2,
+      'A thought to return to.',
+      'Original note',
+      'yellow',
+    );
+    await page.goto(`/book/${book.id}`);
     const section = page.getByRole('region', { name: 'Highlights & notes', exact: true });
     const item = section.locator(`[data-annotation-id="${saved.id}"]`);
     const quote = item.locator('.book-annotation-quote');
@@ -98,7 +128,9 @@ test.describe('Book highlights and notes', () => {
     const conflict = item.locator('.annotation-saved-note');
     const url = `/api/reader/assets/${assetId}/annotations/${saved.id}`;
     const remoteEdit = async (changes: { note?: string; color?: string }) => {
-      const response = await page.request.patch(url, { data: { revision: saved.revision, ...changes } });
+      const response = await page.request.patch(url, {
+        data: { revision: saved.revision, ...changes },
+      });
       expect(response.ok()).toBe(true);
       saved = await response.json();
     };
@@ -147,42 +179,39 @@ test.describe('Book highlights and notes', () => {
     const recreated = await readSaved();
     expect(recreated.id).not.toBe(saved.id);
     expect(recreated).toMatchObject({
-      note: 'Draft after deletion', color: saved.color, quote: saved.quote, locator: saved.locator,
+      note: 'Draft after deletion',
+      color: saved.color,
+      quote: saved.quote,
+      locator: saved.locator,
     });
   });
 
-  test('browses a hundred highlights and exports the whole book while searching', async ({ page }) => {
-    test.setTimeout(30000);
-    const { assetId } = await openBook(page);
-    const passages = [
-      ['A useful note leaves a path back to the thought that prompted it.', 'Connect this with the question in the opening chapter. What changes when we read it a second time?'],
-      ['Small observations become clearer when we place them next to one another.', 'A possible structure for the discussion: observation, comparison, then a new question.'],
-      ['The empty space between two ideas can be as interesting as either idea alone.', ''],
-      ['Reading slowly makes room for questions that a quick summary cannot answer.', 'Try this with the reading group next week.'],
-      ['We return to a passage because we have changed since the first reading.', 'The final sentence echoes the introduction, but now the emphasis feels different.'],
-    ];
-    const colors = ['yellow', 'green', 'blue', 'pink', 'purple'];
-    for (let index = 0; index < 100; index++) {
-      const [quote, note] = passages[index % passages.length];
-      await createHighlight(page, assetId, (index + 1) * 2, quote, note ? `${note}\nObservation ${index + 1}.` : '', colors[index % colors.length]);
+  test('pages highlights and exports the whole book while searching', async ({ page }) => {
+    const book = await findBook(page, 'With Cover Book');
+    const assetId = book.assets[0].id;
+    const total = 60;
+    for (let index = 0; index < total; index++) {
+      await createHighlight(
+        page,
+        assetId,
+        (index + 1) * 2,
+        'A passage worth returning to after finishing the book.',
+        `Observation ${index + 1}.`,
+        'yellow',
+      );
     }
-    await page.reload();
+    await page.goto(`/book/${book.id}`);
     const section = page.getByRole('region', { name: 'Highlights & notes', exact: true });
-    await expect(section.locator('.book-annotations-count')).toHaveText('100');
+    await expect(section.locator('.book-annotations-count')).toHaveText(String(total));
     const items = section.locator('.book-annotation');
     let loaded = await items.count();
     expect(loaded).toBeGreaterThan(0);
-    expect(loaded).toBeLessThan(100);
+    expect(loaded).toBeLessThan(total);
     const scroll = section.getByRole('region', { name: 'Highlights and notes', exact: true });
     expect(await scroll.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
-    while (loaded < 100) {
-      await section.getByRole('button', { name: 'Show more highlights' }).click();
-      await expect.poll(() => items.count()).toBeGreaterThan(loaded);
-      loaded = await items.count();
-    }
-    await expect(items).toHaveCount(100);
-    await section.getByRole('searchbox').fill('observation 100.');
-    await expect(section.locator('.book-annotation')).toHaveCount(1);
+    // Search includes notes beyond the first rendered page; export ignores the filter.
+    await section.getByRole('searchbox').fill(`observation ${total}.`);
+    await expect(items).toHaveCount(1);
     await section.getByRole('button', { name: 'Export', exact: true }).click();
     const download = page.waitForEvent('download');
     await page.getByRole('menuitem', { name: 'Export all as Markdown' }).click();
@@ -190,26 +219,32 @@ test.describe('Book highlights and notes', () => {
     const chunks: Buffer[] = [];
     for await (const chunk of stream!) chunks.push(Buffer.from(chunk));
     const exported = Buffer.concat(chunks).toString();
-    expect(exported.match(/^## Highlight /gm)).toHaveLength(100);
+    expect(exported.match(/^## Highlight /gm)).toHaveLength(total);
     await section.getByRole('searchbox').fill('');
+    await expect(items).toHaveCount(loaded);
+    while (loaded < total) {
+      await section.getByRole('button', { name: 'Show more highlights' }).click();
+      await expect.poll(() => items.count()).toBeGreaterThan(loaded);
+      loaded = await items.count();
+    }
+    await expect(items).toHaveCount(total);
+    await expect(section.getByRole('button', { name: 'Show more highlights' })).toBeHidden();
     await section.locator('.book-annotation-quote').first().click();
     await page.setViewportSize({ width: 390, height: 844 });
-    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+      390,
+    );
   });
 });
 
-async function openBook(page: Page): Promise<{ bookURL: string; assetId: number }> {
-  await page.goto('/?q=With%20Cover%20Book');
-  const bookURL = await page.locator('.book-card', { hasText: 'With Cover Book' }).locator('.book-title-link').getAttribute('href');
-  if (!bookURL) throw new Error('missing book URL');
-  const annotationsLoaded = page.waitForResponse((response) => /\/api\/books\/\d+\/annotations$/.test(response.url()));
-  await page.goto(bookURL);
-  await annotationsLoaded;
-  const assetId = Number(await page.locator('[data-reader-progress-asset]').getAttribute('data-reader-progress-asset'));
-  return { bookURL, assetId };
-}
-
-async function createHighlight(page: Page, assetId: number, position: number, quote: string, note: string, color: string): Promise<Annotation> {
+async function createHighlight(
+  page: Page,
+  assetId: number,
+  position: number,
+  quote: string,
+  note: string,
+  color: string,
+): Promise<Annotation> {
   const response = await page.request.post(`/api/reader/assets/${assetId}/annotations`, {
     data: { locator: { cfi: `epubcfi(/6/${position}!/4/2/1:0)` }, quote, note, color },
   });

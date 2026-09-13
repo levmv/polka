@@ -7,6 +7,8 @@ from html import escape
 # Minimal valid 1x1 PNG, embedded as a cover so importers/grids have a real
 # image to load without a server-generated placeholder round trip.
 PNG_1x1 = b'\x89PNG\x0d\x0a\x1a\x0a\x00\x00\x00\x0dIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\x0aIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\x0d\x0a\x2d\xb4\x00\x00\x00\x00IEND\xaeB`\x82'
+# Match the grid placeholder ratio so navigation tests do not race cover decoding.
+PNG_2x3 = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAIAAAADCAYAAAC56t6BAAAAC0lEQVR4nGNgwAkAABsAAco8Sg0AAAAASUVORK5CYII=')
 AVIF_2x2 = base64.b64decode('AAAAIGZ0eXBhdmlmAAAAAGF2aWZtaWYxbWlhZk1BMUEAAADrbWV0YQAAAAAAAAAhaGRscgAAAAAAAAAAcGljdAAAAAAAAAAAAAAAAAAAAAAOcGl0bQAAAAAAAQAAAB5pbG9jAAAAAEQAAAEAAQAAAAEAAAETAAAATgAAAChpaW5mAAAAAAABAAAAGmluZmUCAAAAAAEAAGF2MDFDb2xvcgAAAABqaXBycAAAAEtpcGNvAAAAFGlzcGUAAAAAAAAAAgAAAAIAAAAQcGl4aQAAAAADCAgIAAAADGF2MUOBIAAAAAAAE2NvbHJuY2x4AAIAAgAAgAAAABdpcG1hAAAAAAAAAAEAAQQBAoMEAAAAVm1kYXQSAAoHOAA+UCAgCTJBEAAA/GkD1f4mq+MwFQdpuClS0/3si/n0TTr9ev16QLv////Vm4Y8wLMNz6Ex1IdSQsuhMdSHUh1IdSHUjV2E5TI=')
 
 CONTAINER_XML = '''<?xml version="1.0"?>
@@ -34,13 +36,13 @@ def _chapter_xhtml(title, author):
 </html>'''
 
 
-def _write_epub(filename, opf, include_cover, chapter):
+def _write_epub(filename, opf, include_cover, chapter, cover_image=PNG_1x1):
     with zipfile.ZipFile(filename, 'w', zipfile.ZIP_STORED) as zf:
         zf.writestr('mimetype', 'application/epub+zip')
     with zipfile.ZipFile(filename, 'a', zipfile.ZIP_DEFLATED) as zf:
         zf.writestr('META-INF/container.xml', CONTAINER_XML)
         if include_cover:
-            zf.writestr('OEBPS/cover.png', PNG_1x1)
+            zf.writestr('OEBPS/cover.png', cover_image)
         zf.writestr('OEBPS/content.opf', opf)
         zf.writestr('OEBPS/chapter.xhtml', chapter)
 
@@ -73,10 +75,6 @@ def create_epub(filename, title, author, include_cover):
 
 
 def create_writeback_fixture(filename):
-    # A neutral EPUB owned solely by the metadata write-back test. Unlike the
-    # shared create_epub fixtures it carries no series/ISBN/publisher, so editing
-    # and rewriting it cannot shift the series, duplicate, or identifier counts
-    # other tests assert on.
     opf = '''<?xml version="1.0"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="2.0">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
@@ -145,10 +143,8 @@ def create_cbz(filename, title, author):
 
 
 def create_filler_epub(filename, idx):
-    # Lean book used only to push a library past the 50/page pagination
-    # threshold. An old date keeps any real fixtures ahead of it under the
-    # default (date-desc) sort; an embedded cover avoids a server-generated placeholder
-    # round trip when the grid renders dozens of them.
+    # Lean books for pagination and retained-navigation tests. Embedded covers
+    # avoid generating placeholders for dozens of books.
     title = f'Filler Book {idx:03d}'
     manifest = (
         '<item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/>'
@@ -165,12 +161,13 @@ def create_filler_epub(filename, idx):
   <manifest>{manifest}</manifest>
   <spine><itemref idref="chapter"/></spine>
 </package>'''
-    _write_epub(filename, opf, include_cover=True, chapter=_chapter_xhtml(title, 'Filler Author'))
+    _write_epub(filename, opf, include_cover=True,
+                chapter=_chapter_xhtml(title, 'Filler Author'), cover_image=PNG_2x3)
 
 
 def main(argv):
     # `--filler N DIR` generates N throwaway books for pagination coverage
-    # (not committed — the Makefile writes them into a gitignored temp dir).
+    # (not committed — the browser fixtures use a temporary directory).
     if argv[:1] == ['--filler']:
         count = int(argv[1])
         out_dir = argv[2]
@@ -184,8 +181,6 @@ def main(argv):
     create_epub('without-cover.epub', 'No Cover Book', 'Test Author', False)
     create_epub('duplicate-1.epub', 'Foundation', 'Isaac Asimov', False)
     create_epub('duplicate-2.epub', 'foundation!', 'isaac   asimov', False)
-    # A book only the metadata write-back test touches, so it can edit and rewrite
-    # the file without disturbing the shared fixtures other tests assert on.
     create_writeback_fixture('writeback.epub')
     create_fb2('reader.fb2', 'FB2 Reader Book', 'Fb Author')
     create_cbz('reader.cbz', 'CBZ Reader Book', 'Comic Author')

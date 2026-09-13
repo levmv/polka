@@ -6,8 +6,8 @@
   "scripts": {
     "build": "node frontend/build.mjs",
     "typecheck": "tsc --noEmit -p frontend/tsconfig.json && tsc --noEmit -p browser-test/tsconfig.json",
-    "lint": "biome check frontend/build.mjs frontend/src frontend/test browser-test/screenshot.mjs biome.json",
-    "lint:fix": "biome check --write frontend/build.mjs frontend/src frontend/test browser-test/screenshot.mjs biome.json",
+    "lint": "biome check frontend/build.mjs frontend/src frontend/test browser-test biome.json",
+    "lint:fix": "biome check --write frontend/build.mjs frontend/src frontend/test browser-test biome.json",
     "test:unit": "node --experimental-strip-types --test frontend/test/*.test.mjs",
     "test:browser-list": "cd browser-test && playwright test --list >/dev/null",
     "e2e": "cd browser-test && playwright test",

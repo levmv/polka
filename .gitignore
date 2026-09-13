@@ -31,7 +31,6 @@
 
 # Playwright browser testing
 /browser-test/screenshots/
-/browser-test/.auth*/
 /browser-test/test-results/
 
 # Python bytecode (browser-test fixture generator)

@@ -1,67 +1,55 @@
-import { readerMutationFields } from '../helpers';
 import {
   epubWithNonstandardZIPSignature,
   epubWithUnmarkedUTF8Entry,
   epubWithVerticalWriting,
-} from '../book-fixtures';
-import { expect, test } from '../fixtures';
-import { importTestBook } from '../helpers';
+} from './book-fixtures';
+import { expect, test } from './fixtures';
+import { importTestBook, readerMutationFields } from './helpers';
 
 test.describe('Reader', () => {
-  test('Vertical EPUB fills the stage without changing its column length', async ({
-    page,
-  }) => {
-    const stamp = Date.now().toString(36);
-    const title = `Vertical EPUB ${stamp}`;
-    const bookId = await importTestBook(page, epubWithVerticalWriting(title, 'Vertical Author', `vertical-epub-${stamp}`));
+  test('Vertical EPUB fills the stage without changing its column length', async ({ page }) => {
+    const title = 'Vertical EPUB';
+    const bookId = await importTestBook(
+      page,
+      epubWithVerticalWriting(title, 'Vertical Author', 'vertical-epub'),
+    );
 
-    try {
-      await page.goto(`/read/${bookId}`);
-      await expect
-        .poll(async () => page.locator('.reader-epub-stage').getAttribute('data-reader-ready'))
-        .toBe('true');
-      await expect
-        .poll(() =>
-          page.evaluate(() => {
-            const view = document.querySelector('foliate-view') as HTMLElement & {
-              renderer?: HTMLElement & { getContents?: () => Array<{ doc?: Document }> };
-            };
-            const doc = view.renderer?.getContents?.()[0]?.doc;
-            const stage = document.querySelector('.reader-epub-stage')?.getBoundingClientRect();
-            if (!doc?.defaultView || !stage) return null;
-            const maxInlineSize = Number.parseFloat(
-              view.renderer?.getAttribute('max-inline-size') || '',
-            );
-            const renderedColumnLength = Number.parseFloat(
-              doc.defaultView.getComputedStyle(doc.documentElement).columnWidth,
-            );
-            const baseMargin = Math.round(
-              Math.min(48, Math.max(28, window.innerHeight * 0.055)),
-            );
-            const expectedColumnLength =
-              Math.min(maxInlineSize, stage.height - 2 * baseMargin) - baseMargin;
-            return {
-              writingMode: view.dataset.readerWritingMode,
-              pageSpansStage:
-                Math.abs(doc.documentElement.getBoundingClientRect().height - stage.height) < 2,
-              columnLengthPreserved:
-                Math.abs(renderedColumnLength - Math.trunc(expectedColumnLength)) < 2,
-            };
-          }),
-        )
-        .toEqual({
-          writingMode: 'vertical',
-          pageSpansStage: true,
-          columnLengthPreserved: true,
-        });
-    } finally {
-      const trash = await page.request.post('/api/books/bulk/trash', {
-        data: { ids: [bookId] },
+    await page.goto(`/read/${bookId}`);
+    await expect
+      .poll(async () => page.locator('.reader-epub-stage').getAttribute('data-reader-ready'))
+      .toBe('true');
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const view = document.querySelector('foliate-view') as HTMLElement & {
+            renderer?: HTMLElement & { getContents?: () => Array<{ doc?: Document }> };
+          };
+          const doc = view.renderer?.getContents?.()[0]?.doc;
+          const stage = document.querySelector('.reader-epub-stage')?.getBoundingClientRect();
+          if (!doc?.defaultView || !stage) return null;
+          const maxInlineSize = Number.parseFloat(
+            view.renderer?.getAttribute('max-inline-size') || '',
+          );
+          const renderedColumnLength = Number.parseFloat(
+            doc.defaultView.getComputedStyle(doc.documentElement).columnWidth,
+          );
+          const baseMargin = Math.round(Math.min(48, Math.max(28, window.innerHeight * 0.055)));
+          const expectedColumnLength =
+            Math.min(maxInlineSize, stage.height - 2 * baseMargin) - baseMargin;
+          return {
+            writingMode: view.dataset.readerWritingMode,
+            pageSpansStage:
+              Math.abs(doc.documentElement.getBoundingClientRect().height - stage.height) < 2,
+            columnLengthPreserved:
+              Math.abs(renderedColumnLength - Math.trunc(expectedColumnLength)) < 2,
+          };
+        }),
+      )
+      .toEqual({
+        writingMode: 'vertical',
+        pageSpansStage: true,
+        columnLengthPreserved: true,
       });
-      expect(trash.ok()).toBeTruthy();
-      const purge = await page.request.delete(`/api/books/${bookId}/purge`);
-      expect(purge.status()).toBe(204);
-    }
   });
 
   test('EPUB reader supports controls and persists reading state', async ({ page }) => {
@@ -390,7 +378,11 @@ test.describe('Reader', () => {
     await test.step('projects saved progress onto book detail', async () => {
       await page.goto(`/book/${bookId}`);
       const saveResponse = await page.request.put(`/api/reader/assets/${assetId}/state`, {
-        data: { ...await readerMutationFields(page, Number(assetId)), progress: 0.42, locator: {} },
+        data: {
+          ...(await readerMutationFields(page, Number(assetId))),
+          progress: 0.42,
+          locator: {},
+        },
       });
       expect(saveResponse.ok()).toBe(true);
 
@@ -405,78 +397,62 @@ test.describe('Reader', () => {
     });
   });
 
-  test('Reader normalizes a recoverable EPUB only after direct opening fails', async ({
-    page,
-  }) => {
-    const stamp = Date.now().toString(36);
-    const title = `Tolerated EPUB ${stamp}`;
-    const author = `Fallback Author ${stamp}`;
-    const bookId = await importTestBook(page, epubWithNonstandardZIPSignature(title, author, `tolerated-epub-${stamp}`));
+  test('Reader normalizes a recoverable EPUB only after direct opening fails', async ({ page }) => {
+    const title = 'Tolerated EPUB';
+    const author = 'Fallback Author';
+    const bookId = await importTestBook(
+      page,
+      epubWithNonstandardZIPSignature(title, author, 'tolerated-epub'),
+    );
 
-    try {
-      await page.goto(`/read/${bookId}`);
-      const reader = page.locator('.reader-page');
-      await expect(reader).toHaveAttribute('data-reader-fallback', 'epub-to-kepub');
-      await expect
-        .poll(async () => page.locator('.reader-epub-stage').getAttribute('data-reader-ready'))
-        .toBe('true');
-      await expect(page.locator('foliate-view')).toHaveCount(1);
-      await expect
-        .poll(() =>
-          page.evaluate(() => {
-            const view = document.querySelector('foliate-view') as HTMLElement & {
-              renderer?: { getContents?: () => Array<{ doc?: Document }> };
-            };
-            return (view.renderer?.getContents?.() || [])
-              .map((entry) => entry.doc?.body?.textContent || '')
-              .join(' ');
-          }),
-        )
-        .toContain(author);
-    } finally {
-      const trash = await page.request.post('/api/books/bulk/trash', {
-        data: { ids: [bookId] },
-      });
-      expect(trash.ok()).toBeTruthy();
-      const purge = await page.request.delete(`/api/books/${bookId}/purge`);
-      expect(purge.status()).toBe(204);
-    }
+    await page.goto(`/read/${bookId}`);
+    const reader = page.locator('.reader-page');
+    await expect(reader).toHaveAttribute('data-reader-fallback', 'epub-to-kepub');
+    await expect
+      .poll(async () => page.locator('.reader-epub-stage').getAttribute('data-reader-ready'))
+      .toBe('true');
+    await expect(page.locator('foliate-view')).toHaveCount(1);
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const view = document.querySelector('foliate-view') as HTMLElement & {
+            renderer?: { getContents?: () => Array<{ doc?: Document }> };
+          };
+          return (view.renderer?.getContents?.() || [])
+            .map((entry) => entry.doc?.body?.textContent || '')
+            .join(' ');
+        }),
+      )
+      .toContain(author);
   });
 
   test('Reader resolves an unmarked UTF-8 EPUB entry without rewriting the source', async ({
     page,
   }) => {
-    const stamp = Date.now().toString(36);
-    const title = `UTF-8 path EPUB ${stamp}`;
-    const author = `Unicode Path Author ${stamp}`;
-    const bookId = await importTestBook(page, epubWithUnmarkedUTF8Entry(title, author, `utf8-path-epub-${stamp}`));
+    const title = 'UTF-8 path EPUB';
+    const author = 'Unicode Path Author';
+    const bookId = await importTestBook(
+      page,
+      epubWithUnmarkedUTF8Entry(title, author, 'utf8-path-epub'),
+    );
 
-    try {
-      await page.goto(`/read/${bookId}`);
-      const reader = page.locator('.reader-page');
-      await expect
-        .poll(async () => page.locator('.reader-epub-stage').getAttribute('data-reader-ready'))
-        .toBe('true');
-      await expect(reader).not.toHaveAttribute('data-reader-fallback', 'epub-to-kepub');
-      await expect
-        .poll(() =>
-          page.evaluate(() => {
-            const view = document.querySelector('foliate-view') as HTMLElement & {
-              renderer?: { getContents?: () => Array<{ doc?: Document }> };
-            };
-            return (view.renderer?.getContents?.() || [])
-              .map((entry) => entry.doc?.body?.textContent || '')
-              .join(' ');
-          }),
-        )
-        .toContain(author);
-    } finally {
-      const trash = await page.request.post('/api/books/bulk/trash', {
-        data: { ids: [bookId] },
-      });
-      expect(trash.ok()).toBeTruthy();
-      const purge = await page.request.delete(`/api/books/${bookId}/purge`);
-      expect(purge.status()).toBe(204);
-    }
+    await page.goto(`/read/${bookId}`);
+    const reader = page.locator('.reader-page');
+    await expect
+      .poll(async () => page.locator('.reader-epub-stage').getAttribute('data-reader-ready'))
+      .toBe('true');
+    await expect(reader).not.toHaveAttribute('data-reader-fallback', 'epub-to-kepub');
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const view = document.querySelector('foliate-view') as HTMLElement & {
+            renderer?: { getContents?: () => Array<{ doc?: Document }> };
+          };
+          return (view.renderer?.getContents?.() || [])
+            .map((entry) => entry.doc?.body?.textContent || '')
+            .join(' ');
+        }),
+      )
+      .toContain(author);
   });
 });

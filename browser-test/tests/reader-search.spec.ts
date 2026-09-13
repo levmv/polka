@@ -1,27 +1,10 @@
 import { expect, type Page, test } from './fixtures';
-import {
-  createReaderTestUser,
-  deleteTestUserAsAdmin,
-  loginByRequest,
-  type TestUser,
-} from './helpers';
+import { openReader } from './helpers';
+
+test.use({ account: 'reader' });
 
 test.describe('Reader local search', () => {
-  let readerUser: TestUser | null = null;
-
-  test.beforeEach(async ({ page }) => {
-    readerUser = await createReaderTestUser(page, 'reader-search');
-    await loginByRequest(page, readerUser.username, readerUser.password);
-  });
-
-  test.afterEach(async ({ page }) => {
-    if (readerUser) {
-      await deleteTestUserAsAdmin(page, readerUser);
-      readerUser = null;
-    }
-  });
-
-  test('searches an EPUB and navigates to a result', async ({ page, browserName }) => {
+  test('searches an EPUB and navigates to a result', async ({ page }) => {
     await openReader(page, 'With Cover Book');
 
     await page.getByRole('button', { name: 'Search in book' }).click();
@@ -50,10 +33,6 @@ test.describe('Reader local search', () => {
     await expect(result).toHaveClass(/active/);
     await expect(panel).toHaveAttribute('data-reader-search-results', /[1-9]/);
     await expect.poll(() => hasFoliateSearchHighlight(page)).toBe(true);
-    await page.screenshot({
-      path: `screenshots/reader-search-highlight-${browserName}.png`,
-      fullPage: true,
-    });
     await trackReaderTurns(page);
     await page.keyboard.press('Escape');
     await expect(panel).toBeHidden();
@@ -61,41 +40,7 @@ test.describe('Reader local search', () => {
     await page.keyboard.press('Space');
     await expect.poll(() => readerTurnCalls(page)).toEqual({ left: 0, right: 1 });
   });
-
-  test('opens search from selected text', async ({ page }) => {
-    await openReader(page, 'With Cover Book');
-
-    const selected = await selectFirstText(page);
-    const word = selected.trim().split(/\s+/)[0];
-    expect(word.length).toBeGreaterThan(2);
-
-    const toolbar = page.locator('.reader-selection-toolbar');
-    await expect(toolbar).toBeVisible();
-    await toolbar.getByRole('button', { name: 'Search' }).click();
-
-    const panel = page.locator('#reader-search-panel');
-    await expect(panel).toBeVisible();
-    await expect(panel.getByRole('searchbox', { name: 'Search this book' })).toHaveValue(
-      selected.replace(/\s+/g, ' ').trim().slice(0, 120),
-    );
-    await expect(panel.locator('.reader-search-result-btn').first()).toBeVisible();
-  });
 });
-
-async function openReader(page: Page, title: string): Promise<void> {
-  await page.goto('/');
-  const card = page.locator('.book-card', { hasText: title });
-  await expect(card).toBeVisible();
-  const href = await card.locator('.book-title-link').getAttribute('href');
-  const bookId = href?.split('/').pop();
-  if (!bookId) throw new Error(`missing book id for ${title}`);
-
-  await page.goto(`/read/${bookId}`);
-  await expect(page.locator('.reader-epub-stage')).toBeVisible();
-  await expect
-    .poll(async () => page.locator('.reader-epub-stage').getAttribute('data-reader-ready'))
-    .toBe('true');
-}
 
 async function firstSearchableWord(page: Page): Promise<string> {
   return page.evaluate(() => {
@@ -160,43 +105,5 @@ async function hasFoliateSearchHighlight(page: Page): Promise<boolean> {
       if (marker) return true;
     }
     return false;
-  });
-}
-
-async function selectFirstText(page: Page): Promise<string> {
-  return page.evaluate(() => {
-    const view = document.querySelector('foliate-view') as HTMLElement & {
-      renderer?: { getContents?: () => Array<{ doc?: Document }> };
-    };
-    for (const content of view.renderer?.getContents?.() || []) {
-      const doc = content.doc;
-      if (!doc) continue;
-      const candidates = doc.querySelectorAll<HTMLElement>('p, li, h1, h2, blockquote');
-      for (const el of candidates) {
-        if (!el.textContent || el.textContent.trim().length <= 3) continue;
-        const textNode = firstTextNode(doc, el);
-        if (!textNode?.textContent?.trim()) continue;
-        const range = doc.createRange();
-        range.setStart(textNode, 0);
-        range.setEnd(textNode, textNode.textContent.length);
-        const selection = doc.getSelection();
-        if (!selection) continue;
-        selection.removeAllRanges();
-        selection.addRange(range);
-        const text = selection.toString();
-        if (text.trim()) return text;
-      }
-    }
-    return '';
-
-    function firstTextNode(doc: Document, root: Node): Text | null {
-      const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-      let node = walker.nextNode();
-      while (node) {
-        if (node.textContent?.trim()) return node as Text;
-        node = walker.nextNode();
-      }
-      return null;
-    }
   });
 }
