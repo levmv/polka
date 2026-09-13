@@ -156,9 +156,16 @@ func (w contextWriter) Exec(query string, args ...any) (sql.Result, error) {
 // caller cancellation and other database errors still propagate. Do not use it
 // for required mutations, including credential creation or revocation.
 func (db *DB) ExecBestEffort(ctx context.Context, query string, args ...any) (bool, error) {
+	return bestEffortWrite(ctx, func(writeCtx context.Context) error {
+		_, err := db.Write(writeCtx).Exec(query, args...)
+		return err
+	})
+}
+
+func bestEffortWrite(ctx context.Context, write func(context.Context) error) (bool, error) {
 	writeCtx, cancel := context.WithTimeout(ctx, bestEffortWriteTimeout)
 	defer cancel()
-	_, err := db.Write(writeCtx).Exec(query, args...)
+	err := write(writeCtx)
 	if err == nil {
 		return true, nil
 	}

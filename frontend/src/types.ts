@@ -151,35 +151,46 @@ export interface Asset {
     download_as?: DownloadAsOption[];
 }
 
-export interface ReaderLocator {
-    engine?: string;
+export interface Locator {
     cfi?: string;
-    fraction?: number;
+    path?: string;
+    fragment?: string;
     page?: number;
-    zoom?: number;
-    [key: string]: unknown;
+    rects?: LocatorRect[];
 }
 
-export interface ReaderState {
+// Unrotated PDF page coordinates, independent of the browser viewport.
+export interface LocatorRect {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+}
+
+export interface ReaderStateWrite {
+    revision: number;
+    progress: number;
+    locator: Locator;
+    device_id: string;
+    device_name: string;
+}
+
+export interface ReaderState extends ReaderStateWrite {
     asset_id: number;
     book_id: number;
-    progress: number;
-    locator: ReaderLocator;
-    last_read_at?: number;
     updated_at?: number;
     reading_status: ReadingStatusState;
     status_changed?: boolean;
     status_transition_id?: number;
 }
 
-export type AnnotationKind = 'highlight';
 export type AnnotationColor = 'yellow' | 'green' | 'blue' | 'pink' | 'purple';
 
 export interface Annotation {
+    revision: number;
     id: number;
     asset_id: number;
-    kind: AnnotationKind;
-    cfi: string;
+    locator: Locator;
     quote: string;
     context_before: string;
     context_after: string;
@@ -192,7 +203,7 @@ export interface Annotation {
 export interface ContinueReadingItem extends BookSummary {
     asset_id: number;
     progress: number;
-    last_read_at: number;
+    updated_at: number;
 }
 
 export type ReaderFlow = 'paginated' | 'scrolled';

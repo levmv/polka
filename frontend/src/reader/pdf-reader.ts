@@ -11,16 +11,27 @@ import {
 
 import { fetchReaderState, touchReaderState } from '../api';
 import { clamp } from '../dom';
-import type { ReaderLocator, ReaderState } from '../types';
-import { createReadingActivity, type ReadingActivity } from './activity';
-import { closeReader, focusReaderSurface, revealChrome, toggleReaderChrome } from './chrome';
+import type { Locator, ReaderState } from '../types';
+import { createReadingActivity } from './activity';
+import { type AnnotationController, wireAnnotations } from './annotations';
+import {
+    closeReader,
+    focusReaderSurface,
+    revealChrome,
+    showReaderError,
+    toggleReaderChrome,
+} from './chrome';
+import { type ReaderLifecycle, wireReaderLifecycle } from './lifecycle';
+import { pdfAnnotationSurface } from './pdf-annotations';
 import { wirePDFOutline } from './pdf-outline';
 import { type PDFSearchController, wirePDFSearch } from './pdf-search';
+import { type ReaderSelectionController, wireReaderSelection } from './selection';
 import { createReaderStateSaver, type ReaderPosition, type ReaderStateSaver } from './state-saver';
 
 const PDF_RESOURCE_ROOT = '/static/pdfjs';
 const MAX_CANVAS_PIXELS = 16_000_000;
 const MAX_OUTPUT_SCALE = 2;
+const PDF_ZOOM_KEY = 'polka-pdf-zoom';
 const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 3;
 const ZOOM_STEP = 1.2;
@@ -69,7 +80,7 @@ export async function initPDFReader(
 }
 
 class PDFReader {
-    private readonly activity: ReadingActivity;
+    private readonly lifecycle: ReaderLifecycle;
     private document: PDFDocumentProxy | null = null;
     private loadingTask: PDFDocumentLoadingTask | null = null;
     private pageProxy: PDFPageProxy | null = null;
@@ -77,13 +88,16 @@ class PDFReader {
     private textLayer: TextLayer | null = null;
     private pageNumber = 1;
     private pageCount = 0;
-    private zoom = 1;
+    private zoom = loadPDFZoom();
     private renderGeneration = 0;
     private saveTimer: number | undefined;
     private resizeTimer: number | undefined;
     private readonly stateSaver: ReaderStateSaver;
     private searchController: PDFSearchController | null = null;
     private pointerGesture: PDFPointerGesture | null = null;
+    private annotations: AnnotationController | null = null;
+    private annotationSurface: ReturnType<typeof pdfAnnotationSurface> | null = null;
+    private selection: ReaderSelectionController | null = null;
 
     constructor(
         private readonly root: HTMLElement,
@@ -92,8 +106,37 @@ class PDFReader {
         private readonly elements: PDFReaderElements,
         private readonly options: PDFReaderOptions,
     ) {
-        this.stateSaver = createReaderStateSaver(root, assetId, options);
-        this.activity = createReadingActivity(assetId);
+        this.stateSaver = createReaderStateSaver(assetId, {
+            ...options,
+            restorePosition: async (state) => {
+                window.clearTimeout(this.saveTimer);
+                const previousPage = this.pageNumber;
+                const generation = this.renderGeneration + 1;
+                this.pageNumber = storedPDFPage(state, this.pageCount);
+                this.updateControls();
+                try {
+                    await this.renderCurrentPage();
+                } catch (error) {
+                    if (generation === this.renderGeneration) {
+                        this.pageNumber = previousPage;
+                        this.updateControls();
+                        try {
+                            await this.renderCurrentPage();
+                        } catch {
+                            showReaderError(this.root, 'Could not open this PDF.');
+                        }
+                    }
+                    throw error;
+                }
+            },
+        });
+        this.lifecycle = wireReaderLifecycle(
+            root,
+            elements.stage,
+            this.stateSaver,
+            createReadingActivity(assetId),
+            { onResume: () => void this.annotations?.load() },
+        );
     }
 
     async open(): Promise<void> {
@@ -127,10 +170,37 @@ class PDFReader {
         });
 
         const state = await statePromise;
+        this.stateSaver.initialize(state);
         this.document = await this.loadingTask.promise;
         this.pageCount = this.document.numPages;
         this.pageNumber = storedPDFPage(state, this.pageCount);
-        this.zoom = storedPDFZoom(state);
+        this.annotationSurface = pdfAnnotationSurface(
+            this.elements.page,
+            this.elements.textLayer,
+            (number) => this.navigateTo(number),
+        );
+        this.annotations = wireAnnotations(this.root, this.assetId, this.annotationSurface, {
+            onShowActions: (target) => this.selection?.showAnnotationActions(target),
+        });
+        this.selection = wireReaderSelection(this.root, {
+            locate: (range) => this.annotationSurface?.locate(range),
+            containsRange: (range) =>
+                this.elements.textLayer.contains(range.startContainer) &&
+                this.elements.textLayer.contains(range.endContainer),
+            contextRoot: this.elements.textLayer,
+            onHighlightSelection: this.annotations.createHighlight,
+            onNoteSelection: (payload) => this.annotations?.createHighlight(payload, true),
+            onEditAnnotation: this.annotations.editNote,
+            onDeleteAnnotation: this.annotations.deleteHighlight,
+            annotationAt: this.annotations.annotationAt,
+        });
+        this.selection.attachDocument(document);
+        await this.annotations.load();
+        const annotationID = Number(
+            new URLSearchParams(window.location.hash.slice(1)).get('annotation'),
+        );
+        const annotationPage = this.annotations.location(annotationID)?.page;
+        if (annotationPage) this.pageNumber = clamp(annotationPage, 1, this.pageCount);
         this.wireControls();
         this.searchController = wirePDFSearch(this.root, this.document, {
             currentPage: () => this.pageNumber,
@@ -141,13 +211,14 @@ class PDFReader {
         });
         this.updateControls();
         await this.renderCurrentPage();
+        if (annotationID) this.annotationSurface.reveal(annotationID);
 
         this.elements.loading.remove();
         this.elements.stage.dataset.readerReady = 'true';
         this.root.classList.add('reader-ready');
         this.elements.stage.focus({ preventScroll: true });
         revealChrome(this.root);
-        this.activity.start();
+        this.lifecycle.start();
         void this.stateSaver.flush();
 
         touchReaderState(this.assetId)
@@ -158,7 +229,13 @@ class PDFReader {
     }
 
     private wireControls(): void {
-        this.activity.observeScrolling(this.elements.stage);
+        this.root.querySelector('.reader-close')?.addEventListener('click', (event) => {
+            event.preventDefault();
+            closeReader(
+                this.root,
+                () => this.annotations?.savePendingEdits() ?? Promise.resolve(true),
+            );
+        });
         this.elements.previous.addEventListener('click', () => {
             void this.navigateTo(this.pageNumber - 1);
         });
@@ -190,8 +267,6 @@ class PDFReader {
 
         window.addEventListener('keydown', this.handleKeydown, true);
         window.addEventListener('resize', this.handleResize);
-        window.addEventListener('pagehide', this.handlePageHide);
-        document.addEventListener('visibilitychange', this.handleVisibilityChange);
     }
 
     private readonly handleKeydown = (event: KeyboardEvent): void => {
@@ -201,13 +276,22 @@ class PDFReader {
         }
 
         if (event.key === 'Escape') {
+            if (
+                this.root.querySelector(
+                    '.reader-annotation-popover:not([hidden]), #reader-annotations-panel:not([hidden])',
+                )
+            )
+                return;
             event.preventDefault();
             if (this.root.classList.contains('reader-chrome-hidden')) {
                 revealChrome(this.root, false);
                 focusReaderSurface(this.root);
                 return;
             }
-            closeReader(this.root);
+            closeReader(
+                this.root,
+                () => this.annotations?.savePendingEdits() ?? Promise.resolve(true),
+            );
         } else if (event.key === 'ArrowLeft' || event.key === 'PageUp') {
             event.preventDefault();
             void this.navigateTo(this.pageNumber - 1);
@@ -276,23 +360,6 @@ class PDFReader {
         }, RESIZE_DELAY_MS);
     };
 
-    private readonly handlePageHide = (): void => {
-        void this.flushPending({ keepalive: true });
-        // This reader owns the whole document. The browser tears down its realm,
-        // worker, and streams together on a real navigation; manually destroying
-        // PDF.js during pagehide races already queued worker chunks. If the page
-        // enters bfcache instead, retaining the live reader also makes it usable
-        // when restored.
-    };
-
-    private readonly handleVisibilityChange = (): void => {
-        if (document.visibilityState === 'hidden') {
-            void this.flushPending({ keepalive: true });
-        } else {
-            void this.flushPending();
-        }
-    };
-
     private async navigateFromInput(): Promise<void> {
         const requested = Number.parseInt(this.elements.pageInput.value, 10);
         if (!Number.isFinite(requested)) {
@@ -310,18 +377,22 @@ class PDFReader {
         }
 
         this.pageNumber = nextPage;
-        this.activity.recordAction();
+        this.lifecycle.markUserNavigation();
         this.updateControls();
-        await this.renderCurrentPage();
         this.scheduleSave();
+        await this.renderCurrentPage();
     }
 
     private async setZoom(zoom: number): Promise<void> {
         const normalized = clamp(zoom, MIN_ZOOM, MAX_ZOOM);
         if (Math.abs(normalized - this.zoom) < 0.001) return;
         this.zoom = normalized;
+        try {
+            localStorage.setItem(PDF_ZOOM_KEY, String(this.zoom));
+        } catch {
+            // Keep the zoom in memory when browser storage is unavailable.
+        }
         this.updateControls();
-        this.scheduleSave();
         revealChrome(this.root);
         await this.renderCurrentPage();
     }
@@ -407,12 +478,15 @@ class PDFReader {
             viewport,
         });
         this.textLayer = textLayer;
-        // Current PDF.js expresses these dimensions with CSS round(), which is
-        // newer than Polka's iOS 14 baseline. The pixel dimensions are already
-        // known here, so keep the layer aligned without raising that baseline.
-        this.elements.textLayer.style.width = `${viewport.width}px`;
-        this.elements.textLayer.style.height = `${viewport.height}px`;
-        this.elements.textLayer.style.setProperty('--total-scale-factor', String(viewport.scale));
+        // Use explicit sizes for browsers without CSS round(). TextLayer uses
+        // unrotated dimensions; CSS rotates the layer to match the canvas.
+        const sideways = viewport.rotation % 180 !== 0;
+        this.elements.textLayer.style.width = `${sideways ? viewport.height : viewport.width}px`;
+        this.elements.textLayer.style.height = `${sideways ? viewport.width : viewport.height}px`;
+        this.elements.textLayer.style.setProperty(
+            '--total-scale-factor',
+            String(viewport.scale * viewport.userUnit),
+        );
         const minFontSize = Number.parseFloat(
             this.elements.textLayer.style.getPropertyValue('--min-font-size'),
         );
@@ -440,9 +514,12 @@ class PDFReader {
         this.pageProxy = null;
         this.elements.page.dataset.pdfRenderedPage = String(this.pageNumber);
         this.searchController?.markCurrentPage(this.pageNumber, textLayer);
+        this.annotationSurface?.setPage(this.pageNumber, viewport);
     }
 
     private releasePage(): void {
+        this.selection?.relocate();
+        this.annotationSurface?.clearPage();
         this.searchController?.clearPage();
         this.renderTask?.cancel();
         this.renderTask = null;
@@ -471,10 +548,8 @@ class PDFReader {
     }
 
     private scheduleSave(): void {
-        const locator: ReaderLocator = {
-            engine: 'pdfjs',
+        const locator: Locator = {
             page: this.pageNumber,
-            zoom: this.zoom,
         };
         const progress = this.pageCount > 0 ? this.pageNumber / this.pageCount : 0;
         this.stateSaver.queue({ progress, locator });
@@ -541,7 +616,7 @@ function pdfReaderElements(page: HTMLElement): PDFReaderElements | null {
 
 function storedPDFPage(state: ReaderPosition | null, pageCount: number): number {
     if (!state || pageCount < 1) return 1;
-    if (state.locator.engine === 'pdfjs' && typeof state.locator.page === 'number') {
+    if (typeof state.locator.page === 'number') {
         return clamp(Math.round(state.locator.page), 1, pageCount);
     }
     if (state.progress > 0) {
@@ -550,15 +625,14 @@ function storedPDFPage(state: ReaderPosition | null, pageCount: number): number 
     return 1;
 }
 
-function storedPDFZoom(state: ReaderPosition | null): number {
-    if (
-        state?.locator.engine !== 'pdfjs' ||
-        typeof state.locator.zoom !== 'number' ||
-        !Number.isFinite(state.locator.zoom)
-    ) {
-        return 1;
+function loadPDFZoom(): number {
+    try {
+        const zoom = Number(localStorage.getItem(PDF_ZOOM_KEY));
+        if (Number.isFinite(zoom) && zoom >= MIN_ZOOM && zoom <= MAX_ZOOM) return zoom;
+    } catch {
+        // Use the default when browser storage is unavailable.
     }
-    return clamp(state.locator.zoom, MIN_ZOOM, MAX_ZOOM);
+    return 1;
 }
 
 function hasPDFTextSelection(): boolean {

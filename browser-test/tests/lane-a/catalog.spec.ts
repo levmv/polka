@@ -1,4 +1,5 @@
 import { expect, type Locator, test } from '../fixtures';
+import { readerMutationFields } from '../helpers';
 
 async function expectImageLoaded(img: Locator): Promise<void> {
   await expect
@@ -11,7 +12,7 @@ async function expectImageLoaded(img: Locator): Promise<void> {
 test.describe('Catalog', () => {
   test('Tag links select a whole tag while unquoted search stays broad', async ({ page }) => {
     await page.goto('/');
-    const books: Array<{ id: number; tags: string | null }> = [];
+    const books: Array<{ id: string; tags: string | null }> = [];
     const titles = ['With Cover Book', 'No Cover Book'];
     try {
       for (const [i, title] of titles.entries()) {
@@ -35,9 +36,6 @@ test.describe('Catalog', () => {
       await expect(page).toHaveURL((url) => url.searchParams.get('q') === 'tag:"История"');
       await expect(page.locator('.book-card')).toHaveCount(1);
       await expect(page.locator('.book-card')).toContainText(titles[0]);
-      await expectImageLoaded(page.locator('.book-card img'));
-      await page.locator('.book-card').hover();
-      await page.screenshot({ path: 'screenshots/exact-tag-search.png', fullPage: true });
 
       await page.locator('#search-input').fill('tag:Ист');
       await expect(page.locator('.book-card')).toHaveCount(2);
@@ -83,8 +81,6 @@ test.describe('Catalog', () => {
     const noCoverSlot = noCoverCard.locator('.book-cover-slot');
     await expect(noCoverSlot.locator('img.book-cover-image')).toHaveCount(1);
     await expectImageLoaded(noCoverSlot.locator('img.book-cover-image'));
-
-    await page.screenshot({ path: 'screenshots/library.png', fullPage: true });
   });
 
   test('Library empty states distinguish no matches and empty shelves', async ({ page }) => {
@@ -94,8 +90,6 @@ test.describe('Catalog', () => {
     await expect(empty).toBeVisible();
     await expect(empty.locator('h2')).toHaveText('No matches');
     await expect(empty).toContainText('zzzz-no-such-book');
-
-    await page.screenshot({ path: 'screenshots/no-results.png', fullPage: true });
 
     await page.locator('#search-input').fill('');
     await expect(page).not.toHaveURL(/q=zzzz-no-such-book/);
@@ -140,7 +134,7 @@ test.describe('Catalog', () => {
     if (!readableAsset) throw new Error('missing readable asset');
     const positionRes = await page.request.put(
       `/api/reader/assets/${readableAsset.id}/state`,
-      { data: { progress: 0.42, locator: { engine: 'browser-test', fraction: 0.42 } } },
+      { data: { ...await readerMutationFields(page, readableAsset.id), progress: 0.42, locator: {} } },
     );
     expect(positionRes.ok()).toBe(true);
     const resetStatus = await page.request.put(
@@ -206,7 +200,6 @@ test.describe('Catalog', () => {
     await readingStatus.click();
     await expect(page.getByRole('menuitem', { name: 'Unread ✓' })).toBeVisible();
     await expect(page.getByRole('menuitem', { name: 'Dropped' })).toBeVisible();
-    await page.screenshot({ path: 'screenshots/book-reading-status.png', fullPage: true });
     await page.getByRole('menuitem', { name: 'Dropped' }).click();
     await expect(readingStatus).toContainText('Dropped · 42%');
     await expect(readingStatus.locator('[data-reader-progress-track]')).toBeVisible();
@@ -217,8 +210,6 @@ test.describe('Catalog', () => {
     await readingStatus.click();
     await page.getByRole('menuitem', { name: 'Unread' }).click();
     await expect(readingStatus).toContainText('Unread');
-
-    await page.screenshot({ path: 'screenshots/book.png', fullPage: true });
   });
 
   test('Series page shows series tiles that open the series in the library', async ({ page }) => {
@@ -248,8 +239,6 @@ test.describe('Catalog', () => {
       // One of the four volumes is finished, so the badge counts progress.
       await expect(card.locator('.series-card-count')).toHaveText('1/4');
       await expect(card.locator('.series-card-progress-fill')).toBeVisible();
-
-      await page.screenshot({ path: 'screenshots/series.png', fullPage: true });
 
       await page.evaluate(() => document.body.setAttribute('data-spa-marker', 'series'));
       await card.click();
@@ -347,8 +336,6 @@ test.describe('Catalog', () => {
     await expect(firstRow).toBeVisible();
     await expect(firstRow.locator('.table-title-link')).toBeVisible();
     await expect(firstRow.locator('.table-format-badge').first()).toBeVisible();
-
-    await page.screenshot({ path: 'screenshots/table.png', fullPage: true });
 
     await firstRow.locator('.btn-quick-edit').click();
     await expect(page.locator('.modal-backdrop')).toBeVisible();

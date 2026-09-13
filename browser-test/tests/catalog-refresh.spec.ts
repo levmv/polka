@@ -2,7 +2,7 @@ import { Buffer } from 'node:buffer';
 import { queryTerm } from '../../frontend/src/search-query';
 import { epub } from './book-fixtures';
 import { expect, type Page, test } from './fixtures';
-import { importTestBook } from './helpers';
+import { importTestBook, readerMutationFields } from './helpers';
 
 let created: number[] = [];
 test.beforeEach(() => {
@@ -70,7 +70,6 @@ test('Series edits reorder the result and keep selection; unrelated tags patch i
   await saveAndClose(page);
   await expect(rowA).toContainText('Checked');
   expect(reads).toBe(2);
-  await page.screenshot({ path: 'screenshots/catalog-series-refresh.png' });
 });
 
 test('Adding a cover removes the book from a missing-cover search', async ({ page }) => {
@@ -199,7 +198,7 @@ test('Bulk removal invalidates an older Continue reading response', async ({ pag
       expect(
         (
           await page.request.put(`/api/reader/assets/${book.assets[0].id}/state`, {
-            data: { progress: 0.37, locator: { engine: 'browser-test', id: 'catalog' } },
+            data: { ...await readerMutationFields(page, book.assets[0].id), progress: 0.37, locator: {} },
           })
         ).ok(),
       ).toBe(true);

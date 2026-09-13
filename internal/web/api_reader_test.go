@@ -1,10 +1,10 @@
 package web
 
 import (
-	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -31,7 +31,7 @@ func TestAPIReaderStateLifecycle(t *testing.T) {
 	if err := json.UnmarshalRead(w.Body, &state); err != nil {
 		t.Fatalf("decode default state: %v", err)
 	}
-	if state.AssetID != 1 || state.BookID != 1 || state.Progress != 0 || state.Locator.String() != "{}" || state.LastReadAt != 0 {
+	if state.AssetID != 1 || state.BookID != 1 || state.Progress != 0 || !state.Locator.IsZero() || state.UpdatedAt != 0 {
 		t.Fatalf("default state = %+v", state)
 	}
 	if state.ReadingStatus.Status != db.ReadingStatusUnread {
@@ -47,7 +47,7 @@ func TestAPIReaderStateLifecycle(t *testing.T) {
 	if err := json.UnmarshalRead(w.Body, &state); err != nil {
 		t.Fatalf("decode touched state: %v", err)
 	}
-	if state.LastReadAt == 0 || state.Progress != 0 || state.Locator.String() != "{}" {
+	if state.UpdatedAt == 0 || state.Revision != 0 || state.Progress != 0 || !state.Locator.IsZero() {
 		t.Fatalf("touched state = %+v", state)
 	}
 	if !state.StatusChanged || state.ReadingStatus.Status != db.ReadingStatusReading {
@@ -55,9 +55,11 @@ func TestAPIReaderStateLifecycle(t *testing.T) {
 	}
 
 	progress := 0.5
-	locator := jsontext.Value(`{"engine":"foliate","cfi":"epubcfi(/6/4)","fraction":0.5}`)
+	locator := &db.Locator{CFI: "epubcfi(/6/4)"}
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodPut, "/api/reader/assets/1/state", readerStateRequest{
+		Revision: new(int64(0)),
+		DeviceID: "urn:test:reader", DeviceName: "Test reader",
 		Progress: &progress,
 		Locator:  locator,
 	}))
@@ -68,7 +70,7 @@ func TestAPIReaderStateLifecycle(t *testing.T) {
 	if err := json.UnmarshalRead(w.Body, &state); err != nil {
 		t.Fatalf("decode saved state: %v", err)
 	}
-	if state.Progress != progress || state.Locator.String() != `{"cfi":"epubcfi(/6/4)","engine":"foliate","fraction":0.5}` || state.LastReadAt == 0 {
+	if state.Progress != progress || !state.Locator.Equal(*locator) || state.UpdatedAt == 0 {
 		t.Fatalf("saved state = %+v", state)
 	}
 	if state.StatusChanged || state.ReadingStatus.Status != db.ReadingStatusReading {
@@ -84,7 +86,7 @@ func TestAPIReaderStateLifecycle(t *testing.T) {
 	if err := json.UnmarshalRead(w.Body, &state); err != nil {
 		t.Fatalf("decode other-user state: %v", err)
 	}
-	if state.Progress != 0 || state.Locator.String() != "{}" || state.LastReadAt != 0 {
+	if state.Progress != 0 || !state.Locator.IsZero() || state.UpdatedAt != 0 {
 		t.Fatalf("reader state leaked across users: %+v", state)
 	}
 	if state.ReadingStatus.Status != db.ReadingStatusUnread {
@@ -92,7 +94,7 @@ func TestAPIReaderStateLifecycle(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodDelete, "/api/reader/assets/1/state", nil))
+	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodDelete, "/api/reader/assets/1/state", map[string]int64{"revision": 1}))
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("reset status = %d, want %d; body: %s", w.Code, http.StatusNoContent, w.Body.String())
 	}
@@ -105,7 +107,7 @@ func TestAPIReaderStateLifecycle(t *testing.T) {
 	if err := json.UnmarshalRead(w.Body, &state); err != nil {
 		t.Fatalf("decode state after reset: %v", err)
 	}
-	if state.Progress != 0 || state.Locator.String() != "{}" || state.LastReadAt != 0 || state.UpdatedAt != 0 {
+	if state.Progress != 0 || !state.Locator.IsZero() || state.Revision != 2 || state.UpdatedAt != 0 {
 		t.Fatalf("state after reset = %+v", state)
 	}
 	if state.ReadingStatus.Status != db.ReadingStatusReading {
@@ -128,8 +130,10 @@ func TestAPIReaderAutoFinishCanBeUndone(t *testing.T) {
 	progress := 0.995
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, jsonRequest(t, s, user.ID, http.MethodPut, "/api/reader/assets/1/state", readerStateRequest{
+		Revision: new(int64(0)),
+		DeviceID: "urn:test:reader", DeviceName: "Test reader",
 		Progress: &progress,
-		Locator:  jsontext.Value(`{"engine":"foliate","fraction":0.995}`),
+		Locator:  &db.Locator{},
 	}))
 	if w.Code != http.StatusOK {
 		t.Fatalf("finish status = %d: %s", w.Code, w.Body.String())
@@ -170,9 +174,11 @@ func TestAPIReaderStateErrors(t *testing.T) {
 	handler := testRoutes(t, s)
 
 	progress := 1.5
-	locator := jsontext.Value(`{"engine":"test"}`)
+	locator := &db.Locator{}
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, jsonRequest(t, s, user.ID, http.MethodPut, "/api/reader/assets/1/state", readerStateRequest{
+		Revision: new(int64(0)),
+		DeviceID: "urn:test:reader", DeviceName: "Test reader",
 		Progress: &progress,
 		Locator:  locator,
 	}))
@@ -183,8 +189,10 @@ func TestAPIReaderStateErrors(t *testing.T) {
 	progress = 0.5
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, jsonRequest(t, s, user.ID, http.MethodPut, "/api/reader/assets/1/state", readerStateRequest{
+		Revision: new(int64(0)),
+		DeviceID: "urn:test:reader", DeviceName: "Test reader",
 		Progress: &progress,
-		Locator:  jsontext.Value(`"bad"`),
+		Locator:  &db.Locator{Page: -1},
 	}))
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("invalid locator status = %d, want %d", w.Code, http.StatusBadRequest)
@@ -234,7 +242,7 @@ func TestAPIAnnotationsLifecycle(t *testing.T) {
 	}
 
 	req := annotationRequest{
-		CFI:           "epubcfi(/6/2!/4/2)",
+		Locator:       db.Locator{CFI: "epubcfi(/6/2!/4/2)", Path: "OPS/chapter.xhtml"},
 		Quote:         "highlighted text",
 		ContextBefore: "before",
 		ContextAfter:  "after",
@@ -248,20 +256,21 @@ func TestAPIAnnotationsLifecycle(t *testing.T) {
 	if err := json.UnmarshalRead(w.Body, &created); err != nil {
 		t.Fatalf("decode created annotation: %v", err)
 	}
-	if created.ID <= 0 || created.AssetID != 1 || created.Kind != db.AnnotationKindHighlight || created.Color != db.AnnotationColorYellow || created.Quote != req.Quote {
+	if created.ID <= 0 || created.AssetID != 1 || created.Locator.Path != req.Locator.Path || created.Color != db.AnnotationColorYellow || created.Quote != req.Quote {
 		t.Fatalf("created annotation = %+v", created)
 	}
 
-	var updated AnnotationDTO
+	updated := created
 	for _, edit := range []struct {
 		name        string
 		patch       annotationUpdateRequest
 		note, color string
 	}{
-		{"set note and color", annotationUpdateRequest{Note: new("  my note  "), Color: new("blue")}, "my note", "blue"},
-		{"color preserves note", annotationUpdateRequest{Color: new("purple")}, "my note", "purple"},
+		{"set note and color", annotationUpdateRequest{Note: new("  my note  "), Color: new("blue")}, "  my note  ", "blue"},
+		{"color preserves note", annotationUpdateRequest{Color: new("purple")}, "  my note  ", "purple"},
 		{"clear note preserves color", annotationUpdateRequest{Note: new("")}, "", "purple"},
 	} {
+		edit.patch.Revision = updated.Revision
 		w = httptest.NewRecorder()
 		handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodPatch, "/api/reader/assets/1/annotations/"+strconv.FormatInt(created.ID, 10), edit.patch))
 		if w.Code != http.StatusOK {
@@ -271,7 +280,7 @@ func TestAPIAnnotationsLifecycle(t *testing.T) {
 		if err := json.UnmarshalRead(w.Body, &updated); err != nil {
 			t.Fatal(err)
 		}
-		if updated.Note != edit.note || updated.Color != edit.color || updated.ID != created.ID || updated.CFI != created.CFI || updated.Quote != created.Quote || updated.CreatedAt != created.CreatedAt {
+		if updated.Note != edit.note || updated.Color != edit.color || updated.ID != created.ID || updated.Locator.CFI != created.Locator.CFI || updated.Quote != created.Quote || updated.CreatedAt != created.CreatedAt {
 			t.Fatalf("%s overwrote annotation content: %+v", edit.name, updated)
 		}
 	}
@@ -280,12 +289,13 @@ func TestAPIAnnotationsLifecycle(t *testing.T) {
 		{Note: new(strings.Repeat("я", db.MaxAnnotationNoteLength+1)), Color: new("green")},
 		{},
 	} {
+		patch.Revision = updated.Revision
 		w = httptest.NewRecorder()
 		handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodPatch, "/api/reader/assets/1/annotations/"+strconv.FormatInt(created.ID, 10), patch))
 		if w.Code != http.StatusBadRequest {
 			t.Fatalf("invalid update: %d %s", w.Code, w.Body.String())
 		}
-		if list := listFor(alice.ID); len(list) != 1 || list[0] != updated {
+		if list := listFor(alice.ID); len(list) != 1 || !reflect.DeepEqual(list[0], updated) {
 			t.Fatalf("invalid update overwrote annotation: %+v", list)
 		}
 	}
@@ -295,22 +305,22 @@ func TestAPIAnnotationsLifecycle(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, bob.ID, http.MethodPatch, "/api/reader/assets/1/annotations/"+strconv.FormatInt(created.ID, 10), annotationUpdateRequest{Note: new("stolen")}))
+	handler.ServeHTTP(w, jsonRequest(t, s, bob.ID, http.MethodPatch, "/api/reader/assets/1/annotations/"+strconv.FormatInt(created.ID, 10), annotationUpdateRequest{Revision: updated.Revision, Note: new("stolen")}))
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("bob update status = %d, want %d", w.Code, http.StatusNotFound)
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, bob.ID, http.MethodDelete, "/api/reader/assets/1/annotations/"+strconv.FormatInt(created.ID, 10), nil))
+	handler.ServeHTTP(w, jsonRequest(t, s, bob.ID, http.MethodDelete, "/api/reader/assets/1/annotations/"+strconv.FormatInt(created.ID, 10), map[string]any{"revision": updated.Revision}))
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("bob delete status = %d, want %d", w.Code, http.StatusNotFound)
 	}
-	if list := listFor(alice.ID); len(list) != 1 || list[0] != updated {
+	if list := listFor(alice.ID); len(list) != 1 || !reflect.DeepEqual(list[0], updated) {
 		t.Fatalf("another user changed the annotation: %+v; want %+v", list, updated)
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodDelete, "/api/reader/assets/1/annotations/"+strconv.FormatInt(created.ID, 10), nil))
+	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodDelete, "/api/reader/assets/1/annotations/"+strconv.FormatInt(created.ID, 10), map[string]any{"revision": updated.Revision}))
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("delete status = %d, want %d; body: %s", w.Code, http.StatusNoContent, w.Body.String())
 	}
@@ -319,7 +329,7 @@ func TestAPIAnnotationsLifecycle(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodPost, "/api/reader/assets/1/annotations", annotationRequest{CFI: "", Quote: "x"}))
+	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodPost, "/api/reader/assets/1/annotations", annotationRequest{Quote: "x"}))
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("invalid create status = %d, want %d", w.Code, http.StatusBadRequest)
 	}
@@ -345,7 +355,7 @@ func TestAPIBookAnnotationsIncludeAllFilesAndRespectAccess(t *testing.T) {
 		{bob.ID, 1, "Another user quote"},
 	} {
 		if _, err := database.CreateAnnotation(t.Context(), fixture.userID, fixture.assetID, db.AnnotationCreate{
-			CFI: "epubcfi(/6/2)", Quote: fixture.quote, Note: "Personal note", Color: "blue",
+			Locator: db.Locator{CFI: "epubcfi(/6/2)"}, Quote: fixture.quote, Note: "Personal note", Color: "blue",
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -398,8 +408,8 @@ func TestAPIContinueReading(t *testing.T) {
 
 	user := mustUser(t, database, "reader", db.RoleMember)
 	mustExec(t, database, `
-			INSERT INTO user_asset_state (user_id, asset_id, progress, locator, last_read_at, updated_at)
-			VALUES (?, 1, 0.42, '{"engine":"foliate","cfi":"epubcfi(/6/2)","fraction":0.42}', 100, 100);
+			INSERT INTO user_asset_state (user_id, asset_id, progress, locator, updated_at)
+			VALUES (?, 1, 0.42, '{"cfi":"epubcfi(/6/2)"}', 100);
 			INSERT INTO user_book_reading_state (user_id, book_id, status, updated_at)
 			VALUES (?, 1, 'reading', 100)
 		`, user.ID, user.ID)

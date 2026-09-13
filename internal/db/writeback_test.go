@@ -142,19 +142,18 @@ func TestMetadataWritebackSnapshotAndAttempt(t *testing.T) {
 	}
 
 	attempt := MetadataWritebackAttempt{
-		AssetID:      1,
-		MetadataRev:  4,
-		StoragePath:  "A/Book/as1.epub",
-		TempPath:     "A/Book/.writeback-as1-rev4.tmp",
-		SHA256:       newHash,
-		Size:         456,
-		KOReaderHash: "kohash",
+		AssetID:     1,
+		MetadataRev: 4,
+		StoragePath: "A/Book/as1.epub",
+		TempPath:    "A/Book/.writeback-as1-rev4.tmp",
+		SHA256:      newHash,
+		Size:        456,
 	}
 	if err := UpsertMetadataWritebackAttempt(database.Write(t.Context()), attempt); err != nil {
 		t.Fatalf("UpsertMetadataWritebackAttempt: %v", err)
 	}
 	if err := database.Transact(context.Background(), func(tx *Tx) error {
-		return MarkMetadataWritebackSuccess(tx, 1, "A/Book/as1.epub", newHash, 456, "kohash", 4)
+		return MarkMetadataWritebackSuccess(tx, 1, "A/Book/as1.epub", newHash, 456, 4)
 	}); err != nil {
 		t.Fatalf("MarkMetadataWritebackSuccess: %v", err)
 	}
@@ -164,12 +163,12 @@ func TestMetadataWritebackSnapshotAndAttempt(t *testing.T) {
 	var currentSize, writebackRev int64
 	var writebackError sql.NullString
 	if err := database.Read(t.Context()).QueryRow(`
-		SELECT current_sha256, current_size, koreader_hash, writeback_rev, writeback_error
+		SELECT current_sha256, current_size, COALESCE(koreader_hash, ''), writeback_rev, writeback_error
 		FROM assets WHERE id = 1
 	`).Scan(&currentHash, &currentSize, &koHash, &writebackRev, &writebackError); err != nil {
 		t.Fatalf("query success asset: %v", err)
 	}
-	if !bytes.Equal(currentHash, newHash) || currentSize != 456 || koHash != "kohash" || writebackRev != 4 || writebackError.Valid {
+	if !bytes.Equal(currentHash, newHash) || currentSize != 456 || koHash != "" || writebackRev != 4 || writebackError.Valid {
 		t.Fatalf("success asset = %x/%d/%q/%d/%+v", currentHash, currentSize, koHash, writebackRev, writebackError)
 	}
 	var pending int

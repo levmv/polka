@@ -94,6 +94,7 @@ export interface FoliateViewElement extends HTMLElement {
     prev: () => Promise<void>;
     next: () => Promise<void>;
     getCFI?: (index: number, range: Range) => string;
+    resolveCFI: (cfi: string) => { index: number };
     search?: (options: {
         query: string;
         matchCase?: boolean;
@@ -111,6 +112,7 @@ export interface FoliateViewElement extends HTMLElement {
 
 export interface FoliateRelocateDetail {
     cfi?: string;
+    range?: Range;
     fraction?: number;
     location?: {
         current?: number;

@@ -4,6 +4,7 @@ import type { ReaderPreferences } from '../types';
 import { createReadingActivity } from './activity';
 import { wireAnnotations } from './annotations';
 import { revealChrome, showReaderError } from './chrome';
+import { foliateAnnotationSurface } from './foliate-annotations';
 import { wireEPUBDocumentControls, wireReaderControls } from './foliate-controls';
 import {
     applyFoliateDisplay,
@@ -21,6 +22,8 @@ import {
     waitForRendererContents,
     wireCurrentFoliateDocuments,
 } from './foliate-engine';
+import { wireFoliateSelection } from './foliate-selection';
+import { wireReaderLifecycle } from './lifecycle';
 import {
     DEFAULT_READER_PREFERENCES,
     normalizeReaderPreferences,
@@ -29,7 +32,6 @@ import {
 import { restoreReaderPosition, wirePositionSaving } from './progress';
 import { handleReadingStatusChange } from './reading-status';
 import { wireReaderSearch } from './search';
-import { wireReaderSelection } from './selection';
 import { createReaderStateSaver } from './state-saver';
 import { wireReaderTOC } from './toc';
 
@@ -55,8 +57,9 @@ async function initFoliateReader(
     const readURL = page.dataset.readerUrl;
     if (!stage || !readURL) return;
     const fallbackURL = page.dataset.readerFallbackUrl || '';
-    const stateSaver = createReaderStateSaver(page, assetId, {
+    const stateSaver = createReaderStateSaver(assetId, {
         onStateSaved: handleReadingStatusChange,
+        restorePosition: (state) => positionSaver.restorePosition(state),
     });
     const activity = createReadingActivity(assetId);
 
@@ -86,19 +89,24 @@ async function initFoliateReader(
         fallbackURL,
     );
     const positionSaver = wirePositionSaving(page, view, stateSaver, { savingEnabled: false });
-    const onNavigate = () => {
-        positionSaver.markUserNavigation();
-        activity.recordAction();
-    };
+    const lifecycle = wireReaderLifecycle(page, stage, stateSaver, activity, {
+        onNavigate: positionSaver.markUserNavigation,
+        onResume: () => void annotations.load(),
+    });
+    const onNavigate = lifecycle.markUserNavigation;
+    view.addEventListener('link', onNavigate);
+    view.addEventListener('load', (event) => {
+        lifecycle.observeDocument((event as CustomEvent<FoliateLoadDetail>).detail.doc);
+    });
     const search = wireReaderSearch(page, view, {
         onNavigate,
     });
-    let selectionController: ReturnType<typeof wireReaderSelection> | undefined;
-    const annotations = wireAnnotations(page, assetId, view, {
+    let selectionController: ReturnType<typeof wireFoliateSelection> | undefined;
+    const annotations = wireAnnotations(page, assetId, foliateAnnotationSurface(view), {
         onNavigate,
         onShowActions: (target) => selectionController?.showAnnotationActions(target),
     });
-    selectionController = wireReaderSelection(page, view, {
+    selectionController = wireFoliateSelection(page, view, {
         onHighlightSelection: annotations.createHighlight,
         onNoteSelection: (payload) => annotations.createHighlight(payload, true),
         onEditAnnotation: annotations.editNote,
@@ -107,7 +115,7 @@ async function initFoliateReader(
         onSearchSelection: search.openWithQuery,
     });
     applyFoliateDisplay(view, preferences);
-    await annotations.hydrate();
+    await annotations.load();
     wireReaderControls(page, stage, view, {
         onNavigate,
         beforeClose: annotations.savePendingEdits,
@@ -117,6 +125,7 @@ async function initFoliateReader(
     });
 
     const state = await statePromise;
+    stateSaver.initialize(state);
     // FB2 mounts its first document more reliably in scrolled flow. Apply the
     // user's saved preference immediately after Foliate finishes init.
     if (format === 'fb2') {
@@ -125,28 +134,24 @@ async function initFoliateReader(
     const annotationID = Number(
         new URLSearchParams(window.location.hash.slice(1)).get('annotation'),
     );
-    await restoreReaderPosition(view, state, annotations.location(annotationID));
+    await restoreReaderPosition(view, state, annotations.location(annotationID)?.cfi);
     positionSaver.enableSaving();
     void stateSaver.flush();
     wireReaderPreferences(page, view, preferences);
     await waitForRendererContents(view);
     wireCurrentFoliateDocuments(view, (doc) => {
-        activity.observeScrolling(doc);
+        lifecycle.observeDocument(doc);
         wireEPUBDocumentControls(page, view, doc, {
             onNavigate,
         });
     });
-    view.addEventListener('load', (event) => {
-        activity.observeScrolling((event as CustomEvent<FoliateLoadDetail>).detail.doc);
-    });
-    activity.observeScrolling(stage);
 
     loading?.remove();
     page.classList.add('reader-ready');
     stage.dataset.readerReady = 'true';
     stage.focus({ preventScroll: true });
     revealChrome(page);
-    activity.start();
+    lifecycle.start();
     touchReaderState(assetId)
         .then(handleReadingStatusChange)
         .catch((e) => {

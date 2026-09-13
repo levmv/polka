@@ -108,7 +108,7 @@ func testRoutes(t *testing.T, s *Server) http.Handler {
 	if err != nil {
 		t.Fatalf("routes: %v", err)
 	}
-	return s.authMiddleware(mux)
+	return opdsProgressionMiddleware(s.authMiddleware(mux))
 }
 
 func addSessionCookie(t *testing.T, s *Server, req *http.Request, userID int64) {

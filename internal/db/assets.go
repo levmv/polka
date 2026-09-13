@@ -53,6 +53,18 @@ type AssetWithAuthorRow struct {
 	AuthorSortName   string
 }
 
+func requireAsset(queryer Queryer, assetID int64) error {
+	var id int64
+	err := queryer.QueryRow("SELECT id FROM assets WHERE id = ?", assetID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrAssetNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("check asset: %w", err)
+	}
+	return nil
+}
+
 // RecordAssetRestore keeps write-back acknowledgement only when restoring the
 // exact bytes it described. Original import identity is never changed.
 func RecordAssetRestore(database Execer, assetID int64, sha256 []byte, size int64) error {
@@ -60,9 +72,10 @@ func RecordAssetRestore(database Execer, assetID int64, sha256 []byte, size int6
 		UPDATE assets
 		SET writeback_rev = CASE WHEN current_sha256 = ? THEN writeback_rev ELSE 0 END,
 		    writeback_error = NULL,
-		    current_sha256 = ?, current_size = ?, koreader_hash = NULL, updated_at = unixepoch()
+		    koreader_hash = CASE WHEN current_sha256 = ? THEN koreader_hash ELSE NULL END,
+		    current_sha256 = ?, current_size = ?, updated_at = unixepoch()
 		WHERE id = ?
-	`, sha256, sha256, size, assetID)
+	`, sha256, sha256, sha256, size, assetID)
 	return err
 }
 

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -137,7 +138,7 @@ func readerFallbackURL(assetID int64, kind format.Format, currentSHA256 []byte) 
 	if kind != format.FormatEPUB || !converter.CanConvert(kind, converter.TargetKEPUB) {
 		return ""
 	}
-	return versionedURL("/download/"+strconv.FormatInt(assetID, 10)+"/as/kepub", conversionCacheVersion(currentSHA256))
+	return pinnedReaderURL(versionedURL("/download/"+strconv.FormatInt(assetID, 10)+"/as/kepub", conversionCacheVersion(currentSHA256)), currentSHA256)
 }
 
 func readerAssetURL(assetID int64, kind format.Format, currentSHA256 []byte) string {
@@ -145,7 +146,15 @@ func readerAssetURL(assetID int64, kind format.Format, currentSHA256 []byte) str
 	if kind == format.FormatCBR || kind == format.FormatCB7 {
 		version = conversionCacheVersion(currentSHA256)
 	}
-	return versionedURL("/read/assets/"+strconv.FormatInt(assetID, 10), version)
+	return pinnedReaderURL(versionedURL("/read/assets/"+strconv.FormatInt(assetID, 10), version), currentSHA256)
+}
+
+func pinnedReaderURL(base string, hash []byte) string {
+	separator := "?"
+	if strings.Contains(base, "?") {
+		separator = "&"
+	}
+	return base + separator + "source=" + hex.EncodeToString(hash)
 }
 
 const assetCacheVersionBytes = 8
@@ -227,7 +236,11 @@ func (s *Server) handleReadAsset(w http.ResponseWriter, r *http.Request) {
 		// Foliate reads ZIP comic archives. Keep the original archive asset as the
 		// source of truth and normalize a bounded temporary CBZ for this read.
 		setVersionedConversionCacheControl(w, r, asset.CurrentSHA256)
-		http.Redirect(w, r, versionedURL("/download/"+strconv.FormatInt(assetID, 10)+"/as/cbz", conversionCacheVersion(asset.CurrentSHA256)), http.StatusTemporaryRedirect)
+		redirectURL := versionedURL("/download/"+strconv.FormatInt(assetID, 10)+"/as/cbz", conversionCacheVersion(asset.CurrentSHA256))
+		if source := r.URL.Query().Get("source"); source != "" {
+			redirectURL += "&source=" + url.QueryEscape(source)
+		}
+		http.Redirect(w, r, redirectURL, http.StatusTemporaryRedirect)
 		return
 	}
 
@@ -240,19 +253,28 @@ func (s *Server) handleReadAsset(w http.ResponseWriter, r *http.Request) {
 		s.serveFB2ReadAsset(w, r, asset, fullPath)
 		return
 	}
-	if _, err := os.Stat(fullPath); err != nil {
+	f, err := os.Open(fullPath)
+	if err != nil {
 		if os.IsNotExist(err) {
-			http.Error(w, "File not found on disk", http.StatusNotFound)
-			return
+			http.NotFound(w, r)
+		} else {
+			serverError(w, r, err)
 		}
+		return
+	}
+	defer f.Close()
+	if !s.verifyReaderContent(w, r, f, asset.CurrentSHA256) {
+		return
+	}
+	info, err := f.Stat()
+	if err != nil {
 		serverError(w, r, err)
 		return
 	}
-
 	setVersionedAssetCacheControl(w, r, asset.CurrentSHA256)
 	w.Header().Set("Content-Type", format.MediaTypeForExtension(asset.Extension))
 	w.Header().Set("Content-Disposition", fileContentDisposition("inline", asset.Filename))
-	http.ServeFile(w, r, fullPath)
+	http.ServeContent(w, r, asset.Filename, info.ModTime(), f)
 }
 
 func (s *Server) serveFB2ReadAsset(w http.ResponseWriter, r *http.Request, asset assetFileRow, fullPath string) {
@@ -265,6 +287,9 @@ func (s *Server) serveFB2ReadAsset(w http.ResponseWriter, r *http.Request, asset
 		return
 	}
 	defer f.Close()
+	if !s.verifyReaderContent(w, r, f, asset.CurrentSHA256) {
+		return
+	}
 
 	info, err := f.Stat()
 	if err != nil {

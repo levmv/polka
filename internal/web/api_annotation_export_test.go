@@ -1,6 +1,8 @@
 package web
 
 import (
+	"bytes"
+	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,6 +11,120 @@ import (
 
 	"github.com/levmv/polka/internal/db"
 )
+
+func TestAPIWebAnnotationExportPreservesTextIdentityAndScope(t *testing.T) {
+	database, dir := setupTestDB(t)
+	defer database.Close()
+	alice := mustUser(t, database, "annotations-alice", db.RoleReader)
+	bob := mustUser(t, database, "annotations-bob", db.RoleReader)
+	input := db.AnnotationCreate{Locator: db.Locator{CFI: "epubcfi(/6/2!/4/2)", Path: "OPS/chapter.xhtml"},
+		Quote: strings.Repeat("Я𐐀\n", 1500), ContextBefore: " before\n", ContextAfter: "\n after ", Note: "  A personal note\n"}
+	annotation, err := database.CreateAnnotation(t.Context(), alice.ID, 1, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.Quote = "BOB PRIVATE TEXT"
+	if _, err := database.CreateAnnotation(t.Context(), bob.ID, 1, input); err != nil {
+		t.Fatal(err)
+	}
+	s := newTestServer(database, dir)
+	handler := testRoutes(t, s)
+	download := func(userID int64) *httptest.ResponseRecorder {
+		t.Helper()
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, jsonRequest(t, s, userID, http.MethodGet, "/api/books/1/annotations/export?format=jsonld", nil))
+		return w
+	}
+	w := download(alice.ID)
+	if w.Code != http.StatusOK || w.Header().Get("Content-Type") != `application/ld+json; profile="http://www.w3.org/ns/anno.jsonld"` {
+		t.Fatalf("Web Annotation export: %d %s", w.Code, w.Body.String())
+	}
+	libraryID, err := db.LibraryIdentity(database.Read(t.Context()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var collection struct {
+		ID    string `json:"id"`
+		Type  string `json:"type"`
+		Total int    `json:"total"`
+		First *struct {
+			ID    string           `json:"id"`
+			Items []map[string]any `json:"items"`
+		} `json:"first"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &collection); err != nil {
+		t.Fatal(err)
+	}
+	page := collection.First
+	if collection.Type != "AnnotationCollection" || collection.ID == "" || collection.Total != 1 || page == nil || page.ID == "" || len(page.Items) != 1 || page.Items[0]["id"] != db.AnnotationURI(libraryID, annotation.ID) {
+		t.Fatalf("annotation page: %+v", page)
+	}
+	target := page.Items[0]["target"].(map[string]any)
+	selector := target["selector"].(map[string]any)
+	if selector["type"] != "TextQuoteSelector" || selector["exact"] != annotation.Quote || selector["prefix"] != annotation.ContextBefore || selector["suffix"] != annotation.ContextAfter {
+		t.Fatal("export truncated or normalized source quote")
+	}
+	note := page.Items[0]["body"].(map[string]any)
+	if note["type"] != "TextualBody" || note["value"] != annotation.Note {
+		t.Fatal("export changed note")
+	}
+	source := target["source"].(map[string]any)
+	if source["id"] != db.ResourceURI(db.PublicationURI(libraryID, 1), annotation.Locator.Path) || page.Items[0]["polka:locator"].(map[string]any)["cfi"] != annotation.Locator.CFI {
+		t.Fatalf("resource scope: %+v", source)
+	}
+	if bytes.Contains(w.Body.Bytes(), []byte("BOB PRIVATE TEXT")) || !bytes.Equal(w.Body.Bytes(), download(alice.ID).Body.Bytes()) {
+		t.Fatal("export mixed accounts or changed annotation identities")
+	}
+	if err := database.DeleteAnnotation(t.Context(), alice.ID, 1, annotation.ID, annotation.Revision); err != nil {
+		t.Fatal(err)
+	}
+	w = download(alice.ID)
+	var empty struct {
+		Total int `json:"total"`
+		First any `json:"first"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &empty); err != nil {
+		t.Fatal(err)
+	}
+	if w.Code != http.StatusOK || empty.Total != 0 || empty.First != nil || bytes.Contains(w.Body.Bytes(), []byte("A personal note")) {
+		t.Fatal("empty collection retained a page or deleted note")
+	}
+	if _, err := database.UpdateUserAccess(t.Context(), alice.ID, db.UserAccess{Role: db.RoleReader, ContentScope: db.ContentScopeShelves}); err != nil {
+		t.Fatal(err)
+	}
+	if w := download(alice.ID); w.Code != http.StatusNotFound {
+		t.Fatalf("export bypassed revoked access: %d", w.Code)
+	}
+}
+
+func TestPDFAnnotationExportPreservesPageAndRegions(t *testing.T) {
+	annotation := db.Annotation{ID: 1, AssetID: 2, Locator: db.Locator{Page: 42, Rects: []db.Rect{
+		{X: 72, Y: 140, Width: 200, Height: 12}, {X: 72, Y: 124, Width: 90, Height: 12},
+	}}, Quote: "Across two lines", Note: "A note", Color: "blue", Revision: 1}
+	encoded, err := json.Marshal(webAnnotation("test-library", annotation))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var exported struct {
+		Locator db.Locator `json:"polka:locator"`
+		Target  struct {
+			Selector struct {
+				Type      string `json:"type"`
+				Value     string `json:"value"`
+				RefinedBy struct {
+					Exact string `json:"exact"`
+				} `json:"refinedBy"`
+			} `json:"selector"`
+		} `json:"target"`
+	}
+	if err := json.Unmarshal(encoded, &exported); err != nil {
+		t.Fatal(err)
+	}
+	if !exported.Locator.Equal(annotation.Locator) || exported.Target.Selector.Type != "FragmentSelector" ||
+		exported.Target.Selector.Value != "page=42" || exported.Target.Selector.RefinedBy.Exact != annotation.Quote {
+		t.Fatalf("PDF location lost in export: %s", encoded)
+	}
+}
 
 func TestAPIAnnotationExportIsStandaloneEscapedAndUserScoped(t *testing.T) {
 	database, dir := setupTestDB(t)
@@ -23,9 +139,9 @@ func TestAPIAnnotationExportIsStandaloneEscapedAndUserScoped(t *testing.T) {
 	`)
 
 	ann, err := database.CreateAnnotation(t.Context(), alice.ID, 1, db.AnnotationCreate{
-		CFI:   `epubcfi(/6/2[<bad>])`,
-		Quote: `Quoted </mark><script>alert("quote")</script>`,
-		Note:  `<img src=x onerror="alert('note')">`,
+		Locator: db.Locator{CFI: "epubcfi(/6/2[<bad>])"},
+		Quote:   `Quoted </mark><script>alert("quote")</script>`,
+		Note:    `<img src=x onerror="alert('note')">`,
 	})
 	if err != nil {
 		t.Fatalf("create annotation: %v", err)

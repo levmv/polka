@@ -85,3 +85,13 @@ export async function deleteTestUserAsAdmin(page: Page, user: TestUser): Promise
     throw new Error(`delete user status ${res.status()}: ${await res.text()}`);
   }
 }
+export async function readerMutationFields(page: Page, assetId: number) {
+  const response = await page.request.get(`/api/reader/assets/${assetId}/state`);
+  if (!response.ok()) throw new Error(`reader state: ${response.status()}`);
+  const state = await response.json();
+  return {
+    revision: state.revision,
+    device_id: 'urn:polka:browser-test',
+    device_name: 'Browser test',
+  };
+}

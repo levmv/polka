@@ -32,6 +32,7 @@ const (
 	ReadingStatusSourceManual    ReadingStatusSource = "manual"
 	ReadingStatusSourceWebReader ReadingStatusSource = "web_reader"
 	ReadingStatusSourceKOSync    ReadingStatusSource = "kosync"
+	ReadingStatusSourceOPDS      ReadingStatusSource = "opds"
 )
 
 type ReadingStatusState struct {

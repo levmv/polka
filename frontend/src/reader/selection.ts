@@ -1,11 +1,9 @@
 import { copyText } from '../clipboard';
 import { clamp } from '../dom';
 import { iconElement } from '../icons';
-import type {
-    FoliateLoadDetail,
-    FoliateRendererRelocateDetail,
-    FoliateViewElement,
-} from './foliate-engine';
+import type { Locator } from '../types';
+import type { AnnotationAnchor } from './annotation-surface';
+import { rangeContext } from './location';
 
 const TOOLBAR_GAP = 8;
 const TOOLBAR_MARGIN = 8;
@@ -13,54 +11,56 @@ const TOOLBAR_MARGIN = 8;
 // until one refresh sees the range; a successful refresh cancels the rest.
 const TOUCH_SELECTION_SETTLE_DELAYS = [100, 300, 700];
 const TOUCH_SELECTION_FALLBACK_DELAYS = [250, 600, 1000];
-const QUOTE_MAX_LENGTH = 1200;
 const CONTEXT_MAX_LENGTH = 500;
 
 interface ActiveSelection {
     doc: Document;
     index?: number;
-    range: Range;
+    anchor: AnnotationAnchor;
     text: string;
     payload?: ReaderSelectionPayload;
     annotation?: ReaderAnnotationReference;
 }
 
 export interface ReaderSelectionPayload {
-    cfi: string;
+    locator: Locator;
     quote: string;
     context_before: string;
     context_after: string;
 }
 
 export interface ReaderAnnotationReference {
-    cfi: string;
+    id: number;
+    locator: Locator;
     hasNote: boolean;
 }
 
 export interface ReaderAnnotationActionTarget extends ReaderAnnotationReference {
-    doc: Document;
-    index?: number;
-    range: Range;
+    anchor: AnnotationAnchor;
     quote: string;
 }
 
 export interface ReaderSelectionOptions {
+    locate(range: Range, index?: number): Locator | undefined;
+    containsRange?: (range: Range) => boolean;
+    contextRoot?: Node;
     onSearchSelection?: (text: string) => void;
     onHighlightSelection?: (payload: ReaderSelectionPayload) => void;
     onNoteSelection?: (payload: ReaderSelectionPayload) => void;
-    onEditAnnotation?: (cfi: string) => void;
-    onDeleteAnnotation?: (cfi: string) => void;
+    onEditAnnotation?: (id: number) => void;
+    onDeleteAnnotation?: (id: number) => void;
     annotationAt?: (doc: Document, range: Range) => ReaderAnnotationReference | undefined;
 }
 
 export interface ReaderSelectionController {
     showAnnotationActions(target: ReaderAnnotationActionTarget): void;
+    attachDocument(doc: Document, index?: number): void;
+    relocate(selection?: { doc: Document; index?: number }, keepAnnotation?: boolean): void;
 }
 
 export function wireReaderSelection(
     page: HTMLElement,
-    view: FoliateViewElement,
-    options: ReaderSelectionOptions = {},
+    options: ReaderSelectionOptions,
 ): ReaderSelectionController {
     const wiredDocuments = new WeakSet<Document>();
     const { toolbar, highlightButton, noteButton, deleteButton, copyButton, searchButton } =
@@ -114,15 +114,19 @@ export function wireReaderSelection(
             return;
         }
         const range = selection.getRangeAt(0).cloneRange();
+        if (options.containsRange && !options.containsRange(range)) {
+            clearToolbar();
+            return;
+        }
         clearTouchRefreshes();
         const annotation = options.annotationAt?.(doc, range);
         active = {
             doc,
             index,
-            range,
+            anchor: { doc, getBoundingClientRect: () => range.getBoundingClientRect() },
             text,
             annotation,
-            payload: annotation ? undefined : selectionPayload(doc, view, index, range, text),
+            payload: annotation ? undefined : selectionPayload(options, index, range, text),
         };
         showToolbar(page, toolbar, active, highlightButton, noteButton, deleteButton);
     };
@@ -152,6 +156,7 @@ export function wireReaderSelection(
         doc.addEventListener(
             'pointerdown',
             (event) => {
+                if (event.target instanceof Node && toolbar.contains(event.target)) return;
                 pointerDown = true;
                 touchGesture = event.pointerType === 'touch';
                 hide();
@@ -163,6 +168,7 @@ export function wireReaderSelection(
         doc.addEventListener(
             'pointerup',
             (event) => {
+                if (event.target instanceof Node && toolbar.contains(event.target)) return;
                 pointerDown = false;
                 touchGesture = false;
                 if (event.pointerType === 'touch') scheduleTouchRefreshes(doc, index);
@@ -172,7 +178,8 @@ export function wireReaderSelection(
         );
         doc.addEventListener(
             'pointercancel',
-            () => {
+            (event) => {
+                if (event.target instanceof Node && toolbar.contains(event.target)) return;
                 pointerDown = false;
                 touchGesture = false;
                 scheduleTouchRefreshes(doc, index);
@@ -183,7 +190,8 @@ export function wireReaderSelection(
         // native selection gestures with the matching Pointer Event.
         doc.addEventListener(
             'touchstart',
-            () => {
+            (event) => {
+                if (event.target instanceof Node && toolbar.contains(event.target)) return;
                 pointerDown = true;
                 touchGesture = true;
                 hide();
@@ -193,7 +201,8 @@ export function wireReaderSelection(
         );
         doc.addEventListener(
             'touchend',
-            () => {
+            (event) => {
+                if (event.target instanceof Node && toolbar.contains(event.target)) return;
                 pointerDown = false;
                 touchGesture = false;
                 scheduleTouchRefreshes(doc, index);
@@ -202,7 +211,8 @@ export function wireReaderSelection(
         );
         doc.addEventListener(
             'touchcancel',
-            () => {
+            (event) => {
+                if (event.target instanceof Node && toolbar.contains(event.target)) return;
                 pointerDown = false;
                 touchGesture = false;
                 scheduleTouchRefreshes(doc, index);
@@ -268,7 +278,7 @@ export function wireReaderSelection(
         const { annotation, doc, payload } = active;
         if (annotation) {
             if (!options.onEditAnnotation) return;
-            options.onEditAnnotation(annotation.cfi);
+            options.onEditAnnotation(annotation.id);
         } else if (payload && options.onNoteSelection) {
             options.onNoteSelection(payload);
         } else return;
@@ -277,32 +287,10 @@ export function wireReaderSelection(
     });
     deleteButton?.addEventListener('click', () => {
         if (!active?.annotation) return;
-        if (!window.confirm('Delete this highlight?')) return;
-        const { cfi } = active.annotation;
+        const { id } = active.annotation;
         active.doc.getSelection()?.removeAllRanges();
         hide();
-        options.onDeleteAnnotation?.(cfi);
-    });
-
-    view.addEventListener('load', (event) => {
-        const detail = (event as CustomEvent<FoliateLoadDetail>).detail;
-        attach(detail.doc, detail.index);
-    });
-    view.renderer?.addEventListener('relocate', (event) => {
-        if (annotationActionsPending) return;
-        const detail = (event as CustomEvent<FoliateRendererRelocateDetail>).detail;
-        if (detail.reason === 'snap') {
-            if (active?.annotation) return;
-            const content = (view.renderer?.getContents?.() || []).find(({ doc }) => {
-                const selection = doc?.getSelection();
-                return selection && selection.rangeCount > 0 && !selection.isCollapsed;
-            });
-            if (content?.doc) {
-                scheduleRefresh(content.doc, content.index);
-                return;
-            }
-        }
-        hide();
+        options.onDeleteAnnotation?.(id);
     });
 
     document.addEventListener(
@@ -335,12 +323,14 @@ export function wireReaderSelection(
     window.visualViewport?.addEventListener('scroll', refreshActive);
     window.visualViewport?.addEventListener('resize', refreshActive);
 
-    // Sections already mounted before wiring (e.g. the first one on open).
-    for (const content of view.renderer?.getContents?.() || []) {
-        if (content.doc) attach(content.doc, content.index);
-    }
-
     return {
+        attachDocument: attach,
+        relocate(selection, keepAnnotation = false): void {
+            if (annotationActionsPending || (keepAnnotation && active?.annotation)) return;
+            if (selection) {
+                if (!active?.annotation) scheduleRefresh(selection.doc, selection.index);
+            } else hide();
+        },
         showAnnotationActions(target: ReaderAnnotationActionTarget): void {
             hide();
             annotationActionsPending = true;
@@ -348,11 +338,10 @@ export function wireReaderSelection(
                 refreshHandle = 0;
                 annotationActionsPending = false;
                 active = {
-                    doc: target.doc,
-                    index: target.index,
-                    range: target.range.cloneRange(),
+                    doc: target.anchor.doc,
+                    anchor: target.anchor,
                     text: target.quote,
-                    annotation: { cfi: target.cfi, hasNote: target.hasNote },
+                    annotation: { id: target.id, locator: target.locator, hasNote: target.hasNote },
                 };
                 showToolbar(page, toolbar, active, highlightButton, noteButton, deleteButton);
             });
@@ -467,7 +456,7 @@ function showToolbar(
     const frameRect = frame?.getBoundingClientRect();
     const offsetX = frameRect?.left ?? 0;
     const offsetY = frameRect?.top ?? 0;
-    const selRect = active.range.getBoundingClientRect();
+    const selRect = active.anchor.getBoundingClientRect();
     const selTop = selRect.top + offsetY;
     const selBottom = selRect.bottom + offsetY;
     const selCenter = selRect.left + selRect.width / 2 + offsetX;
@@ -490,72 +479,18 @@ function showToolbar(
     toolbar.classList.add('reader-selection-toolbar--visible');
     toolbar.dataset.readerSelectionActive = 'true';
 
-    const cfi = active.payload?.cfi || active.annotation?.cfi;
+    const cfi = active.payload?.locator.cfi || active.annotation?.locator.cfi;
     if (cfi) toolbar.dataset.readerSelectionCfi = cfi;
 }
 
 function selectionPayload(
-    doc: Document,
-    view: FoliateViewElement,
+    options: ReaderSelectionOptions,
     index: number | undefined,
     range: Range,
     text: string,
 ): ReaderSelectionPayload | undefined {
-    let cfi = '';
-    try {
-        cfi = view.getCFI?.(index ?? 0, range) || '';
-    } catch (e) {
-        console.error('Failed to compute selection CFI:', e);
-    }
-    if (!cfi) return undefined;
-
-    return {
-        cfi,
-        quote: clipSnippet(normalizeSnippet(text), QUOTE_MAX_LENGTH, 'end'),
-        context_before: clipSnippet(
-            normalizeSnippet(contextBefore(doc, range)),
-            CONTEXT_MAX_LENGTH,
-            'start',
-        ),
-        context_after: clipSnippet(
-            normalizeSnippet(contextAfter(doc, range)),
-            CONTEXT_MAX_LENGTH,
-            'end',
-        ),
-    };
-}
-
-function contextBefore(doc: Document, range: Range): string {
-    const root = doc.body || doc.documentElement;
-    if (!root) return '';
-    try {
-        const before = doc.createRange();
-        before.selectNodeContents(root);
-        before.setEnd(range.startContainer, range.startOffset);
-        return before.toString();
-    } catch {
-        return '';
-    }
-}
-
-function contextAfter(doc: Document, range: Range): string {
-    const root = doc.body || doc.documentElement;
-    if (!root) return '';
-    try {
-        const after = doc.createRange();
-        after.selectNodeContents(root);
-        after.setStart(range.endContainer, range.endOffset);
-        return after.toString();
-    } catch {
-        return '';
-    }
-}
-
-function normalizeSnippet(text: string): string {
-    return text.replace(/\s+/g, ' ').trim();
-}
-
-function clipSnippet(text: string, maxLength: number, keep: 'start' | 'end'): string {
-    if (text.length <= maxLength) return text;
-    return keep === 'start' ? text.slice(text.length - maxLength) : text.slice(0, maxLength);
+    const locator = options.locate(range, index);
+    if (!locator) return undefined;
+    const context = rangeContext(range, CONTEXT_MAX_LENGTH, options.contextRoot);
+    return { locator, quote: text, context_before: context.before, context_after: context.after };
 }

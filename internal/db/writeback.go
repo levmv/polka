@@ -53,13 +53,12 @@ type MetadataWritebackSnapshot struct {
 }
 
 type MetadataWritebackAttempt struct {
-	AssetID      int64
-	MetadataRev  int64
-	StoragePath  string
-	TempPath     string
-	SHA256       []byte
-	Size         int64
-	KOReaderHash string
+	AssetID     int64
+	MetadataRev int64
+	StoragePath string
+	TempPath    string
+	SHA256      []byte
+	Size        int64
 }
 
 type MetadataWritebackAttemptRow struct {
@@ -286,17 +285,16 @@ func LoadMetadataWritebackSnapshot(queryer Queryer, assetID int64) (MetadataWrit
 func UpsertMetadataWritebackAttempt(execer Execer, attempt MetadataWritebackAttempt) error {
 	if _, err := execer.Exec(`
 		INSERT INTO metadata_writeback_attempts
-			(asset_id, metadata_rev, storage_path, temp_path, sha256, size, koreader_hash, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, unixepoch())
+			(asset_id, metadata_rev, storage_path, temp_path, sha256, size, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, unixepoch())
 		ON CONFLICT(asset_id) DO UPDATE SET
 			metadata_rev = excluded.metadata_rev,
 			storage_path = excluded.storage_path,
 			temp_path = excluded.temp_path,
 			sha256 = excluded.sha256,
 			size = excluded.size,
-			koreader_hash = excluded.koreader_hash,
 			created_at = unixepoch()
-	`, attempt.AssetID, attempt.MetadataRev, attempt.StoragePath, attempt.TempPath, attempt.SHA256, attempt.Size, attempt.KOReaderHash); err != nil {
+	`, attempt.AssetID, attempt.MetadataRev, attempt.StoragePath, attempt.TempPath, attempt.SHA256, attempt.Size); err != nil {
 		return fmt.Errorf("upsert metadata writeback attempt: %w", err)
 	}
 	return nil
@@ -305,12 +303,12 @@ func UpsertMetadataWritebackAttempt(execer Execer, attempt MetadataWritebackAtte
 func LoadMetadataWritebackAttempt(queryer Queryer, assetID int64) (MetadataWritebackAttempt, bool, error) {
 	var attempt MetadataWritebackAttempt
 	err := queryer.QueryRow(`
-		SELECT asset_id, metadata_rev, storage_path, temp_path, sha256, size, COALESCE(koreader_hash, '')
+		SELECT asset_id, metadata_rev, storage_path, temp_path, sha256, size
 		FROM metadata_writeback_attempts
 		WHERE asset_id = ?
 	`, assetID).Scan(
 		&attempt.AssetID, &attempt.MetadataRev, &attempt.StoragePath,
-		&attempt.TempPath, &attempt.SHA256, &attempt.Size, &attempt.KOReaderHash,
+		&attempt.TempPath, &attempt.SHA256, &attempt.Size,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return MetadataWritebackAttempt{}, false, nil
@@ -324,7 +322,7 @@ func LoadMetadataWritebackAttempt(queryer Queryer, assetID int64) (MetadataWrite
 func ListMetadataWritebackAttempts(queryer Queryer) ([]MetadataWritebackAttemptRow, error) {
 	rows, err := queryer.Query(`
 		SELECT m.asset_id, m.metadata_rev, m.storage_path, m.temp_path, m.sha256,
-		       m.size, COALESCE(m.koreader_hash, ''), a.storage_path
+		       m.size, a.storage_path
 		FROM metadata_writeback_attempts m
 		JOIN assets a ON a.id = m.asset_id
 		ORDER BY m.asset_id
@@ -339,7 +337,7 @@ func ListMetadataWritebackAttempts(queryer Queryer) ([]MetadataWritebackAttemptR
 		var row MetadataWritebackAttemptRow
 		if err := rows.Scan(
 			&row.AssetID, &row.MetadataRev, &row.StoragePath, &row.TempPath,
-			&row.SHA256, &row.Size, &row.KOReaderHash, &row.CurrentStoragePath,
+			&row.SHA256, &row.Size, &row.CurrentStoragePath,
 		); err != nil {
 			return nil, fmt.Errorf("scan metadata writeback attempt: %w", err)
 		}
@@ -358,17 +356,17 @@ func ClearMetadataWritebackAttempt(execer Execer, assetID int64) error {
 	return nil
 }
 
-func MarkMetadataWritebackSuccess(tx *Tx, assetID int64, storagePath string, sha256 []byte, size int64, koReaderHash string, metadataRev int64) error {
+func MarkMetadataWritebackSuccess(tx *Tx, assetID int64, storagePath string, sha256 []byte, size int64, metadataRev int64) error {
 	res, err := tx.Exec(`
 		UPDATE assets
 		SET current_sha256 = ?,
 		    current_size = ?,
-		    koreader_hash = ?,
+		    koreader_hash = CASE WHEN current_sha256 = ? THEN koreader_hash ELSE NULL END,
 		    writeback_rev = ?,
 		    writeback_error = NULL,
 		    updated_at = unixepoch()
 		WHERE id = ? AND storage_path = ?
-	`, sha256, size, koReaderHash, metadataRev, assetID, storagePath)
+	`, sha256, size, sha256, metadataRev, assetID, storagePath)
 	if err != nil {
 		return fmt.Errorf("mark metadata writeback success: %w", err)
 	}

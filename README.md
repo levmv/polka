@@ -25,11 +25,9 @@ lower-maintenance home for your books.
 - **Fix metadata and covers** when you care to. Books are usable immediately,
   and the details can improve later — one at a time, in bulk, or with
   suggestions fetched from Open Library and Google Books (only when you ask).
-- **Read in the browser** with your place remembered. Reflowable books also
-  have in-book search and personal highlights with notes, exportable per book
-  as standalone HTML or Markdown. OPDS and KOReader progress sync let external
-  readers in too; Kobo sync can project one chosen shelf into the device's
-  native library.
+- **Read in the browser** with your place remembered. Search within books and
+  save highlights and notes you can export. Connect reading apps and devices
+  through OPDS, KOReader progress sync, or Kobo library sync.
 - **Send books to a device** by email — Kindle and PocketBook presets, or any
   address — converting on the way when the device needs a different format.
 

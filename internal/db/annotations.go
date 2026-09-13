@@ -15,36 +15,33 @@ var (
 )
 
 const (
-	AnnotationKindHighlight = "highlight"
-	AnnotationColorYellow   = "yellow"
-
-	MaxAnnotationCFILength     = 2048
-	MaxAnnotationQuoteLength   = 1200
+	AnnotationColorYellow      = "yellow"
+	MaxAnnotationQuoteLength   = 32768
 	MaxAnnotationContextLength = 500
 	MaxAnnotationNoteLength    = 4000
 )
 
-const annotationColumns = `id, user_id, asset_id, kind, cfi, quote,
-	context_before, context_after, note, color, created_at, updated_at`
+const annotationColumns = `id, user_id, asset_id, locator,
+    quote, context_before, context_after, note, color, revision, deleted, created_at, updated_at`
 
 type Annotation struct {
 	ID            int64
 	UserID        int64
 	AssetID       int64
-	Kind          string
-	CFI           string
+	Locator       Locator
 	Quote         string
 	ContextBefore string
 	ContextAfter  string
 	Note          string
 	Color         string
+	Revision      int64
+	Deleted       bool
 	CreatedAt     int64
 	UpdatedAt     int64
 }
 
 type AnnotationCreate struct {
-	Kind          string
-	CFI           string
+	Locator       Locator
 	Quote         string
 	ContextBefore string
 	ContextAfter  string
@@ -53,35 +50,29 @@ type AnnotationCreate struct {
 }
 
 type AnnotationUpdate struct {
-	Note  *string
-	Color *string
+	Revision int64
+	Note     *string
+	Color    *string
 }
 
 func ListAnnotations(queryer Queryer, userID, assetID int64) ([]Annotation, error) {
 	if userID <= 0 {
 		return nil, ErrUserIDRequired
 	}
-	if _, err := GetReaderState(queryer, userID, assetID); err != nil {
+	if err := requireAsset(queryer, assetID); err != nil {
 		return nil, err
 	}
-	return listAnnotations(queryer, `
-		SELECT `+annotationColumns+`
-		FROM user_annotations
-		WHERE user_id = ? AND asset_id = ?
-		ORDER BY created_at ASC, id ASC
-	`, userID, assetID)
+	return listAnnotations(queryer, `SELECT `+annotationColumns+` FROM user_annotations
+        WHERE user_id = ? AND asset_id = ? AND deleted = 0 ORDER BY created_at ASC, id ASC`, userID, assetID)
 }
 
 func ListBookAnnotations(queryer Queryer, userID, bookID int64) ([]Annotation, error) {
 	if userID <= 0 {
 		return nil, ErrUserIDRequired
 	}
-	return listAnnotations(queryer, `
-		SELECT `+annotationColumns+`
-		FROM user_annotations
-		WHERE user_id = ? AND asset_id IN (SELECT id FROM assets WHERE book_id = ?)
-		ORDER BY asset_id, created_at, id
-	`, userID, bookID)
+	return listAnnotations(queryer, `SELECT `+annotationColumns+` FROM user_annotations
+        WHERE user_id = ? AND deleted = 0 AND asset_id IN (SELECT id FROM assets WHERE book_id = ?)
+        ORDER BY asset_id, created_at, id`, userID, bookID)
 }
 
 func listAnnotations(queryer Queryer, query string, args ...any) ([]Annotation, error) {
@@ -90,8 +81,7 @@ func listAnnotations(queryer Queryer, query string, args ...any) ([]Annotation, 
 		return nil, fmt.Errorf("list annotations: %w", err)
 	}
 	defer rows.Close()
-
-	var out []Annotation
+	out := []Annotation{}
 	for rows.Next() {
 		var ann Annotation
 		if err := scanAnnotation(rows, &ann); err != nil {
@@ -99,159 +89,144 @@ func listAnnotations(queryer Queryer, query string, args ...any) ([]Annotation, 
 		}
 		out = append(out, ann)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("list annotations rows: %w", err)
-	}
-	return out, nil
+	return out, rows.Err()
 }
 
 func (db *DB) CreateAnnotation(ctx context.Context, userID, assetID int64, input AnnotationCreate) (Annotation, error) {
 	if userID <= 0 {
 		return Annotation{}, ErrUserIDRequired
 	}
-	if _, err := GetReaderState(db.Read(ctx), userID, assetID); err != nil {
-		return Annotation{}, err
-	}
 	ann, err := normalizeAnnotation(userID, assetID, input)
 	if err != nil {
 		return Annotation{}, err
 	}
 	err = db.Transact(ctx, func(tx *Tx) error {
-		return scanAnnotation(tx.QueryRow(`
-			INSERT INTO user_annotations
-				(user_id, asset_id, kind, cfi, quote, context_before, context_after, note, color)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-			ON CONFLICT(user_id, asset_id, kind, cfi) DO UPDATE SET
-				quote = excluded.quote,
-				context_before = excluded.context_before,
-				context_after = excluded.context_after,
-				note = CASE
-					WHEN excluded.note = '' THEN user_annotations.note
-					ELSE excluded.note
-				END,
-				color = CASE WHEN ? THEN user_annotations.color ELSE excluded.color END,
-				updated_at = unixepoch()
-			RETURNING `+annotationColumns,
-			ann.UserID, ann.AssetID, ann.Kind, ann.CFI, ann.Quote, ann.ContextBefore, ann.ContextAfter, ann.Note, ann.Color,
-			strings.TrimSpace(input.Color) == ""), &ann)
+		if err := requireAsset(tx, assetID); err != nil {
+			return err
+		}
+		var existing Annotation
+		err := scanAnnotation(tx.QueryRow(`SELECT `+annotationColumns+` FROM user_annotations
+			WHERE user_id = ? AND asset_id = ? AND coalesce(json_extract(locator, '$.cfi'), locator) = ? AND deleted = 0`, userID, assetID, annotationSelection(ann.Locator)), &existing)
+		if err == nil {
+			// Repeating a selection must not replace a note or color edited since
+			// its creation, including when the original response was lost.
+			ann = existing
+			return nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		return scanAnnotation(tx.QueryRow(`INSERT INTO user_annotations
+            (user_id, asset_id, locator, quote, context_before, context_after, note, color)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING `+annotationColumns,
+			ann.UserID, ann.AssetID, ann.Locator,
+			ann.Quote, ann.ContextBefore, ann.ContextAfter, ann.Note, ann.Color), &ann)
 	})
-	if err != nil {
-		return Annotation{}, fmt.Errorf("create annotation: %w", err)
+	return ann, err
+}
+
+func getAnnotation(queryer Queryer, userID, assetID, annotationID int64) (Annotation, error) {
+	var ann Annotation
+	err := scanAnnotation(queryer.QueryRow(`SELECT `+annotationColumns+` FROM user_annotations
+        WHERE id = ? AND user_id = ? AND asset_id = ?`, annotationID, userID, assetID), &ann)
+	if errors.Is(err, sql.ErrNoRows) {
+		err = ErrAnnotationNotFound
 	}
-	return ann, nil
+	return ann, err
 }
 
 func (db *DB) UpdateAnnotation(ctx context.Context, userID, assetID, annotationID int64, input AnnotationUpdate) (Annotation, error) {
 	if userID <= 0 {
 		return Annotation{}, ErrUserIDRequired
 	}
+	if input.Revision <= 0 {
+		return Annotation{}, ErrInvalidAnnotation
+	}
 	if input.Note == nil && input.Color == nil {
 		return Annotation{}, ErrInvalidAnnotation
 	}
-	if input.Note != nil {
-		note, err := normalizeAnnotationNote(*input.Note)
-		if err != nil {
-			return Annotation{}, err
-		}
-		input.Note = &note
+	if input.Note != nil && utf8.RuneCountInString(*input.Note) > MaxAnnotationNoteLength {
+		return Annotation{}, errorWithDetail(ErrInvalidAnnotation, "This note is too long. Shorten it before saving.")
 	}
 	if input.Color != nil && !validAnnotationColor(*input.Color) {
 		return Annotation{}, ErrInvalidAnnotation
 	}
 	var ann Annotation
 	err := db.Transact(ctx, func(tx *Tx) error {
-		return scanAnnotation(tx.QueryRow(`
-			UPDATE user_annotations
-			SET note = coalesce(?, note), color = coalesce(?, color), updated_at = unixepoch()
-			WHERE id = ? AND user_id = ? AND asset_id = ?
-			RETURNING `+annotationColumns,
+		var err error
+		ann, err = getAnnotation(tx, userID, assetID, annotationID)
+		if err != nil {
+			return err
+		}
+		if ann.Deleted {
+			return ErrReadingConflict
+		}
+		// An already-applied edit succeeds even with an old revision. Compare
+		// only submitted fields; unrelated concurrent edits remain untouched.
+		if (input.Note == nil || ann.Note == *input.Note) && (input.Color == nil || ann.Color == *input.Color) {
+			return nil
+		}
+		if ann.Revision != input.Revision {
+			return ErrReadingConflict
+		}
+		return scanAnnotation(tx.QueryRow(`UPDATE user_annotations SET note = coalesce(?, note),
+            color = coalesce(?, color), revision = revision + 1, updated_at = unixepoch()
+            WHERE id = ? AND user_id = ? AND asset_id = ? RETURNING `+annotationColumns,
 			input.Note, input.Color, annotationID, userID, assetID), &ann)
 	})
-	if errors.Is(err, sql.ErrNoRows) {
-		return Annotation{}, ErrAnnotationNotFound
-	}
-	if err != nil {
-		return Annotation{}, fmt.Errorf("update annotation: %w", err)
-	}
-	return ann, nil
+	return ann, err
 }
 
-func (db *DB) DeleteAnnotation(ctx context.Context, userID, assetID, annotationID int64) error {
+func (db *DB) DeleteAnnotation(ctx context.Context, userID, assetID, annotationID, revision int64) error {
 	if userID <= 0 {
 		return ErrUserIDRequired
 	}
-	res, err := db.Write(ctx).Exec(`
-		DELETE FROM user_annotations
-		WHERE id = ? AND user_id = ? AND asset_id = ?
-	`, annotationID, userID, assetID)
-	if err != nil {
-		return fmt.Errorf("delete annotation: %w", err)
+	if revision <= 0 {
+		return ErrInvalidAnnotation
 	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("delete annotation rows: %w", err)
-	}
-	if n == 0 {
-		return ErrAnnotationNotFound
-	}
-	return nil
+	return db.Transact(ctx, func(tx *Tx) error {
+		ann, err := getAnnotation(tx, userID, assetID, annotationID)
+		if err != nil {
+			return err
+		}
+		if ann.Deleted {
+			return nil
+		}
+		if ann.Revision != revision {
+			return ErrReadingConflict
+		}
+		_, err = tx.Exec(`UPDATE user_annotations SET deleted = 1, revision = revision + 1,
+            locator = '{}', quote = '', context_before = '', context_after = '', note = '',
+            updated_at = unixepoch() WHERE id = ? AND user_id = ? AND asset_id = ?`, annotationID, userID, assetID)
+		return err
+	})
 }
 
 func scanAnnotation(scanner rowScanner, ann *Annotation) error {
-	if err := scanner.Scan(
-		&ann.ID,
-		&ann.UserID,
-		&ann.AssetID,
-		&ann.Kind,
-		&ann.CFI,
-		&ann.Quote,
-		&ann.ContextBefore,
-		&ann.ContextAfter,
-		&ann.Note,
-		&ann.Color,
-		&ann.CreatedAt,
-		&ann.UpdatedAt,
-	); err != nil {
-		return fmt.Errorf("scan annotation: %w", err)
-	}
-	return nil
+	return scanner.Scan(&ann.ID, &ann.UserID, &ann.AssetID, &ann.Locator,
+		&ann.Quote, &ann.ContextBefore, &ann.ContextAfter, &ann.Note, &ann.Color,
+		&ann.Revision, &ann.Deleted, &ann.CreatedAt, &ann.UpdatedAt)
 }
 
 func normalizeAnnotation(userID, assetID int64, input AnnotationCreate) (Annotation, error) {
-	kind := strings.TrimSpace(input.Kind)
-	if kind == "" {
-		kind = AnnotationKindHighlight
-	}
 	color := strings.TrimSpace(input.Color)
 	if color == "" {
 		color = AnnotationColorYellow
 	}
-	ann := Annotation{
-		UserID:        userID,
-		AssetID:       assetID,
-		Kind:          kind,
-		CFI:           strings.TrimSpace(input.CFI),
-		Quote:         strings.TrimSpace(input.Quote),
-		ContextBefore: strings.TrimSpace(input.ContextBefore),
-		ContextAfter:  strings.TrimSpace(input.ContextAfter),
-		Color:         color,
+	ann := Annotation{UserID: userID, AssetID: assetID,
+		Locator: input.Locator,
+		Quote:   input.Quote, ContextBefore: input.ContextBefore, ContextAfter: input.ContextAfter,
+		Note: input.Note, Color: color}
+	if utf8.RuneCountInString(ann.Quote) > MaxAnnotationQuoteLength {
+		return Annotation{}, errorWithDetail(ErrInvalidAnnotation, "This highlight is too long. Select a shorter passage.")
 	}
-	note, err := normalizeAnnotationNote(input.Note)
-	if err != nil {
-		return Annotation{}, err
+	if utf8.RuneCountInString(ann.Note) > MaxAnnotationNoteLength {
+		return Annotation{}, errorWithDetail(ErrInvalidAnnotation, "This note is too long. Shorten it before saving.")
 	}
-	ann.Note = note
-	if ann.Kind != AnnotationKindHighlight {
-		return Annotation{}, ErrInvalidAnnotation
-	}
-	if !validAnnotationColor(ann.Color) {
-		return Annotation{}, ErrInvalidAnnotation
-	}
-	if ann.CFI == "" || ann.Quote == "" {
-		return Annotation{}, ErrInvalidAnnotation
-	}
-	if utf8.RuneCountInString(ann.CFI) > MaxAnnotationCFILength ||
-		utf8.RuneCountInString(ann.Quote) > MaxAnnotationQuoteLength ||
+	var err error
+	ann.Locator, err = normalizeLocator(ann.Locator)
+	if err != nil || ann.Locator.CFI == "" && (ann.Locator.Page == 0 || len(ann.Locator.Rects) == 0) ||
+		!validAnnotationColor(ann.Color) || strings.TrimSpace(ann.Quote) == "" ||
 		utf8.RuneCountInString(ann.ContextBefore) > MaxAnnotationContextLength ||
 		utf8.RuneCountInString(ann.ContextAfter) > MaxAnnotationContextLength {
 		return Annotation{}, ErrInvalidAnnotation
@@ -267,10 +242,10 @@ func validAnnotationColor(color string) bool {
 	return false
 }
 
-func normalizeAnnotationNote(note string) (string, error) {
-	normalized := strings.TrimSpace(note)
-	if utf8.RuneCountInString(normalized) > MaxAnnotationNoteLength {
-		return "", ErrInvalidAnnotation
+// Matches the unique index. Resource paths do not change a CFI selection's identity.
+func annotationSelection(locator Locator) any {
+	if locator.CFI != "" {
+		return locator.CFI
 	}
-	return normalized, nil
+	return locator
 }

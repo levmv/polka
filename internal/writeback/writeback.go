@@ -14,7 +14,6 @@ import (
 	"github.com/levmv/polka/internal/covers"
 	"github.com/levmv/polka/internal/db"
 	"github.com/levmv/polka/internal/format"
-	"github.com/levmv/polka/internal/koreader"
 	"github.com/levmv/polka/internal/storage"
 	"github.com/levmv/polka/internal/workslot"
 )
@@ -250,16 +249,12 @@ func writeAsset(ctx context.Context, database *db.DB, root storage.Root, assetID
 		return fail(ctx, database, result, fmt.Errorf("validate rendered metadata: %w", err))
 	}
 	renderedSHA256 := renderedHash.Sum(nil)
-	renderedKOReaderHash, err := koreader.PartialMD5File(root.Abs(tempRel))
-	if err != nil {
-		return fail(ctx, database, result, fmt.Errorf("compute KOReader hash: %w", err))
-	}
 	if err := context.Cause(ctx); err != nil {
 		return result, err
 	}
 
 	if bytes.Equal(renderedSHA256, currentHash) && renderedSize.N == currentSize {
-		if err := markSuccess(ctx, database, row, currentHash, currentSize, renderedKOReaderHash, snapshot.MetadataRev); err != nil {
+		if err := markSuccess(ctx, database, row, currentHash, currentSize, snapshot.MetadataRev); err != nil {
 			return fail(ctx, database, result, err)
 		}
 		result.Status = StatusUnchanged
@@ -271,13 +266,12 @@ func writeAsset(ctx context.Context, database *db.DB, root storage.Root, assetID
 		return fail(ctx, database, result, err)
 	}
 	attempt := db.MetadataWritebackAttempt{
-		AssetID:      row.AssetID,
-		MetadataRev:  snapshot.MetadataRev,
-		StoragePath:  row.StoragePath,
-		TempPath:     tempRel,
-		SHA256:       renderedSHA256,
-		Size:         renderedSize.N,
-		KOReaderHash: renderedKOReaderHash,
+		AssetID:     row.AssetID,
+		MetadataRev: snapshot.MetadataRev,
+		StoragePath: row.StoragePath,
+		TempPath:    tempRel,
+		SHA256:      renderedSHA256,
+		Size:        renderedSize.N,
 	}
 	if err := database.Transact(ctx, func(tx *db.Tx) error {
 		return db.UpsertMetadataWritebackAttempt(tx, attempt)
@@ -300,7 +294,7 @@ func writeAsset(ctx context.Context, database *db.DB, root storage.Root, assetID
 	if err := storage.ReplaceWithStaged(root, tempRel, row.StoragePath); err != nil {
 		return fail(ctx, database, result, err)
 	}
-	if err := markSuccess(ctx, database, row, renderedSHA256, renderedSize.N, renderedKOReaderHash, snapshot.MetadataRev); err != nil {
+	if err := markSuccess(ctx, database, row, renderedSHA256, renderedSize.N, snapshot.MetadataRev); err != nil {
 		return fail(ctx, database, result, err)
 	}
 	result.Status = StatusWritten
@@ -415,9 +409,9 @@ func validateCurrentBytes(row db.MetadataWritebackAssetRow, currentHash []byte, 
 	return nil
 }
 
-func markSuccess(ctx context.Context, database *db.DB, row db.MetadataWritebackAssetRow, hash []byte, size int64, koReaderHash string, metadataRev int64) error {
+func markSuccess(ctx context.Context, database *db.DB, row db.MetadataWritebackAssetRow, hash []byte, size int64, metadataRev int64) error {
 	return database.Transact(ctx, func(tx *db.Tx) error {
-		return db.MarkMetadataWritebackSuccess(tx, row.AssetID, row.StoragePath, hash, size, koReaderHash, metadataRev)
+		return db.MarkMetadataWritebackSuccess(tx, row.AssetID, row.StoragePath, hash, size, metadataRev)
 	})
 }
 

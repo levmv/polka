@@ -138,12 +138,12 @@ func TestMergeDuplicateBooksMovesAssetsShelvesAndSafeFillIns(t *testing.T) {
 		VALUES (1, ?, 'Device', 'reader@example.test', 'generic', 2, 2, 'Foundation', 'asset_pdf.pdf')
 	`, user.ID)
 	mustExec(t, database, `
-		INSERT INTO user_asset_state (user_id, asset_id, progress, locator, last_read_at, updated_at)
-		VALUES (?, 2, 0.4, '{}', 20, 20)
+		INSERT INTO user_asset_state (user_id, asset_id, progress, locator, updated_at)
+		VALUES (?, 2, 0.4, '{}', 20)
 	`, user.ID)
 	mustExec(t, database, `
-		INSERT INTO user_annotations (id, user_id, asset_id, cfi, quote, note)
-		VALUES (1, ?, 2, '/6/2', 'Quote', 'Note')
+		INSERT INTO user_annotations (id, user_id, asset_id, locator, quote, note)
+		VALUES (1, ?, 2, '{"page":2,"rects":[{"x":72,"y":140,"width":90,"height":12}]}', 'Quote', 'Note')
 	`, user.ID)
 
 	var result DuplicateMergeResult

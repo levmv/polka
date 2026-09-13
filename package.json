@@ -5,7 +5,7 @@
   "description": "Frontend toolchain for polka — bundling, typecheck, and browser tests.",
   "scripts": {
     "build": "node frontend/build.mjs",
-    "typecheck": "tsc --noEmit -p frontend/tsconfig.json",
+    "typecheck": "tsc --noEmit -p frontend/tsconfig.json && tsc --noEmit -p browser-test/tsconfig.json",
     "lint": "biome check frontend/build.mjs frontend/src frontend/test browser-test/screenshot.mjs biome.json",
     "lint:fix": "biome check --write frontend/build.mjs frontend/src frontend/test browser-test/screenshot.mjs biome.json",
     "test:unit": "node --experimental-strip-types --test frontend/test/*.test.mjs",
@@ -19,6 +19,7 @@
   "devDependencies": {
     "@biomejs/biome": "^2.5.0",
     "@playwright/test": "^1.62.1",
+    "@types/node": "^22.20.2",
     "esbuild": "^0.28.1",
     "typescript": "^7.0.2"
   },

@@ -1,3 +1,4 @@
+import { readerMutationFields } from '../helpers';
 import {
   epubWithNonstandardZIPSignature,
   epubWithUnmarkedUTF8Entry,
@@ -53,7 +54,6 @@ test.describe('Reader', () => {
           pageSpansStage: true,
           columnLengthPreserved: true,
         });
-      await page.screenshot({ path: 'screenshots/reader-vertical.png', fullPage: true });
     } finally {
       const trash = await page.request.post('/api/books/bulk/trash', {
         data: { ids: [bookId] },
@@ -319,7 +319,6 @@ test.describe('Reader', () => {
           });
         })
         .toBe(true);
-      await page.screenshot({ path: 'screenshots/reader-display-panel.png', fullPage: true });
       await displayPanel.getByRole('button', { name: 'Scroll' }).click();
       await expect(reader).toHaveAttribute('data-reader-flow', 'scrolled');
       await displayPanel.getByRole('button', { name: 'Larger text' }).click();
@@ -382,27 +381,18 @@ test.describe('Reader', () => {
             const res = await fetch(`/api/reader/assets/${id}/state`);
             if (!res.ok) return 0;
             const state = await res.json();
-            return state.last_read_at || 0;
+            return state.updated_at || 0;
           }, assetId);
         })
         .toBeGreaterThan(0);
-
-      await page.screenshot({ path: 'screenshots/reader-epub.png', fullPage: true });
     });
 
     await test.step('projects saved progress onto book detail', async () => {
       await page.goto(`/book/${bookId}`);
-      await page.evaluate(async (id) => {
-        const res = await fetch(`/api/reader/assets/${encodeURIComponent(id)}/state`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            progress: 0.42,
-            locator: { engine: 'browser-test', id: 'progress' },
-          }),
-        });
-        if (!res.ok) throw new Error(`save reader state status ${res.status}`);
-      }, assetId);
+      const saveResponse = await page.request.put(`/api/reader/assets/${assetId}/state`, {
+        data: { ...await readerMutationFields(page, Number(assetId)), progress: 0.42, locator: {} },
+      });
+      expect(saveResponse.ok()).toBe(true);
 
       await page.reload();
       const progress = page.locator('#btn-reading-status');
@@ -412,7 +402,6 @@ test.describe('Reader', () => {
         'style',
         /42%/,
       );
-      await page.screenshot({ path: 'screenshots/book-progress.png', fullPage: true });
     });
   });
 

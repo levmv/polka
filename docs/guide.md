@@ -76,13 +76,11 @@ its metadata is optional and can happen later.
   multiple files attached.
 
 Imports copy books into managed storage and leave their sources unchanged by
-default. Metadata and covers are read from the files when available; books
-without a usable cover get a generated one. Importing the same file again is
-safe: matching content is recognized instead of added twice. An imported
-book's *Added* date may come from calibre's timestamp or the earliest source
-file modification time, so it can be older than the import itself. This keeps
-an existing collection in order instead of every book appearing new on the
-same day.
+default. Importing the same file again is safe: matching content is recognized
+instead of added twice.
+
+An imported book's *Added* date may come from calibre's timestamp or the earliest
+source file modification time, so it can be older than the import itself.
 
 To supply a separate cover during import, place an image named `cover` next to
 the book. It takes precedence over the embedded cover.
@@ -118,30 +116,21 @@ Reading status is personal, so `status:` can produce different results for
 different accounts even when the rest of the query is shared. `/` focuses the
 search field, and `Esc` clears it.
 
-Every new account starts with a personal **Want to read** shelf for books to
-read later. You can rename or delete it like any other shelf.
-
 Shelves can be filled manually or backed by a saved search. A saved-search
-shelf updates whenever books begin or stop matching its query. After you enter
-a search, a bookmark button appears inside the search field; use it to save the
-current query as a shelf. Shelves can be personal or shared, while reading
-progress always remains personal.
-
-The Series page gives one entry per series. Opening one returns to the library
-filtered to that series and sorted in volume order; series do not have separate
-detail pages.
+shelf updates whenever books begin or stop matching its query. To save the
+current search as a shelf, use the bookmark button in the search field.
+Shelves can be personal or shared.
 
 ## Edit and clean up the catalog
 
-The edit form keeps changes in a draft until *Save* or `Ctrl/Cmd-S`. It accepts
-multiple authors and partial publication dates such as `1965` or `1965-08`.
+The book editor accepts multiple authors and partial publication dates such
+as `1965` or `1965-08`. `Ctrl/Cmd-S` saves your changes.
 Previous and Next follow the library, shelf, or search result you opened the
 book from, which is useful for editing a group in sequence.
 
 Cover and metadata lookup run only when requested. Metadata candidates from
 Open Library and Google Books can be applied field by field; polka otherwise
-works offline. A cover selected manually is not silently replaced by a later
-import or maintenance pass.
+works offline.
 
 Members and administrators can select several books in the library and edit
 authors, tags, series numbering, and shelf membership in bulk. The Authors page
@@ -164,23 +153,11 @@ restore it; permanent deletion and emptying Trash are administrator-only. The
 Library action menu also opens Cleanup, which collects metadata-gap searches
 and likely duplicate books.
 
-## Read and annotate
+## Highlights and notes
 
-Reading position and display settings are saved per account. Books currently
-being read appear in *Continue reading* on the library page.
-
-Reading status is separate from saved position. Opening an unread book marks it
-as *Reading*, and reaching the end marks it *Finished* with an immediate *Undo*
-action. A status set manually to *Dropped* or *Finished* is not changed
-automatically.
-
-EPUB, FB2, and Kindle books support in-book search, paged or scrolled layout,
-themes, typography controls, and text selection. Selected text can be saved as
-a personal highlight with an optional note. Your highlights and notes are
-collected on the book page, with links back to their passages in the reader.
-Export them as standalone HTML or Markdown to keep a copy or work with them
-elsewhere. The export includes all your highlights from every file of the book,
-even when the list is filtered by a search.
+Export highlights and notes from the book page. Choose HTML for reading or
+printing, Markdown for editing, or Web Annotation (JSON-LD) for tools that
+support that standard.
 
 ## Other devices and reading apps
 
@@ -197,6 +174,8 @@ on a trusted network, and use HTTPS or a VPN elsewhere.
 Connect an OPDS client such as KOReader, Moon+ Reader, or PocketBook to
 `http://your-host/opds` with username `polka` and an app password. The
 catalog includes search, series, tags, and the shelves visible to that account.
+Apps that support OPDS Progression can also sync reading positions with the
+web reader.
 
 ### KOReader progress sync
 
@@ -221,16 +200,10 @@ password: use HTTPS or a trusted private network.
 
 ### Email delivery
 
-Sending books is off until an administrator turns on Sending in
-Settings → Devices. That reveals the rest of the section and adds *Send* to book
-pages for everyone.
-
-An administrator then configures SMTP once, and each account can add Kindle,
-PocketBook, or ordinary email destinations. When necessary, polka converts the
-book to a format accepted by the selected device.
-
-Turning Sending off again hides *Send* and refuses new sends while keeping the
-configuration, so a library can stop sending without erasing its settings.
+To enable email delivery, an administrator turns on Sending in
+Settings → Devices and configures SMTP. Each account can then add Kindle,
+PocketBook, or other email destinations and send books from the book page.
+When necessary, polka converts the book to a format accepted by the device.
 
 ### Download and conversion
 

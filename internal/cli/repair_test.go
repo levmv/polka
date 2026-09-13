@@ -188,7 +188,7 @@ func TestRepairFinalizesCompletedWritebackAttempt(t *testing.T) {
 		t.Fatalf("hash replaced final: %v", err)
 	}
 	tempRel := storage.WritebackTempRelPath(storagePath, fmt.Sprintf("%d-rev2", assetID))
-	insertWritebackAttempt(t, database, assetID, storagePath, tempRel, newHash, newSize, "ko-new", 2)
+	insertWritebackAttempt(t, database, assetID, storagePath, tempRel, newHash, newSize, 2)
 
 	if err := runCheck(t.Context(), dataDir, nil); !errors.Is(err, ErrIssuesFound) {
 		t.Fatalf("runCheck before repair = %v; want ErrIssuesFound", err)
@@ -197,7 +197,7 @@ func TestRepairFinalizesCompletedWritebackAttempt(t *testing.T) {
 		t.Fatalf("runRepair: %v", err)
 	}
 	assertWritebackAttemptCleared(t, database, assetID)
-	assertAssetWritebackState(t, database, assetID, newHash, newSize, "ko-new", 2)
+	assertAssetWritebackState(t, database, assetID, newHash, newSize, 2)
 	if err := runCheck(t.Context(), dataDir, nil); err != nil {
 		t.Fatalf("runCheck after repair: %v", err)
 	}
@@ -222,7 +222,7 @@ func TestRepairAppliesPendingWritebackTemp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("hash temp: %v", err)
 	}
-	insertWritebackAttempt(t, database, assetID, storagePath, tempRel, newHash, newSize, "ko-temp", 2)
+	insertWritebackAttempt(t, database, assetID, storagePath, tempRel, newHash, newSize, 2)
 
 	if err := runRepair(context.Background(), dataDir, nil); err != nil {
 		t.Fatalf("runRepair: %v", err)
@@ -238,7 +238,7 @@ func TestRepairAppliesPendingWritebackTemp(t *testing.T) {
 		t.Fatalf("final hash/size = %x/%d; want %x/%d", finalHash, finalSize, newHash, newSize)
 	}
 	assertWritebackAttemptCleared(t, database, assetID)
-	assertAssetWritebackState(t, database, assetID, newHash, newSize, "ko-temp", 2)
+	assertAssetWritebackState(t, database, assetID, newHash, newSize, 2)
 }
 
 func TestRepairMergedWritebackAttemptLeavesSurvivorMetadataPending(t *testing.T) {
@@ -279,7 +279,7 @@ func TestRepairMergedWritebackAttemptLeavesSurvivorMetadataPending(t *testing.T)
 			if err != nil {
 				t.Fatal(err)
 			}
-			insertWritebackAttempt(t, database, assetID, storagePath, tempRel, hash, size, "ko-pending", snapshot.MetadataRev)
+			insertWritebackAttempt(t, database, assetID, storagePath, tempRel, hash, size, snapshot.MetadataRev)
 			if replaced {
 				if err := storage.ReplaceWithStaged(root, tempRel, storagePath); err != nil {
 					t.Fatal(err)
@@ -391,16 +391,15 @@ func setupImportedRepairEPUB(t *testing.T, title, author string) (string, *db.DB
 	return dataDir, database, root, assetID, storagePath
 }
 
-func insertWritebackAttempt(t *testing.T, database *db.DB, assetID int64, storagePath, tempRel string, hash []byte, size int64, koHash string, rev int64) {
+func insertWritebackAttempt(t *testing.T, database *db.DB, assetID int64, storagePath, tempRel string, hash []byte, size int64, rev int64) {
 	t.Helper()
 	if err := db.UpsertMetadataWritebackAttempt(database.Write(t.Context()), db.MetadataWritebackAttempt{
-		AssetID:      assetID,
-		MetadataRev:  rev,
-		StoragePath:  storagePath,
-		TempPath:     tempRel,
-		SHA256:       hash,
-		Size:         size,
-		KOReaderHash: koHash,
+		AssetID:     assetID,
+		MetadataRev: rev,
+		StoragePath: storagePath,
+		TempPath:    tempRel,
+		SHA256:      hash,
+		Size:        size,
 	}); err != nil {
 		t.Fatalf("insert writeback attempt: %v", err)
 	}
@@ -417,7 +416,7 @@ func assertWritebackAttemptCleared(t *testing.T, database *db.DB, assetID int64)
 	}
 }
 
-func assertAssetWritebackState(t *testing.T, database *db.DB, assetID int64, hash []byte, size int64, koHash string, rev int64) {
+func assertAssetWritebackState(t *testing.T, database *db.DB, assetID int64, hash []byte, size int64, rev int64) {
 	t.Helper()
 	var gotHash []byte
 	var gotKO string
@@ -430,8 +429,8 @@ func assertAssetWritebackState(t *testing.T, database *db.DB, assetID int64, has
 	`, assetID).Scan(&gotHash, &gotSize, &gotKO, &gotRev, &writebackError); err != nil {
 		t.Fatalf("query asset writeback state: %v", err)
 	}
-	if !bytes.Equal(gotHash, hash) || gotSize != size || gotKO != koHash || gotRev != rev || writebackError != "" {
-		t.Fatalf("asset writeback state = hash:%x size:%d ko:%q rev:%d err:%q; want hash:%x size:%d ko:%q rev:%d no err", gotHash, gotSize, gotKO, gotRev, writebackError, hash, size, koHash, rev)
+	if !bytes.Equal(gotHash, hash) || gotSize != size || gotKO != "" || gotRev != rev || writebackError != "" {
+		t.Fatalf("asset writeback state = hash:%x size:%d ko:%q rev:%d err:%q; want hash:%x size:%d rev:%d, empty KOReader cache and no err", gotHash, gotSize, gotKO, gotRev, writebackError, hash, size, rev)
 	}
 }
 

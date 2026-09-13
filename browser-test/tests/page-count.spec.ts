@@ -10,7 +10,7 @@ test('shows a calculated page count without replacing a note draft', async ({ pa
   const initialWrite = await page.request.post(`/api/books/${bookId}/writeback`);
   expect((await initialWrite.json()).book.writeback).toEqual({ available: true, dirty: false });
   const annotation = await page.request.post(`/api/reader/assets/${asset.id}/annotations`, {
-    data: { cfi: 'epubcfi(/6/2!/4/2/1:0)', quote: 'A reader', note: 'An observation', color: 'green' },
+    data: { locator: { cfi: 'epubcfi(/6/2!/4/2/1:0)' }, quote: 'A reader', note: 'An observation', color: 'green' },
   });
   expect(annotation.ok()).toBe(true);
 
@@ -32,7 +32,6 @@ test('shows a calculated page count without replacing a note draft', async ({ pa
     await expect(page.locator('.detail-page-count')).toHaveText('≈ 1 page');
     await expect(note).toHaveValue('Keep this unsaved thought');
     await expect(note).toBeFocused();
-    await page.screenshot({ path: 'screenshots/book-page-count-desktop.png', fullPage: true, animations: 'disabled' });
     await page.locator('#btn-book-menu').click();
     await expect(page.getByRole('menuitem', { name: 'Metadata file is up to date' })).toBeDisabled();
     await page.keyboard.press('Escape');

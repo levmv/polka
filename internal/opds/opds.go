@@ -9,13 +9,14 @@ import (
 )
 
 const (
-	NavigationFeedType  = "application/atom+xml;profile=opds-catalog;kind=navigation"
-	AcquisitionFeedType = "application/atom+xml;profile=opds-catalog;kind=acquisition"
-	AcquisitionRel      = "http://opds-spec.org/acquisition"
-	ImageRel            = "http://opds-spec.org/image"
-	ThumbnailRel        = "http://opds-spec.org/image/thumbnail"
-	SearchRel           = "search"
-	OpenSearchType      = "application/opensearchdescription+xml"
+	AcquisitionEntryType = "application/atom+xml;type=entry;profile=opds-catalog"
+	NavigationFeedType   = "application/atom+xml;profile=opds-catalog;kind=navigation"
+	AcquisitionFeedType  = "application/atom+xml;profile=opds-catalog;kind=acquisition"
+	AcquisitionRel       = "http://opds-spec.org/acquisition"
+	ImageRel             = "http://opds-spec.org/image"
+	ThumbnailRel         = "http://opds-spec.org/image/thumbnail"
+	SearchRel            = "search"
+	OpenSearchType       = "application/opensearchdescription+xml"
 )
 
 type Link struct {
@@ -56,6 +57,9 @@ type feed struct {
 }
 
 type entry struct {
+	XMLName       xml.Name   `xml:"entry"`
+	XMLNS         string     `xml:"xmlns,attr,omitempty"`
+	XMLNSDC       string     `xml:"xmlns:dc,attr,omitempty"`
 	Title         string     `xml:"title"`
 	ID            string     `xml:"id"`
 	Updated       string     `xml:"updated"`
@@ -273,6 +277,13 @@ func publicationEntry(pub Publication, fallbackUpdated time.Time) entry {
 		e.Categories = append(e.Categories, category{Term: c, Label: c})
 	}
 	return e
+}
+
+func AcquisitionEntry(pub Publication) ([]byte, error) {
+	document := publicationEntry(pub, time.Now())
+	document.XMLNS = "http://www.w3.org/2005/Atom"
+	document.XMLNSDC = "http://purl.org/dc/elements/1.1/"
+	return marshalDoc(document)
 }
 
 func marshalFeed(f feed) ([]byte, error) {

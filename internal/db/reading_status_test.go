@@ -28,14 +28,14 @@ func TestReadingStatusLifecycleHistoryAndIsolation(t *testing.T) {
 		t.Fatalf("opened status = %+v, err %v", opened, err)
 	}
 	_, again, err := database.SaveReaderStateAndAdvanceStatus(
-		context.Background(), alice.ID, 1, 0.5, EmptyReaderLocator(), ReadingStatusSourceWebReader,
+		context.Background(), alice.ID, 1, testReaderWrite(0.5, Locator{}, 0), ReadingStatusSourceWebReader,
 	)
 	if err != nil || again.Changed || again.State.Status != ReadingStatusReading {
 		t.Fatalf("repeated reading update = %+v, err %v", again, err)
 	}
 
 	_, finished, err := database.SaveReaderStateAndAdvanceStatus(
-		context.Background(), alice.ID, 1, ReaderFinishedProgress, EmptyReaderLocator(), ReadingStatusSourceWebReader,
+		context.Background(), alice.ID, 1, testReaderWrite(ReaderFinishedProgress, Locator{}, 1), ReadingStatusSourceWebReader,
 	)
 	if err != nil || !finished.Changed || finished.State.Status != ReadingStatusFinished || finished.EventID == 0 {
 		t.Fatalf("finished status = %+v, err %v", finished, err)
@@ -108,13 +108,14 @@ func TestAutomaticReadingStatusKeepsExplicitTerminalStates(t *testing.T) {
 	mustExec(t, database, `
 		INSERT INTO books (id, title, sort_title) VALUES (1, 'Book', 'Book');
 		INSERT INTO assets (id, book_id, storage_path, filename, extension, koreader_hash, original_sha256, current_sha256)
-		VALUES (1, 1, 'book.epub', 'book.epub', '.epub', 'known', randomblob(32), randomblob(32));
+		VALUES (1, 1, 'book.epub', 'book.epub', '.epub', '55555555555555555555555555555555', randomblob(32), randomblob(32));
+		INSERT INTO koreader_hashes SELECT id, unhex(koreader_hash) FROM assets;
 	`)
 
 	if _, err := database.SetReadingStatus(context.Background(), user.ID, 1, ReadingStatusDropped, ReadingStatusSourceManual); err != nil {
 		t.Fatalf("drop: %v", err)
 	}
-	change, err := database.AdvanceReadingStatusForDocumentHash(context.Background(), user.ID, "known", 1)
+	change, err := database.AdvanceReadingStatusForDocumentHash(context.Background(), user.ID, "55555555555555555555555555555555", 1)
 	if err != nil || change.Changed || change.State.Status != ReadingStatusDropped {
 		t.Fatalf("KOSync changed dropped status: %+v, err %v", change, err)
 	}

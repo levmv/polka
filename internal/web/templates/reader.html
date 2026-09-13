@@ -41,7 +41,6 @@
             </label>
             <button class="reader-pdf-turn" type="button" data-pdf-next aria-label="Next page" title="Next page" disabled>›</button>
             <span class="sr-only" data-reader-progress aria-live="polite"></span>
-            <span class="reader-save-status" data-reader-save-status role="status" hidden>Position not saved</span>
         </footer>
     {{else if .UsesFoliate}}
         <section class="reader-epub-stage" aria-label="Book reader" tabindex="0">
@@ -49,7 +48,6 @@
         </section>
         <footer class="reader-footer" aria-live="polite">
             <span class="reader-progress" data-reader-progress></span>
-            <span class="reader-save-status" data-reader-save-status role="status" hidden>Position not saved</span>
         </footer>
     {{else}}
         <section class="reader-fallback" aria-labelledby="reader-fallback-title">

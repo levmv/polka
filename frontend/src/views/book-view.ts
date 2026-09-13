@@ -1062,7 +1062,7 @@ function renderBookReaderProgress(container: HTMLElement, book: Book, assetID: n
 
 function updateBookReaderProgress(progressEl: HTMLElement, state: ReaderState): void {
     const progress = clampProgress(state.progress);
-    const hasState = progress > 0 || !!state.last_read_at;
+    const hasState = progress > 0 || !!state.updated_at;
     const label = progressEl.querySelector<HTMLElement>('[data-reading-status-label]');
     const status = state.reading_status?.status;
     if (label && status) {
@@ -1146,7 +1146,7 @@ async function resetBookReaderPosition(container: HTMLElement, asset: Asset): Pr
     if (!confirmed) return;
 
     try {
-        await resetReaderState(asset.id);
+        await resetReaderState(asset.id, (await fetchReaderState(asset.id)).revision);
         notifyCatalogChanged({ kind: 'reading-state' });
         const progressEl = container.querySelector<HTMLElement>(
             `[data-reader-progress-asset="${asset.id}"]`,

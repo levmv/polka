@@ -19,6 +19,10 @@ func TestEnsureDefaultsRollsBackFailedInitialization(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
+	var initialCount int
+	if err := database.Read(t.Context()).QueryRow("SELECT count(*) FROM app_settings").Scan(&initialCount); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := database.Write(t.Context()).Exec(`
 		CREATE TRIGGER reject_ingest_path BEFORE INSERT ON app_settings
 		WHEN NEW.key = 'ingest.path'
@@ -33,8 +37,8 @@ func TestEnsureDefaultsRollsBackFailedInitialization(t *testing.T) {
 	if err := database.Read(t.Context()).QueryRow("SELECT count(*) FROM app_settings").Scan(&count); err != nil {
 		t.Fatal(err)
 	}
-	if count != 0 {
-		t.Fatalf("failed initialization left %d settings, want none", count)
+	if count != initialCount {
+		t.Fatalf("failed initialization left %d settings, want original %d", count, initialCount)
 	}
 	if _, err := database.Write(t.Context()).Exec("DROP TRIGGER reject_ingest_path"); err != nil {
 		t.Fatal(err)
