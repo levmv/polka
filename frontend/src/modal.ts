@@ -576,11 +576,11 @@ function focusableElements(root: HTMLElement): HTMLElement[] {
 }
 
 function lockPageScroll(): void {
-    document.body.classList.add('modal_open');
+    document.body.classList.add('modal-open');
 }
 
 function unlockPageScroll(): void {
-    document.body.classList.remove('modal_open');
+    document.body.classList.remove('modal-open');
 }
 
 function restoreFocus(target: HTMLElement | null): void {

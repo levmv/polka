@@ -208,7 +208,7 @@ test.describe('Book editor', () => {
     });
     try {
       await nextButton.click();
-      await expect(page.locator('.edit-form-loading-overlay')).toBeVisible();
+      await expect(page.locator('.edit-loading-overlay')).toBeVisible();
       await expect(page.locator('.edit-modal .save-indicator')).not.toContainText('Loading');
     } finally {
       releaseBook();
@@ -286,7 +286,7 @@ test.describe('Book editor', () => {
     expect(uploadRequests).toBe(0);
     await expect(coverPicker).toBeVisible();
     await expect(coverPicker.locator('.cover-picker-primary img')).toHaveAttribute('src', /^blob:/);
-    await expect(coverPicker.locator('.cover-picker-reference')).toBeVisible();
+    await expect(coverPicker.locator('.cover-picker-saved')).toBeVisible();
     await expect(coverContainer).toHaveClass(/is-dirty/);
     await expect(coverContainer).not.toHaveClass(/is-fetched/);
     await expect(coverContainer.locator('img')).toHaveAttribute('src', /^blob:/);
@@ -390,9 +390,9 @@ test.describe('Book editor', () => {
     await expect(coverPicker).toBeVisible();
     await expect(coverPicker.locator('.cover-picker-primary img')).toHaveAttribute('src', /^blob:/);
     await expectImageLoaded(coverPicker.locator('.cover-picker-primary img'));
-    await expect(coverPicker.locator('.cover-picker-reference')).toBeVisible();
+    await expect(coverPicker.locator('.cover-picker-saved')).toBeVisible();
     await expect(coverPicker.getByRole('button', { name: 'Use saved cover' })).toBeVisible();
-    await expectImageLoaded(coverPicker.locator('.cover-picker-reference img'));
+    await expectImageLoaded(coverPicker.locator('.cover-picker-saved img'));
     await expect(coverPicker.locator('.cover-picker-variant')).toHaveCount(4);
     await expect(coverPicker.locator('.cover-picker-variant-image')).toHaveCount(4);
     await expect(coverContainer).toHaveClass(/is-dirty/);
@@ -419,7 +419,7 @@ test.describe('Book editor', () => {
     await coverPicker.getByRole('button', { name: 'Use saved cover' }).click();
     await expect(coverContainer).not.toHaveClass(/is-dirty/);
     await expect(page.locator('.edit-cover-revert')).toBeHidden();
-    await expect(coverPicker.locator('.cover-picker-reference')).toBeVisible();
+    await expect(coverPicker.locator('.cover-picker-saved')).toBeVisible();
     await expect(coverPicker.getByRole('button', { name: 'Use saved cover' })).toHaveClass(
       /is-selected/,
     );

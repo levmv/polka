@@ -851,7 +851,7 @@ function updateLoadMore(state: LibraryViewState) {
     if (state.loadFailure) status.textContent = state.loadFailure.message;
     else
         status.innerHTML =
-            '<span class="local-loading-state"><span class="local-spinner" aria-hidden="true"></span>Loading more books…</span>';
+            '<span class="loading-state"><span class="spinner" aria-hidden="true"></span>Loading more books…</span>';
     // Re-arm after each page: a short page or a tall viewport can leave the
     // sentinel in view without another intersection crossing. Failures wait
     // for an explicit retry instead of repeatedly hitting an unavailable API.

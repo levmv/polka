@@ -29,7 +29,7 @@ export function createBookAnnotations(book: Book) {
     count.setAttribute('role', 'status');
     const heading = textEl('div', 'book-annotations-title', '');
     heading.append(title, count);
-    const exportButton = button('', 'detail-action detail-action-icon');
+    const exportButton = button('', 'action-btn action-btn-icon');
     exportButton.setAttribute('aria-label', 'Export');
     exportButton.title = 'Export highlights';
     exportButton.append(iconElement('download', 18));
@@ -66,9 +66,9 @@ export function createBookAnnotations(book: Book) {
     list.className = 'book-annotations-list';
     const status = textEl('p', 'book-annotations-status', '');
     status.setAttribute('role', 'status');
-    const retry = button('Try again', 'detail-action');
+    const retry = button('Try again', 'action-btn');
     retry.hidden = true;
-    const more = button('Show more highlights', 'detail-action book-annotations-more');
+    const more = button('Show more highlights', 'action-btn book-annotations-more');
     more.hidden = true;
     viewport.append(list, status, retry, more);
     el.append(header, viewport);

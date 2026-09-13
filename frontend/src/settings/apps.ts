@@ -87,7 +87,7 @@ function renderAppPasswords(root: HTMLElement, state: AppsState): void {
 
     const action = document.createElement('div');
     action.className = 'settings-section-action';
-    const create = buttonEl('settings-btn settings-primary-btn', 'New app password', () =>
+    const create = buttonEl('dialog-btn dialog-primary-btn', 'New app password', () =>
         openCreateAppPasswordModal(state, rerender),
     );
     create.disabled = !state.loaded;
@@ -176,12 +176,12 @@ function renderKoboConnection(root: HTMLElement, state: KoboState): void {
 
     if (state.koboConnection) {
         const connection = state.koboConnection;
-        const details = buttonEl('settings-btn', 'Details', () =>
+        const details = buttonEl('dialog-btn', 'Details', () =>
             openKoboConnectionDetails(connection.setup_url),
         );
         const actions = [
-            buttonEl('settings-btn', 'Replace…', () => openKoboSetupModal(state, rerender)),
-            buttonEl('settings-btn settings-danger-btn', 'Revoke', async () => {
+            buttonEl('dialog-btn', 'Replace…', () => openKoboSetupModal(state, rerender)),
+            buttonEl('dialog-btn dialog-danger-btn', 'Revoke', async () => {
                 const confirmed = await confirmModal({
                     title: 'Revoke Kobo connection',
                     body: 'Kobo library sync will stop immediately. Books already downloaded to the device stay there.',
@@ -215,7 +215,7 @@ function renderKoboConnection(root: HTMLElement, state: KoboState): void {
 
     const action = document.createElement('div');
     action.className = 'settings-section-action';
-    const setup = buttonEl('settings-btn settings-primary-btn', 'Set up Kobo', () =>
+    const setup = buttonEl('dialog-btn dialog-primary-btn', 'Set up Kobo', () =>
         openKoboSetupModal(state, rerender),
     );
     setup.disabled = state.shelves.length === 0;
@@ -232,7 +232,7 @@ function openKoboSetupModal(state: KoboState, rerender: () => void): void {
     if (state.shelves.length === 0) return;
     const fields = fieldGroup();
     const shelf = document.createElement('select');
-    shelf.className = 'settings-input';
+    shelf.className = 'dialog-input';
     shelf.setAttribute('aria-label', 'Shelf');
     for (const item of state.shelves) {
         const option = document.createElement('option');
@@ -244,7 +244,7 @@ function openKoboSetupModal(state: KoboState, rerender: () => void): void {
     fields.append(
         textEl(
             'div',
-            'settings-submodal-hint',
+            'dialog-help',
             state.koboConnection
                 ? 'Creating a new URL revokes the current Kobo connection.'
                 : 'Choose the shelf that should appear on this Kobo.',
@@ -274,14 +274,14 @@ function openKoboSetupModal(state: KoboState, rerender: () => void): void {
 
 function openKoboConnectionDetails(setupURL: string): void {
     const body = document.createElement('div');
-    body.className = 'settings-submodal-fields';
+    body.className = 'dialog-fields';
     body.append(
         createReadonlyCopyField('Kobo setup URL', setupURL, {
             copyLabel: 'Copy Kobo setup URL',
         }),
         textEl(
             'div',
-            'settings-submodal-hint',
+            'dialog-help',
             'On the mounted Kobo, open .kobo/Kobo/Kobo eReader.conf and set api_endpoint to this URL under [OneStoreServices], then safely eject and sync.',
         ),
     );
@@ -324,7 +324,7 @@ function openCreateAppPasswordModal(state: AppsState, rerender: () => void): voi
 
 function openAppConnectionDetails(name: string, token: string): void {
     const body = document.createElement('div');
-    body.className = 'settings-submodal-fields';
+    body.className = 'dialog-fields';
 
     const password = createReadonlyCopyField('App password', token, {
         copyLabel: 'Copy app password',
@@ -377,10 +377,10 @@ function openAppConnectionDetails(name: string, token: string): void {
 }
 
 function createTokenRow(token: AppToken, state: AppsState, rerender: () => void): HTMLElement {
-    const details = buttonEl('settings-btn', 'Details', () =>
+    const details = buttonEl('dialog-btn', 'Details', () =>
         openAppConnectionDetails(token.name, token.token),
     );
-    const revoke = buttonEl('settings-btn settings-danger-btn', 'Revoke', async () => {
+    const revoke = buttonEl('dialog-btn dialog-danger-btn', 'Revoke', async () => {
         const confirmed = await confirmModal({
             title: 'Revoke app password',
             body: `"${token.name}" will stop working immediately.`,

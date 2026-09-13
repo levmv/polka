@@ -43,7 +43,7 @@ test.describe('Editor overlay history', () => {
 
     try {
       await row.locator('.btn-quick-edit').click();
-      await expect(page.locator('.edit-modal-loading')).toBeVisible();
+      await expect(page.locator('.edit-loading')).toBeVisible();
       await page.evaluate(() => window.history.back());
 
       await expect(page.locator('.edit-modal')).toHaveCount(0);

@@ -144,7 +144,7 @@ function renderGeneralPanel(
     const timeZoneField = document.createElement('div');
     const timeZoneInput = document.createElement('input');
     timeZoneInput.type = 'text';
-    timeZoneInput.className = 'settings-input';
+    timeZoneInput.className = 'dialog-input';
     timeZoneInput.setAttribute('aria-label', 'Time zone');
     timeZoneInput.setAttribute('list', 'settings-time-zones');
     timeZoneInput.autocomplete = 'off';
@@ -189,7 +189,7 @@ function renderGeneralPanel(
     root.append(rows);
     const currentVersion = appVersion();
     if (currentVersion) {
-        const versionLine = textEl('div', 'settings-note', 'Polka version: ');
+        const versionLine = textEl('div', 'dialog-note', 'Polka version: ');
         const versionLink = document.createElement('a');
         versionLink.className = 'settings-version-link';
         versionLink.href = 'https://github.com/levmv/polka';
@@ -273,7 +273,7 @@ function writebackControl(state: GeneralState, rerender: () => void): HTMLElemen
 function writebackCountsLine(state: GeneralState, rerender: () => void): HTMLElement {
     const wb = state.status?.writeback;
     const line = document.createElement('div');
-    line.className = 'settings-note settings-storage-note';
+    line.className = 'dialog-note';
     if (!wb || (wb.pending === 0 && wb.failed === 0)) {
         line.textContent = 'All book files carry the current metadata.';
         return line;
@@ -281,7 +281,7 @@ function writebackCountsLine(state: GeneralState, rerender: () => void): HTMLEle
     const parts = [`${wb.pending} ${wb.pending === 1 ? 'file' : 'files'} pending metadata write`];
     if (wb.failed > 0) {
         parts.push(`${wb.failed} failed`);
-        line.classList.add('settings-note-error');
+        line.classList.add('dialog-note-error');
     }
     line.append(document.createTextNode(parts.join(' · ')));
     if (wb.failed > 0) {

@@ -64,11 +64,11 @@ function openShelfDialog(opts: ShelfDialogState): Promise<Shelf | null> {
                 Boolean(opts.shelf && opts.shelf.owner_id === opts.currentUser.id));
 
         const fields = document.createElement('div');
-        fields.className = 'settings-submodal-fields';
+        fields.className = 'dialog-fields';
 
         const name = document.createElement('input');
         name.type = 'text';
-        name.className = 'settings-input';
+        name.className = 'dialog-input';
         name.autocomplete = 'off';
         name.value = opts.initialName;
         fields.append(formField('Name', name));
@@ -78,11 +78,11 @@ function openShelfDialog(opts: ShelfDialogState): Promise<Shelf | null> {
         let queryValidationTimer: number | undefined;
         let queryValidationRun = 0;
         const queryStatus = document.createElement('div');
-        queryStatus.className = 'settings-field-hint shelf-query-status';
+        queryStatus.className = 'dialog-hint shelf-query-status';
         queryStatus.setAttribute('role', 'status');
 
         if (opts.kind === 'query') {
-            query.className = 'settings-input shelf-query-input';
+            query.className = 'dialog-input shelf-query-input';
             query.autocomplete = 'off';
             query.spellcheck = false;
             query.rows = 3;
@@ -98,7 +98,7 @@ function openShelfDialog(opts: ShelfDialogState): Promise<Shelf | null> {
         }
 
         const status = document.createElement('div');
-        status.className = 'settings-status';
+        status.className = 'dialog-status';
         status.setAttribute('role', 'status');
 
         const form = document.createElement('form');
@@ -185,8 +185,8 @@ function openShelfDialog(opts: ShelfDialogState): Promise<Shelf | null> {
         const { modal } = openModal({
             title: dialogTitle(opts.mode, opts.kind),
             body: form,
-            bodyClass: 'settings-submodal-body',
-            modalClass: 'modal-flow settings-submodal',
+            bodyClass: 'modal-compact-body',
+            modalClass: 'modal-flow modal-compact',
             actions: [cancel, submit],
             onClose: () => {
                 if (!settled) {
@@ -348,7 +348,7 @@ function radio(
 
 function visibilityField(control: HTMLElement): HTMLElement {
     const wrap = document.createElement('div');
-    wrap.className = 'settings-field shelf-visibility-field';
+    wrap.className = 'dialog-field shelf-visibility-field';
     wrap.append(control);
     return wrap;
 }

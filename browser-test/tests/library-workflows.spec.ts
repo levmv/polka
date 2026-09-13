@@ -92,7 +92,7 @@ test.describe('Library workflows', () => {
     await expect(layoutRow.locator('input')).toHaveValue(
       '{author_bucket}/{author_sort}/{title} [a{asset_id}]{dot_ext}',
     );
-    await expect(layoutRow.locator('.settings-note')).toContainText('CLI');
+    await expect(layoutRow.locator('.dialog-note')).toContainText('CLI');
 
     await page.goto('/?q=Writeback%20Fixture');
     const card = page.locator('.book-card', { hasText: 'Writeback Fixture' });
@@ -257,7 +257,7 @@ test.describe('Library workflows', () => {
     expect(title).not.toBe('');
 
     await page.locator('#new-shelf-btn').click();
-    const dialog = page.locator('.settings-submodal');
+    const dialog = page.locator('.modal-compact');
     await expect(dialog.getByRole('heading', { name: 'New shelf' })).toBeVisible();
     await dialog.getByLabel('Name').fill('Browser Shelf');
     await dialog.getByRole('button', { name: 'Create shelf' }).click();
@@ -304,7 +304,7 @@ test.describe('Library workflows', () => {
     await row.hover();
     await row.locator('.shelf-actions-btn').click();
     await page.getByRole('menuitem', { name: 'Edit' }).click();
-    const editShelf = page.locator('.settings-submodal');
+    const editShelf = page.locator('.modal-compact');
     await expect(editShelf.getByRole('heading', { name: 'Edit shelf' })).toBeVisible();
     await editShelf.getByLabel('Name').fill('Renamed Shelf');
     await editShelf.getByRole('button', { name: 'Save' }).click();
@@ -342,7 +342,7 @@ test.describe('Library workflows', () => {
     await page.locator('#btn-book-shelves').click();
     const popover = page.locator('.shelf-popover');
     await popover.locator('.shelf-popover-create-btn').click();
-    const dialog = page.locator('.settings-submodal');
+    const dialog = page.locator('.modal-compact');
     await expect(dialog.getByRole('heading', { name: 'New shelf' })).toBeVisible();
     await dialog.getByLabel('Name').fill('Popover Shelf');
     await dialog.getByRole('button', { name: 'Create shelf' }).click();
@@ -375,7 +375,7 @@ test.describe('Library workflows', () => {
     await page.locator('#search-input').fill('author:"Test Author" tag:"fixture"');
     await expect(page.locator('#save-search-btn')).toBeVisible();
     await page.locator('#save-search-btn').click();
-    let dialog = page.locator('.settings-submodal');
+    let dialog = page.locator('.modal-compact');
     await expect(dialog.getByRole('heading', { name: 'Save search' })).toBeVisible();
     await expect(dialog.getByLabel('Name')).toHaveValue('');
     await expect(dialog.getByRole('button', { name: 'Create shelf' })).toBeDisabled();
@@ -385,7 +385,7 @@ test.describe('Library workflows', () => {
     await page.locator('#search-input').fill('No Cover');
     await expect(page.locator('#save-search-btn')).toBeVisible();
     await page.locator('#save-search-btn').click();
-    dialog = page.locator('.settings-submodal');
+    dialog = page.locator('.modal-compact');
     await expect(dialog.getByRole('heading', { name: 'Save search' })).toBeVisible();
     await expect(dialog.getByLabel('Name')).toHaveValue('No Cover');
     await dialog.getByRole('button', { name: 'Create shelf' }).click();
@@ -423,7 +423,7 @@ test.describe('Library workflows', () => {
     await expect(page.locator('.detail-title')).toContainText('With Cover Book');
 
     await page.getByRole('button', { name: 'Send' }).click();
-    const dialog = page.locator('.settings-submodal');
+    const dialog = page.locator('.modal-compact');
     await expect(dialog.getByRole('heading', { name: 'Send to device' })).toBeVisible();
     await expect(dialog.getByText('Add a reader email address')).toBeVisible();
 

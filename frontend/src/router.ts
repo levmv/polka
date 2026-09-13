@@ -4,7 +4,7 @@
 // The router creates and owns one root element per mounted route, renders the
 // route skeleton into it, and hands it to mount(). Views own everything wired
 // beneath that root and return either a cleanup function or a controller.
-// Owning the root — rather than replacing #app-content wholesale — is what lets
+// Owning the root — rather than replacing #content wholesale — is what lets
 // a single route later be detached and kept alive across a navigation.
 // Cleanup always runs before the next route is mounted, so views can remove
 // global listeners and floating UI safely.
@@ -65,7 +65,7 @@ export interface RouteMountContext {
 export interface Route<TMatch> {
     // Sidebar nav item id to mark active for this route, if any.
     navId?: string;
-    // Temporary class applied to .app-main while this route is active.
+    // Temporary class applied to .main while this route is active.
     mainClass?: string;
     // Static or match-derived document title.
     title?: string | ((match: TMatch) => string);
@@ -103,7 +103,7 @@ interface MatchedRoute<TMatch> {
     match: TMatch;
 }
 
-const CONTENT_HOST_ID = 'app-content';
+const CONTENT_HOST_ID = 'content';
 // A plain static block. It must never take position, transform, filter,
 // contain, or display: contents: .library-jump-rail is position: fixed and
 // measured against the viewport, and any of those would make this root its
@@ -267,7 +267,7 @@ function setActiveNav(previous: string | undefined, next: string | undefined): v
 }
 
 function setMainClass(previous: string | undefined, next: string | undefined): void {
-    const main = document.querySelector<HTMLElement>('.app-main');
+    const main = document.querySelector<HTMLElement>('.main');
     if (!main) return;
     if (previous && previous !== next) main.classList.remove(previous);
     if (next) main.classList.add(next);

@@ -256,7 +256,7 @@ export function createCopyButton(
 ): HTMLButtonElement {
     const button = document.createElement('button');
     button.type = 'button';
-    button.className = 'settings-icon-btn settings-copy-btn';
+    button.className = 'dialog-icon-btn copy-btn';
     button.setAttribute('aria-label', label);
     button.title = label;
     button.innerHTML = icon('content_copy', 18);
@@ -296,7 +296,7 @@ export function openFormModal(opts: {
     const formId = `settings-form-${Math.random().toString(36).slice(2, 8)}`;
 
     const status = document.createElement('div');
-    status.className = 'settings-status';
+    status.className = 'dialog-status';
     status.setAttribute('role', 'status');
 
     const form = document.createElement('form');
@@ -317,8 +317,8 @@ export function openFormModal(opts: {
     const { modal } = openModal({
         title: opts.title,
         body: form,
-        bodyClass: 'settings-submodal-body',
-        modalClass: 'modal-flow settings-submodal',
+        bodyClass: 'modal-compact-body',
+        modalClass: 'modal-flow modal-compact',
         actions: [cancel, submit],
         onClose: opts.onClose,
     });
@@ -346,19 +346,19 @@ export function openInfoModal(title: string, body: HTMLElement, focus?: HTMLElem
     const { modal } = openModal({
         title,
         body,
-        bodyClass: 'settings-submodal-body',
-        modalClass: 'modal-flow settings-submodal',
+        bodyClass: 'modal-compact-body',
+        modalClass: 'modal-flow modal-compact',
         actions: '<button class="btn-confirm" type="button" data-modal-close>Done</button>',
     });
     modal.open(focus);
 }
 
 export function loadingNote(): HTMLElement {
-    return textEl('div', 'settings-note', 'Loading…');
+    return textEl('div', 'dialog-note', 'Loading…');
 }
 
 export function errorNote(message: string): HTMLElement {
-    return textEl('div', 'settings-note settings-note-error', message);
+    return textEl('div', 'dialog-note dialog-note-error', message);
 }
 
 // A failed section is a dead end until the modal is reopened, so its message
@@ -393,7 +393,7 @@ export function inlineSettingsButton(
 
 export function fieldGroup(): HTMLDivElement {
     const group = document.createElement('div');
-    group.className = 'settings-submodal-fields';
+    group.className = 'dialog-fields';
     return group;
 }
 
@@ -402,7 +402,7 @@ export function makeInput(type: string, autocomplete: string): HTMLInputElement 
     input.type = type;
     input.autocomplete = autocomplete as HTMLInputElement['autocomplete'];
     input.required = true;
-    input.className = 'settings-input';
+    input.className = 'dialog-input';
     return input;
 }
 

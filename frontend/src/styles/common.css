@@ -1,0 +1,1692 @@
+/* Theme and base */
+:root {
+    --bg-color: #fcfcfc;
+    --text-main: #1a1a1a;
+    /* The book page's h1, held off maximum contrast: at display size the full
+       --text-main reads as heavy rather than crisp. Every theme defines it as a
+       short step from its own text colour toward its own background. */
+    --text-title: #222222;
+    --text-muted: #666666;
+    --border-color: #eaeaea;
+    /* Hairlines that divide content stay quiet; a control you can type in has to
+       read as a control, so its edge is a step darker than a divider. */
+    --control-border: #d0d0d0;
+    --primary: #2d2d2d;
+    --accent: #0066cc;
+    --card-bg: #ffffff;
+    /* Semantic colours that vary with the selected theme. One-off illustration
+       and reader-highlight colours stay beside the component that owns them. */
+    --surface-hover: rgba(0, 0, 0, 0.05);
+    --surface-subtle: rgba(0, 0, 0, 0.03);
+    --panel-shadow: 0 12px 32px rgba(10, 14, 18, 0.18);
+    --accent-soft: rgba(0, 102, 204, 0.08);
+    --accent-soft-strong: rgba(0, 102, 204, 0.16);
+    --danger: #c62828;
+    --danger-fill: #c62828;
+    --success: #2e7d32;
+    --warning: #e65100;
+    --on-accent: #ffffff;
+    --reader-progress-bg: rgba(255, 255, 255, 0.72);
+    --reader-backdrop: rgba(0, 0, 0, 0.16);
+    --reader-panel-shadow: 18px 0 34px rgba(0, 0, 0, 0.12);
+    --reader-option-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+    --dirty-line: #b8ad98;
+    --dirty-shadow: rgba(168, 130, 70, 0.38);
+    --fetched-line: #d08a22;
+    --fetched-fill: #fffaf1;
+    --fetched-shadow: rgba(208, 138, 34, 0.72);
+    --info-fill: #e1f5fe;
+    --info-text: #0277bd;
+    --info-line: #b3e5fc;
+    --bulk-bar-bg: rgba(28, 28, 30, 0.9);
+    --bulk-bar-fg: #f5f5f7;
+    --bulk-bar-line: rgba(255, 255, 255, 0.16);
+    --bulk-bar-button-bg: rgba(255, 255, 255, 0.1);
+    --bulk-bar-button-hover: rgba(255, 255, 255, 0.2);
+    --reader-search-highlight-fill: rgba(255, 196, 0, 0.38);
+    --reader-search-highlight-outline: rgba(180, 119, 0, 0.24);
+    --font-sans: system-ui, -apple-system, sans-serif;
+    /* The book page's title block is the one place that steps out of the sans
+       stack, the way a title page would. Georgia leads because it is the serif
+       present on both Apple and Windows. */
+    --font-serif: Georgia, "Times New Roman", Times, serif;
+    /* One explicit height for the library toolbar's controls and for the top
+       strip the fixed hamburger sits in at drawer widths. Set it here rather
+       than letting each control's padding decide: the search field, icon
+       buttons, view toggle, sort, and hamburger all have to line up, and
+       implicit heights drifted apart (46 / 42 / 40). Keep it >= 44px, the
+       comfortable touch-target floor. */
+    --toolbar-control-height: 44px;
+    /* Keep the desktop content and sidebar wordmark at the same top inset. */
+    --top-inset: 1.6875rem;
+    /* Corner scale. Controls (buttons, inputs, selects) share one radius;
+       larger floating surfaces (modals, popovers, cards) get a slightly softer
+       one. Small inner bits stay at a literal 4px and deliberate pills at
+       999px. Before this there were a dozen ad-hoc values. */
+    --radius-control: 6px;
+    --radius-surface: 10px;
+    color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme]) {
+        --bg-color: #121212;
+        --text-main: #e0e0e0;
+        --text-title: #d8d8d8;
+        --text-muted: #888888;
+        --border-color: #333333;
+        --control-border: #4f4f4f;
+        --primary: #ffffff;
+        --accent: #4da6ff;
+        --card-bg: #1e1e1e;
+        --surface-hover: rgba(255, 255, 255, 0.07);
+        --surface-subtle: rgba(255, 255, 255, 0.05);
+        --panel-shadow: 0 12px 32px rgba(0, 0, 0, 0.42);
+        --accent-soft: rgba(77, 166, 255, 0.14);
+        --accent-soft-strong: rgba(77, 166, 255, 0.24);
+        --danger: #ef9a9a;
+        --success: #81c784;
+        --warning: #ffb74d;
+        --reader-progress-bg: rgba(18, 18, 18, 0.72);
+        --reader-backdrop: rgba(0, 0, 0, 0.34);
+        --reader-panel-shadow: 18px 0 34px rgba(0, 0, 0, 0.36);
+        --reader-option-shadow: none;
+        --dirty-line: #756b5d;
+        --dirty-shadow: rgba(199, 157, 89, 0.44);
+        --fetched-fill: rgba(208, 138, 34, 0.1);
+        --fetched-shadow: rgba(208, 138, 34, 0.78);
+        --info-fill: #0d233a;
+        --info-text: #4da6ff;
+        --info-line: #1a3a5c;
+        --bulk-bar-bg: rgba(242, 242, 245, 0.92);
+        --bulk-bar-fg: #1a1a1a;
+        --bulk-bar-line: rgba(0, 0, 0, 0.12);
+        --bulk-bar-button-bg: rgba(0, 0, 0, 0.06);
+        --bulk-bar-button-hover: rgba(0, 0, 0, 0.13);
+        color-scheme: dark;
+    }
+}
+
+:root[data-theme="dark"] {
+    --bg-color: #121212;
+    --text-main: #e0e0e0;
+    --text-title: #d8d8d8;
+    --text-muted: #888888;
+    --border-color: #333333;
+    --control-border: #4f4f4f;
+    --primary: #ffffff;
+    --accent: #4da6ff;
+    --card-bg: #1e1e1e;
+    --surface-hover: rgba(255, 255, 255, 0.07);
+    --surface-subtle: rgba(255, 255, 255, 0.05);
+    --panel-shadow: 0 12px 32px rgba(0, 0, 0, 0.42);
+    --accent-soft: rgba(77, 166, 255, 0.14);
+    --accent-soft-strong: rgba(77, 166, 255, 0.24);
+    --danger: #ef9a9a;
+    --success: #81c784;
+    --warning: #ffb74d;
+    --reader-progress-bg: rgba(18, 18, 18, 0.72);
+    --reader-backdrop: rgba(0, 0, 0, 0.34);
+    --reader-panel-shadow: 18px 0 34px rgba(0, 0, 0, 0.36);
+    --reader-option-shadow: none;
+    --dirty-line: #756b5d;
+    --dirty-shadow: rgba(199, 157, 89, 0.44);
+    --fetched-fill: rgba(208, 138, 34, 0.1);
+    --fetched-shadow: rgba(208, 138, 34, 0.78);
+    --info-fill: #0d233a;
+    --info-text: #4da6ff;
+    --info-line: #1a3a5c;
+    --bulk-bar-bg: rgba(242, 242, 245, 0.92);
+    --bulk-bar-fg: #1a1a1a;
+    --bulk-bar-line: rgba(0, 0, 0, 0.12);
+    --bulk-bar-button-bg: rgba(0, 0, 0, 0.06);
+    --bulk-bar-button-hover: rgba(0, 0, 0, 0.13);
+    color-scheme: dark;
+}
+
+:root[data-theme="sepia"] {
+    --bg-color: #f4efe6;
+    --text-main: #241c15;
+    --text-title: #2a221b;
+    --text-muted: #74685d;
+    --border-color: #ded2c3;
+    --control-border: #c3b096;
+    --primary: #241c15;
+    --accent: #8f4f19;
+    --card-bg: #fffaf1;
+    color-scheme: light;
+}
+
+body {
+    background-color: var(--bg-color);
+    color: var(--text-main);
+    font-family: var(--font-sans);
+    margin: 0;
+    padding: 0;
+    line-height: 1.5;
+}
+
+a {
+    color: var(--accent);
+    text-decoration: none;
+}
+
+a:hover {
+    text-decoration: underline;
+}
+
+/* Icons and utilities */
+/* Icon sprite (Material Symbols, defined in layout.html). The sheet itself is
+   hidden; .icon styles every <use> reference. Size comes from each svg's
+   width/height attributes. */
+.icon-sprite {
+    position: absolute;
+    width: 0;
+    height: 0;
+    overflow: hidden;
+}
+
+.icon {
+    flex: 0 0 auto;
+    fill: currentColor;
+    vertical-align: middle;
+}
+
+.muted-count {
+    color: var(--text-muted);
+    font-size: 0.8em;
+    font-weight: normal;
+}
+
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+/* Loading indicators */
+body.busy * {
+    /* biome-ignore lint/complexity/noImportantStyles: The busy cursor must override every component cursor. */
+    cursor: wait !important;
+}
+
+.busy-loader {
+    pointer-events: none;
+    user-select: none;
+    display: none;
+}
+
+body.busy .busy-loader {
+    display: block;
+}
+
+.busy-progress {
+    position: fixed;
+    z-index: 5000;
+    top: 0;
+    right: 100%;
+    width: 100%;
+    height: 2px;
+    background: var(--accent);
+    transform: translateX(0%);
+    animation: busyloading 1.4s linear infinite;
+    will-change: transform;
+}
+
+@keyframes busyloading {
+    0% {
+        transform: translateX(0%);
+    }
+    100% {
+        transform: translateX(200%);
+    }
+}
+
+.spinner {
+    flex: 0 0 auto;
+    width: 0.9rem;
+    height: 0.9rem;
+    border: 2px solid var(--border-color);
+    border-top-color: var(--accent);
+    border-radius: 999px;
+    animation: spinner 0.8s linear infinite;
+}
+
+@keyframes spinner {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.loading-state {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.65rem;
+    color: var(--text-muted);
+}
+
+/* Action buttons */
+.action-btn {
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    height: 36px;
+    padding: 0 0.85rem;
+    background: var(--card-bg);
+    color: var(--text-main);
+    border: 1px solid var(--control-border);
+    border-radius: var(--radius-control);
+    font-size: 0.9rem;
+    font-weight: 500;
+    text-decoration: none;
+    cursor: pointer;
+    transition:
+        background-color 0.15s,
+        color 0.15s;
+}
+
+.action-btn:hover,
+.action-btn:focus-visible {
+    background-color: var(--surface-hover);
+    color: var(--text-main);
+    text-decoration: none;
+    outline: 0;
+}
+
+.action-btn svg {
+    opacity: 0.7;
+}
+
+.action-btn-primary {
+    background: var(--primary);
+    color: var(--bg-color);
+    border-color: var(--primary);
+}
+
+.action-btn-primary:hover,
+.action-btn-primary:focus-visible {
+    background: var(--text-main);
+    color: var(--bg-color);
+}
+
+.action-btn-primary svg {
+    opacity: 0.85;
+}
+
+.action-btn-icon {
+    width: 36px;
+    padding: 0;
+}
+
+/* Forms */
+.form-row {
+    display: flex;
+    gap: 1rem;
+}
+
+.form-col-flex {
+    flex: 1;
+}
+
+.form-col-fixed {
+    width: 100px;
+}
+
+/* Short-content fields (language code, year) shouldn't sprawl to fill the row;
+   they grow a little to stay usable but never eat the space a long Publisher or
+   Title legitimately needs. */
+.form-col-narrow {
+    flex: 0 1 8.5rem;
+    min-width: 6rem;
+}
+
+.form-col-date {
+    flex-basis: 10.25rem;
+}
+
+.form-label {
+    display: block;
+    margin-bottom: 0.25rem;
+}
+
+/* In-label hint (e.g. the "semicolon separated" reminder) that surfaces only
+   while the field is actually in use — hover or focus — so it is there exactly
+   when you'd want it and silent the rest of the time. Stays in flow (just fades)
+   so revealing it never shifts the layout. */
+.field-hint {
+    color: var(--text-muted);
+    font-weight: 400;
+    opacity: 0;
+    transition: opacity 0.12s ease;
+}
+
+.form-group:hover .field-hint,
+.form-group:focus-within .field-hint {
+    opacity: 1;
+}
+
+.form-input {
+    box-sizing: border-box;
+    width: 100%;
+    padding: 0.5rem;
+    color: var(--text-main);
+    background: var(--card-bg);
+    border: 1px solid var(--control-border);
+    border-radius: 4px;
+    font: inherit;
+}
+
+.form-input:focus {
+    border-color: var(--accent);
+    outline: 0;
+}
+
+textarea.form-input {
+    font-family: inherit;
+}
+
+.input-error {
+    color: red;
+    font-size: 0.8rem;
+    display: none;
+}
+
+/* Quiet field validation: a row of small marks under an input. Hidden until
+   there's something to say; success is a lone muted check, a problem adds a
+   short word. The detail (the exact value) lives in each mark's title. */
+.field-validation {
+    margin-top: 0.3rem;
+    display: none;
+    align-items: center;
+    gap: 0.6rem;
+    font-size: 0.8rem;
+}
+
+.field-flag {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2rem;
+}
+
+.field-flag svg {
+    display: block;
+}
+
+.field-flag-ok {
+    color: var(--success);
+    opacity: 0.75;
+}
+
+.field-flag-bad {
+    color: var(--warning);
+}
+
+/* Menus and popovers */
+.floating-menu {
+    position: fixed;
+    z-index: 130;
+    padding: 0.25rem;
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-surface);
+    box-shadow: var(--panel-shadow);
+}
+
+.floating-menu[hidden] {
+    display: none;
+}
+
+.menu-item {
+    display: block;
+    width: 100%;
+    min-height: 36px;
+    padding: 0.5rem 0.625rem;
+    color: var(--text-main);
+    background: transparent;
+    border: 0;
+    border-radius: 4px;
+    cursor: pointer;
+    font: inherit;
+    font-size: 0.95rem;
+    text-align: left;
+}
+
+.menu-item:hover,
+.menu-item:focus-visible {
+    background: var(--surface-hover);
+    outline: 0;
+}
+
+/* Floating panel (popover.ts): like .floating-menu but hosts arbitrary content. */
+.floating-panel {
+    position: fixed;
+    /* Above .modal-backdrop (200) so popovers still receive clicks in modals. */
+    z-index: 210;
+    padding: 0.5rem;
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-surface);
+    box-shadow: var(--panel-shadow);
+}
+
+.floating-panel[hidden] {
+    display: none;
+}
+
+/* Choice controls */
+/* Choice control (select.ts): trigger shows the value + chevron; the dropdown
+   reuses .floating-menu and marks the selected option with a trailing check. */
+.select-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    min-height: 36px;
+    min-width: 140px;
+    padding: 0.4rem 0.6rem;
+    color: var(--text-main);
+    background: var(--card-bg);
+    border: 1px solid var(--control-border);
+    border-radius: var(--radius-control);
+    cursor: pointer;
+    font: inherit;
+    text-align: left;
+}
+
+.select-trigger:hover,
+.select-trigger:focus-visible,
+.select-trigger[aria-expanded="true"] {
+    border-color: var(--accent);
+    outline: 0;
+}
+
+.select-trigger-label {
+    flex: 1 1 auto;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.select-chevron {
+    color: var(--text-muted);
+    /* Optical, not geometric: the boxes already line up, but the glyph's ink
+       sits ~0.2px above its own box centre and a downward chevron reads
+       top-heavy (two thick arms above, a point below), so it looks like it
+       floats. A hair of translation settles it against the label. */
+    transform: translateY(1px);
+}
+
+.select-menu {
+    /* Above .modal-backdrop (200) so the dropdown shows when used in a modal. */
+    z-index: 210;
+    max-height: min(60vh, 320px);
+    overflow-y: auto;
+}
+
+.select-option {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.select-option-label {
+    flex: 1 1 auto;
+}
+
+.select-check {
+    color: var(--accent);
+    visibility: hidden;
+}
+
+.select-option[aria-selected="true"] .select-check {
+    visibility: visible;
+}
+
+/* Switches */
+/* On/off switch (toggle.ts): track + knob keyed off aria-checked. */
+.toggle {
+    position: relative;
+    flex: 0 0 auto;
+    width: 42px;
+    height: 24px;
+    padding: 0;
+    /* The track is read by its fill, not its edge, so border and background stay
+       the same colour and the switch keeps its flat pill shape. */
+    background: var(--border-color);
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+}
+
+.toggle:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+.toggle[aria-checked="true"] {
+    background: var(--accent);
+    border-color: var(--accent);
+}
+
+.toggle-knob {
+    position: absolute;
+    top: 50%;
+    left: 2px;
+    width: 18px;
+    height: 18px;
+    background: #fff;
+    border-radius: 50%;
+    transform: translateY(-50%);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+    transition: left 0.15s ease;
+}
+
+.toggle[aria-checked="true"] .toggle-knob {
+    left: 20px;
+}
+
+/* Date picker */
+.date-picker-popover {
+    width: min(300px, calc(100vw - 32px));
+}
+
+.date-picker-mode {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.25rem;
+    padding: 0.2rem;
+    margin-bottom: 0.6rem;
+    background: var(--bg-color);
+    border: 1px solid var(--control-border);
+    border-radius: var(--radius-control);
+}
+
+.date-picker-mode-btn {
+    min-height: 30px;
+    color: var(--text-muted);
+    background: transparent;
+    border: 0;
+    border-radius: var(--radius-control);
+    cursor: pointer;
+    font: inherit;
+    font-size: 0.84rem;
+    font-weight: 700;
+}
+
+.date-picker-mode-btn:hover,
+.date-picker-mode-btn:focus-visible {
+    color: var(--text-main);
+    outline: 0;
+}
+
+.date-picker-mode-btn[aria-pressed="true"] {
+    color: var(--text-main);
+    background: var(--card-bg);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.date-picker-header {
+    display: grid;
+    grid-template-columns: 34px minmax(0, 1fr) 34px;
+    gap: 0.4rem;
+    align-items: center;
+    margin-bottom: 0.55rem;
+}
+
+.date-picker-current {
+    overflow: hidden;
+    color: var(--text-main);
+    font: inherit;
+    font-size: 0.95rem;
+    font-weight: 700;
+    text-align: center;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.date-picker-nav {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    color: var(--text-main);
+    background: transparent;
+    border: 1px solid var(--control-border);
+    border-radius: var(--radius-control);
+    cursor: pointer;
+}
+
+.date-picker-nav:hover,
+.date-picker-nav:focus-visible {
+    border-color: var(--accent);
+    outline: 0;
+}
+
+.date-picker-next-icon {
+    transform: rotate(180deg);
+}
+
+.date-picker-year-grid,
+.date-picker-month-grid,
+.date-picker-calendar {
+    display: grid;
+    gap: 0.3rem;
+}
+
+.date-picker-year-grid,
+.date-picker-month-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.date-picker-calendar {
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+
+.date-picker-cell {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+    height: 34px;
+    color: var(--text-main);
+    background: transparent;
+    border: 1px solid var(--control-border);
+    border-radius: var(--radius-control);
+    cursor: pointer;
+    font: inherit;
+    font-size: 0.86rem;
+}
+
+.date-picker-cell:hover,
+.date-picker-cell:focus-visible {
+    border-color: var(--accent);
+    outline: 0;
+}
+
+.date-picker-cell.is-active {
+    color: var(--accent);
+    border-color: var(--accent);
+    font-weight: 800;
+}
+
+.date-picker-weekday {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 24px;
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    font-weight: 800;
+}
+
+.date-picker-day-empty {
+    height: 34px;
+}
+
+.date-input-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 36px;
+    align-items: stretch;
+}
+
+.date-input-row .form-input {
+    border-right: 0;
+    border-radius: 4px 0 0 4px;
+}
+
+.date-input-row:focus-within .date-picker-trigger {
+    border-color: var(--accent);
+}
+
+.date-picker-trigger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-main);
+    background: var(--card-bg);
+    border: 1px solid var(--control-border);
+    border-radius: 0 4px 4px 0;
+    cursor: pointer;
+}
+
+.date-picker-trigger:hover,
+.date-picker-trigger:focus-visible {
+    border-color: var(--accent);
+    outline: 0;
+}
+
+/* Autocomplete */
+/* Text-compatible comma/list autocomplete */
+.text-list-ac-wrap {
+    position: relative;
+    min-width: 0;
+}
+
+.text-list-ac-list {
+    position: fixed;
+    z-index: 2000;
+    box-sizing: border-box;
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-surface);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+    overflow-y: auto;
+}
+
+.text-list-ac-list[hidden] {
+    display: none;
+}
+
+.text-list-ac-item {
+    display: block;
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    color: var(--text-main);
+    font: inherit;
+    font-size: 0.9rem;
+    text-align: left;
+    background: transparent;
+    border: 0;
+    cursor: pointer;
+}
+
+.text-list-ac-item:hover,
+.text-list-ac-item.active {
+    background: var(--accent-soft);
+    box-shadow: inset 3px 0 0 var(--accent);
+    outline: 0;
+}
+
+.text-list-ac-primary,
+.text-list-ac-meta {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.text-list-ac-meta {
+    margin-top: 0.1rem;
+    color: var(--text-muted);
+    font-size: 0.78rem;
+}
+
+/* Dialogs */
+body.modal-open {
+    overflow: hidden;
+}
+
+.modal-backdrop {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 200;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    place-items: center;
+    padding: 8px 16px;
+    overflow: auto;
+    overscroll-behavior: contain;
+    background: rgba(10, 14, 18, 0.74);
+    animation: modal-fade-in 180ms ease-out;
+    -webkit-overflow-scrolling: touch;
+}
+
+.modal {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    width: 420px;
+    max-width: 100%;
+    max-height: calc(100vh - 16px);
+    /* biome-ignore lint/suspicious/noDuplicateProperties: dvh overrides the legacy viewport fallback when supported. */
+    max-height: calc(100dvh - 16px);
+    background: var(--card-bg);
+    border: 0;
+    border-radius: var(--radius-surface);
+    overflow: auto;
+    overscroll-behavior: contain;
+    box-shadow: 0 18px 48px rgba(10, 14, 18, 0.34);
+    animation: modal-slide-in 180ms ease-out;
+}
+
+.modal-wide > .modal {
+    width: min(960px, calc(100vw - 32px));
+}
+
+/* The book page closes the same way a dialog does — the list it was opened
+   from is still there, held, and comes back exactly as it was left. Same button
+   in the same corner, so the gesture is learned once. */
+.modal-close,
+.page-close {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 2;
+    display: inline-grid;
+    width: 38px;
+    height: 38px;
+    padding: 0;
+    place-items: center;
+    color: var(--text-main);
+    background: transparent;
+    border: 0;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.modal-close:hover,
+.modal-close:focus-visible,
+.page-close:hover,
+.page-close:focus-visible {
+    background: var(--border-color);
+    outline: 0;
+}
+
+.page-close svg,
+.modal-close svg {
+    width: 26px;
+    height: 26px;
+    fill: currentColor;
+    stroke: none;
+}
+
+/* Alone in the page margin the dialog's weight reads as an accent, so the cross
+   steps down a size and stays quiet until pointed at. The button box is
+   unchanged: same target and hover chip as the dialog's. */
+.page-close {
+    color: var(--text-muted);
+}
+
+.page-close svg {
+    width: 22px;
+    height: 22px;
+}
+
+.page-close:hover,
+.page-close:focus-visible {
+    color: var(--text-main);
+}
+
+.modal-header,
+.modal-body,
+.modal-actions {
+    padding: 14px 16px;
+}
+
+.modal-close + .modal-header {
+    padding-right: 48px;
+}
+
+.modal-header {
+    flex: 0 0 auto;
+}
+
+.modal-header h2 {
+    margin: 0;
+    font-size: 18px;
+}
+
+.modal-flow .modal-header {
+    border-bottom: 0;
+    padding-bottom: 6px;
+}
+
+.modal-flow .modal-body {
+    scrollbar-gutter: auto;
+    padding-top: 4px;
+}
+
+.modal-body {
+    flex: 0 0 auto;
+    min-height: 0;
+    overflow: visible;
+    scrollbar-gutter: auto;
+    color: var(--text-muted);
+}
+
+.modal,
+.modal-body {
+    scrollbar-color: var(--text-muted) transparent;
+    scrollbar-width: thin;
+    -webkit-overflow-scrolling: touch;
+}
+
+.modal::-webkit-scrollbar,
+.modal-body::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+.modal::-webkit-scrollbar-track,
+.modal-body::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.modal::-webkit-scrollbar-thumb,
+.modal-body::-webkit-scrollbar-thumb {
+    background: var(--text-muted);
+    border: 2px solid var(--card-bg);
+    border-radius: 999px;
+}
+
+.modal-actions {
+    flex: 0 0 auto;
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    border-top: 1px solid var(--border-color);
+}
+
+@media (max-width: 760px) {
+    .modal-backdrop {
+        padding: 8px;
+    }
+
+    .modal {
+        max-height: calc(100vh - 16px);
+        /* biome-ignore lint/suspicious/noDuplicateProperties: dvh overrides the legacy viewport fallback when supported. */
+        max-height: calc(100dvh - 16px);
+    }
+
+    .modal-wide {
+        padding: 0;
+    }
+
+    .modal-wide > .modal {
+        width: 100%;
+        max-height: 100vh;
+        /* biome-ignore lint/suspicious/noDuplicateProperties: dvh overrides the legacy viewport fallback when supported. */
+        max-height: 100dvh;
+        border-radius: 0;
+    }
+}
+
+@keyframes modal-fade-in {
+    from {
+        background: rgba(10, 14, 18, 0);
+    }
+}
+
+@keyframes modal-slide-in {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+}
+
+/* Confirm dialog */
+.modal-confirm .modal-body p {
+    margin: 0;
+    line-height: 1.5;
+    color: var(--text-main);
+}
+
+.btn-confirm,
+.btn-confirm-cancel {
+    padding: 0.5rem 1rem;
+    border-radius: var(--radius-control);
+    border: 1px solid var(--control-border);
+    background: var(--card-bg);
+    color: var(--text-main);
+    cursor: pointer;
+    font: inherit;
+}
+
+.btn-confirm {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: var(--on-accent);
+}
+
+.btn-confirm-danger {
+    border-color: var(--danger-fill);
+    background: var(--danger-fill);
+    color: var(--on-accent);
+}
+
+.btn-confirm:disabled {
+    border-color: var(--border-color);
+    background: var(--border-color);
+    color: var(--text-muted);
+    cursor: default;
+}
+
+.btn-confirm-cancel:disabled {
+    cursor: default;
+    opacity: 0.55;
+}
+
+.btn-confirm:hover:not(:disabled),
+.btn-confirm-cancel:hover:not(:disabled) {
+    opacity: 0.9;
+}
+
+/* Dialog fields and feedback */
+.dialog-field {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.dialog-field[hidden] {
+    display: none;
+}
+
+.dialog-field span,
+.checkbox-field {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+
+.dialog-hint {
+    color: var(--text-muted);
+    font-size: 0.82rem;
+    line-height: 1.35;
+}
+
+.dialog-hint.error {
+    color: var(--danger);
+}
+
+/* Quiet inline placeholder for a panel that is loading or failed to load. */
+.dialog-note {
+    padding: 0.85rem 0;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+}
+
+.dialog-note-error {
+    color: var(--danger);
+}
+
+.dialog-status {
+    min-height: 1.25rem;
+    margin: 0.75rem 0;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+}
+
+.dialog-status.error {
+    color: var(--danger);
+}
+
+/* Small forms opened from settings, shelves, or a book. */
+.modal-compact {
+    width: 440px;
+}
+
+.modal-compact-body {
+    color: var(--text-main);
+}
+
+.dialog-fields {
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+}
+
+.dialog-help {
+    color: var(--text-muted);
+    font-size: 0.88rem;
+    line-height: 1.45;
+}
+
+.dialog-input {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    height: 36px;
+    padding: 0 0.55rem;
+    color: var(--text-main);
+    background: var(--card-bg);
+    border: 1px solid var(--control-border);
+    border-radius: 4px;
+    font: inherit;
+}
+
+.dialog-input:focus {
+    border-color: var(--accent);
+    outline: 0;
+}
+
+/* Percent widths resolve against the shrink-to-fit control wrapper, so desktop
+   widths stay fixed; the narrow breakpoint resets wide inputs to 100%. */
+.dialog-input.dialog-input-wide {
+    width: 17rem;
+}
+
+.dialog-input.dialog-input-port {
+    width: 5.5rem;
+}
+
+@media (max-width: 760px) {
+    .dialog-input.dialog-input-wide {
+        width: 100%;
+    }
+}
+
+.checkbox-field {
+    display: inline-flex;
+    min-height: 36px;
+    align-items: center;
+    gap: 0.45rem;
+    white-space: nowrap;
+}
+
+.checkbox {
+    width: 18px;
+    height: 18px;
+}
+
+/* Dialog buttons */
+.dialog-btn {
+    min-height: 36px;
+    padding: 0.45rem 0.7rem;
+    color: var(--text-main);
+    background: var(--card-bg);
+    border: 1px solid var(--control-border);
+    border-radius: 4px;
+    cursor: pointer;
+    font: inherit;
+    white-space: nowrap;
+}
+
+.dialog-btn:hover:not(:disabled),
+.dialog-btn:focus-visible:not(:disabled) {
+    border-color: var(--accent);
+    outline: 0;
+}
+
+.dialog-btn:disabled {
+    cursor: default;
+    opacity: 0.55;
+}
+
+.dialog-primary-btn {
+    font-weight: 700;
+}
+
+.dialog-danger-btn {
+    color: #b71c1c;
+}
+
+/* Icon-only square button (remove user, copy field), matching dialog-btn. */
+.dialog-icon-btn {
+    display: inline-grid;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    color: var(--text-main);
+    background: var(--card-bg);
+    border: 1px solid var(--control-border);
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.dialog-icon-btn .icon {
+    width: 18px;
+    height: 18px;
+    fill: currentColor;
+}
+
+.dialog-icon-btn:hover:not(:disabled),
+.dialog-icon-btn:focus-visible:not(:disabled) {
+    border-color: var(--accent);
+    outline: 0;
+}
+
+.dialog-icon-btn:disabled {
+    cursor: default;
+    opacity: 0.55;
+}
+
+.dialog-danger-icon {
+    color: #b71c1c;
+}
+
+.copy-btn.is-copied {
+    color: var(--accent);
+    border-color: var(--accent);
+}
+
+/* Notifications */
+/* Toast: single transient notification, top-centre above modals. See toast.ts
+   for timing rules. */
+.toast-host {
+    position: fixed;
+    top: 24px;
+    left: 0;
+    right: 0;
+    z-index: 400;
+    display: grid;
+    justify-items: center;
+    padding: 0 16px;
+    pointer-events: none;
+}
+
+.toast {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    max-width: min(440px, 100%);
+    padding: 0.65rem 0.5rem 0.65rem 0.9rem;
+    color: #fff;
+    background: #2b2f33;
+    border-radius: var(--radius-surface);
+    box-shadow: 0 12px 32px rgba(10, 14, 18, 0.34);
+    grid-area: 1 / 1;
+    pointer-events: auto;
+    opacity: 0;
+    transform: translateY(-10px);
+    transition:
+        opacity 150ms ease,
+        transform 200ms cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+
+.toast-visible {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.toast-leaving {
+    opacity: 0;
+    transform: translateY(-6px);
+}
+
+.toast-error {
+    background: var(--danger-fill);
+}
+
+.toast-text {
+    padding: 0.1rem 0;
+    font-size: 0.9rem;
+    line-height: 1.35;
+}
+
+.toast-action {
+    flex: 0 0 auto;
+    padding: 0 0.35rem;
+    color: #fff;
+    background: transparent;
+    border: 0;
+    font: inherit;
+    font-weight: 700;
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+.toast-close {
+    flex: 0 0 auto;
+    display: inline-grid;
+    width: 28px;
+    height: 28px;
+    place-items: center;
+    color: inherit;
+    background: transparent;
+    border: 0;
+    border-radius: 4px;
+    font-size: 19px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.toast-close:hover,
+.toast-close:focus-visible {
+    background: rgba(255, 255, 255, 0.16);
+    outline: 0;
+}
+
+/* Rich text editor */
+.rich-editor {
+    border: 1px solid var(--control-border);
+    border-radius: var(--radius-surface);
+    background-color: var(--card-bg);
+    overflow: hidden;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.rich-editor-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    padding: 0.5rem;
+    background-color: var(--bg-color);
+    border-bottom: 1px solid var(--border-color);
+    align-items: center;
+}
+
+.rich-editor-btn {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    padding: 0.25rem 0.5rem;
+    cursor: pointer;
+    color: var(--text-main);
+    font-size: 0.9rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 30px;
+    height: 30px;
+    transition:
+        background-color 0.15s,
+        border-color 0.15s;
+}
+
+.rich-editor-btn:hover {
+    background-color: var(--border-color);
+}
+
+.rich-editor-btn.active {
+    background-color: var(--border-color);
+    border-color: var(--text-muted);
+}
+
+.rich-editor-separator {
+    width: 1px;
+    height: 20px;
+    background-color: var(--border-color);
+    margin: 0 0.25rem;
+}
+
+.rich-editor-linkbar {
+    padding: 0.5rem;
+    background-color: var(--bg-color);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.rich-editor-linkbar[hidden] {
+    display: none;
+}
+
+.rich-editor-linkbar-fields {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.rich-editor-linkbar-input {
+    flex: 1;
+    min-width: 0;
+    padding: 0.35rem 0.5rem;
+    font-size: 0.9rem;
+    border: 1px solid var(--control-border);
+    border-radius: 4px;
+    background-color: var(--card-bg);
+    color: var(--text-main);
+}
+
+.rich-editor-linkbar-add,
+.rich-editor-linkbar-cancel {
+    padding: 0.35rem 0.75rem;
+    font-size: 0.85rem;
+    border: 1px solid var(--control-border);
+    border-radius: 4px;
+    background: var(--card-bg);
+    color: var(--text-main);
+    cursor: pointer;
+}
+
+.rich-editor-linkbar-add:hover,
+.rich-editor-linkbar-cancel:hover {
+    background-color: var(--border-color);
+}
+
+.rich-editor-linkbar-error {
+    margin-top: 0.4rem;
+    font-size: 0.8rem;
+    color: var(--danger);
+}
+
+.rich-editor-linkbar-error[hidden] {
+    display: none;
+}
+
+.rich-editor-content {
+    min-height: 120px;
+    padding: 0.75rem;
+    color: var(--text-main);
+    outline: none;
+    line-height: 1.5;
+}
+
+.rich-editor-content p {
+    margin: 0 0 0.5rem 0;
+}
+
+.rich-editor-content ul,
+.rich-editor-content ol {
+    margin: 0 0 0.5rem 0;
+    padding-left: 1.5rem;
+}
+
+/* Annotation editor */
+.annotation-editor-fields {
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    min-width: 0;
+}
+
+.annotation-editor [hidden] {
+    display: none;
+}
+
+.annotation-note-input {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 0.7rem;
+    border: 1px solid var(--control-border);
+    border-radius: var(--radius-control);
+    background: var(--card-bg);
+    color: var(--text-main);
+    font: 0.95rem / 1.6 var(--font-sans);
+    min-height: 8rem;
+    max-height: 24rem;
+    resize: vertical;
+}
+
+.annotation-note-input::placeholder {
+    color: var(--text-muted);
+}
+
+.annotation-note-input:focus {
+    border-color: var(--accent);
+    outline: none;
+}
+
+.annotation-editor-actions {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.annotation-editor .annotation-delete {
+    color: var(--danger);
+    font: inherit;
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+
+.annotation-editor-actions > .annotation-delete {
+    border: 0;
+    background: transparent;
+    padding: 0.5rem;
+    margin-left: auto;
+}
+
+.annotation-feedback {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    margin: 0;
+}
+
+.annotation-feedback:empty {
+    display: none;
+}
+
+.annotation-editor-fields:disabled {
+    opacity: 0.6;
+}
+
+.annotation-editor :disabled {
+    cursor: default;
+}
+
+.annotation-saved-note {
+    min-width: 0;
+    font-size: 0.85rem;
+    line-height: 1.45;
+}
+
+.annotation-saved-note > span {
+    color: var(--text-muted);
+    font-size: 0.75rem;
+}
+
+.annotation-saved-note blockquote {
+    max-height: 7rem;
+    overflow: auto;
+    margin: 0.25rem 0 0;
+    padding-left: 0.6rem;
+    border-left: 3px solid var(--annotation-color);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.annotation-colors {
+    display: flex;
+    gap: 0.15rem;
+    border: 0;
+    margin: 0;
+    padding: 0;
+    min-width: 0;
+}
+
+.annotation-color {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+}
+
+.annotation-color input {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    opacity: 0;
+    cursor: pointer;
+}
+
+.annotation-color > span {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: var(--annotation-color);
+    color: #292722;
+}
+
+.annotation-color .icon {
+    visibility: hidden;
+}
+
+.annotation-color input:checked + span .icon {
+    visibility: visible;
+}
+
+.annotation-color input:focus-visible + span {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+}
+
+.annotation-editor-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 2rem;
+    gap: 0.35rem;
+}
+
+.annotation-editor-quote {
+    display: -webkit-box;
+    min-width: 0;
+    margin: 0;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    line-height: 1.35;
+}
+
+.annotation-editor-compact .annotation-editor-fields {
+    gap: 0.35rem;
+}
+
+.annotation-editor-done {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    align-self: start;
+    width: 2rem;
+    min-height: 2rem;
+    padding: 0.3rem;
+    border: 0;
+    border-radius: var(--radius-control);
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    font: inherit;
+}
+
+.annotation-editor-done:hover,
+.annotation-editor-done:focus-visible {
+    background: var(--surface-hover);
+    color: var(--text-main);
+    outline: none;
+}
+
+.annotation-editor-compact .annotation-note-input {
+    min-height: 5.25rem;
+    max-height: 9rem;
+    padding: 0.45rem 0.5rem;
+    background: var(--bg-color);
+    font-size: 0.82rem;
+    line-height: 1.35;
+}
+
+.annotation-editor-compact .annotation-editor-actions {
+    justify-content: flex-end;
+}
+
+.annotation-editor-compact :is(.action-btn, .annotation-feedback, .annotation-saved-note) {
+    font-size: 0.78rem;
+}

@@ -58,7 +58,7 @@ test.describe('Account settings', () => {
     await expect(opdsSetup.getByRole('textbox', { name: 'Username' })).toHaveValue('polka');
 
     await modal.getByRole('button', { name: 'Set up Kobo' }).click();
-    const submodal = page.locator('.settings-submodal');
+    const submodal = page.locator('.modal-compact');
     await submodal.getByLabel('Shelf').selectOption({ label: `${shelfName} · smart shelf` });
     await submodal.getByRole('button', { name: 'Create' }).click();
 
@@ -147,7 +147,7 @@ test.describe('Account settings', () => {
     });
 
     const modal = await openSettings(page, 'Users');
-    const error = modal.locator('.settings-note-error');
+    const error = modal.locator('.dialog-note-error');
     await expect(error).toContainText('Cannot reach server');
 
     // One automatic retry is bounded. Once both connection attempts fail, the
@@ -196,7 +196,7 @@ test.describe('Account settings', () => {
     ).toBeVisible();
 
     await modal.getByRole('button', { name: 'Add user' }).click();
-    const submodal = page.locator('.settings-submodal');
+    const submodal = page.locator('.modal-compact');
     await expect(submodal.getByRole('heading', { name: 'Add user' })).toBeVisible();
     await submodal.getByLabel('Content scope').click();
     await page.getByRole('option', { name: 'Selected shelves' }).click();

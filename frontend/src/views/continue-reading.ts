@@ -139,7 +139,7 @@ function createCard(item: ContinueReadingItem): HTMLElement {
     info.className = 'continue-reading-info';
 
     const title = document.createElement('span');
-    title.className = 'continue-reading-book-title';
+    title.className = 'continue-reading-title';
     title.textContent = item.title;
 
     const authors = document.createElement('span');

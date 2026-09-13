@@ -45,7 +45,7 @@ export function createAnnotationEditor(initial: Annotation, options: AnnotationE
     const savedNote = textEl('blockquote', '', '');
     saved.append(textEl('span', '', 'Saved note'), savedNote);
     const actions = textEl('div', 'annotation-editor-actions', '');
-    const submit = button('Save', 'detail-action detail-action-primary');
+    const submit = button('Save', 'action-btn action-btn-primary');
     submit.type = 'submit';
     const done = compact ? button('', 'annotation-editor-done') : null;
     if (done) {
@@ -57,12 +57,12 @@ export function createAnnotationEditor(initial: Annotation, options: AnnotationE
         header.append(textEl('div', 'annotation-editor-quote', initial.quote), done);
         fields.append(header, input, colors.el);
     } else fields.append(colors.el, input);
-    const cancel = button('Cancel', 'detail-action');
+    const cancel = button('Cancel', 'action-btn');
     const remove = button('Delete', 'annotation-delete');
     remove.hidden = compact;
     actions.append(submit, cancel);
     if (options.onRead) {
-        const read = button('Open in reader', 'detail-action');
+        const read = button('Open in reader', 'action-btn');
         read.prepend(iconElement('menu_book', 16));
         read.addEventListener('click', async () => {
             if (await save()) options.onRead?.(draft.base);

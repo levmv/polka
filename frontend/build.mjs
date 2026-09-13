@@ -44,6 +44,8 @@ await esbuild.build({
     ...common,
     entryPoints: ['frontend/src/styles/style.css'],
     outfile: `${staticRoot}/style.css`,
+    // Keep explicit edge offsets; minification would otherwise introduce inset.
+    supported: { 'inset-property': false },
 });
 
 // PDF.js loads CMaps, color profiles, standard fonts, and image decoders on

@@ -70,7 +70,7 @@ test.describe('Retained library navigation', () => {
     try {
       await page.locator('.book-card').nth(firstPage).locator('.book-title-link').click();
       await expect(page).toHaveURL(/\/book\//);
-      await expect(page.locator('.book-detail-loading-card')).toContainText('Loading book');
+      await expect(page.locator('.book-loading-state')).toContainText('Loading book');
     } finally {
       releaseBook();
     }
@@ -121,7 +121,7 @@ test.describe('Retained library navigation', () => {
         observer.disconnect();
         window.history.back();
       });
-      const host = document.getElementById('app-content');
+      const host = document.getElementById('content');
       if (host) observer.observe(host, { childList: true, subtree: true });
       document
         .querySelectorAll<HTMLElement>('.book-card')

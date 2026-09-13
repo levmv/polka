@@ -47,14 +47,14 @@ applyCachedTheme();
 const routes: Route<unknown>[] = [
     {
         navId: 'nav-library',
-        mainClass: 'app-main--strip',
+        mainClass: 'main--strip',
         title: 'polka',
         match: (path) => (path === '/' || path === '/index.html' ? true : null),
         render: () => renderLibraryPage(),
         mount: (_match, root) => initLibrary(root),
     },
     {
-        mainClass: 'app-main--strip',
+        mainClass: 'main--strip',
         match: (path) => {
             if (!path.startsWith('/book/')) return null;
             const pathParts = path.split('/');
@@ -65,7 +65,7 @@ const routes: Route<unknown>[] = [
     },
     {
         navId: 'nav-library',
-        mainClass: 'app-main--strip',
+        mainClass: 'main--strip',
         title: 'Cleanup - polka',
         match: (path) => (path === '/cleanup' ? true : null),
         render: () => renderCleanupPage(),
@@ -76,7 +76,7 @@ const routes: Route<unknown>[] = [
     },
     {
         navId: 'nav-series',
-        mainClass: 'app-main--strip',
+        mainClass: 'main--strip',
         title: 'Series - polka',
         match: (path) => (path === '/series' ? true : null),
         render: () => renderSeriesPage(),
@@ -84,7 +84,7 @@ const routes: Route<unknown>[] = [
     },
     {
         navId: 'nav-authors',
-        mainClass: 'app-main--strip',
+        mainClass: 'main--strip',
         title: 'Authors - polka',
         match: (path) => (path === '/authors' ? true : null),
         render: () => renderAuthorsPage(),
@@ -94,7 +94,7 @@ const routes: Route<unknown>[] = [
     },
     {
         navId: 'nav-library',
-        mainClass: 'app-main--strip',
+        mainClass: 'main--strip',
         title: 'Trash - polka',
         match: (path) => (path === '/trash' ? true : null),
         render: () => renderTrashPage(),
@@ -107,13 +107,13 @@ const routes: Route<unknown>[] = [
 
 document.addEventListener('DOMContentLoaded', () => {
     const toggle = document.getElementById('sidebar-toggle');
-    const sidebar = document.getElementById('app-sidebar');
+    const sidebar = document.getElementById('sidebar');
     const overlay = document.getElementById('sidebar-overlay');
 
     const setSidebarOpen = (open: boolean) => {
         sidebar?.classList.toggle('open', open);
         overlay?.classList.toggle('open', open);
-        document.querySelector('.app-layout')?.classList.toggle('sidebar-open', open);
+        document.querySelector('.layout')?.classList.toggle('sidebar-open', open);
     };
 
     if (toggle && sidebar && overlay) {
@@ -184,7 +184,7 @@ function initNavigation(router: Router, closeSidebar: () => void): (href: string
         // a known in-app predecessor, so the previous page comes back as it was
         // left rather than being re-entered at the top. The href stays real for
         // a middle click, "open in new tab", and arriving by direct link.
-        if (link.hasAttribute('data-app-back') && readPredecessorURL(window.history.state)) {
+        if (link.hasAttribute('data-back') && readPredecessorURL(window.history.state)) {
             event.preventDefault();
             window.history.back();
             return;
@@ -276,7 +276,7 @@ function appNavigationLink(target: EventTarget | null, router: Router): HTMLAnch
     if (!link) return null;
     const url = new URL(link.href, window.location.href);
     if (url.origin !== window.location.origin) return null;
-    if (link.hasAttribute('data-app-nav')) return link;
+    if (link.hasAttribute('data-nav')) return link;
     if (router.canMount(url.pathname)) return link;
     return null;
 }

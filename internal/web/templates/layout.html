@@ -37,15 +37,15 @@
         <symbol id="i-logout" viewBox="0 -960 960 960"><path d="M200-120q-33 0-56.5-23.5T120-200v-560q0-33 23.5-56.5T200-840h280v80H200v560h280v80H200Zm440-160-55-58 102-102H360v-80h327L585-622l55-58 200 200-200 200Z"/></symbol>
         <symbol id="i-person" viewBox="0 -960 960 960"><path d="M480-480q-66 0-113-47t-47-113q0-66 47-113t113-47q66 0 113 47t47 113q0 66-47 113t-113 47ZM160-160v-112q0-34 17.5-62.5T224-378q62-31 126-46.5T480-440q66 0 130 15.5T736-378q29 15 46.5 43.5T800-272v112H160Zm80-80h480v-32q0-11-5.5-20T700-306q-54-27-109-40.5T480-360q-56 0-111 13.5T260-306q-9 5-14.5 14t-5.5 20v32Zm240-320q33 0 56.5-23.5T560-640q0-33-23.5-56.5T480-720q-33 0-56.5 23.5T400-640q0 33 23.5 56.5T480-560Zm0-80Zm0 400Z"/></symbol>
     </svg>
-    <div class="busy__loader" aria-hidden="true"><div class="busy-progress"></div></div>
-    <div class="app-layout">
+    <div class="busy-loader" aria-hidden="true"><div class="busy-progress"></div></div>
+    <div class="layout">
         <button id="sidebar-toggle" class="sidebar-toggle" aria-label="Toggle menu">
             <svg class="icon" width="24" height="24" aria-hidden="true"><use href="#i-menu"></use></svg>
         </button>
-        <div class="app-sidebar-overlay" id="sidebar-overlay"></div>
-        <nav class="app-sidebar" id="app-sidebar">
+        <div class="sidebar-overlay" id="sidebar-overlay"></div>
+        <nav class="sidebar" id="sidebar">
             <div class="sidebar-brand">
-                <a href="/" data-app-nav>polka</a>
+                <a href="/" data-nav>polka</a>
                 <div id="sidebar-upload" class="sidebar-brand-upload" hidden>
                     <input type="file" id="book-upload-input" class="book-upload-input" accept="{{.BookUploadAccept}}" multiple hidden>
                     <button id="book-upload-btn" class="sidebar-icon-btn sidebar-upload-btn" type="button" aria-label="Add books" title="Add books">
@@ -55,13 +55,13 @@
             </div>
             <ul class="sidebar-nav sidebar-primary-nav">
                 <li class="library-nav-row" id="library-nav-row">
-                    <a href="/" id="nav-library" class="nav-item" data-app-nav>Library</a>
+                    <a href="/" id="nav-library" class="nav-item" data-nav>Library</a>
                     <button id="nav-library-actions" class="sidebar-icon-btn library-actions-btn" type="button" aria-label="Manage library" title="Manage library" hidden>
                         <svg class="icon" width="18" height="18" aria-hidden="true"><use href="#i-more_vert"></use></svg>
                     </button>
                 </li>
-                <li><a href="/series" id="nav-series" class="nav-item" data-app-nav>Series</a></li>
-                <li><a href="/authors" id="nav-authors" class="nav-item" data-app-nav>Authors</a></li>
+                <li><a href="/series" id="nav-series" class="nav-item" data-nav>Series</a></li>
+                <li><a href="/authors" id="nav-authors" class="nav-item" data-nav>Authors</a></li>
             </ul>
             <div class="sidebar-section sidebar-shelves-section">
                 <div class="sidebar-section-header">
@@ -74,8 +74,8 @@
             </div>
             <div id="sidebar-account" class="sidebar-account" hidden></div>
         </nav>
-        <main class="app-main">
-            <div id="app-content" class="app-content">
+        <main class="main">
+            <div id="content" class="content">
             {{block "content" .}}{{end}}
             </div>
         </main>

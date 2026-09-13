@@ -167,11 +167,7 @@ function fileLayoutControl(layout: AdminStorageStatus['layout']): HTMLElement {
     wrap.className = 'settings-layout-control';
     wrap.append(
         createReadonlyCopyControl('File layout', layout.template),
-        textEl(
-            'div',
-            'settings-note settings-storage-note',
-            'Changes currently go through the CLI.',
-        ),
+        textEl('div', 'dialog-note', 'Changes currently go through the CLI.'),
     );
     return wrap;
 }
@@ -187,7 +183,7 @@ function booksFolderControl(books: BooksStorage): HTMLElement {
 }
 
 function booksHealthLine(books: BooksStorage): HTMLElement {
-    const line = textEl('div', 'settings-note settings-storage-note settings-health', '');
+    const line = textEl('div', 'dialog-note settings-health', '');
 
     const parts: HTMLElement[] = [
         textEl(
@@ -229,14 +225,10 @@ function folderImportControl(state: StorageState, rerender: () => void): HTMLEle
     pathInput.setAttribute('aria-label', 'Add existing books folder');
     pathInput.spellcheck = false;
 
-    const summary = textEl(
-        'div',
-        'settings-note settings-storage-note settings-folder-import-summary',
-        '',
-    );
+    const summary = textEl('div', 'dialog-note settings-folder-import-summary', '');
     renderFolderImportPreviewSummary(summary, state.folderImportPreview);
 
-    const previewButton = buttonEl('settings-btn', 'Preview', async () => {
+    const previewButton = buttonEl('dialog-btn', 'Preview', async () => {
         const path = pathInput.value.trim();
         if (!path) {
             showToast('Folder path is required', { type: 'error' });
@@ -272,7 +264,7 @@ function folderImportControl(state: StorageState, rerender: () => void): HTMLEle
         }
     });
 
-    const importButton = buttonEl('settings-btn settings-primary-btn', 'Import', async () => {
+    const importButton = buttonEl('dialog-btn dialog-primary-btn', 'Import', async () => {
         const path = pathInput.value.trim();
         const preview = state.folderImportPreview;
         if (!preview || preview.path !== path) {
@@ -356,7 +348,7 @@ function renderFolderImportPreviewSummary(
     preview: FolderImportPreview | null,
 ): void {
     target.replaceChildren();
-    target.classList.toggle('settings-note-error', Boolean(preview && preview.failed > 0));
+    target.classList.toggle('dialog-note-error', Boolean(preview && preview.failed > 0));
     if (!preview) {
         target.textContent = 'Use an absolute server path, then preview before importing.';
         return;
@@ -492,7 +484,7 @@ function incomingFolderControl(state: StorageState, rerender: () => void): HTMLE
     pathInput.setAttribute('aria-label', 'Incoming folder');
     pathInput.spellcheck = false;
 
-    const saveButton = buttonEl('settings-btn', 'Save', () => {
+    const saveButton = buttonEl('dialog-btn', 'Save', () => {
         void savePath();
     });
     const syncSaveButton = () => {
@@ -524,7 +516,7 @@ function incomingFolderControl(state: StorageState, rerender: () => void): HTMLE
     // Scan now is an explicit one-shot import — the UI twin of `polka ingest`.
     // It works even when automatic watching is off (the button below), so it
     // doubles as the manual-import path.
-    const scanButton = buttonEl('settings-btn', 'Scan now', async () => {
+    const scanButton = buttonEl('dialog-btn', 'Scan now', async () => {
         scanButton.disabled = true;
         scanButton.textContent = 'Scanning…';
         try {
@@ -556,10 +548,9 @@ function incomingFolderControl(state: StorageState, rerender: () => void): HTMLE
 
     const note = textEl(
         'div',
-        status.ingest.last_error ? 'settings-note settings-note-error' : 'settings-note',
+        status.ingest.last_error ? 'dialog-note dialog-note-error' : 'dialog-note',
         ingestStatusText(status),
     );
-    note.classList.add('settings-storage-note');
 
     wrap.append(pathRow, deleteRow, note);
     return wrap;

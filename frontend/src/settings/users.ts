@@ -53,7 +53,7 @@ function renderUsersPanel(root: HTMLElement, currentUser: CurrentUser, state: Us
         const action = document.createElement('div');
         action.className = 'settings-section-action';
         action.append(
-            buttonEl('settings-btn settings-primary-btn', 'Add user', () =>
+            buttonEl('dialog-btn dialog-primary-btn', 'Add user', () =>
                 openAddUserModal(root, state, rerender),
             ),
         );
@@ -126,7 +126,7 @@ function createPersonRow(
     actions.className = 'settings-user-actions';
 
     actions.append(
-        buttonEl('settings-btn', isSelf ? 'Change password' : 'Reset password', () =>
+        buttonEl('dialog-btn', isSelf ? 'Change password' : 'Reset password', () =>
             openPasswordModal(user, isSelf, rerender),
         ),
     );
@@ -135,7 +135,7 @@ function createPersonRow(
     // sign-out, not a settings action) or the last remaining admin.
     if (currentUser.role === 'admin' && !isSelf) {
         actions.append(
-            buttonEl('settings-btn', 'Access', () => {
+            buttonEl('dialog-btn', 'Access', () => {
                 void openAccessModal(root, user, allUsers, state, rerender);
             }),
         );
@@ -143,7 +143,7 @@ function createPersonRow(
         const lastAdmin = user.role === 'admin' && countAdmins(allUsers) <= 1;
         const remove = document.createElement('button');
         remove.type = 'button';
-        remove.className = 'settings-icon-btn settings-danger-icon';
+        remove.className = 'dialog-icon-btn dialog-danger-icon';
         remove.innerHTML = icon('delete', 18);
         remove.setAttribute('aria-label', `Remove ${user.username}`);
         remove.title = lastAdmin ? 'Cannot remove the last admin' : `Remove ${user.username}`;
@@ -359,7 +359,7 @@ function createAccessControls(opts: {
         for (const shelf of opts.shelves) {
             const input = document.createElement('input');
             input.type = 'checkbox';
-            input.className = 'settings-checkbox';
+            input.className = 'checkbox';
             input.value = String(shelf.id);
             input.checked = checked.has(shelf.id);
             shelfBox.append(shelfCheckboxField(shelf, input));
@@ -427,7 +427,7 @@ function shelfLabel(shelf: Shelf): string {
 
 function shelfCheckboxField(shelf: Shelf, input: HTMLInputElement): HTMLLabelElement {
     const label = document.createElement('label');
-    label.className = 'settings-checkbox-field settings-shelf-checkbox-field';
+    label.className = 'checkbox-field settings-shelf-checkbox-field';
 
     const marker = document.createElement('span');
     marker.className = 'shelf-kind-marker';

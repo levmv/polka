@@ -298,7 +298,6 @@ export function createCoverDraftController(opts: {
                 showSavedReference,
             ),
             modalClass: 'cover-picker-modal',
-            bodyClass: 'cover-picker-body',
             onClose: () => {
                 coverChooser = null;
                 if (!pendingCover && generatedVariants.length === 0) showSavedReference = false;
@@ -482,7 +481,7 @@ function renderCoverChooser(
         b.id,
         b.cover_version,
         `cover-picker-saved-image-${uiID}`,
-        'cover-picker-reference-image',
+        'cover-picker-saved-image',
     );
     const primaryCoverHtml = renderCoverPickerPrimaryImage(b, uiID, pendingCover);
     const railHtml = renderCoverPickerRail(
@@ -540,8 +539,8 @@ function renderCoverPickerRail(
     if (!shouldShowSaved) return '';
     const savedSelected = !pendingCover;
     const savedHtml = `
-            <div class="cover-picker-reference">
-                <button type="button" id="cover-picker-saved-${uiID}" class="cover-picker-reference-button ${savedSelected ? 'is-selected' : ''}" aria-label="Use saved cover" aria-pressed="${savedSelected ? 'true' : 'false'}">
+            <div class="cover-picker-saved">
+                <button type="button" id="cover-picker-saved-${uiID}" class="cover-picker-saved-btn ${savedSelected ? 'is-selected' : ''}" aria-label="Use saved cover" aria-pressed="${savedSelected ? 'true' : 'false'}">
                     ${savedReferenceHtml}
                 </button>
             </div>

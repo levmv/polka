@@ -41,7 +41,7 @@ function wireSidebarUpload(input: HTMLInputElement, btn: HTMLButtonElement): voi
 
     const clearDropState = () => {
         dragDepth = 0;
-        document.querySelector('.app-main')?.classList.remove('library-drop-active');
+        document.querySelector('.main')?.classList.remove('library-drop-active');
     };
 
     btn.addEventListener('click', () => input.click());
@@ -65,7 +65,7 @@ function wireSidebarUpload(input: HTMLInputElement, btn: HTMLButtonElement): voi
         if (!isExternalFileDrag(event, internalDrag)) return;
         event.preventDefault();
         dragDepth++;
-        document.querySelector('.app-main')?.classList.add('library-drop-active');
+        document.querySelector('.main')?.classList.add('library-drop-active');
     });
     document.addEventListener('dragover', (event) => {
         if (!isExternalFileDrag(event, internalDrag)) return;
@@ -75,7 +75,7 @@ function wireSidebarUpload(input: HTMLInputElement, btn: HTMLButtonElement): voi
         if (!isExternalFileDrag(event, internalDrag)) return;
         dragDepth = Math.max(0, dragDepth - 1);
         if (dragDepth === 0) {
-            document.querySelector('.app-main')?.classList.remove('library-drop-active');
+            document.querySelector('.main')?.classList.remove('library-drop-active');
         }
     });
     document.addEventListener('drop', (event) => {

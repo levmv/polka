@@ -4,7 +4,7 @@ import { listURLForContext, readBookListContextFromLocation } from '../book-list
 export function bootReader(init: () => void): void {
     document.addEventListener('DOMContentLoaded', () => {
         document.body.classList.add('reader-shell');
-        document.querySelector<HTMLElement>('.app-main')?.classList.add('app-main--reader');
+        document.querySelector<HTMLElement>('.main')?.classList.add('main--reader');
         applyCloseTarget();
         void fetchUserSettings().catch(() => undefined);
         init();

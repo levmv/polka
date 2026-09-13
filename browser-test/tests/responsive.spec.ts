@@ -11,7 +11,7 @@ test.describe('Responsive layout (iPad viewport)', () => {
     const toggle = page.locator('#sidebar-toggle');
     await expect(toggle).toBeVisible();
 
-    const sidebar = page.locator('#app-sidebar');
+    const sidebar = page.locator('#sidebar');
     const overlay = page.locator('#sidebar-overlay');
 
     await expect(sidebar).not.toHaveClass(/open/);
@@ -125,8 +125,8 @@ test.describe('Responsive layout (iPad viewport)', () => {
           return { x: r.x, width: r.width };
         };
         return {
-          main: rect('.app-main'),
-          content: rect('.app-content'),
+          main: rect('.main'),
+          content: rect('.content'),
           search: rect('.search-row'),
         };
       });
@@ -241,7 +241,7 @@ test.describe('Responsive layout (iPad viewport)', () => {
     ]);
     await expect(page.locator('.detail-meta-bottom')).toHaveText(/^Added /);
 
-    const download = page.locator('.detail-actions a.detail-action[href^="/download/"]').first();
+    const download = page.locator('.detail-actions a.action-btn[href^="/download/"]').first();
     await expect(download).toBeVisible();
     const box = await download.boundingBox();
     expect(box).not.toBeNull();

@@ -31,7 +31,7 @@ export function textEl<K extends keyof HTMLElementTagNameMap>(
 
 export function formField(labelText: string, control: HTMLElement): HTMLLabelElement {
     const field = document.createElement('label');
-    field.className = 'settings-field';
+    field.className = 'dialog-field';
     const label = document.createElement('span');
     label.textContent = labelText;
     field.append(label, control);

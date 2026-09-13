@@ -157,14 +157,14 @@ function assetDownloadAsUrl(asset: Asset, target: string): string {
 
 function assetDownloadHtml(asset: Asset): string {
     const label = assetFormatLabel(asset);
-    const nativeLink = `<a href="${assetDownloadUrl(asset)}" class="detail-action detail-download-main" target="_blank" rel="noopener noreferrer">${icon('download', 16)}${escapeHtml(label)}</a>`;
+    const nativeLink = `<a href="${assetDownloadUrl(asset)}" class="action-btn detail-download-main" target="_blank" rel="noopener noreferrer">${icon('download', 16)}${escapeHtml(label)}</a>`;
     if (!asset.download_as || asset.download_as.length === 0) {
         return nativeLink;
     }
     return `
         <span class="detail-download-group">
             ${nativeLink}
-            <button class="detail-action detail-action-icon detail-download-menu" type="button" data-download-menu-asset="${escapeHtml(asset.id)}" aria-label="Download formats for ${escapeHtml(label)}" title="Download formats">
+            <button class="action-btn action-btn-icon detail-download-menu" type="button" data-download-menu-asset="${escapeHtml(asset.id)}" aria-label="Download formats for ${escapeHtml(label)}" title="Download formats">
                 ${icon('expand_more', 18)}
             </button>
         </span>
@@ -248,7 +248,7 @@ async function loadBookDetail(view: BookDetailView, bookId: number): Promise<voi
 
         view.book = b;
         updateBackLink(view.root, view.listContext);
-        container.classList.remove('book-detail-loading');
+        container.classList.remove('book-loading');
         container.removeAttribute('aria-busy');
         renderBookDetail(view, container, {
             canCurate: me.role === 'admin' || me.role === 'member',
@@ -268,7 +268,7 @@ async function loadBookDetail(view: BookDetailView, bookId: number): Promise<voi
     } catch (e) {
         if (view.phase !== 'active') return;
         console.error('Failed to load book detail:', e);
-        container.classList.remove('book-detail-loading');
+        container.classList.remove('book-loading');
         container.removeAttribute('aria-busy');
         container.innerHTML = '<h2>Book not found.</h2>';
     } finally {
@@ -463,7 +463,7 @@ function renderBookDetail(
         }
     }
 
-    // Read + per-asset download buttons. They share the .detail-action family
+    // Read + per-asset download buttons. They share the .action-btn family
     // with Shelves/Edit/⋯ below, so the whole row reads as one set; Read is the
     // single filled (primary) action.
     let assetsHtml = '';
@@ -471,14 +471,14 @@ function renderBookDetail(
         primaryAsset && isReadableAsset(primaryAsset) ? primaryAsset : null;
     if (b.assets && b.assets.length > 0) {
         if (primaryReadableAsset) {
-            assetsHtml += `<a href="/read/${escapeHtml(b.id)}" class="detail-action detail-action-primary">${icon('menu_book', 16)}Read</a>`;
+            assetsHtml += `<a href="/read/${escapeHtml(b.id)}" class="action-btn action-btn-primary">${icon('menu_book', 16)}Read</a>`;
         }
         b.assets.forEach((a: Asset) => {
             assetsHtml += assetDownloadHtml(a);
         });
         if (sendEnabled()) {
             assetsHtml += `
-                <button id="btn-send-book" class="detail-action" type="button">
+                <button id="btn-send-book" class="action-btn" type="button">
                     ${icon('upload', 16)}Send
                 </button>
             `;
@@ -538,19 +538,19 @@ function renderBookDetail(
             </div>
             <div class="detail-actions">
                 ${assetsHtml}
-                <button id="btn-book-shelves" class="detail-action detail-action-icon" type="button" aria-label="Shelves" title="Shelves">
+                <button id="btn-book-shelves" class="action-btn action-btn-icon" type="button" aria-label="Shelves" title="Shelves">
                     ${icon('bookmark', 20)}
                 </button>
                 ${
                     canCurate
-                        ? `<button id="btn-edit-book" class="detail-action" type="button">
+                        ? `<button id="btn-edit-book" class="action-btn" type="button">
                             ${icon('edit', 16)}Edit
                         </button>`
                         : ''
                 }
                 ${
                     canCurate || primaryReadableAsset
-                        ? `<button id="btn-book-menu" class="detail-action detail-action-icon" type="button" aria-label="More actions" title="More actions">
+                        ? `<button id="btn-book-menu" class="action-btn action-btn-icon" type="button" aria-label="More actions" title="More actions">
                             ${icon('more_vert', 20)}
                         </button>`
                         : ''
@@ -711,7 +711,7 @@ function pageCountLabel(count: number, asset: Asset): string {
 function openSendBookModal(book: Book): void {
     const body = document.createElement('div');
     body.className = 'send-device-body';
-    body.append(textEl('div', 'settings-note', 'Loading…'));
+    body.append(textEl('div', 'dialog-note', 'Loading…'));
 
     const send = document.createElement('button');
     send.type = 'button';
@@ -728,8 +728,8 @@ function openSendBookModal(book: Book): void {
     const { modal } = openModal({
         title: 'Send to device',
         body,
-        bodyClass: 'settings-submodal-body',
-        modalClass: 'modal-flow settings-submodal',
+        bodyClass: 'modal-compact-body',
+        modalClass: 'modal-flow modal-compact',
         actions: [cancel, send],
     });
     modal.open(send);
@@ -761,7 +761,7 @@ function openSendBookModal(book: Book): void {
                 body.replaceChildren(
                     textEl(
                         'div',
-                        'settings-note settings-note-error',
+                        'dialog-note dialog-note-error',
                         errorMessage(err, 'Load send options failed'),
                     ),
                 );
@@ -808,7 +808,7 @@ function renderSendBookOptions(
 
     if (!options.configured) {
         body.append(
-            textEl('div', 'settings-note', options.reason || 'Email delivery is not configured'),
+            textEl('div', 'dialog-note', options.reason || 'Email delivery is not configured'),
         );
         return;
     }
@@ -826,7 +826,7 @@ function renderSendBookOptions(
     if (!defaultOption) return;
 
     const deviceSelect = document.createElement('select');
-    deviceSelect.className = 'settings-input';
+    deviceSelect.className = 'dialog-input';
     for (const option of options.devices) {
         const item = document.createElement('option');
         item.value = String(option.device.id);
@@ -841,7 +841,7 @@ function renderSendBookOptions(
 
     const addDevice = document.createElement('button');
     addDevice.type = 'button';
-    addDevice.className = 'settings-btn';
+    addDevice.className = 'dialog-btn';
     addDevice.textContent = 'Add device';
     addDevice.addEventListener('click', () => {
         send.hidden = true;
@@ -868,14 +868,14 @@ function renderSendBookOptions(
             planArea.append(
                 textEl(
                     'div',
-                    'settings-note',
+                    'dialog-note',
                     option?.reason?.message || 'No sendable format for this device.',
                 ),
             );
             return;
         }
 
-        const note = textEl('div', 'settings-note send-device-plan', '');
+        const note = textEl('div', 'dialog-note send-device-plan', '');
         const selectChoice = (choiceID: string) => {
             const choice = choices.find((item) => planChoiceID(item) === choiceID) || choices[0];
             state.setSelectedPlan(choice);
@@ -884,7 +884,7 @@ function renderSendBookOptions(
 
         if (choices.length > 1) {
             const fileSelect = document.createElement('select');
-            fileSelect.className = 'settings-input';
+            fileSelect.className = 'dialog-input';
             for (const choice of choices) {
                 const item = document.createElement('option');
                 item.value = planChoiceID(choice);
@@ -911,22 +911,22 @@ function renderInlineDeviceAdd(
     reloadAfterDeviceAdd: (deviceID: number) => void,
 ): void {
     const form = document.createElement('form');
-    form.className = 'settings-submodal-fields';
+    form.className = 'dialog-fields';
 
     const name = document.createElement('input');
     name.type = 'text';
     name.autocomplete = 'off';
     name.required = true;
-    name.className = 'settings-input';
+    name.className = 'dialog-input';
 
     const email = document.createElement('input');
     email.type = 'email';
     email.autocomplete = 'email';
     email.required = true;
-    email.className = 'settings-input';
+    email.className = 'dialog-input';
 
     const preset = document.createElement('select');
-    preset.className = 'settings-input';
+    preset.className = 'dialog-input';
     for (const item of [
         { value: 'kindle', label: 'Kindle' },
         { value: 'pocketbook', label: 'PocketBook' },
@@ -948,11 +948,11 @@ function renderInlineDeviceAdd(
 
     const submit = document.createElement('button');
     submit.type = 'submit';
-    submit.className = 'settings-btn settings-primary-btn';
+    submit.className = 'dialog-btn dialog-primary-btn';
     submit.textContent = 'Add device';
 
     form.append(
-        textEl('div', 'settings-submodal-hint', 'Add a reader email address, then send this book.'),
+        textEl('div', 'dialog-help', 'Add a reader email address, then send this book.'),
         formField('Name', name),
         formField('Email', email),
         formField('Preset', preset),

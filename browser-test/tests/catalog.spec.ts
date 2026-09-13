@@ -151,7 +151,7 @@ test.describe('Catalog', () => {
     await expect(page.locator('.detail-title')).toBeVisible();
     await expect(page.locator('.detail-title')).not.toBeFocused();
 
-    const downloadLink = page.locator('.detail-actions a.detail-action[href^="/download/"]');
+    const downloadLink = page.locator('.detail-actions a.action-btn[href^="/download/"]');
     await expect(downloadLink.first()).toBeVisible();
     await page
       .locator('.detail-download-group', { hasText: 'EPUB' })
@@ -442,7 +442,7 @@ test.describe('Catalog', () => {
     });
 
     await expect(page.locator('.toast')).toHaveCount(0);
-    await expect(page.locator('.app-main')).not.toHaveClass(/library-drop-active/);
+    await expect(page.locator('.main')).not.toHaveClass(/library-drop-active/);
   });
 
   test('Authors page opens inline editors and appends the next page', async ({ page }) => {
@@ -611,7 +611,7 @@ test.describe('Catalog', () => {
     await expect(page.locator('#search-input')).toHaveValue(`author:"${name}"`);
     await expect(page.locator('#save-search-btn')).toBeVisible();
     await page.locator('#save-search-btn').click();
-    const dialog = page.locator('.settings-submodal');
+    const dialog = page.locator('.modal-compact');
     await expect(dialog.getByRole('heading', { name: 'Save search' })).toBeVisible();
     await expect(dialog.getByLabel('Name')).toHaveValue(name);
     await expect(dialog.getByLabel('Search query')).toHaveValue(`author:"${name}"`);

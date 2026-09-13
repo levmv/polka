@@ -50,7 +50,7 @@ export function openCoverSearchDialog(opts: {
         status.textContent = 'Searching...';
         submit.disabled = true;
         submit.setAttribute('aria-busy', 'true');
-        submit.innerHTML = '<span class="local-spinner" aria-hidden="true"></span> Search';
+        submit.innerHTML = '<span class="spinner" aria-hidden="true"></span> Search';
         try {
             const found = await searchCoverImages(opts.bookID, title, author, abort.signal);
             if (abort.signal.aborted) return;
@@ -94,16 +94,14 @@ function renderCoverSearchForm(title: string, author: string): string {
     return `
         <div class="cover-search">
             <form class="cover-search-form">
-                <div class="cover-search-fields">
-                    <label class="cover-search-field">
-                        <span class="form-label">Title</span>
-                        <input type="text" name="title" class="form-input" value="${escapeHtml(title)}" autocomplete="off">
-                    </label>
-                    <label class="cover-search-field">
-                        <span class="form-label">Author</span>
-                        <input type="text" name="author" class="form-input" value="${escapeHtml(author)}" autocomplete="off">
-                    </label>
-                </div>
+                <label class="cover-search-field">
+                    <span class="form-label">Title</span>
+                    <input type="text" name="title" class="form-input" value="${escapeHtml(title)}" autocomplete="off">
+                </label>
+                <label class="cover-search-field">
+                    <span class="form-label">Author</span>
+                    <input type="text" name="author" class="form-input" value="${escapeHtml(author)}" autocomplete="off">
+                </label>
                 <button type="submit" class="cover-search-submit">
                     ${icon('search', 16)} Search
                 </button>

@@ -156,23 +156,19 @@ function createEmailDeliveryBlock(state: DevicesState, rerender: () => void): HT
     // everything else has a working default and waits under Advanced. SMTP-prefixed
     // labels and a new-password field keep the browser from offering the polka
     // account here.
-    const host = smtpInput('text', email.host, 'settings-input-wide');
-    const port = smtpInput(
-        'number',
-        String(email.port || DEFAULT_SMTP_PORT),
-        'settings-input-port',
-    );
-    const username = smtpInput('text', email.username, 'settings-input-wide');
-    const password = smtpInput('password', '', 'settings-input-wide');
+    const host = smtpInput('text', email.host, 'dialog-input-wide');
+    const port = smtpInput('number', String(email.port || DEFAULT_SMTP_PORT), 'dialog-input-port');
+    const username = smtpInput('text', email.username, 'dialog-input-wide');
+    const password = smtpInput('password', '', 'dialog-input-wide');
     password.autocomplete = 'new-password';
     password.placeholder = email.password_set ? 'Saved password unchanged' : '';
     password.required = false;
-    const fromAddress = smtpInput('text', email.from_address, 'settings-input-wide');
-    const fromName = smtpInput('text', email.from_name, 'settings-input-wide');
+    const fromAddress = smtpInput('text', email.from_address, 'dialog-input-wide');
+    const fromName = smtpInput('text', email.from_name, 'dialog-input-wide');
     const limit = smtpInput(
         'number',
         String(email.attachment_limit_mb || DEFAULT_ATTACHMENT_LIMIT_MB),
-        'settings-input-port',
+        'dialog-input-port',
     );
     const security = createSelect({
         ariaLabel: 'SMTP security',
@@ -213,7 +209,7 @@ function createEmailDeliveryBlock(state: DevicesState, rerender: () => void): HT
         settingsRow('Attachment limit', 'Raw files are checked with base64 email overhead.', limit),
     );
 
-    const save = buttonEl('settings-btn settings-primary-btn', 'Save email settings', async () => {
+    const save = buttonEl('dialog-btn dialog-primary-btn', 'Save email settings', async () => {
         try {
             const payload: Parameters<typeof saveEmailDeliverySettings>[0] = {
                 host: host.value.trim(),
@@ -232,7 +228,7 @@ function createEmailDeliveryBlock(state: DevicesState, rerender: () => void): HT
             showToast(errorMessage(err, 'Save email settings failed'), { type: 'error' });
         }
     });
-    const test = buttonEl('settings-btn', 'Send test', () => openSendTestModal());
+    const test = buttonEl('dialog-btn', 'Send test', () => openSendTestModal());
 
     // A test uses persisted settings, so disable it while the form has unsaved edits.
     const fields = [host, port, username, password, fromAddress, fromName, limit];
@@ -272,7 +268,7 @@ function createDeviceListBlock(state: DevicesState, rerender: () => void): HTMLE
     const action = document.createElement('div');
     action.className = 'settings-section-action';
     action.append(
-        buttonEl('settings-btn settings-primary-btn', 'Add device', () =>
+        buttonEl('dialog-btn dialog-primary-btn', 'Add device', () =>
             openDeliveryDeviceModal(null, state, rerender),
         ),
     );
@@ -311,7 +307,7 @@ function createDeliveryDeviceRow(
     const actions: HTMLElement[] = [];
     if (!device.is_default) {
         actions.push(
-            buttonEl('settings-btn', 'Default', async () => {
+            buttonEl('dialog-btn', 'Default', async () => {
                 try {
                     const updated = await updateDeliveryDevice(device.id, { is_default: true });
                     state.devices = state.devices.map((item) =>
@@ -325,8 +321,8 @@ function createDeliveryDeviceRow(
         );
     }
     actions.push(
-        buttonEl('settings-btn', 'Edit', () => openDeliveryDeviceModal(device, state, rerender)),
-        buttonEl('settings-btn settings-danger-btn', 'Remove', async () => {
+        buttonEl('dialog-btn', 'Edit', () => openDeliveryDeviceModal(device, state, rerender)),
+        buttonEl('dialog-btn dialog-danger-btn', 'Remove', async () => {
             const confirmed = await confirmModal({
                 title: 'Remove device',
                 body: `Remove ${device.name}?`,

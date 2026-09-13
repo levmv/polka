@@ -5,7 +5,7 @@ export function createRichEditor(
     onBlur: () => void,
 ): HTMLElement {
     const container = document.createElement('div');
-    container.className = 'rich-editor-container form-input';
+    container.className = 'rich-editor form-input';
 
     const toolbar = document.createElement('div');
     toolbar.className = 'rich-editor-toolbar';

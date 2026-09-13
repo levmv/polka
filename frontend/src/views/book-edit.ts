@@ -120,13 +120,13 @@ export async function openEditModal(
     const { modal, root } = openModal({
         title: 'Edit book',
         body: `
-            <div class="edit-modal-loading-state local-loading-state" role="status" aria-live="polite">
-                <span class="local-spinner" aria-hidden="true"></span>
-                <div class="edit-modal-loading-title">Loading book...</div>
+            <div class="edit-loading-state loading-state" role="status" aria-live="polite">
+                <span class="spinner" aria-hidden="true"></span>
+                <div class="edit-loading-title">Loading book...</div>
             </div>
         `,
         backdropClass: 'modal-wide',
-        modalClass: 'edit-modal edit-modal-loading',
+        modalClass: 'edit-modal edit-loading',
         history: overlay,
         onClose: () => {
             cancelled = true;
@@ -146,9 +146,9 @@ export async function openEditModal(
         const body = root.querySelector<HTMLElement>('.modal-body');
         if (body) {
             body.innerHTML = `
-                <div class="edit-modal-loading-state edit-modal-loading-error" role="alert">
-                    <div class="edit-modal-loading-title">Could not load this book.</div>
-                    <div class="edit-modal-loading-text">Close this window and try again.</div>
+                <div class="edit-loading-state edit-loading-error" role="alert">
+                    <div class="edit-loading-title">Could not load this book.</div>
+                    <div class="edit-loading-text">Close this window and try again.</div>
                 </div>
             `;
         }
@@ -532,12 +532,12 @@ function openLoadedEditModal(
     const setFormSwitching = (active: boolean) => {
         switching = active;
         const modalEl = root.querySelector<HTMLElement>('.edit-modal');
-        const loadingOverlay = document.getElementById(`edit-form-loading-overlay-${uiID}`);
+        const loadingOverlay = document.getElementById(`edit-loading-overlay-${uiID}`);
         if (modalEl) {
             if (active) {
                 const height = Math.ceil(modalEl.getBoundingClientRect().height);
                 modalEl.style.minHeight = `${height}px`;
-                modalEl.classList.add('edit-modal-switching');
+                modalEl.classList.add('edit-switching');
                 modalEl.setAttribute('aria-busy', 'true');
                 if (loadingOverlay) loadingOverlay.hidden = false;
             } else {
@@ -546,7 +546,7 @@ function openLoadedEditModal(
                 window.requestAnimationFrame(() => {
                     window.requestAnimationFrame(() => {
                         modalEl.style.minHeight = '';
-                        modalEl.classList.remove('edit-modal-switching');
+                        modalEl.classList.remove('edit-switching');
                     });
                 });
             }
@@ -1015,8 +1015,8 @@ function renderEditForm(b: Book, uiID: string): string {
                             </div>
                         </div>
                     </div>
-                    <div class="edit-form-loading-overlay" id="edit-form-loading-overlay-${uiID}" role="status" aria-live="polite" hidden>
-                        <span class="local-spinner" aria-hidden="true"></span>
+                    <div class="edit-loading-overlay" id="edit-loading-overlay-${uiID}" role="status" aria-live="polite" hidden>
+                        <span class="spinner" aria-hidden="true"></span>
                         <span>Loading book...</span>
                     </div>
                 </form>

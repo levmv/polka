@@ -44,12 +44,12 @@ export function renderLibraryPage(): string {
 export function renderBookPage(): string {
     return `
         <div class="back-link">
-            <a href="/" class="page-close" title="Back to Library" aria-label="Back to Library" data-app-back>${icon('close', 24)}</a>
+            <a href="/" class="page-close" title="Back to Library" aria-label="Back to Library" data-back>${icon('close', 24)}</a>
         </div>
-        <div id="book-detail-container" class="detail-layout book-detail-loading" aria-busy="true">
-            <div class="book-detail-loading-card local-loading-state" role="status" aria-live="polite">
-                <span class="local-spinner" aria-hidden="true"></span>
-                <div class="book-detail-loading-title">Loading book...</div>
+        <div id="book-detail-container" class="detail-layout book-loading" aria-busy="true">
+            <div class="book-loading-state loading-state" role="status" aria-live="polite">
+                <span class="spinner" aria-hidden="true"></span>
+                <div class="book-loading-title">Loading book...</div>
             </div>
         </div>
     `;

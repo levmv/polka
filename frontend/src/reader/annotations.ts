@@ -395,7 +395,7 @@ function createAnnotationPanel(page: HTMLElement): AnnotationPanel | null {
     status.setAttribute('aria-live', 'polite');
     const retry = document.createElement('button');
     retry.type = 'button';
-    retry.className = 'detail-action reader-annotations-retry';
+    retry.className = 'action-btn reader-annotations-retry';
     retry.textContent = 'Try again';
     retry.hidden = true;
 
