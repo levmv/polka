@@ -6,7 +6,8 @@
             "frontend/src/**/*.css",
             "frontend/test/**/*.mjs",
             "frontend/build.mjs",
-            "browser-test/**/*.mjs"
+            "browser-test/**/*.mjs",
+            "browser-test/**/*.ts"
         ]
     },
     "formatter": {
@@ -32,5 +33,13 @@
                 "noDescendingSpecificity": "off"
             }
         }
-    }
+    },
+    "overrides": [
+        {
+            "includes": ["browser-test/**/*.ts"],
+            "formatter": {
+                "indentWidth": 2
+            }
+        }
+    ]
 }

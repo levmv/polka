@@ -151,7 +151,9 @@ test.describe('Editor overlay history', () => {
     await expect(page.locator('.edit-modal input[name="title"]')).toHaveValue(firstTitle);
   });
 
-  test('navigation away leaves its URL in place and remounts before reopening', async ({ page }) => {
+  test('navigation away leaves its URL in place and remounts before reopening', async ({
+    page,
+  }) => {
     await page.goto('/?sort=title');
     const firstCard = page.locator('.book-card').first();
     await expect(firstCard).toBeVisible();

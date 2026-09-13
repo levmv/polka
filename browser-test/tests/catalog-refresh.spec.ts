@@ -4,21 +4,8 @@ import { epub } from './book-fixtures';
 import { expect, type Page, test } from './fixtures';
 import { importTestBook, readerMutationFields } from './helpers';
 
-let created: number[] = [];
-test.beforeEach(() => {
-  created = [];
-});
-test.afterEach(async ({ page }) => {
-  for (const id of created) {
-    await page.request.post('/api/books/bulk/trash', { data: { ids: [id] } });
-    expect((await page.request.delete(`/api/books/${id}/purge`)).status()).toBe(204);
-  }
-});
-
 async function addBook(page: Page, title: string, author = 'Catalog Author'): Promise<number> {
-  const id = await importTestBook(page, epub(title, author, `${title}-${Date.now()}`));
-  created.push(id);
-  return id;
+  return importTestBook(page, epub(title, author, title));
 }
 
 async function saveAndClose(page: Page): Promise<void> {
@@ -181,7 +168,6 @@ test('Shared author sorting refreshes every affected book even if the follow-up 
 test('Bulk removal invalidates an older Continue reading response', async ({ page }) => {
   const removed = await addBook(page, 'Catalog reading removed');
   const kept = await addBook(page, 'Catalog reading kept');
-  const settings = await (await page.request.get('/api/settings')).json();
   await page.request.put('/api/settings', { data: { show_continue_reading: true } });
   let release!: () => void;
   const pending = new Promise<void>((resolve) => {
@@ -198,7 +184,11 @@ test('Bulk removal invalidates an older Continue reading response', async ({ pag
       expect(
         (
           await page.request.put(`/api/reader/assets/${book.assets[0].id}/state`, {
-            data: { ...await readerMutationFields(page, book.assets[0].id), progress: 0.37, locator: {} },
+            data: {
+              ...(await readerMutationFields(page, book.assets[0].id)),
+              progress: 0.37,
+              locator: {},
+            },
           })
         ).ok(),
       ).toBe(true);
@@ -236,8 +226,5 @@ test('Bulk removal invalidates an older Continue reading response', async ({ pag
     expect(reads).toBe(2);
   } finally {
     release();
-    await page.request.put('/api/settings', {
-      data: { show_continue_reading: settings.show_continue_reading },
-    });
   }
 });

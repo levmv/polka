@@ -12,10 +12,15 @@ Repository-wide contribution rules live in [AGENTS.md](../AGENTS.md).
 Run commands from the repository root:
 
 - `make serve` builds and runs a local library.
-- `make frontend` bundles assets; `make test` formats sources and runs the full
-  repository gate.
-- `make browser-test` runs the UI suite. Inspect its screenshots in
-  `browser-test/screenshots/` after UI changes.
+- `make frontend` bundles assets; `make test` formats sources and runs checks,
+  unit tests and the build.
+- `make browser-test` runs the UI suite. Select a file or browser with, for example,
+  `make browser-test PWARGS='tests/pdf-reader.spec.ts --project=ipad-webkit'`.
+
+Browser tests receive a fresh copy of a prepared library, including its files
+and accounts. Tests can change it freely; the fixture stops the server and
+removes the copy afterward. Use `test.use({ account: 'reader' })` for a reader
+account or `test.use({ seed: 'pagination' })` for the 55-book catalog.
 
 The root [package.json](../package.json) owns the toolchain and focused scripts.
 Pure logic tests live in [test/](test/); browser tests live in

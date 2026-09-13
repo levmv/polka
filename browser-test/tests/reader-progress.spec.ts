@@ -1,56 +1,85 @@
 import { expect, test } from './fixtures';
-import {
-  createReaderTestUser,
-  deleteTestUserAsAdmin,
-  loginByRequest,
-  readerMutationFields,
-  type TestUser,
-} from './helpers';
+import { findBook, openReader, readerMutationFields } from './helpers';
+
+test.use({ account: 'reader' });
 
 test.describe('Reader progress lifecycle', () => {
-  let readerUser: TestUser | null = null;
+  test('Continue reading appears only after reader state exists', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.locator('#continue-reading')).toBeHidden();
 
-  test.beforeEach(async ({ page }) => {
-    readerUser = await createReaderTestUser(page, 'reader-progress');
-    await loginByRequest(page, readerUser.username, readerUser.password);
-  });
+    const book = await findBook(page, 'With Cover Book');
+    const assetId = book.assets[0].id;
+    const save = await page.request.put(`/api/reader/assets/${assetId}/state`, {
+      data: { ...(await readerMutationFields(page, assetId)), progress: 0.37, locator: {} },
+    });
+    expect(save.ok()).toBe(true);
 
-  test.afterEach(async ({ page }) => {
-    if (readerUser) {
-      await deleteTestUserAsAdmin(page, readerUser);
-      readerUser = null;
-    }
+    await page.goto('/');
+    const rail = page.locator('#continue-reading');
+    await expect(rail).toBeVisible();
+    const card = rail.locator('.continue-reading-card', { hasText: book.title });
+    await expect(card).toBeVisible();
+    // Screen readers get the progress through the card's accessible name.
+    await expect(card).toHaveAttribute('aria-label', /37% read/);
+
+    // ?from=library so closing the reader returns to the rail, not to the book.
+    const readPath = `/read/asset/${assetId}?from=library`;
+    await expect(card).toHaveAttribute('href', readPath);
+
+    await card.click();
+    await expect(page).toHaveURL(/\/read\/asset\//);
+    const closeReader = page.getByRole('link', { name: 'Close reader' });
+    await expect(closeReader).toHaveAttribute('href', '/');
+    await closeReader.click();
+    await expect(page).toHaveURL((url) => url.pathname === '/');
+    await expect(page.locator('#continue-reading')).toBeVisible();
+
+    // The library DOM is replaced on each SPA visit. Return to it in the same
+    // document and prove the newly rendered dismiss button owns a listener.
+    await page.locator('#nav-series').click();
+    await expect(page).toHaveURL(/\/series$/);
+    await page.locator('#nav-library').click();
+    await expect(page).toHaveURL((url) => url.pathname === '/');
+    await expect(page.locator('#continue-reading')).toBeVisible();
+    await page.getByRole('button', { name: 'Hide Continue reading' }).click();
+    await expect(page.locator('#continue-reading')).toBeHidden();
+    await expect
+      .poll(async () => {
+        const response = await page.request.get('/api/settings');
+        return (await response.json()).show_continue_reading;
+      })
+      .toBe(false);
+
+    await page.locator('.account-settings').click();
+    await page.getByRole('switch', { name: 'Show Continue reading rail' }).click();
+    await expect(rail).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.settings-modal')).toHaveCount(0);
+    const dismiss = page.getByRole('button', { name: 'Hide Continue reading' });
+    await expect(dismiss).toBeEnabled();
+    await dismiss.click();
+    await expect(rail).toBeHidden();
+
+    await expect(page).toHaveURL((url) => url.pathname === '/');
   });
 
   test('preserves and flushes CBZ progress, then resets only reader state', async ({ page }) => {
-    await page.goto('/?q=CBZ%20Reader%20Book');
-    const card = page.locator('.book-card', { hasText: 'CBZ Reader Book' });
-    await expect(card).toBeVisible();
-    const href = await card.locator('.book-title-link').getAttribute('href');
-    const bookId = href ? new URL(href, page.url()).pathname.split('/').pop() : '';
-    if (!bookId) throw new Error('missing CBZ book id');
-
-    await page.goto(href || `/book/${encodeURIComponent(bookId)}`);
-    await expect(page.locator('.detail-title')).toHaveText('CBZ Reader Book');
-    const assetId = Number(await page
-      .locator('[data-reader-progress-asset]')
-      .getAttribute('data-reader-progress-asset'));
-    if (!assetId) throw new Error('missing readable CBZ asset');
+    const book = await findBook(page, 'CBZ Reader Book');
+    const bookId = book.id;
+    const assetId = book.assets[0].id;
 
     // Foliate weights fixed-layout section progress by the compressed page
     // size. Keep this before the first-page boundary even when the AVIF fixture
     // is much larger than the tiny PNG pages, so ArrowRight has somewhere to go.
     const savedProgress = 0.05;
-    const saveRes = await page.request.put(
-      `/api/reader/assets/${assetId}/state`,
-      {
-        data: {
-          ...await readerMutationFields(page, assetId),
-          progress: savedProgress,
-          locator: {},
-        },
+    const saveRes = await page.request.put(`/api/reader/assets/${assetId}/state`, {
+      data: {
+        ...(await readerMutationFields(page, assetId)),
+        progress: savedProgress,
+        locator: {},
       },
-    );
+    });
     expect(saveRes.ok()).toBe(true);
 
     await page.goto(`/read/${encodeURIComponent(bookId)}`);
@@ -62,6 +91,25 @@ test.describe('Reader progress lifecycle', () => {
       return book?.sections?.map((section) => section.id) ?? [];
     });
     expect(sections).toEqual(['1.png', '2.bin', '10.png', '11.avif']);
+
+    const avifDimensions = await page.locator('foliate-view').evaluate(async (view) => {
+      type ComicSection = { id?: string; load: () => Promise<string> };
+      const book = (view as HTMLElement & { book?: { sections?: ComicSection[] } }).book;
+      const section = book?.sections?.find((candidate) => candidate.id === '11.avif');
+      if (!section) return null;
+      const pageURL = await section.load();
+      const html = await (await fetch(pageURL)).text();
+      const imageURL = new DOMParser()
+        .parseFromString(html, 'text/html')
+        .querySelector('img')
+        ?.getAttribute('src');
+      if (!imageURL) return null;
+      const image = new Image();
+      image.src = imageURL;
+      await image.decode();
+      return [image.naturalWidth, image.naturalHeight];
+    });
+    expect(avifDimensions).toEqual([2, 2]);
 
     // CBZ emits a relocation while the fixed-layout renderer initializes. It
     // must not replace an existing position with the first page.
@@ -101,10 +149,12 @@ test.describe('Reader progress lifecycle', () => {
       readingStatusLabel(statusBeforeReset),
     );
     await expect(progressBar.locator('[data-reader-progress-track]')).toBeHidden();
-    await expect.poll(async () => await fetchReaderState(page, assetId)).toMatchObject({
-      progress: 0,
-      locator: {},
-    });
+    await expect
+      .poll(async () => await fetchReaderState(page, assetId))
+      .toMatchObject({
+        progress: 0,
+        locator: {},
+      });
     const reset = await fetchReaderState(page, assetId);
     expect(reset.updated_at ?? 0).toBe(0);
     expect(reset.reading_status.status).toBe(statusBeforeReset);
@@ -115,39 +165,24 @@ test.describe('Reader progress lifecycle', () => {
     expect(continuing.some((item) => item.asset_id === assetId)).toBe(false);
   });
 
-  test('decodes an AVIF comic page through the local CBZ adapter', async ({ page }) => {
-    await openProgressReader(page);
-
-    const avifDimensions = await page.locator('foliate-view').evaluate(async (view) => {
-      type ComicSection = { id?: string; load: () => Promise<string> };
-      const book = (view as HTMLElement & { book?: { sections?: ComicSection[] } }).book;
-      const section = book?.sections?.find((candidate) => candidate.id === '11.avif');
-      if (!section) return null;
-      const pageURL = await section.load();
-      const html = await (await fetch(pageURL)).text();
-      const imageURL = new DOMParser()
-        .parseFromString(html, 'text/html')
-        .querySelector('img')
-        ?.getAttribute('src');
-      if (!imageURL) return null;
-      const image = new Image();
-      image.src = imageURL;
-      await image.decode();
-      return [image.naturalWidth, image.naturalHeight];
-    });
-    expect(avifDimensions).toEqual([2, 2]);
-  });
-
   // Merge rules and write outcomes are covered in frontend/test/reader-position.test.mjs.
   // Here we exercise browser lifecycle events and actual reader navigation.
-  test('quietly retries a failed save and finishes it when the reader closes', async ({ page, browserErrors }) => {
-    const assetId = await openProgressReader(page);
-    browserErrors.allow((message) => message.includes('503') && message.includes(`/api/reader/assets/${assetId}/state`));
+  test('quietly retries a failed save and finishes it when the reader closes', async ({
+    page,
+    browserErrors,
+  }) => {
+    const assetId = await openReader(page, 'CBZ Reader Book');
+    browserErrors.allow(
+      (message) =>
+        message.includes('503') && message.includes(`/api/reader/assets/${assetId}/state`),
+    );
     let failedSaves = 0;
     let allowSaves = false;
     let saving = false;
     let release!: () => void;
-    const pending = new Promise<void>((resolve) => { release = resolve; });
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     await page.route(`**/api/reader/assets/${assetId}/state`, async (route) => {
       if (route.request().method() !== 'PUT') return route.continue();
       if (!allowSaves) {
@@ -179,20 +214,28 @@ test.describe('Reader progress lifecycle', () => {
     } finally {
       release();
     }
-    await expect.poll(async () => (await fetchReaderState(page, assetId)).progress)
+    await expect
+      .poll(async () => (await fetchReaderState(page, assetId)).progress)
       .toBeCloseTo(pendingProgress, 5);
   });
 
-  test('recovers a failed initial load without moving someone who kept reading', async ({ page, browserErrors }) => {
-    const assetId = await openProgressReader(page);
+  test('recovers a failed initial load without moving someone who kept reading', async ({
+    page,
+    browserErrors,
+  }) => {
+    const assetId = await openReader(page, 'CBZ Reader Book');
     const saved = await saveRemotePosition(page, assetId, 3, 0.99);
-    browserErrors.allow((message) => message.includes('Failed to fetch reader state') ||
-      (message.includes('503') && message.includes('/state')));
+    browserErrors.allow(
+      (message) =>
+        message.includes('Failed to fetch reader state') ||
+        (message.includes('503') && message.includes('/state')),
+    );
     let allowReads = false;
     await page.route(`**/api/reader/assets/${assetId}/state`, (route) =>
       route.request().method() !== 'GET' || allowReads
         ? route.continue()
-        : route.fulfill({ status: 503, body: 'database busy' }));
+        : route.fulfill({ status: 503, body: 'database busy' }),
+    );
     await page.clock.install();
     await page.setViewportSize({ width: 390, height: 844 });
     await page.reload();
@@ -211,13 +254,17 @@ test.describe('Reader progress lifecycle', () => {
     expect((await fetchReaderState(page, assetId)).revision).toBe(saved.revision);
   });
 
-  test('keeps active reading in place, then resumes remote progress including a move backwards', async ({ page, browserErrors }) => {
-    const assetId = await openProgressReader(page);
+  test('keeps active reading in place, then resumes remote progress including a move backwards', async ({
+    page,
+    browserErrors,
+  }) => {
+    const assetId = await openReader(page, 'CBZ Reader Book');
     browserErrors.allow((message) => message.includes('409') && message.includes('/state'));
     await page.clock.install();
     const forward = await saveRemotePosition(page, assetId, 3, 0.99);
-    const reconciled = page.waitForResponse((response) =>
-      response.url().endsWith('/state') && response.request().method() === 'GET');
+    const reconciled = page.waitForResponse(
+      (response) => response.url().endsWith('/state') && response.request().method() === 'GET',
+    );
     const before = await currentReaderCFI(page);
     await page.keyboard.press('ArrowRight');
     await expect.poll(() => currentReaderCFI(page)).not.toBe(before);
@@ -240,17 +287,21 @@ test.describe('Reader progress lifecycle', () => {
     expect((await fetchReaderState(page, assetId)).revision).toBe(backward.revision);
 
     await page.keyboard.press('ArrowRight');
-    await expect.poll(async () => (await fetchReaderState(page, assetId)).revision).toBe(backward.revision + 1);
+    await expect
+      .poll(async () => (await fetchReaderState(page, assetId)).revision)
+      .toBe(backward.revision + 1);
     const advanced = await fetchReaderState(page, assetId);
     await page.keyboard.press('ArrowLeft');
-    await expect.poll(async () => (await fetchReaderState(page, assetId)).revision).toBe(advanced.revision + 1);
+    await expect
+      .poll(async () => (await fetchReaderState(page, assetId)).revision)
+      .toBe(advanced.revision + 1);
     expect((await fetchReaderState(page, assetId)).progress).toBeLessThan(advanced.progress);
     await expect(page.locator('.toast-error')).toBeHidden();
   });
 
   test('uses the reported percentage when an external CFI cannot be resolved', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 400 });
-    const assetId = await openProgressReader(page, 'With Cover Book');
+    const assetId = await openReader(page, 'With Cover Book');
     let expectedFraction = 0;
     // One unresolvable DOM address is enough to exercise the real engine's
     // fallback. Parsing and interchange variants belong in the non-browser tests.
@@ -338,9 +389,7 @@ async function fetchReaderState(
   updated_at?: number;
   reading_status: { status: string };
 }> {
-  const res = await page.request.get(
-    `/api/reader/assets/${assetId}/state`,
-  );
+  const res = await page.request.get(`/api/reader/assets/${assetId}/state`);
   if (!res.ok()) throw new Error(`reader state status ${res.status()}: ${await res.text()}`);
   return await res.json();
 }
@@ -354,17 +403,32 @@ async function currentReaderFraction(page: import('@playwright/test').Page): Pro
   });
 }
 
-async function currentReaderCFI(page: import('@playwright/test').Page): Promise<string | undefined> {
-  return page.locator('foliate-view').evaluate((view) =>
-    (view as HTMLElement & { lastLocation?: { cfi?: string } }).lastLocation?.cfi);
+async function currentReaderCFI(
+  page: import('@playwright/test').Page,
+): Promise<string | undefined> {
+  return page
+    .locator('foliate-view')
+    .evaluate(
+      (view) => (view as HTMLElement & { lastLocation?: { cfi?: string } }).lastLocation?.cfi,
+    );
 }
 
-async function saveRemotePosition(page: import('@playwright/test').Page, assetId: number, section: number, progress: number) {
-  const cfi = await page.locator('foliate-view').evaluate((view, index) =>
-    (view as HTMLElement & { getCFI: (index: number) => string }).getCFI(index), section);
+async function saveRemotePosition(
+  page: import('@playwright/test').Page,
+  assetId: number,
+  section: number,
+  progress: number,
+) {
+  const cfi = await page
+    .locator('foliate-view')
+    .evaluate(
+      (view, index) => (view as HTMLElement & { getCFI: (index: number) => string }).getCFI(index),
+      section,
+    );
   const response = await page.request.put(`/api/reader/assets/${assetId}/state`, {
     data: {
-      ...await readerMutationFields(page, assetId), progress,
+      ...(await readerMutationFields(page, assetId)),
+      progress,
       locator: { cfi },
     },
   });
@@ -374,13 +438,4 @@ async function saveRemotePosition(page: import('@playwright/test').Page, assetId
 
 function readingStatusLabel(status: string): string {
   return status.charAt(0).toUpperCase() + status.slice(1);
-}
-async function openProgressReader(page: import('@playwright/test').Page, title = 'CBZ Reader Book'): Promise<number> {
-  await page.goto(`/?q=${encodeURIComponent(title)}`);
-  const href = await page.locator('.book-card', { hasText: title }).locator('.book-title-link').getAttribute('href');
-  if (!href) throw new Error(`missing book: ${title}`);
-  const bookId = new URL(href, page.url()).pathname.split('/').pop();
-  await page.goto(`/read/${bookId}`);
-  await expect(page.locator('.reader-epub-stage')).toHaveAttribute('data-reader-ready', 'true');
-  return Number(await page.locator('.reader-page').getAttribute('data-reader-asset-id'));
 }

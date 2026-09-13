@@ -1,16 +1,10 @@
 import { expect, type Locator, type Page, test } from './fixtures';
 
-async function createQueryShelf(page: Page, name: string, query: string): Promise<number> {
+async function createQueryShelf(page: Page, name: string, query: string): Promise<void> {
   const response = await page.request.post('/api/shelves', {
     data: { name, kind: 'query', query, shared: true },
   });
   expect(response.ok()).toBe(true);
-  return ((await response.json()) as { id: number }).id;
-}
-
-async function deleteShelf(page: Page, id: number): Promise<void> {
-  const response = await page.request.delete(`/api/shelves/${id}`);
-  expect(response.status()).toBe(204);
 }
 
 async function openSettings(page: Page, tab: string): Promise<Locator> {
@@ -27,7 +21,9 @@ async function openSettings(page: Page, tab: string): Promise<Locator> {
 test.describe('Account settings', () => {
   test('loading library settings preserves a personal setting being edited', async ({ page }) => {
     let release!: () => void;
-    const storageReady = new Promise<void>((resolve) => { release = resolve; });
+    const storageReady = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     await page.route('**/api/admin/storage', async (route) => {
       await storageReady;
       await route.continue();
@@ -53,9 +49,8 @@ test.describe('Account settings', () => {
 
   test('shows reading app setup and manages credentials', async ({ page, context }) => {
     await context.grantPermissions(['clipboard-read', 'clipboard-write']);
-    const stamp = Date.now().toString(36);
-    const shelfName = `Kobo Query ${stamp}`;
-    const shelfID = await createQueryShelf(page, shelfName, 'author:"Noise Author" tag:"private"');
+    const shelfName = 'Kobo Query';
+    await createQueryShelf(page, shelfName, 'author:"Noise Author" tag:"private"');
     let modal = await openSettings(page, 'Reading apps');
 
     const opdsSetup = modal.locator('.settings-opds-setup');
@@ -68,16 +63,19 @@ test.describe('Account settings', () => {
     await submodal.getByRole('button', { name: 'Create' }).click();
 
     await expect(submodal.getByRole('heading', { name: 'Connect Kobo' })).toBeVisible();
-    const koboSetupURL = await submodal.getByRole('textbox', { name: 'Kobo setup URL' }).inputValue();
+    const koboSetupURL = await submodal
+      .getByRole('textbox', { name: 'Kobo setup URL' })
+      .inputValue();
     await submodal.getByRole('button', { name: 'Done' }).click();
 
     modal = await openSettings(page, 'Reading apps');
     await modal.locator('.settings-kobo-row').getByText(shelfName, { exact: true }).click();
-    await expect(submodal.getByRole('textbox', { name: 'Kobo setup URL' })).toHaveValue(koboSetupURL);
-    await page.screenshot({ path: 'screenshots/settings-kobo-setup.png', animations: 'disabled' });
+    await expect(submodal.getByRole('textbox', { name: 'Kobo setup URL' })).toHaveValue(
+      koboSetupURL,
+    );
     await submodal.getByRole('button', { name: 'Done' }).click();
 
-    const tokenName = `koreader-${stamp}`;
+    const tokenName = 'koreader';
     await modal.getByRole('button', { name: 'New app password' }).click();
     await submodal.getByLabel('Name').fill(tokenName);
     await submodal.getByRole('button', { name: 'Create' }).click();
@@ -92,15 +90,7 @@ test.describe('Account settings', () => {
     const tokenList = modal.locator('.settings-item-list');
     const tokenRow = tokenList.locator('.settings-item-row', { hasText: tokenName });
     await expect(tokenRow).toBeVisible();
-    await page.screenshot({
-      path: 'screenshots/settings-saved-app-password.png',
-      animations: 'disabled',
-    });
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.screenshot({
-      path: 'screenshots/settings-reading-apps-mobile.png',
-      animations: 'disabled',
-    });
     await tokenRow.getByText(tokenName, { exact: true }).click();
     await expect(submodal.getByRole('textbox', { name: 'App password', exact: true })).toHaveValue(
       secretValue,
@@ -108,7 +98,9 @@ test.describe('Account settings', () => {
     await expect(submodal.getByRole('textbox', { name: 'Catalog URL' })).toHaveValue(/\/opds$/);
     await expect(submodal.getByRole('textbox', { name: 'Username' })).toHaveValue('polka');
     const completeURL = new URL(
-      await submodal.getByRole('textbox', { name: 'Complete URL (includes password)' }).inputValue(),
+      await submodal
+        .getByRole('textbox', { name: 'Complete URL (includes password)' })
+        .inputValue(),
     );
     expect(completeURL.username).toBe('polka');
     expect(completeURL.password).toBe(secretValue);
@@ -126,10 +118,6 @@ test.describe('Account settings', () => {
     await copyPassword.click();
     await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(secretValue);
     await expect(copyPassword).toBeFocused();
-    await page.screenshot({
-      path: 'screenshots/settings-reading-app-details-mobile.png',
-      animations: 'disabled',
-    });
     await submodal.getByRole('button', { name: 'Done' }).click();
     const details = tokenRow.getByRole('button', { name: 'Details' });
     await expect(details).toBeFocused();
@@ -145,11 +133,9 @@ test.describe('Account settings', () => {
     await expect(submodal).toHaveCount(0);
     await page.locator('.modal-confirm').getByRole('button', { name: 'Revoke' }).click();
     await expect(modal.getByRole('button', { name: 'Set up Kobo' })).toBeVisible();
-
-    await deleteShelf(page, shelfID);
   });
 
-  test('a section that fails to load rests on its error and offers a retry', async ({
+  test('a failed section stops retrying automatically and offers a manual retry', async ({
     page,
     browserErrors,
   }) => {
@@ -182,32 +168,24 @@ test.describe('Account settings', () => {
     await expect(sendingSwitch).toHaveAttribute('aria-checked', 'false');
     await expect(modal.getByRole('heading', { name: 'Email delivery' })).toHaveCount(0);
     await expect(modal.getByRole('heading', { name: 'Send devices' })).toHaveCount(0);
-    await page.screenshot({ path: 'screenshots/settings-devices-off.png', fullPage: true });
 
     await sendingSwitch.click();
     await expect(sendingSwitch).toHaveAttribute('aria-checked', 'true');
     await expect(modal.getByRole('heading', { name: 'Email delivery' })).toBeVisible();
     await expect(modal.getByRole('heading', { name: 'Send devices' })).toBeVisible();
     await expect(modal.getByRole('heading', { name: 'Recent sends' })).toBeVisible();
-    await page.screenshot({ path: 'screenshots/settings-devices-on.png', fullPage: true });
 
-    // Leave the shared catalog as it was found.
     await sendingSwitch.click();
     await expect(modal.getByRole('heading', { name: 'Email delivery' })).toHaveCount(0);
   });
 
-  test('manages scoped users across desktop and mobile', async ({ page }) => {
-    const stamp = Date.now().toString(36);
-    const newUser = `alice-${stamp}`;
-    const accessShelfName = `Scoped Query ${stamp}`;
+  test('manages scoped users', async ({ page }) => {
+    const newUser = 'alice';
+    const accessShelfName = 'Scoped Query';
     const accessShelfQuery = 'author:"Noise Author" tag:"private"';
-    const filteredShelfName = `Filtered Query ${stamp}`;
-    const accessShelfID = await createQueryShelf(page, accessShelfName, accessShelfQuery);
-    const filteredShelfID = await createQueryShelf(
-      page,
-      filteredShelfName,
-      `${accessShelfQuery} no:cover`,
-    );
+    const filteredShelfName = 'Filtered Query';
+    await createQueryShelf(page, accessShelfName, accessShelfQuery);
+    await createQueryShelf(page, filteredShelfName, `${accessShelfQuery} no:cover`);
     const modal = await openSettings(page, 'Users');
 
     await expect(modal.locator('.settings-user-row', { hasText: 'admin' })).toBeVisible();
@@ -216,11 +194,6 @@ test.describe('Account settings', () => {
         name: 'Change password',
       }),
     ).toBeVisible();
-    await page.screenshot({ path: 'screenshots/settings.png', fullPage: true });
-    await page.setViewportSize({ width: 390, height: 720 });
-    await expect(modal).toBeVisible();
-    await page.screenshot({ path: 'screenshots/settings-mobile.png' });
-    await page.setViewportSize({ width: 1280, height: 720 });
 
     await modal.getByRole('button', { name: 'Add user' }).click();
     const submodal = page.locator('.settings-submodal');
@@ -245,8 +218,63 @@ test.describe('Account settings', () => {
     await userRow.getByRole('button', { name: `Remove ${newUser}` }).click();
     await page.locator('.modal-confirm').getByRole('button', { name: 'Remove' }).click();
     await expect(userRow).toHaveCount(0);
+  });
 
-    await deleteShelf(page, filteredShelfID);
-    await deleteShelf(page, accessShelfID);
+  test('Explicit themes override the operating-system color scheme', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await page.goto('/');
+    const libraryNav = page.locator('#nav-library');
+    await expect(libraryNav).toBeVisible();
+
+    const expectColors = async (expected: {
+      background: string;
+      hover: string;
+      danger: string;
+    }) => {
+      await libraryNav.hover();
+      await expect(page.locator('body')).toHaveCSS('background-color', expected.background);
+      await expect(libraryNav).toHaveCSS('background-color', expected.hover);
+      await expect
+        .poll(() =>
+          page.evaluate(() =>
+            getComputedStyle(document.documentElement).getPropertyValue('--danger').trim(),
+          ),
+        )
+        .toBe(expected.danger);
+    };
+
+    await expectColors({
+      background: 'rgb(18, 18, 18)',
+      hover: 'rgba(255, 255, 255, 0.07)',
+      danger: '#ef9a9a',
+    });
+
+    await page.evaluate(() => {
+      document.documentElement.dataset.theme = 'light';
+    });
+    await expectColors({
+      background: 'rgb(252, 252, 252)',
+      hover: 'rgba(0, 0, 0, 0.05)',
+      danger: '#c62828',
+    });
+
+    await page.evaluate(() => {
+      document.documentElement.dataset.theme = 'sepia';
+    });
+    await expectColors({
+      background: 'rgb(244, 239, 230)',
+      hover: 'rgba(0, 0, 0, 0.05)',
+      danger: '#c62828',
+    });
+
+    await page.emulateMedia({ colorScheme: 'light' });
+    await page.evaluate(() => {
+      document.documentElement.dataset.theme = 'dark';
+    });
+    await expectColors({
+      background: 'rgb(18, 18, 18)',
+      hover: 'rgba(255, 255, 255, 0.07)',
+      danger: '#ef9a9a',
+    });
   });
 });

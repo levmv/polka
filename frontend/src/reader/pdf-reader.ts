@@ -278,7 +278,7 @@ class PDFReader {
         if (event.key === 'Escape') {
             if (
                 this.root.querySelector(
-                    '.reader-annotation-popover:not([hidden]), #reader-annotations-panel:not([hidden])',
+                    '.reader-annotation-popover:not([hidden]), #reader-annotations-panel:not([hidden]), #reader-search-panel:not([hidden])',
                 )
             )
                 return;

@@ -98,7 +98,9 @@ function buildEPUB(
   const description = options.description || '';
   const t = xmlEscape(title);
   const a = xmlEscape(author);
-  const desc = description ? `\n    <dc:description>${xmlEscape(description)}</dc:description>` : '';
+  const desc = description
+    ? `\n    <dc:description>${xmlEscape(description)}</dc:description>`
+    : '';
   const opf = `<?xml version="1.0" encoding="utf-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid" version="3.0">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
@@ -139,12 +141,7 @@ export function epubWithScripts(title: string, scriptURL: string, name: string):
   return buildEPUB(title, 'Script probe author', name, { scriptURL });
 }
 
-export function epub(
-  title: string,
-  author: string,
-  name: string,
-  description = '',
-): UploadFile {
+export function epub(title: string, author: string, name: string, description = ''): UploadFile {
   return buildEPUB(title, author, name, { description });
 }
 
@@ -166,11 +163,7 @@ export function epubWithNonstandardZIPSignature(
   return fixture;
 }
 
-export function epubWithUnmarkedUTF8Entry(
-  title: string,
-  author: string,
-  name: string,
-): UploadFile {
+export function epubWithUnmarkedUTF8Entry(title: string, author: string, name: string): UploadFile {
   // The filename bytes are valid UTF-8, but the tiny ZIP writer deliberately
   // leaves the language-encoding flag clear, matching a real producer defect.
   return buildEPUB(title, author, name, { chapterName: '章.xhtml' });
@@ -192,7 +185,13 @@ function pdfEscape(value: string): string {
   return value.replace(/([\\()])/g, '\\$1');
 }
 
-export function pdf(title: string, author: string, name: string, rotations: number[] = [], secondLine = ''): UploadFile {
+export function pdf(
+  title: string,
+  author: string,
+  name: string,
+  rotations: number[] = [],
+  secondLine = '',
+): UploadFile {
   const pageLabels = ['First PDF page', 'Second PDF page', 'Third PDF page'];
   const objects = new Map<number, Buffer>();
   objects.set(1, Buffer.from('<< /Type /Catalog /Pages 2 0 R /Outlines 11 0 R >>'));
@@ -201,8 +200,7 @@ export function pdf(title: string, author: string, name: string, rotations: numb
   for (let index = 0; index < pageLabels.length; index++) {
     const pageID = 3 + index * 2;
     const contentID = pageID + 1;
-    const bottomTarget =
-      index === 2 ? '\nBT /F1 24 Tf 72 72 Td (Bottom PDF target) Tj ET' : '';
+    const bottomTarget = index === 2 ? '\nBT /F1 24 Tf 72 72 Td (Bottom PDF target) Tj ET' : '';
     const extraLine = secondLine ? `\nBT /F1 24 Tf 72 660 Td (${pdfEscape(secondLine)}) Tj ET` : '';
     const content = Buffer.from(
       `BT /F1 24 Tf 72 700 Td (${pdfEscape(pageLabels[index])}) Tj ET${extraLine}${bottomTarget}`,
@@ -224,10 +222,7 @@ export function pdf(title: string, author: string, name: string, rotations: numb
   }
 
   objects.set(9, Buffer.from('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'));
-  objects.set(
-    10,
-    Buffer.from(`<< /Title (${pdfEscape(title)}) /Author (${pdfEscape(author)}) >>`),
-  );
+  objects.set(10, Buffer.from(`<< /Title (${pdfEscape(title)}) /Author (${pdfEscape(author)}) >>`));
   objects.set(11, Buffer.from('<< /Type /Outlines /First 12 0 R /Last 13 0 R /Count 2 >>'));
   objects.set(
     12,
@@ -235,9 +230,7 @@ export function pdf(title: string, author: string, name: string, rotations: numb
   );
   objects.set(
     13,
-    Buffer.from(
-      '<< /Title (Final PDF page) /Parent 11 0 R /Prev 12 0 R /Dest [7 0 R /Fit] >>',
-    ),
+    Buffer.from('<< /Title (Final PDF page) /Parent 11 0 R /Prev 12 0 R /Dest [7 0 R /Fit] >>'),
   );
 
   const chunks: Buffer[] = [Buffer.from('%PDF-1.4\n')];

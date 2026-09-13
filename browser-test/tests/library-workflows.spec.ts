@@ -1,14 +1,7 @@
 import { Buffer } from 'node:buffer';
 import { readFileSync } from 'node:fs';
-import { epub } from '../book-fixtures';
-import { expect, test } from '../fixtures';
-import {
-  createReaderTestUser,
-  deleteTestUserAsAdmin,
-  login,
-  loginByRequest,
-  readerMutationFields,
-} from '../helpers';
+import { expect, test } from './fixtures';
+import { findBook, login } from './helpers';
 
 test.describe('Library workflows', () => {
   test('Sidebar log out posts to /logout', async ({ page }) => {
@@ -50,87 +43,9 @@ test.describe('Library workflows', () => {
     await expect(page).toHaveURL(/\/login$/);
   });
 
-  test('Continue reading appears only after reader state exists', async ({ page }) => {
-    const readerUser = await createReaderTestUser(page, 'continue-reading');
-    try {
-      await loginByRequest(page, readerUser.username, readerUser.password);
-      await page.goto('/');
-      await expect(page.locator('#continue-reading')).toBeHidden();
-
-      const target = await page.evaluate(async () => {
-        const res = await fetch('/api/books');
-        if (!res.ok) throw new Error(`books status ${res.status}`);
-        const books = await res.json();
-        const book = books.find((b: any) =>
-          (b.assets || []).some((a: any) => ['.epub', '.fb2', '.pdf'].includes(a.extension)),
-        );
-        if (!book) throw new Error('missing readable book');
-        const asset = book.assets.find((a: any) =>
-          ['.epub', '.fb2', '.pdf'].includes(a.extension),
-        );
-        return { title: book.title, assetId: asset.id };
-      });
-      const save = await page.request.put(`/api/reader/assets/${target.assetId}/state`, {
-        data: { ...await readerMutationFields(page, target.assetId), progress: 0.37, locator: {} },
-      });
-      expect(save.ok()).toBe(true);
-
-      await page.goto('/');
-      const rail = page.locator('#continue-reading');
-      await expect(rail).toBeVisible();
-      const card = rail.locator('.continue-reading-card', { hasText: target.title });
-      await expect(card).toBeVisible();
-      // The card shows progress as a bar; the reading of it is the accessible name.
-      await expect(card).toHaveAttribute('aria-label', /37% read/);
-
-      // ?from=library so closing the reader returns to the rail, not to the book.
-      const readPath = `/read/asset/${encodeURIComponent(target.assetId)}?from=library`;
-      await expect(card).toHaveAttribute('href', readPath);
-      expect((await page.request.get(readPath)).ok()).toBe(true);
-
-      await card.click();
-      await expect(page).toHaveURL(/\/read\/asset\//);
-      const closeReader = page.getByRole('link', { name: 'Close reader' });
-      await expect(closeReader).toHaveAttribute('href', '/');
-      await closeReader.click();
-      await expect(page).toHaveURL((url) => url.pathname === '/');
-      await expect(page.locator('#continue-reading')).toBeVisible();
-
-      // The library DOM is replaced on each SPA visit. Return to it in the same
-      // document and prove the newly rendered dismiss button owns a listener.
-      await page.locator('#nav-series').click();
-      await expect(page).toHaveURL(/\/series$/);
-      await page.locator('#nav-library').click();
-      await expect(page).toHaveURL((url) => url.pathname === '/');
-      await expect(page.locator('#continue-reading')).toBeVisible();
-      await page.getByRole('button', { name: 'Hide Continue reading' }).click();
-      await expect(page.locator('#continue-reading')).toBeHidden();
-      await expect
-        .poll(async () => {
-          const response = await page.request.get('/api/settings');
-          return (await response.json()).show_continue_reading;
-        })
-        .toBe(false);
-
-      await page.locator('.account-settings').click();
-      await page.getByRole('switch', { name: 'Show Continue reading rail' }).click();
-      await expect(rail).toBeVisible();
-      await page.keyboard.press('Escape');
-      await expect(page.locator('.settings-modal')).toHaveCount(0);
-      const dismiss = page.getByRole('button', { name: 'Hide Continue reading' });
-      await expect(dismiss).toBeEnabled();
-      await dismiss.click();
-      await expect(rail).toBeHidden();
-
-      await expect(page).toHaveURL(
-        (url) => url.pathname === '/',
-      );
-    } finally {
-      await deleteTestUserAsAdmin(page, readerUser);
-    }
-  });
-
-  test('Storage settings shows the books folder health line and scans on demand', async ({ page }) => {
+  test('Storage settings shows the books folder health line and scans on demand', async ({
+    page,
+  }) => {
     await page.goto('/');
     await expect(page.locator('.account-settings')).toBeVisible();
 
@@ -142,8 +57,6 @@ test.describe('Library workflows', () => {
     await modal.getByRole('tab', { name: 'Storage' }).click();
     await expect(modal.getByRole('heading', { name: 'Storage' })).toBeVisible();
 
-    // Books folder health line: the managed root is reachable and holds the
-    // imported fixtures, so it reports "Reachable · … · N books · …".
     const health = modal.locator('.settings-health');
     await expect(health).toContainText('Reachable');
     await expect(health).toContainText('book');
@@ -160,15 +73,12 @@ test.describe('Library workflows', () => {
     await modal.getByRole('button', { name: 'Hide' }).click();
     await expect(modal.getByPlaceholder('/srv/books')).toHaveCount(0);
 
-    // Scan now runs an immediate ingest pass. The default incoming folder is
-    // empty here, so it reports nothing to import through a toast.
+    // The fixture's incoming folder is empty.
     await modal.getByRole('button', { name: 'Scan now' }).click();
     await expect(page.locator('.toast')).toContainText(/No new files|imported|already in library/);
   });
 
   test('Metadata write-back: settings mode plus the book-page action', async ({ page }) => {
-    // General shows the mode control (default Manual) and a backlog
-    // line because write-back is a global library policy, not a path control.
     await page.goto('/');
     await expect(page.locator('.account-settings')).toBeVisible();
     await page.locator('.account-settings').click();
@@ -180,27 +90,22 @@ test.describe('Library workflows', () => {
     const layoutRow = settings.locator('.settings-row', { hasText: 'File layout' });
     await expect(layoutRow).toBeVisible();
     await expect(layoutRow.locator('input')).toHaveValue(
-        '{author_bucket}/{author_sort}/{title} [a{asset_id}]{dot_ext}',
+      '{author_bucket}/{author_sort}/{title} [a{asset_id}]{dot_ext}',
     );
     await expect(layoutRow.locator('.settings-note')).toContainText('CLI');
 
-    // Use the dedicated write-back fixture so editing and rewriting its file does
-    // not disturb the shared books other tests assert on.
     await page.goto('/?q=Writeback%20Fixture');
     const card = page.locator('.book-card', { hasText: 'Writeback Fixture' });
     await expect(card).toBeVisible();
     await card.locator('.book-title').click();
     await expect(page.locator('.detail-title')).toContainText('Writeback Fixture');
 
-    // An edit puts the EPUB behind the catalog; the admin action then writes it
-    // and flips to a disabled "up to date".
+    // Editing metadata makes the file eligible for write-back.
     await page.locator('#btn-edit-book').click();
     await expect(page.locator('.edit-modal')).toBeVisible();
     const titleInput = page.locator('.edit-modal input[name="title"]');
     const saveBtn = page.locator('.edit-modal .edit-save-btn');
-    // A unique title guarantees the save bumps the metadata rev (and so the file
-    // goes dirty) even if the test re-runs against an already-edited fixture.
-    await titleInput.fill(`Writeback Fixture ${Date.now().toString(36)}`);
+    await titleInput.fill('Writeback Fixture Revised');
     await expect(saveBtn).toBeEnabled();
     // The edit modal saves in place and stays open, so wait on the PATCH before
     // closing it to return to the now-dirty detail.
@@ -228,29 +133,13 @@ test.describe('Library workflows', () => {
   });
 
   test('Late metadata write-back does not replace a newer book detail', async ({ page }) => {
-    await page.goto('/?q=Writeback%20Fixture');
-    const writebackCard = page.locator('.book-card', { hasText: 'Writeback Fixture' });
-    await expect(writebackCard).toBeVisible();
-    await writebackCard.locator('.book-title-link').click();
-    await expect(page.locator('.detail-title')).toContainText('Writeback Fixture');
-    const writebackID = new URL(page.url()).pathname.split('/').pop();
-    if (!writebackID) throw new Error('missing write-back fixture id');
-
-    // Make the fixture dirty so the manual write-back action is available even
-    // when this test runs independently or is retried against the same library.
-    await page.locator('#btn-edit-book').click();
-    const edit = page.locator('.edit-modal');
-    const titleInput = edit.locator('input[name="title"]');
-    await titleInput.fill(`Writeback Fixture Stale ${Date.now().toString(36)}`);
-    const saved = page.waitForResponse(
-      (response) =>
-        response.request().method() === 'PATCH' &&
-        new URL(response.url()).pathname === `/api/books/${writebackID}`,
-    );
-    await edit.locator('.edit-save-btn').click();
-    await saved;
-    await edit.locator('.modal-close').click();
-    await expect(edit).toBeHidden();
+    const book = await findBook(page, 'Writeback Fixture');
+    const writebackID = book.id;
+    const edit = await page.request.patch(`/api/books/${writebackID}`, {
+      data: { title: 'Writeback Fixture Revised' },
+    });
+    expect(edit.ok()).toBe(true);
+    await page.goto(`/book/${writebackID}`);
 
     let releaseResponse = () => {};
     const responseRelease = new Promise<void>((resolve) => {
@@ -284,7 +173,9 @@ test.describe('Library workflows', () => {
 
       releaseResponse();
       await expect(
-        page.locator('.toast:not(.toast-leaving)', { hasText: /Metadata written|already up to date/ }),
+        page.locator('.toast:not(.toast-leaving)', {
+          hasText: /Metadata written|already up to date/,
+        }),
       ).toBeVisible();
       await expect(page).toHaveURL(nextBookURL);
       await expect(page.locator('.detail-title')).toHaveText('No Cover Book');
@@ -299,7 +190,7 @@ test.describe('Library workflows', () => {
   });
 
   test('Upload opens an existing duplicate and restores it after removal', async ({ page }) => {
-    const title = `Upload Restore ${Date.now().toString(36)}`;
+    const title = 'Upload Restore';
     const file = {
       name: `${title}.fb2`,
       mimeType: 'application/xml',
@@ -313,7 +204,9 @@ test.describe('Library workflows', () => {
     const card = page.locator('.book-card', { hasText: title });
     await expect(card).toBeVisible();
     await page.locator('#book-upload-input').setInputFiles(file);
-    const duplicate = page.locator('.toast:not(.toast-leaving)', { hasText: `Already in library: ${title}` });
+    const duplicate = page.locator('.toast:not(.toast-leaving)', {
+      hasText: `Already in library: ${title}`,
+    });
     await expect(duplicate).toBeVisible();
     await duplicate.getByRole('button', { name: 'Open' }).click();
     await expect(page.locator('.detail-title')).toContainText(title);
@@ -333,12 +226,12 @@ test.describe('Library workflows', () => {
     await page.goto('/');
     await expect(page.locator('.book-card').first()).toBeVisible();
 
-    const title = `Batch Upload ${Date.now().toString(36)}`;
+    const title = 'Batch Upload';
     await page.locator('#book-upload-input').setInputFiles([
       {
         name: 'without-cover.epub',
         mimeType: 'application/epub+zip',
-        buffer: readFileSync('fixtures/without-cover.epub'),
+        buffer: readFileSync(new URL('../fixtures/without-cover.epub', import.meta.url)),
       },
       {
         name: `${title}.fb2`,
@@ -369,7 +262,9 @@ test.describe('Library workflows', () => {
     await dialog.getByLabel('Name').fill('Browser Shelf');
     await dialog.getByRole('button', { name: 'Create shelf' }).click();
     await expect(dialog).toHaveCount(0);
-    await expect(page.locator('#shelf-nav .shelf-nav-item', { hasText: 'Browser Shelf' })).toBeVisible();
+    await expect(
+      page.locator('#shelf-nav .shelf-nav-item', { hasText: 'Browser Shelf' }),
+    ).toBeVisible();
 
     await firstCard.locator('.book-title').click();
     await expect(page.locator('.detail-title')).toContainText(title);
@@ -383,8 +278,24 @@ test.describe('Library workflows', () => {
     await page.keyboard.press('Escape');
     await expect(popover).toBeHidden();
 
-    await page.locator('#shelf-nav .shelf-nav-item', { hasText: 'Browser Shelf' }).click();
+    const shelfLink = page.locator('#shelf-nav .shelf-nav-item', { hasText: 'Browser Shelf' });
+    await shelfLink.click();
+    await expect(shelfLink).toHaveClass(/active/);
+    await expect(page.locator('#nav-library')).not.toHaveClass(/active/);
+    const shelfURL = page.url();
+    await page.locator('.book-card', { hasText: title }).locator('.book-title-link').click();
+    await expect(page.locator('.detail-title')).toHaveText(title);
+    await expect(shelfLink).toHaveClass(/active/);
+    await page.locator('.back-link a').click();
+    await expect(page).toHaveURL(shelfURL);
     await expect(page.locator('.book-card', { hasText: title })).toBeVisible();
+    await expect(shelfLink).toHaveClass(/active/);
+
+    await page.locator('.sidebar-brand a').click();
+    await expect(page).toHaveURL((url) => url.pathname === '/' && !url.searchParams.has('shelf'));
+    await expect(page.locator('#nav-library')).toHaveClass(/active/);
+    await expect(shelfLink).not.toHaveClass(/active/);
+    await shelfLink.click();
 
     const row = page.locator('#shelf-nav .shelf-nav-row', { hasText: 'Browser Shelf' });
     await expect(row.locator('.shelf-nav-item')).toBeVisible();
@@ -417,7 +328,13 @@ test.describe('Library workflows', () => {
     ).toHaveCount(0);
   });
 
-  test('A shelf can be created from the book-page popover', async ({ page }) => {
+  test('The book shelf picker creates shelves and toggles membership from the keyboard', async ({
+    page,
+  }) => {
+    const created = await page.request.post('/api/shelves', {
+      data: { name: 'Another Shelf', kind: 'manual' },
+    });
+    expect(created.ok()).toBe(true);
     await page.goto('/');
     await page.locator('.book-card').first().locator('.book-title').click();
     await expect(page.locator('.detail-title')).toBeVisible();
@@ -440,31 +357,15 @@ test.describe('Library workflows', () => {
     await page.locator('#btn-book-shelves').click();
     const newRow = popover.locator('.shelf-picker-row', { hasText: 'Popover Shelf' });
     await expect(newRow.locator('input[type="checkbox"]')).toBeChecked();
-  });
 
-  test('Popover keyboard nav toggles multiple shelves in a row', async ({ page }) => {
-    for (const name of ['Kbd One', 'Kbd Two']) {
-      const created = await page.request.post('/api/shelves', { data: { name, kind: 'manual' } });
-      expect(created.ok()).toBe(true);
-    }
-    await page.goto('/');
-    await page.locator('.book-card').first().locator('.book-title').click();
-    await page.locator('#btn-book-shelves').click();
-    const popover = page.locator('.shelf-popover');
-    const first = popover.locator('.shelf-picker-row', { hasText: 'Kbd One' }).locator('input');
+    const first = popover.getByLabel('Another Shelf', { exact: true });
     await first.focus();
-
-    // Toggling with Space must not lose focus, so Down + Space can keep going.
     await page.keyboard.press('Space');
     await page.keyboard.press('ArrowDown');
     await page.keyboard.press('Space');
-
-    await expect(
-      popover.locator('.shelf-picker-row', { hasText: 'Kbd One' }).locator('input'),
-    ).toBeChecked();
-    await expect(
-      popover.locator('.shelf-picker-row', { hasText: 'Kbd Two' }).locator('input'),
-    ).toBeChecked();
+    await expect(first).toBeChecked();
+    await expect(newRow.locator('input')).not.toBeChecked();
+    await expect(newRow.locator('input')).toBeFocused();
   });
 
   test('Search can be saved as a query shelf', async ({ page }) => {
@@ -537,16 +438,8 @@ test.describe('Library workflows', () => {
   });
 
   test('Trash: remove a book, restore it, then permanently delete it', async ({ page }) => {
-    // Self-contained: upload a uniquely-named book so the flow never disturbs the
-    // shared fixture library, and end by purging it (net-zero).
-    const title = `Trash Flow ${Date.now().toString(36)}`;
+    const title = 'No Cover Book';
     await page.goto('/');
-    await expect(page.locator('.book-card').first()).toBeVisible();
-    await page.locator('#book-upload-input').setInputFiles({
-      name: `${title}.fb2`,
-      mimeType: 'application/xml',
-      buffer: Buffer.from(`<FictionBook><body><p>${title}</p></body></FictionBook>`),
-    });
     const card = page.locator('.book-card', { hasText: title });
     await expect(card).toBeVisible();
 
@@ -562,7 +455,9 @@ test.describe('Library workflows', () => {
     await expect(page.locator('.book-card', { hasText: title })).toHaveCount(0);
 
     // It shows in Trash, attributed and with admin actions.
-    await page.goto('/trash');
+    await page.getByRole('button', { name: 'Manage library' }).click();
+    await page.getByRole('menuitem', { name: 'Trash', exact: true }).click();
+    await expect(page).toHaveURL(/\/trash$/);
     const trashCard = page.locator('.trash-card', { hasText: title });
     await expect(trashCard).toBeVisible();
     await expect(trashCard.locator('.trash-card-meta')).toContainText('Trashed');
@@ -574,21 +469,27 @@ test.describe('Library workflows', () => {
     await page.goto('/');
     await expect(page.locator('.book-card', { hasText: title })).toBeVisible();
 
-    // Trash it again and permanently delete it to clean up.
+    // Permanent deletion is a separate action after moving the book to Trash.
     await page.locator('.book-card', { hasText: title }).locator('.book-title-link').click();
     await page.locator('#btn-book-menu').click();
     await page.locator('.menu-item', { hasText: 'Remove from library' }).click();
     await page.locator('.modal-confirm').getByRole('button', { name: 'Remove' }).click();
     await page.waitForURL((url) => new URL(url).pathname === '/');
 
-    await page.goto('/trash');
+    await page.getByRole('button', { name: 'Manage library' }).click();
+    await page.getByRole('menuitem', { name: 'Trash', exact: true }).click();
+    await expect(page).toHaveURL(/\/trash$/);
     await page.locator('.trash-card', { hasText: title }).locator('.btn-purge').click();
-    await page.locator('.modal-confirm').getByRole('button', { name: 'Delete permanently' }).click();
+    await page
+      .locator('.modal-confirm')
+      .getByRole('button', { name: 'Delete permanently' })
+      .click();
     await expect(page.locator('.trash-card', { hasText: title })).toHaveCount(0);
   });
 
   test('Book details stay compact and expand in place', async ({ page }) => {
-    const title = `Long Blurb ${Date.now().toString(36)}`;
+    const title = 'With Cover Book';
+    const fixture = await findBook(page, title);
     // Rich-text margins count toward the space above the annotations.
     const paragraph =
       'This publisher blurb runs long on purpose so the book page has something to clamp. '.repeat(
@@ -596,28 +497,42 @@ test.describe('Library workflows', () => {
       );
     const description = `<h3>About the book</h3>${`<p>${paragraph}</p>`.repeat(4)}`;
 
-    await page.goto('/');
-    await expect(page.locator('.book-card').first()).toBeVisible();
-    await page
-      .locator('#book-upload-input')
-      .setInputFiles(epub(title, 'Blurb Author', title, description));
-
-    const card = page.locator('.book-card', { hasText: title });
-    await expect(card).toBeVisible();
-    await card.locator('.book-title-link').click();
-    await expect(page.locator('.detail-title')).toContainText(title);
-
-    const bookURL = page.url();
-    const bookId = new URL(bookURL).pathname.split('/').pop();
-    const tags = ['Literature', 'Essays', 'Reading', 'Creativity', 'Memory', 'Culture', 'Language', 'Art', 'Philosophy', 'History', 'Education', 'Criticism', 'Nonfiction', 'Writing'];
-    const update = await page.request.patch(`/api/books/${bookId}`, { data: { tags: tags.join(', ') } });
+    const tags = [
+      'Literature',
+      'Essays',
+      'Reading',
+      'Creativity',
+      'Memory',
+      'Culture',
+      'Language',
+      'Art',
+      'Philosophy',
+      'History',
+      'Education',
+      'Criticism',
+      'Nonfiction',
+      'Writing',
+    ];
+    const update = await page.request.patch(`/api/books/${fixture.id}`, {
+      data: { description, tags: tags.join(', ') },
+    });
     expect(update.ok()).toBe(true);
     const book = await update.json();
-    const highlight = await page.request.post(`/api/reader/assets/${book.assets[0].id}/annotations`, {
-      data: { locator: { cfi: 'epubcfi(/6/2!/4/2/1:0)' }, quote: 'A passage worth returning to.', note: 'Keep this question for the next discussion.' },
-    });
+    const highlight = await page.request.post(
+      `/api/reader/assets/${book.assets[0].id}/annotations`,
+      {
+        data: {
+          locator: { cfi: 'epubcfi(/6/2!/4/2/1:0)' },
+          quote: 'A passage worth returning to.',
+          note: 'Keep this question for the next discussion.',
+        },
+      },
+    );
     expect(highlight.ok()).toBe(true);
-    await page.reload();
+    await page.goto('/');
+    const card = page.locator('.book-card', { hasText: title });
+    await card.locator('.book-title-link').click();
+    await expect(page.locator('.detail-title')).toHaveText(title);
 
     const blurb = page.locator('.detail-description');
     const more = page.locator('.detail-description-more');
@@ -628,7 +543,9 @@ test.describe('Library workflows', () => {
     const tagsMore = tagRow.getByRole('button');
     await expect(visibleTags).toHaveText(tags.slice(0, 5));
     await expect(tagsMore).toHaveText(`+${tags.length - 5}`);
-    await expect(page.getByRole('heading', { name: 'Highlights & notes' })).toBeInViewport({ ratio: 1 });
+    await expect(page.getByRole('heading', { name: 'Highlights & notes' })).toBeInViewport({
+      ratio: 1,
+    });
 
     await more.click();
     await expect(more).toHaveText('Show less');

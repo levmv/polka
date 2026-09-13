@@ -1,11 +1,9 @@
-import { expect, type Page, test } from './fixtures';
+import { expect, test } from './fixtures';
+import { openReader } from './helpers';
 
 // Tablet layout and touch interactions run in Chromium and WebKit.
 test.describe('Responsive layout (iPad viewport)', () => {
-  test('Drawer controls work across tablet breakpoints', async ({
-    page,
-    browserName,
-  }) => {
+  test('Drawer controls work across tablet breakpoints', async ({ page }) => {
     await page.goto('/?q=With%20Cover');
 
     // The hamburger only renders below the breakpoint, so its visibility also
@@ -35,7 +33,6 @@ test.describe('Responsive layout (iPad viewport)', () => {
     await expect(page.getByRole('menuitem', { name: 'Cleanup' })).toBeVisible();
     await expect(page.getByRole('menuitem', { name: 'Trash' })).toBeVisible();
     await page.keyboard.press('Escape');
-    await page.screenshot({ path: `screenshots/sidebar-ipad-${browserName}.png` });
 
     await overlay.click();
     await expect(sidebar).not.toHaveClass(/open/);
@@ -57,8 +54,10 @@ test.describe('Responsive layout (iPad viewport)', () => {
     await expect.poll(async () => (await sidebar.boundingBox())!.x).toBeGreaterThanOrEqual(0);
   });
 
-  test('Reader panels restore touch controls and selection survives a page snap', async ({ page }) => {
-    await openReadOnlyReader(page);
+  test('Reader panels restore touch controls and selection survives a page snap', async ({
+    page,
+  }) => {
+    await openReader(page);
     const reader = page.locator('.reader-page');
 
     const panels = [
@@ -162,7 +161,7 @@ test.describe('Responsive layout (iPad viewport)', () => {
     await expect(bar).toHaveCount(0);
   });
 
-  test('Large-library title jumps stay beside the grid', async ({ page, browserName }) => {
+  test('Large-library title jumps stay beside the grid', async ({ page }) => {
     await page.route('**/api/books/jumps?sort=title', async (route) => {
       await route.fulfill({
         contentType: 'application/json',
@@ -190,33 +189,56 @@ test.describe('Responsive layout (iPad viewport)', () => {
     expect(rightCardBox).not.toBeNull();
     expect(railBox!.x + railBox!.width).toBeLessThanOrEqual(768);
     expect(rightCardBox!.x + rightCardBox!.width).toBeLessThan(railBox!.x);
-
-    await page.screenshot({
-      path: `screenshots/jump-rail-ipad-${browserName}.png`,
-      fullPage: true,
-    });
   });
 
-  test('Book details and tag disclosures fit narrow viewports', async ({ page, browserName }) => {
-    const tags = ['Literature', 'Essays', 'Reading', 'Creativity', 'Memory', 'Culture', 'Language', 'Art', 'Philosophy', 'History', 'Education', 'Criticism', 'Nonfiction', 'Writing'];
+  test('Book details and tag disclosures fit narrow viewports', async ({ page }) => {
+    const tags = [
+      'Literature',
+      'Essays',
+      'Reading',
+      'Creativity',
+      'Memory',
+      'Culture',
+      'Language',
+      'Art',
+      'Philosophy',
+      'History',
+      'Education',
+      'Criticism',
+      'Nonfiction',
+      'Writing',
+    ];
     await page.route(/\/api\/books\/\d+$/, async (route) => {
       const response = await route.fetch();
       const book = await response.json();
-      await route.fulfill({ response, json: {
-        ...book,
-        tags: tags.join(', '),
-        assets: [
-          { ...book.assets[0], size: 768 * 1024, page_count: 920 },
-          { id: 999999, extension: '.pdf', size: 12.5 * 1024 * 1024, page_count: 48, is_primary: false, can_read: true },
-        ],
-      } });
+      await route.fulfill({
+        response,
+        json: {
+          ...book,
+          tags: tags.join(', '),
+          assets: [
+            { ...book.assets[0], size: 768 * 1024, page_count: 920 },
+            {
+              id: 999999,
+              extension: '.pdf',
+              size: 12.5 * 1024 * 1024,
+              page_count: 48,
+              is_primary: false,
+              can_read: true,
+            },
+          ],
+        },
+      });
     });
     await page.goto('/?q=With%20Cover');
     const card = page.locator('.book-card', { hasText: 'With Cover Book' });
     await expect(card).toBeVisible();
     await card.locator('.book-title').click();
     await expect(page.locator('.detail-title')).toBeVisible();
-    await expect(page.locator('.detail-file')).toHaveText(['EPUB (768 KB, ≈ 920 pages)', 'PDF (12.5 MB)']);
+    await expect(page.locator('.detail-file')).toHaveText([
+      'EPUB (768 KB, ≈ 920 pages)',
+      'PDF (12.5 MB)',
+    ]);
     await expect(page.locator('.detail-meta-bottom')).toHaveText(/^Added /);
 
     const download = page.locator('.detail-actions a.detail-action[href^="/download/"]').first();
@@ -227,12 +249,8 @@ test.describe('Responsive layout (iPad viewport)', () => {
     expect(box!.x).toBeGreaterThanOrEqual(0);
     expect(box!.x + box!.width).toBeLessThanOrEqual(769);
 
-    // Stacked order below the breakpoint: cover, then title/authors, then the
-    // reading state, then publication details, tags, and the description.
-    // This guards the display: contents + order rules, which silently lose to
-    // the base layout if their @media block is placed before it (equal
-    // specificity, source order wins) — and an element left out of the order
-    // list keeps the initial 0 and jumps ahead of the cover.
+    // Check the rendered order: overridden media rules or a missing CSS order
+    // can put a detail block ahead of the cover.
     const coverBox = await page.locator('.detail-cover-image').boundingBox();
     const titleBox = await page.locator('.detail-title').boundingBox();
     const readingBox = await page.locator('.detail-reading-state').boundingBox();
@@ -255,34 +273,12 @@ test.describe('Responsive layout (iPad viewport)', () => {
     const tagsMore = tagRow.getByRole('button');
     await expect(tagsMore).toBeVisible();
     await page.setViewportSize({ width: 1280, height: 720 });
-    await page.screenshot({ animations: 'disabled', path: `screenshots/book-tags-desktop-${browserName}.png`, fullPage: true });
     await tagsMore.click();
     await expect(tagRow.locator('.detail-tag:visible')).toHaveCount(tags.length);
     await page.setViewportSize({ width: 390, height: 844 });
     await expect(tagRow.locator('.detail-tag:visible')).toHaveCount(tags.length);
-    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
-    await page.screenshot({ animations: 'disabled', path: `screenshots/book-tags-mobile-${browserName}.png`, fullPage: true });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+      390,
+    );
   });
 });
-
-async function openReadOnlyReader(page: Page): Promise<void> {
-  await page.goto('/?q=With%20Cover');
-  const href = await page
-    .locator('.book-card', { hasText: 'With Cover Book' })
-    .locator('.book-title-link')
-    .getAttribute('href');
-  const bookId = href?.split('/').pop()?.split('?')[0];
-  if (!bookId) throw new Error('missing reader book id');
-
-  // Responsive projects share a read-only catalog. Return the current state
-  // for the reader's best-effort touch instead of updating it.
-  await page.route('**/api/reader/assets/*/touch', async (route) => {
-    const stateURL = route.request().url().replace(/\/touch$/, '/state');
-    const response = await page.request.get(stateURL);
-    await route.fulfill({ response });
-  });
-  await page.goto(`/read/${bookId}`);
-  await expect
-    .poll(async () => page.locator('.reader-epub-stage').getAttribute('data-reader-ready'))
-    .toBe('true');
-}

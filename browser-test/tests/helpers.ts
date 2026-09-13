@@ -1,17 +1,29 @@
-import type { Page } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
+import type { BookSummary } from '../../frontend/src/types';
 import type { UploadFile } from './book-fixtures';
+
+export async function findBook(page: Page, title: string): Promise<BookSummary> {
+  const response = await page.request.get('/api/books', { params: { q: title } });
+  if (!response.ok()) throw new Error(`books status ${response.status()}`);
+  const books: BookSummary[] = await response.json();
+  const book = books.find((book) => book.title === title);
+  if (!book) throw new Error(`missing book: ${title}`);
+  return book;
+}
+
+export async function openReader(page: Page, title = 'With Cover Book'): Promise<number> {
+  const book = await findBook(page, title);
+  await page.goto(`/read/${book.id}`);
+  await expect(page.locator('.reader-epub-stage')).toHaveAttribute('data-reader-ready', 'true');
+  return Number(await page.locator('.reader-page').getAttribute('data-reader-asset-id'));
+}
 
 export async function importTestBook(page: Page, file: UploadFile): Promise<number> {
   const response = await page.request.post('/api/import', { multipart: { book: file } });
-  if (!response.ok()) throw new Error(`import status ${response.status()}: ${await response.text()}`);
+  if (!response.ok())
+    throw new Error(`import status ${response.status()}: ${await response.text()}`);
   const result = (await response.json()) as { book: { id: number } };
   return result.book.id;
-}
-
-export interface TestUser {
-  id: number;
-  username: string;
-  password: string;
 }
 
 export function collectBrowserErrors(page: Page): string[] {
@@ -32,11 +44,7 @@ function isExpectedConsoleNoise(msg: { text(): string; location(): { url?: strin
   return text.includes('favicon.ico') || url.endsWith('/favicon.ico');
 }
 
-export async function login(
-  page: Page,
-  username = process.env.POLKA_TEST_USER || 'admin',
-  password = process.env.POLKA_TEST_PASSWORD || 'devpass',
-): Promise<void> {
+export async function login(page: Page, username = 'admin', password = 'devpass'): Promise<void> {
   await page.goto('/login');
   await page.locator('input[name="username"]').fill(username);
   await page.locator('input[name="password"]').fill(password);
@@ -47,44 +55,6 @@ export async function login(
   await page.locator('.account-name').waitFor();
 }
 
-export async function loginByRequest(
-  page: Page,
-  username = process.env.POLKA_TEST_USER || 'admin',
-  password = process.env.POLKA_TEST_PASSWORD || 'devpass',
-): Promise<void> {
-  const res = await page.request.post('/login', {
-    form: { username, password },
-  });
-  if (!res.ok()) throw new Error(`login status ${res.status()}: ${await res.text()}`);
-}
-
-export async function createReaderTestUser(page: Page, prefix: string): Promise<TestUser> {
-  const username = `${prefix}-${Date.now().toString(36)}-${Math.random()
-    .toString(36)
-    .slice(2, 8)}`;
-  const password = 'reader-test-pass';
-  const res = await page.request.post('/api/users', {
-    data: {
-      username,
-      password,
-      role: 'reader',
-      content_scope: 'all',
-    },
-  });
-  if (!res.ok()) throw new Error(`create user status ${res.status()}: ${await res.text()}`);
-  const body = (await res.json()) as { id: number; username: string };
-  return { id: body.id, username: body.username, password };
-}
-
-export async function deleteTestUserAsAdmin(page: Page, user: TestUser): Promise<void> {
-  // Stop reader saves before changing the browser's session to the admin account.
-  await page.goto('about:blank');
-  await loginByRequest(page);
-  const res = await page.request.delete(`/api/users/${user.id}`);
-  if (!res.ok() && res.status() !== 404) {
-    throw new Error(`delete user status ${res.status()}: ${await res.text()}`);
-  }
-}
 export async function readerMutationFields(page: Page, assetId: number) {
   const response = await page.request.get(`/api/reader/assets/${assetId}/state`);
   if (!response.ok()) throw new Error(`reader state: ${response.status()}`);
