@@ -419,6 +419,11 @@ func (s *Server) handleOPDSOpenSearch(w http.ResponseWriter, r *http.Request) {
 // acquisition link is useless to a reader).
 func (s *Server) writeOPDSAcquisition(w http.ResponseWriter, r *http.Request, meta opds.AcquisitionMeta, rows []db.OPDSPublicationRow) {
 	queryer := s.db.Read(r.Context())
+	libraryID, err := db.LibraryIdentity(queryer)
+	if err != nil {
+		serverError(w, r, err)
+		return
+	}
 	bookIDs := make([]int64, 0, len(rows))
 	for _, row := range rows {
 		bookIDs = append(bookIDs, row.ID)
@@ -446,24 +451,17 @@ func (s *Server) writeOPDSAcquisition(w http.ResponseWriter, r *http.Request, me
 		if len(links) == 0 {
 			continue
 		}
+		assets := assetsByBook[row.ID]
+		if len(assets) == 1 {
+			links = append(links, opdsProgressionLink(r, assets[0].ID))
+		} else {
+			for _, asset := range assets {
+				links = append(links, opds.Link{Rel: "alternate", Href: absoluteURL(r, "/opds/publications/"+strconv.FormatInt(asset.ID, 10), nil), Type: opds.AcquisitionEntryType, Title: strings.ToUpper(strings.TrimPrefix(asset.Extension, "."))})
+			}
+		}
 		links = append(links, opdsCoverLinks(r, row.ID, row.CoverVersion)...)
 
-		pub := opds.Publication{
-			ID:            "urn:polka:book:" + strconv.FormatInt(row.ID, 10),
-			Title:         row.Title,
-			Updated:       time.Unix(row.UpdatedAt, 0),
-			Authors:       opdsAuthorNames(authorsByBook[row.ID]),
-			Categories:    opdsCategories(row.Tags.String),
-			Publisher:     row.Publisher.String,
-			PublishedDate: row.PublishedDate.String,
-			Language:      row.Language.String,
-			Identifiers:   opdsIdentifiers(row.Identifiers.String),
-			Links:         links,
-		}
-		if row.Description.Valid {
-			pub.Summary = htmlText(row.Description.String)
-		}
-		pubs = append(pubs, pub)
+		pubs = append(pubs, opdsPublication(db.BookURI(libraryID, row.ID), row, authorsByBook[row.ID], links))
 	}
 
 	body, err := opds.Acquisition(time.Now(), meta, pubs)
@@ -472,6 +470,16 @@ func (s *Server) writeOPDSAcquisition(w http.ResponseWriter, r *http.Request, me
 		return
 	}
 	writeOPDS(w, opds.AcquisitionFeedType, body)
+}
+
+func opdsPublication(id string, row db.OPDSPublicationRow, authors []db.AuthorRow, links []opds.Link) opds.Publication {
+	return opds.Publication{
+		ID: id, Title: row.Title, Updated: time.Unix(row.UpdatedAt, 0),
+		Authors: opdsAuthorNames(authors), Summary: htmlText(row.Description.String),
+		Categories: opdsCategories(row.Tags.String), Publisher: row.Publisher.String,
+		PublishedDate: row.PublishedDate.String, Language: row.Language.String,
+		Identifiers: opdsIdentifiers(row.Identifiers.String), Links: links,
+	}
 }
 
 func opdsIdentifiers(raw string) []string {
@@ -624,4 +632,51 @@ func writeOPDS(w http.ResponseWriter, contentType string, body []byte) {
 	w.Header().Set("Content-Type", contentType+"; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	w.Write(body)
+}
+
+func opdsProgressionLink(r *http.Request, assetID int64) opds.Link {
+	return opds.Link{Rel: opds.ProgressionRel, Type: opds.ProgressionType, Href: absoluteURL(r, "/opds/progression/"+strconv.FormatInt(assetID, 10), nil)}
+}
+
+func (s *Server) handleOPDSAssetPublication(w http.ResponseWriter, r *http.Request) {
+	assetID, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	scope, ok := s.requireAssetAccess(w, r, assetID)
+	if !ok {
+		return
+	}
+	asset, err := s.assetFile(r.Context(), assetID)
+	if err != nil {
+		serverError(w, r, err)
+		return
+	}
+	queryer := s.db.Read(r.Context())
+	row, err := db.GetOPDSPublication(queryer, scope, asset.BookID)
+	if err != nil {
+		serverError(w, r, err)
+		return
+	}
+	libraryID, err := db.LibraryIdentity(queryer)
+	if err != nil {
+		serverError(w, r, err)
+		return
+	}
+	authors, err := db.AuthorsByBookIDs(queryer, []int64{asset.BookID})
+	if err != nil {
+		serverError(w, r, err)
+		return
+	}
+	links := []opds.Link{
+		{Rel: opds.AcquisitionRel, Href: absoluteURL(r, "/download/"+strconv.FormatInt(assetID, 10), nil), Type: format.MediaTypeForExtension(asset.Extension)},
+		opdsProgressionLink(r, assetID),
+	}
+	links = append(links, opdsCoverLinks(r, row.ID, row.CoverVersion)...)
+	body, err := opds.AcquisitionEntry(opdsPublication(db.PublicationURI(libraryID, assetID), row, authors[asset.BookID], links))
+	if err != nil {
+		serverError(w, r, err)
+		return
+	}
+	writeOPDS(w, opds.AcquisitionEntryType, body)
 }

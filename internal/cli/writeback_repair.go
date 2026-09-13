@@ -138,7 +138,7 @@ func repairMetadataWritebackAttempt(ctx context.Context, database *db.DB, root s
 
 func markWritebackAttemptSuccess(ctx context.Context, database *db.DB, attempt db.MetadataWritebackAttemptRow) error {
 	return database.Transact(ctx, func(tx *db.Tx) error {
-		return db.MarkMetadataWritebackSuccess(tx, attempt.AssetID, attempt.StoragePath, attempt.SHA256, attempt.Size, attempt.KOReaderHash, attempt.MetadataRev)
+		return db.MarkMetadataWritebackSuccess(tx, attempt.AssetID, attempt.StoragePath, attempt.SHA256, attempt.Size, attempt.MetadataRev)
 	})
 }
 

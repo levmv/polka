@@ -1,3 +1,8 @@
+import {
+    type AnnotationChanges,
+    type AnnotationConflict,
+    annotationNoteConflicts,
+} from './annotations';
 import { type BookListContext, bookListContextParams } from './book-list-context';
 import { takeBootstrapCurrentUser, takeBootstrapUserSettings } from './bootstrap';
 import { notifyCatalogChanged } from './catalog-events';
@@ -34,9 +39,10 @@ import type {
     FolderImportPreview,
     FolderImportResult,
     KoboConnection,
+    Locator,
     MetadataCandidate,
-    ReaderLocator,
     ReaderState,
+    ReaderStateWrite,
     ReadingStatus,
     ReadingStatusState,
     SearchQueryValidation,
@@ -58,9 +64,15 @@ let userSettingsPromise: Promise<UserSettings> | null = null;
 // Catalog reads are local and normally complete in milliseconds. A deadline is
 // still necessary because fetch has none of its own: a browser can otherwise
 // leave a request pending forever after trying to reuse a stale connection.
-// Safe reads get one fresh attempt after the first connection failure.
-const READ_ATTEMPT_TIMEOUT_MS = 12_000;
-const READ_ATTEMPTS = 2;
+// Safe reads and explicitly retryable writes get one fresh attempt after the
+// first connection failure, using the same request body.
+const REQUEST_ATTEMPT_TIMEOUT_MS = 12_000;
+const REQUEST_ATTEMPTS = 2;
+
+interface APIRequestInit extends RequestInit {
+    // The server must accept replaying this mutation after a lost response.
+    retryable?: boolean;
+}
 
 class APIConnectionError extends Error {
     constructor(
@@ -134,7 +146,7 @@ function requestDeadline(callerSignal: AbortSignal | null | undefined): RequestD
             ),
         );
         controller.abort();
-    }, READ_ATTEMPT_TIMEOUT_MS);
+    }, REQUEST_ATTEMPT_TIMEOUT_MS);
 
     return {
         signal: controller.signal,
@@ -159,17 +171,18 @@ function requestMethod(input: RequestInfo | URL, init?: RequestInit): string {
 
 async function requestResult<T>(
     input: RequestInfo | URL,
-    init: RequestInit | undefined,
+    init: APIRequestInit | undefined,
     consume: (response: Response) => Promise<T>,
 ): Promise<T> {
-    const safeRead = ['GET', 'HEAD'].includes(requestMethod(input, init));
-    const attempts = safeRead ? READ_ATTEMPTS : 1;
+    const { retryable = false, ...requestInit } = init ?? {};
+    const canRetry = retryable || ['GET', 'HEAD'].includes(requestMethod(input, requestInit));
+    const attempts = canRetry ? REQUEST_ATTEMPTS : 1;
 
     for (let attempt = 0; attempt < attempts; attempt++) {
         try {
-            return await requestAttempt(input, init, consume, safeRead);
+            return await requestAttempt(input, requestInit, consume, canRetry);
         } catch (error) {
-            if (init?.signal?.aborted) throw error;
+            if (requestInit.signal?.aborted) throw error;
             if (!(error instanceof APIConnectionError) || attempt === attempts - 1) throw error;
         }
     }
@@ -213,16 +226,25 @@ async function requestAttempt<T>(
     }
 }
 
+export class APIError extends Error {
+    constructor(
+        message: string,
+        public readonly status: number,
+    ) {
+        super(message);
+    }
+}
+
 async function responseError(res: Response, fallback: string): Promise<Error> {
     if (res.status === 401) window.location.href = '/login';
     const text = await res.text();
-    return new Error(text.trim() || fallback);
+    return new APIError(text.trim() || fallback, res.status);
 }
 
 async function apiFetch(
     input: RequestInfo | URL,
     fallback: string | ((res: Response) => string),
-    init?: RequestInit,
+    init?: APIRequestInit,
 ): Promise<Response> {
     return await requestResult(input, init, async (res) => {
         if (!res.ok) {
@@ -238,7 +260,7 @@ async function apiFetch(
 async function fetchJSON<T>(
     input: RequestInfo | URL,
     fallback: string | ((res: Response) => string),
-    init?: RequestInit,
+    init?: APIRequestInit,
 ): Promise<T> {
     return await requestResult(input, init, async (res) => {
         if (!res.ok) {
@@ -861,19 +883,25 @@ export async function undoReadingStatus(
 
 export async function saveReaderState(
     assetId: number,
-    payload: { progress: number; locator: ReaderLocator },
+    payload: ReaderStateWrite,
     options: { keepalive?: boolean } = {},
 ): Promise<ReaderState> {
-    return await fetchJSON<ReaderState>(
+    return await requestAttempt(
         `/api/reader/assets/${assetId}/state`,
-        'Failed to save reader state',
-        { ...jsonBody('PUT', payload), keepalive: options.keepalive },
+        // An autosave can still be in flight when the reader closes.
+        { ...jsonBody('PUT', payload), keepalive: true },
+        async (response) => {
+            if (!response.ok) throw await responseError(response, 'Failed to save reader state');
+            return (await response.json()) as ReaderState;
+        },
+        !options.keepalive,
     );
 }
 
-export async function resetReaderState(assetId: number): Promise<void> {
-    await apiFetch(`/api/reader/assets/${assetId}/state`, 'Failed to reset reader state', {
-        method: 'DELETE',
+export async function resetReaderState(assetId: number, revision: number): Promise<void> {
+    await apiFetch(`/api/reader/assets/${assetId}/state`, 'Could not save reading data', {
+        ...jsonBody('DELETE', { revision }),
+        retryable: true,
     });
 }
 
@@ -896,18 +924,21 @@ export async function fetchBookAnnotations(
     );
 }
 
-export async function fetchAnnotations(assetId: number): Promise<Annotation[]> {
+export async function fetchAnnotations(
+    assetId: number,
+    signal?: AbortSignal,
+): Promise<Annotation[]> {
     return await fetchJSON<Annotation[]>(
         `/api/reader/assets/${assetId}/annotations`,
         'Failed to fetch annotations',
+        { signal },
     );
 }
 
 export async function createAnnotation(
     assetId: number,
     payload: {
-        kind?: Annotation['kind'];
-        cfi: string;
+        locator: Locator;
         quote: string;
         context_before?: string;
         context_after?: string;
@@ -917,29 +948,86 @@ export async function createAnnotation(
 ): Promise<Annotation> {
     return await fetchJSON<Annotation>(
         `/api/reader/assets/${assetId}/annotations`,
-        'Failed to create annotation',
-        jsonBody('POST', payload),
+        'Could not save reading data',
+        { ...jsonBody('POST', payload), retryable: true },
     );
 }
 
-export async function updateAnnotation(
-    assetId: number,
-    annotationId: number,
-    changes: { note?: string; color?: Annotation['color'] },
+async function updateAnnotation(
+    annotation: Annotation,
+    changes: AnnotationChanges,
 ): Promise<Annotation> {
     return await fetchJSON<Annotation>(
-        `/api/reader/assets/${assetId}/annotations/${annotationId}`,
-        'Failed to update annotation',
-        jsonBody('PATCH', changes),
+        `/api/reader/assets/${annotation.asset_id}/annotations/${annotation.id}`,
+        'Could not save reading data',
+        { ...jsonBody('PATCH', { ...changes, revision: annotation.revision }), retryable: true },
     );
 }
 
-export async function deleteAnnotation(assetId: number, annotationId: number): Promise<void> {
-    await apiFetch(
-        `/api/reader/assets/${assetId}/annotations/${annotationId}`,
-        'Failed to delete annotation',
-        { method: 'DELETE' },
-    );
+export async function saveAnnotationChanges(
+    base: Annotation,
+    changes: AnnotationChanges,
+    signal?: AbortSignal,
+): Promise<{ kind: 'saved'; annotation: Annotation } | AnnotationConflict> {
+    let current = base;
+    for (let attempt = 0; ; attempt++) {
+        if (signal?.aborted)
+            throw signal.reason ?? new DOMException('The operation was aborted', 'AbortError');
+        if (!Object.keys(changes).length) return { kind: 'saved', annotation: current };
+        try {
+            return { kind: 'saved', annotation: await updateAnnotation(current, changes) };
+        } catch (error) {
+            if (!(error instanceof APIError) || error.status !== 409) throw error;
+        }
+        let latest = await fetchCurrentAnnotation(current, signal);
+        if (!latest) {
+            // Saving an edited draft recreates a highlight deleted elsewhere.
+            // Keep the old ID deleted; retries use the existing selection identity.
+            const note = changes.note ?? base.note ?? '';
+            const color = changes.color ?? base.color;
+            latest = await createAnnotation(base.asset_id, {
+                locator: base.locator,
+                quote: base.quote,
+                context_before: base.context_before,
+                context_after: base.context_after,
+                note,
+                color,
+            });
+            if ((latest.note ?? '') === note && latest.color === color)
+                return { kind: 'saved', annotation: latest };
+        }
+        // Retry independent edits once. Continued contention leaves the draft
+        // with the user instead of looping or silently replacing another note.
+        if (annotationNoteConflicts(base, latest, changes) || attempt >= 1)
+            return { kind: 'conflict', current: latest };
+        current = latest;
+    }
+}
+
+export async function deleteAnnotation(
+    annotation: Annotation,
+    signal?: AbortSignal,
+): Promise<{ kind: 'deleted' } | { kind: 'conflict'; current: Annotation }> {
+    try {
+        await apiFetch(
+            `/api/reader/assets/${annotation.asset_id}/annotations/${annotation.id}`,
+            'Could not save reading data',
+            { ...jsonBody('DELETE', { revision: annotation.revision }), retryable: true },
+        );
+    } catch (error) {
+        if (!(error instanceof APIError) || error.status !== 409) throw error;
+        const current = await fetchCurrentAnnotation(annotation, signal);
+        if (current) return { kind: 'conflict', current };
+    }
+    return { kind: 'deleted' };
+}
+
+async function fetchCurrentAnnotation(
+    annotation: Annotation,
+    signal?: AbortSignal,
+): Promise<Annotation | null> {
+    const rows = await fetchAnnotations(annotation.asset_id, signal);
+    return rows.find((row) => row.id === annotation.id) ?? null;
 }
 
 export async function fetchMetadataCandidates(

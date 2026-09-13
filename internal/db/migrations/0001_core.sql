@@ -99,7 +99,6 @@ CREATE TABLE assets (
 
 CREATE UNIQUE INDEX idx_assets_original_sha256 ON assets(original_sha256);
 CREATE INDEX idx_assets_current_sha256 ON assets(current_sha256);
-CREATE INDEX idx_assets_koreader_hash ON assets(koreader_hash) WHERE koreader_hash IS NOT NULL AND koreader_hash <> '';
 -- Keep this predicate in sync with format.MetadataWritebackFormatKeys().
 CREATE INDEX idx_assets_writeback_dirty ON assets(book_id, writeback_rev) WHERE format IN ('epub', 'fb2', 'kepub');
 CREATE INDEX idx_assets_book_id ON assets(book_id);
@@ -109,7 +108,7 @@ CREATE UNIQUE INDEX idx_assets_one_primary_per_book ON assets(book_id) WHERE is_
 -- One row per in-flight physical metadata write-back replacement. Dirty work
 -- is still derived from assets.writeback_rev < books.metadata_rev; this table
 -- only makes the overwrite temp/rename window inspectable and repairable.
--- Both paths are relative to the storage root; hashes and byte size describe
+-- Both paths are relative to the storage root; hash and byte size describe
 -- the staged replacement, not the previous file at storage_path.
 CREATE TABLE metadata_writeback_attempts (
     asset_id INTEGER PRIMARY KEY REFERENCES assets(id) ON DELETE CASCADE,
@@ -118,7 +117,6 @@ CREATE TABLE metadata_writeback_attempts (
     temp_path TEXT NOT NULL,
     sha256 BLOB NOT NULL CHECK (typeof(sha256) = 'blob' AND length(sha256) = 32),
     size INTEGER NOT NULL,
-    koreader_hash TEXT,
     created_at INTEGER NOT NULL DEFAULT (unixepoch())
 );
 
@@ -135,7 +133,7 @@ CREATE TABLE authors (
 -- authors have no entries here.
 CREATE TABLE book_authors (
     book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
-    author_id INTEGER NOT NULL REFERENCES authors(id) ON DELETE CASCADE,
+    author_id INTEGER NOT NULL REFERENCES authors(id),
     role TEXT,
     author_order INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (book_id, author_id)
@@ -266,26 +264,29 @@ CREATE TABLE user_settings (
 
 -- Per-user reader state. Position is stored per concrete asset because EPUB/PDF
 -- variants of the same book have independent locators. `locator` is a JSON
--- object opaque to SQLite (CFI/page/resource position/etc. belongs to the reader
--- engine); progress is a coarse normalized 0..1 value for browse/UI summaries.
+-- object using the shared Locator model; progress is a coarse normalized 0..1
+-- value for browse/UI summaries and fallback navigation.
 CREATE TABLE user_asset_state (
     user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     asset_id     INTEGER NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
     progress     REAL NOT NULL DEFAULT 0 CHECK (progress >= 0 AND progress <= 1),
     locator      TEXT NOT NULL DEFAULT '{}',
-    last_read_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    revision     INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0),
+    device_id    TEXT NOT NULL DEFAULT '',
+    device_name  TEXT NOT NULL DEFAULT '',
+    -- Server time of the latest opening or accepted save. Reset clears it to 0.
     updated_at   INTEGER NOT NULL DEFAULT (unixepoch()),
     PRIMARY KEY (user_id, asset_id)
 );
 
-CREATE INDEX idx_user_asset_state_last_read ON user_asset_state(user_id, last_read_at DESC);
+CREATE INDEX idx_user_asset_state_updated ON user_asset_state(user_id, updated_at DESC);
 
 -- Reading-time accounting, separate from login sessions and reader position.
 -- All timestamps in these two activity tables are Unix milliseconds.
 -- A web session can contain short pauses: only the current visible segment
 -- keeps checkpoint state; earlier segments are folded into counted_ms.
 CREATE TABLE reading_sessions (
-    id                 INTEGER PRIMARY KEY,
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id            INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     asset_id           INTEGER NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
     source             TEXT NOT NULL,
@@ -348,7 +349,7 @@ CREATE TABLE user_book_reading_events (
     previous_event_id INTEGER REFERENCES user_book_reading_events(id) ON DELETE SET NULL,
     from_status  TEXT NOT NULL CHECK (from_status IN ('unread', 'reading', 'finished', 'dropped')),
     to_status    TEXT NOT NULL CHECK (to_status IN ('unread', 'reading', 'finished', 'dropped')),
-    source       TEXT NOT NULL CHECK (source IN ('manual', 'web_reader', 'kosync')),
+    source       TEXT NOT NULL CHECK (source IN ('manual', 'web_reader', 'kosync', 'opds')),
     occurred_at  INTEGER NOT NULL DEFAULT (unixepoch()),
     reverted_at  INTEGER,
     CHECK (from_status <> to_status)
@@ -359,33 +360,35 @@ CREATE INDEX idx_user_book_reading_events_finished ON user_book_reading_events(u
     WHERE reverted_at IS NULL;
 CREATE INDEX idx_user_book_reading_events_previous ON user_book_reading_events(previous_event_id);
 
--- Per-user web-reader annotations. Values are anchored to the concrete asset
--- with Foliate CFI because alternate formats have different document locators.
--- EPUB/FB2 files are never rewritten for web highlights; the DB is authoritative.
+-- Keep deleted IDs so retries can acknowledge deletion and reject stale edits.
+-- Selecting the same passage again creates a new annotation with a new ID.
 CREATE TABLE user_annotations (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     asset_id       INTEGER NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
-    kind           TEXT NOT NULL DEFAULT 'highlight' CHECK (kind IN ('highlight')),
-    cfi            TEXT NOT NULL,
+    locator        TEXT NOT NULL,
+    revision       INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0),
+    deleted        INTEGER NOT NULL DEFAULT 0 CHECK (deleted IN (0, 1)),
     quote          TEXT NOT NULL DEFAULT '',
     context_before TEXT NOT NULL DEFAULT '',
     context_after  TEXT NOT NULL DEFAULT '',
     note           TEXT NOT NULL DEFAULT '',
     color          TEXT NOT NULL DEFAULT 'yellow' CHECK (color IN ('yellow', 'green', 'blue', 'pink', 'purple')),
     created_at     INTEGER NOT NULL DEFAULT (unixepoch()),
-    updated_at     INTEGER NOT NULL DEFAULT (unixepoch()),
-    UNIQUE (user_id, asset_id, kind, cfi)
+    updated_at     INTEGER NOT NULL DEFAULT (unixepoch())
 );
 
-CREATE INDEX idx_user_annotations_asset ON user_annotations(user_id, asset_id, created_at);
+-- CFI identifies a selection independently of the optional chapter path.
+-- PDF selections use their canonical page/rectangles object.
+CREATE UNIQUE INDEX idx_user_annotations_selection ON user_annotations(user_id, asset_id, coalesce(json_extract(locator, '$.cfi'), locator)) WHERE deleted = 0;
+CREATE INDEX idx_user_annotations_asset ON user_annotations(user_id, asset_id, created_at) WHERE deleted = 0;
 
 -- One native Kobo connection per account, projecting one shelf. Its setup URL
 -- remains retrievable; replacing the connection revokes the previous URL.
 CREATE TABLE kobo_connections (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id      INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
-    shelf_id     INTEGER NOT NULL REFERENCES shelves(id) ON DELETE CASCADE,
+    shelf_id     INTEGER NOT NULL REFERENCES shelves(id),
     token        TEXT NOT NULL UNIQUE,
     revision     INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0),
     created_at   INTEGER NOT NULL DEFAULT (unixepoch()),
@@ -414,7 +417,7 @@ CREATE TABLE kobo_items (
 
 -- KOReader locators use document hashes, independently of web-reader locators.
 -- An unambiguous live-catalog match may advance book-level reading status.
--- Write-back updates assets.koreader_hash but leaves these records under their
+-- Write-back clears assets.koreader_hash but leaves these records under their
 -- original hashes: devices may still hold the old file bytes.
 CREATE TABLE koreader_progress (
     user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -428,6 +431,16 @@ CREATE TABLE koreader_progress (
 );
 
 CREATE INDEX idx_koreader_progress_updated ON koreader_progress(user_id, updated_at DESC);
+
+-- Register hashes when issuing original or converted downloads, not on every
+-- metadata edit. Known hashes outlive rewrites of the current file.
+-- A sampled hash can match multiple assets; only the pair is unique.
+CREATE TABLE koreader_hashes (
+    asset_id INTEGER NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+    hash BLOB NOT NULL CHECK (typeof(hash) = 'blob' AND length(hash) = 16),
+    PRIMARY KEY (asset_id, hash)
+) WITHOUT ROWID;
+CREATE INDEX idx_koreader_hashes_hash ON koreader_hashes(hash);
 
 -- Send-to-device state. SMTP configuration lives in app_settings; these
 -- tables are per-user because device addresses and delivery history are
@@ -459,7 +472,7 @@ CREATE TABLE delivery_jobs (
     device_name  TEXT NOT NULL,
     device_email TEXT NOT NULL,
     preset       TEXT NOT NULL,
-    book_id      INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    book_id      INTEGER NOT NULL REFERENCES books(id),
     asset_id     INTEGER REFERENCES assets(id) ON DELETE SET NULL,
     title        TEXT NOT NULL,
     target       TEXT, -- Conversion target format; NULL sends the original file.
@@ -483,6 +496,8 @@ CREATE TABLE app_settings (
     value      TEXT NOT NULL,
     updated_at INTEGER NOT NULL DEFAULT (unixepoch())
 );
+
+INSERT INTO app_settings (key, value) VALUES ('library_id', lower(hex(randomblob(16))));
 
 -- One cross-process writer lease for storage-mutating maintenance. It is a
 -- heartbeat row rather than a filesystem lock so it works on network

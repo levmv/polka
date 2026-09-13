@@ -46,25 +46,34 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+	f, err := os.Open(fullPath)
+	if os.IsNotExist(err) {
 		http.Error(w, "File not found on disk", http.StatusNotFound)
+		return
+	} else if err != nil {
+		serverError(w, r, err)
+		return
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		serverError(w, r, err)
 		return
 	}
 
 	w.Header().Set("Content-Type", format.MediaTypeForExtension(asset.Extension))
 	w.Header().Set("Content-Disposition", fileContentDisposition("attachment", asset.Filename))
 
-	// Import leaves this lazy identity empty; compute it on the first download.
-	// Supported byte replacements (metadata write-back and duplicate restore)
-	// maintain or clear the persisted value themselves, so subsequent downloads
-	// should not re-read samples and open a redundant SQLite write transaction.
-	if asset.KOReaderHash == "" {
-		if hash, err := koreader.PartialMD5File(fullPath); err == nil {
+	// Only issued files need an association for a future KOReader sync. Metadata
+	// writes invalidate the current cache without hashing undownloaded versions.
+	// Hash and serve the same open file; the section reader leaves its cursor alone.
+	if r.Method == http.MethodGet && asset.KOReaderHash == "" {
+		if hash, err := koreader.PartialMD5(io.NewSectionReader(f, 0, info.Size())); err == nil {
 			_ = s.db.CacheAssetKOReaderHash(r.Context(), assetID, asset.CurrentSHA256, hash)
 		}
 	}
 
-	http.ServeFile(w, r, fullPath)
+	http.ServeContent(w, r, asset.Filename, info.ModTime(), f)
 }
 
 func (s *Server) handleDownloadAs(w http.ResponseWriter, r *http.Request) {
@@ -105,6 +114,9 @@ func (s *Server) handleDownloadAs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer f.Close()
+	if !s.verifyReaderContent(w, r, f, asset.CurrentSHA256) {
+		return
+	}
 
 	info, err := f.Stat()
 	if err != nil {
@@ -157,6 +169,14 @@ func (s *Server) handleDownloadAs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer cleanup()
+	if r.URL.Query().Get("source") == "" && r.Method == http.MethodGet {
+		// The browser's internal reading rendition is not a device download.
+		// Converted downloads get their own hashes, without replacing the cache
+		// for the original. Sampling must not move the cursor used by io.Copy.
+		if hash, err := koreader.PartialMD5(io.NewSectionReader(ready, 0, convertedSize)); err == nil {
+			_ = s.db.RememberKOReaderHash(r.Context(), assetID, hash)
+		}
+	}
 	if err := r.Context().Err(); err != nil {
 		return
 	}

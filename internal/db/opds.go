@@ -23,6 +23,14 @@ const opdsPublicationColumns = `
 	b.description, b.tags, b.publisher, b.published_date,
 	b.language, b.identifiers, b.cover_version, b.updated_at`
 
+func GetOPDSPublication(queryer Queryer, scope VisibilityScope, bookID int64) (OPDSPublicationRow, error) {
+	where, args := scope.AppendBookWhere("b.id = ? AND b.deleted_at IS NULL", "b.id", bookID)
+	var publication OPDSPublicationRow
+	err := scanOPDSPublication(queryer.QueryRow(`SELECT `+opdsPublicationColumns+`
+        FROM books b WHERE `+where, args...), &publication)
+	return publication, err
+}
+
 // ListOPDSPublications is the narrow read model for OPDS acquisition feeds. It
 // only returns live books that have at least one asset, because an OPDS
 // publication entry without an acquisition link is not useful to external
@@ -144,11 +152,7 @@ func scanOPDSPublications(rows *sql.Rows) ([]OPDSPublicationRow, error) {
 	var pubs []OPDSPublicationRow
 	for rows.Next() {
 		var p OPDSPublicationRow
-		if err := rows.Scan(
-			&p.ID, &p.Title, &p.Description, &p.Tags,
-			&p.Publisher, &p.PublishedDate, &p.Language, &p.Identifiers,
-			&p.CoverVersion, &p.UpdatedAt,
-		); err != nil {
+		if err := scanOPDSPublication(rows, &p); err != nil {
 			return nil, fmt.Errorf("scan opds publication: %w", err)
 		}
 		pubs = append(pubs, p)
@@ -157,6 +161,12 @@ func scanOPDSPublications(rows *sql.Rows) ([]OPDSPublicationRow, error) {
 		return nil, fmt.Errorf("opds publications rows: %w", err)
 	}
 	return pubs, nil
+}
+
+func scanOPDSPublication(scanner rowScanner, p *OPDSPublicationRow) error {
+	return scanner.Scan(&p.ID, &p.Title, &p.Description, &p.Tags,
+		&p.Publisher, &p.PublishedDate, &p.Language, &p.Identifiers,
+		&p.CoverVersion, &p.UpdatedAt)
 }
 
 func CountOPDSPublications(queryer Queryer, scope VisibilityScope) (int, error) {

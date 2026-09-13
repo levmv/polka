@@ -24,6 +24,7 @@ import (
 )
 
 type Server struct {
+	readerContent      readerContentCache
 	db                 *db.DB
 	dataDir            string
 	storageRoot        storage.Root
@@ -206,7 +207,7 @@ func Serve(ctx context.Context, cfg Config) error {
 	}
 	requests := newTaskGroup(context.Background())
 	s.requestBaseContext = requests.Context()
-	handler := requests.Wrap(s.authMiddleware(mux))
+	handler := requests.Wrap(opdsProgressionMiddleware(s.authMiddleware(mux)))
 
 	// A bare `go build` embeds only static/placeholder.txt (esbuild never ran),
 	// so a missing or empty app.js is the real "not built" signal. Don't sniff the
@@ -413,6 +414,9 @@ func (s *Server) routes() (*http.ServeMux, error) {
 	// OPDS routes
 	s.route(mux, "GET /opds", db.RoleReader, s.handleOPDSRoot)
 	s.route(mux, "GET /opds/{$}", db.RoleReader, s.handleOPDSRoot)
+	s.route(mux, "GET /opds/publications/{id}", db.RoleReader, s.handleOPDSAssetPublication)
+	s.route(mux, "GET /opds/progression/{id}", db.RoleReader, s.handleOPDSProgression)
+	s.route(mux, "PUT /opds/progression/{id}", db.RoleReader, s.handleOPDSProgression)
 	s.route(mux, "GET /opds/books", db.RoleReader, s.handleOPDSBooks)
 	s.route(mux, "GET /opds/search", db.RoleReader, s.handleOPDSSearch)
 	s.route(mux, "GET /opds/osd", db.RoleReader, s.handleOPDSOpenSearch)

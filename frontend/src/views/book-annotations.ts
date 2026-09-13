@@ -4,8 +4,8 @@ import {
     annotationMatches,
     sortAnnotations,
 } from '../annotations';
-import { deleteAnnotation, fetchBookAnnotations, updateAnnotation } from '../api';
-import { createAnnotationColorPicker } from '../components/annotation-color-picker';
+import { fetchBookAnnotations } from '../api';
+import { createAnnotationEditor } from '../components/annotation-editor';
 import { createSelect } from '../components/select';
 import { textEl } from '../dom';
 import { errorMessage } from '../errors';
@@ -81,6 +81,7 @@ export function createBookAnnotations(book: Book) {
     const exportMenu = createMenu(exportButton, [
         { label: 'Export all as HTML', action: () => download('html') },
         { label: 'Export all as Markdown', action: () => download('markdown') },
+        { label: 'Export all as Web Annotation', action: () => download('jsonld') },
     ]);
     function download(format: string): void {
         const link = document.createElement('a');
@@ -134,43 +135,37 @@ export function createBookAnnotations(book: Book) {
         quote.setAttribute('aria-expanded', 'false');
         const note = textEl('p', 'book-annotation-note', annotation.note ?? '');
         const meta = textEl('p', 'book-annotation-meta', '');
-        const editor = document.createElement('form');
-        editor.className = 'book-annotation-editor';
-        editor.id = `annotation-editor-${book.id}-${annotation.id}`;
-        editor.hidden = true;
-        quote.setAttribute('aria-controls', editor.id);
-        const fields = document.createElement('fieldset');
-        fields.className = 'book-annotation-fields';
-        const colors = createAnnotationColorPicker(`annotation-color-${book.id}-${annotation.id}`);
-        const input = document.createElement('textarea');
-        input.rows = 4;
-        input.maxLength = 4000;
-        input.placeholder = 'Add a note';
-        input.setAttribute('aria-label', 'Note');
-        const actions = textEl('div', 'book-annotation-actions', '');
-        const save = button('Save', 'detail-action detail-action-primary');
-        save.type = 'submit';
-        const cancel = button('Cancel', 'detail-action');
-        const read = button('Open in reader', 'detail-action');
-        read.prepend(iconElement('menu_book', 16));
-        read.disabled = !asset?.can_read;
-        const remove = button('Delete', 'book-annotation-delete');
-        const feedback = textEl('p', 'book-annotation-feedback', '');
-        feedback.setAttribute('role', 'status');
-        const deletion = textEl('div', 'book-annotation-deletion', '');
-        deletion.hidden = true;
-        const confirm = button('Delete highlight', 'detail-action book-annotation-delete');
-        const keep = button('Keep highlight', 'detail-action');
-        deletion.append(textEl('span', '', 'Delete this highlight and its note?'), confirm, keep);
-        actions.append(save, cancel, read, remove);
-        fields.append(colors.el, input, actions, deletion);
-        editor.append(fields, feedback);
-        item.append(quote, note, meta, editor);
+        const editor = createAnnotationEditor(initial, {
+            signal: abort.signal,
+            onChange(saved, previous) {
+                annotation = saved;
+                rows = rows.map((row) => (row.id === previous.id ? saved : row));
+                items.delete(previous.id);
+                items.set(saved.id, item);
+                item.dataset.annotationId = String(saved.id);
+                display();
+            },
+            onDelete(deleted) {
+                rows = rows.filter((row) => row.id !== deleted.id);
+                items.delete(deleted.id);
+                finishEdit();
+            },
+            onClose: finishEdit,
+            onRead: asset?.can_read
+                ? (saved) =>
+                      window.location.assign(`/read/asset/${saved.asset_id}#annotation=${saved.id}`)
+                : undefined,
+        });
+        editor.el.classList.add('book-annotation-editor');
+        editor.el.id = `annotation-editor-${book.id}-${initial.id}`;
+        editor.el.hidden = true;
+        quote.setAttribute('aria-controls', editor.el.id);
+        item.append(quote, note, meta, editor.el);
 
         function display(): void {
             item.style.setProperty('--annotation-color', ANNOTATION_COLORS[annotation.color]);
             note.textContent = annotation.note ?? '';
-            note.hidden = !editor.hidden || !annotation.note;
+            note.hidden = !editor.el.hidden || !annotation.note;
             const date = new Date(Math.max(annotation.created_at, annotation.updated_at) * 1000);
             meta.textContent = date.toLocaleDateString(undefined, {
                 day: 'numeric',
@@ -181,104 +176,30 @@ export function createBookAnnotations(book: Book) {
             if (book.assets.length > 1 && asset)
                 meta.textContent += ` · ${asset.extension.replace('.', '').toUpperCase()}`;
         }
-        function close(): void {
-            editor.hidden = true;
+        function finishEdit(): void {
+            editor.el.hidden = true;
             quote.setAttribute('aria-expanded', 'false');
-            feedback.textContent = '';
-            deletion.hidden = true;
             display();
-            quote.focus({ preventScroll: true });
+            refresh(false);
+            if (list.contains(quote)) quote.focus({ preventScroll: true });
+            else if (rows.length) search.focus({ preventScroll: true });
+            else {
+                const heading = el.parentElement?.querySelector<HTMLElement>('.detail-title');
+                if (heading) {
+                    heading.tabIndex = -1;
+                    heading.focus({ preventScroll: true });
+                }
+            }
         }
         quote.addEventListener('click', () => {
-            if (!editor.hidden) {
-                input.focus();
-                return;
+            if (editor.el.hidden) {
+                editor.reset();
+                editor.el.hidden = false;
+                quote.setAttribute('aria-expanded', 'true');
+                note.hidden = true;
+                editor.el.scrollIntoView({ block: 'nearest' });
             }
-            input.value = annotation.note ?? '';
-            colors.setValue(annotation.color);
-            editor.hidden = false;
-            quote.setAttribute('aria-expanded', 'true');
-            note.hidden = true;
-            input.focus({ preventScroll: true });
-            editor.scrollIntoView({ block: 'nearest' });
-        });
-        cancel.addEventListener('click', close);
-        remove.addEventListener('click', () => {
-            deletion.hidden = false;
-            keep.focus();
-        });
-        keep.addEventListener('click', () => {
-            deletion.hidden = true;
-            remove.focus();
-        });
-        confirm.addEventListener('click', async () => {
-            fields.disabled = true;
-            feedback.textContent = 'Deleting…';
-            try {
-                await deleteAnnotation(annotation.asset_id, annotation.id);
-                if (abort.signal.aborted) return;
-                rows = rows.filter((row) => row.id !== annotation.id);
-                items.delete(annotation.id);
-                refresh(false);
-                if (rows.length) search.focus({ preventScroll: true });
-                else {
-                    const heading = el.parentElement?.querySelector<HTMLElement>('.detail-title');
-                    if (heading) {
-                        heading.tabIndex = -1;
-                        heading.focus({ preventScroll: true });
-                    }
-                }
-            } catch (error) {
-                if (!abort.signal.aborted)
-                    feedback.textContent = errorMessage(error, 'Could not delete highlight.');
-            } finally {
-                fields.disabled = false;
-            }
-        });
-        async function persist(): Promise<boolean> {
-            if (abort.signal.aborted || fields.disabled) return false;
-            const changes: { note?: string; color?: Annotation['color'] } = {};
-            if (input.value !== (annotation.note ?? '')) changes.note = input.value;
-            if (colors.getValue() !== annotation.color) changes.color = colors.getValue();
-            if (!Object.keys(changes).length) return true;
-            fields.disabled = true;
-            feedback.textContent = 'Saving…';
-            try {
-                annotation = await updateAnnotation(annotation.asset_id, annotation.id, changes);
-                if (abort.signal.aborted) return false;
-                rows = rows.map((row) => (row.id === annotation.id ? annotation : row));
-                display();
-                feedback.textContent = '';
-                return true;
-            } catch (error) {
-                if (!abort.signal.aborted)
-                    feedback.textContent = errorMessage(error, 'Could not save highlight.');
-                return false;
-            } finally {
-                fields.disabled = false;
-            }
-        }
-        editor.addEventListener('submit', async (event) => {
-            event.preventDefault();
-            if (fields.disabled) return;
-            if (await persist()) {
-                close();
-                refresh(false);
-                if (list.contains(quote)) quote.focus({ preventScroll: true });
-                else search.focus({ preventScroll: true });
-            }
-        });
-        input.addEventListener('keydown', (event) => {
-            if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
-                event.preventDefault();
-                save.click();
-            }
-        });
-        read.addEventListener('click', async () => {
-            if (await persist())
-                window.location.assign(
-                    `/read/asset/${annotation.asset_id}#annotation=${annotation.id}`,
-                );
+            editor.input.focus({ preventScroll: true });
         });
         display();
         return item;

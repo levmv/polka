@@ -192,7 +192,7 @@ function pdfEscape(value: string): string {
   return value.replace(/([\\()])/g, '\\$1');
 }
 
-export function pdf(title: string, author: string, name: string): UploadFile {
+export function pdf(title: string, author: string, name: string, rotations: number[] = [], secondLine = ''): UploadFile {
   const pageLabels = ['First PDF page', 'Second PDF page', 'Third PDF page'];
   const objects = new Map<number, Buffer>();
   objects.set(1, Buffer.from('<< /Type /Catalog /Pages 2 0 R /Outlines 11 0 R >>'));
@@ -203,13 +203,14 @@ export function pdf(title: string, author: string, name: string): UploadFile {
     const contentID = pageID + 1;
     const bottomTarget =
       index === 2 ? '\nBT /F1 24 Tf 72 72 Td (Bottom PDF target) Tj ET' : '';
+    const extraLine = secondLine ? `\nBT /F1 24 Tf 72 660 Td (${pdfEscape(secondLine)}) Tj ET` : '';
     const content = Buffer.from(
-      `BT /F1 24 Tf 72 700 Td (${pdfEscape(pageLabels[index])}) Tj ET${bottomTarget}`,
+      `BT /F1 24 Tf 72 700 Td (${pdfEscape(pageLabels[index])}) Tj ET${extraLine}${bottomTarget}`,
     );
     objects.set(
       pageID,
       Buffer.from(
-        `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 9 0 R >> >> /Contents ${contentID} 0 R >>`,
+        `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Rotate ${rotations[index] ?? 0} /Resources << /Font << /F1 9 0 R >> >> /Contents ${contentID} 0 R >>`,
       ),
     );
     objects.set(

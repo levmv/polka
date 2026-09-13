@@ -5,6 +5,7 @@ import (
 	"html/template"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -22,13 +23,13 @@ type annotationExportDocument struct {
 }
 
 type annotationExportItem struct {
-	Quote   string
-	Note    string
-	CFI     string
-	Color   string
-	File    string
-	Created annotationExportTime
-	Updated annotationExportTime
+	Quote    string
+	Note     string
+	Location string
+	Color    string
+	File     string
+	Created  annotationExportTime
+	Updated  annotationExportTime
 }
 
 type annotationExportTime struct {
@@ -190,7 +191,7 @@ footer {
       <p class="meta">{{if .File}}{{.File}} · {{end}}Highlighted <time datetime="{{.Created.ISO}}">{{.Created.Human}}</time>{{if .Updated.Human}} · Updated <time datetime="{{.Updated.ISO}}">{{.Updated.Human}}</time>{{end}}</p>
       <details>
         <summary>Source location</summary>
-        <code>{{.CFI}}</code>
+        <code>{{.Location}}</code>
       </details>
     </li>
     {{end}}
@@ -209,7 +210,7 @@ func (s *Server) handleAPIAnnotationExport(w http.ResponseWriter, r *http.Reques
 	if exportFormat == "" {
 		exportFormat = "html"
 	}
-	if exportFormat != "html" && exportFormat != "markdown" {
+	if exportFormat != "html" && exportFormat != "markdown" && exportFormat != "jsonld" {
 		http.Error(w, "Unsupported export format", http.StatusBadRequest)
 		return
 	}
@@ -231,6 +232,18 @@ func (s *Server) handleAPIAnnotationExport(w http.ResponseWriter, r *http.Reques
 	if writeReaderStateError(w, r, err) {
 		return
 	}
+	if exportFormat == "jsonld" {
+		libraryID, err := db.LibraryIdentity(s.db.Read(r.Context()))
+		if err != nil {
+			serverError(w, r, err)
+			return
+		}
+		w.Header().Set("Content-Type", `application/ld+json; profile="http://www.w3.org/ns/anno.jsonld"`)
+		w.Header().Set("Content-Disposition", fileContentDisposition("attachment", annotationExportFilename(book.Title, "jsonld")))
+		w.Header().Set("Cache-Control", "private, no-store")
+		_ = writeAnnotationCollection(w, libraryID, db.BookURI(libraryID, bookID)+":user:"+strconv.FormatInt(UserID(r.Context()), 10)+":annotations", rows)
+		return
+	}
 	assets, err := db.AssetsByBookIDs(s.db.Read(r.Context()), []int64{bookID})
 	if err != nil {
 		serverError(w, r, err)
@@ -242,7 +255,6 @@ func (s *Server) handleAPIAnnotationExport(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	_, authors := authorsToDTO(authorsByBook[bookID])
-
 	document := buildAnnotationExportDocument(book.Title, authors, assets, rows)
 	w.Header().Set("Cache-Control", "private, no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
@@ -277,12 +289,12 @@ func buildAnnotationExportDocument(title, authors string, assets []db.AssetRow, 
 	items := make([]annotationExportItem, 0, len(rows))
 	for _, row := range rows {
 		item := annotationExportItem{
-			Quote:   row.Quote,
-			Note:    row.Note,
-			CFI:     row.CFI,
-			Color:   row.Color,
-			File:    files[row.AssetID],
-			Created: annotationExportTimestamp(row.CreatedAt),
+			Quote:    row.Quote,
+			Note:     row.Note,
+			Location: annotationLocation(row.Locator),
+			Color:    row.Color,
+			File:     files[row.AssetID],
+			Created:  annotationExportTimestamp(row.CreatedAt),
 		}
 		if row.UpdatedAt > row.CreatedAt {
 			item.Updated = annotationExportTimestamp(row.UpdatedAt)
@@ -351,7 +363,7 @@ func writeAnnotationMarkdown(w io.Writer, document annotationExportDocument) err
 			if annotation.Updated.Human != "" {
 				fmt.Fprintf(&export, " · Updated %s", escapeMarkdownText(annotation.Updated.Human))
 			}
-			fmt.Fprintf(&export, "\n\nSource: %s\n", markdownCodeSpan(annotation.CFI))
+			fmt.Fprintf(&export, "\n\nSource: %s\n", markdownCodeSpan(annotation.Location))
 			if annotation.File != "" {
 				fmt.Fprintf(&export, "\nFile: %s\n", escapeMarkdownText(annotation.File))
 			}
@@ -420,4 +432,11 @@ func annotationExportFilename(title, extension string) string {
 		base = "Book"
 	}
 	return base + " - highlights." + extension
+}
+
+func annotationLocation(locator db.Locator) string {
+	if locator.Page > 0 {
+		return fmt.Sprintf("Page %d", locator.Page)
+	}
+	return locator.CFI
 }

@@ -2,7 +2,6 @@ package web
 
 import (
 	"context"
-	"encoding/json/jsontext"
 	"errors"
 	"net/http"
 	"strconv"
@@ -11,11 +10,13 @@ import (
 )
 
 type ReaderStateDTO struct {
+	Revision           int64            `json:"revision"`
+	DeviceID           string           `json:"device_id"`
+	DeviceName         string           `json:"device_name"`
 	AssetID            int64            `json:"asset_id"`
 	BookID             int64            `json:"book_id"`
 	Progress           float64          `json:"progress"`
-	Locator            db.ReaderLocator `json:"locator"`
-	LastReadAt         int64            `json:"last_read_at,omitzero"`
+	Locator            db.Locator       `json:"locator"`
 	UpdatedAt          int64            `json:"updated_at,omitzero"`
 	ReadingStatus      ReadingStatusDTO `json:"reading_status"`
 	StatusChanged      bool             `json:"status_changed,omitzero"`
@@ -24,52 +25,57 @@ type ReaderStateDTO struct {
 
 type ContinueReadingDTO struct {
 	BookSummaryDTO
-	AssetID    int64   `json:"asset_id"`
-	Progress   float64 `json:"progress"`
-	LastReadAt int64   `json:"last_read_at"`
+	AssetID   int64   `json:"asset_id"`
+	Progress  float64 `json:"progress"`
+	UpdatedAt int64   `json:"updated_at"`
 }
 
 type AnnotationDTO struct {
-	ID            int64  `json:"id"`
-	AssetID       int64  `json:"asset_id"`
-	Kind          string `json:"kind"`
-	CFI           string `json:"cfi"`
-	Quote         string `json:"quote"`
-	ContextBefore string `json:"context_before"`
-	ContextAfter  string `json:"context_after"`
-	Note          string `json:"note,omitempty"`
-	Color         string `json:"color"`
-	CreatedAt     int64  `json:"created_at"`
-	UpdatedAt     int64  `json:"updated_at"`
+	ID            int64      `json:"id"`
+	AssetID       int64      `json:"asset_id"`
+	Locator       db.Locator `json:"locator"`
+	Revision      int64      `json:"revision"`
+	Quote         string     `json:"quote"`
+	ContextBefore string     `json:"context_before"`
+	ContextAfter  string     `json:"context_after"`
+	Note          string     `json:"note,omitempty"`
+	Color         string     `json:"color"`
+	CreatedAt     int64      `json:"created_at"`
+	UpdatedAt     int64      `json:"updated_at"`
 }
 
 type readerStateRequest struct {
-	Progress *float64       `json:"progress"`
-	Locator  jsontext.Value `json:"locator"`
+	Revision   *int64      `json:"revision"`
+	DeviceID   string      `json:"device_id"`
+	DeviceName string      `json:"device_name"`
+	Progress   *float64    `json:"progress"`
+	Locator    *db.Locator `json:"locator"`
 }
 
 type annotationRequest struct {
-	Kind          string `json:"kind"`
-	CFI           string `json:"cfi"`
-	Quote         string `json:"quote"`
-	ContextBefore string `json:"context_before"`
-	ContextAfter  string `json:"context_after"`
-	Note          string `json:"note"`
-	Color         string `json:"color"`
+	Locator       db.Locator `json:"locator"`
+	Quote         string     `json:"quote"`
+	ContextBefore string     `json:"context_before"`
+	ContextAfter  string     `json:"context_after"`
+	Note          string     `json:"note"`
+	Color         string     `json:"color"`
 }
 
 type annotationUpdateRequest struct {
-	Note  *string `json:"note,omitzero"`
-	Color *string `json:"color,omitzero"`
+	Revision int64   `json:"revision"`
+	Note     *string `json:"note,omitzero"`
+	Color    *string `json:"color,omitzero"`
 }
 
 func readerStateDTO(state *db.ReaderState, change db.ReadingStatusChange) ReaderStateDTO {
 	return ReaderStateDTO{
+		Revision:           state.Revision,
+		DeviceID:           state.DeviceID,
+		DeviceName:         state.DeviceName,
 		AssetID:            state.AssetID,
 		BookID:             state.BookID,
 		Progress:           state.Progress,
 		Locator:            state.Locator,
-		LastReadAt:         state.LastReadAt,
 		UpdatedAt:          state.UpdatedAt,
 		ReadingStatus:      readingStatusDTO(change.State),
 		StatusChanged:      change.Changed,
@@ -79,10 +85,10 @@ func readerStateDTO(state *db.ReaderState, change db.ReadingStatusChange) Reader
 
 func annotationDTO(ann db.Annotation) AnnotationDTO {
 	return AnnotationDTO{
+		Revision:      ann.Revision,
 		ID:            ann.ID,
 		AssetID:       ann.AssetID,
-		Kind:          ann.Kind,
-		CFI:           ann.CFI,
+		Locator:       ann.Locator,
 		Quote:         ann.Quote,
 		ContextBefore: ann.ContextBefore,
 		ContextAfter:  ann.ContextAfter,
@@ -162,7 +168,7 @@ func (s *Server) continueReadingDTOs(ctx context.Context, rows []db.ContinueRead
 			BookSummaryDTO: summary,
 			AssetID:        row.AssetID,
 			Progress:       row.Progress,
-			LastReadAt:     row.LastReadAt,
+			UpdatedAt:      row.UpdatedAt,
 		})
 	}
 	return out, nil
@@ -203,17 +209,21 @@ func (s *Server) handleAPIReaderStateSave(w http.ResponseWriter, r *http.Request
 		http.Error(w, "Missing progress", http.StatusBadRequest)
 		return
 	}
-	if len(req.Locator) == 0 {
+	if req.Locator == nil {
 		http.Error(w, "Missing locator", http.StatusBadRequest)
 		return
 	}
 
+	if req.Revision == nil {
+		writeReaderStateError(w, r, db.ErrInvalidReaderInput)
+		return
+	}
 	state, change, err := s.db.SaveReaderStateAndAdvanceStatus(
 		r.Context(),
 		UserID(r.Context()),
 		assetID,
-		*req.Progress,
-		db.ReaderLocator(req.Locator),
+		db.ReaderPositionWrite{Revision: *req.Revision, Progress: *req.Progress,
+			Locator: *req.Locator, DeviceID: req.DeviceID, DeviceName: req.DeviceName},
 		db.ReadingStatusSourceWebReader,
 	)
 	if writeReaderStateError(w, r, err) {
@@ -230,7 +240,17 @@ func (s *Server) handleAPIReaderStateReset(w http.ResponseWriter, r *http.Reques
 	if _, ok := s.requireAssetAccess(w, r, assetID); !ok {
 		return
 	}
-	if writeReaderStateError(w, r, s.db.ResetReaderState(r.Context(), UserID(r.Context()), assetID)) {
+	var req struct {
+		Revision *int64 `json:"revision"`
+	}
+	if !readJSON(w, r, &req) {
+		return
+	}
+	if req.Revision == nil {
+		writeReaderStateError(w, r, db.ErrInvalidReaderInput)
+		return
+	}
+	if writeReaderStateError(w, r, s.db.ResetReaderState(r.Context(), UserID(r.Context()), assetID, *req.Revision)) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -299,8 +319,7 @@ func (s *Server) handleAPIAnnotationCreate(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	ann, err := s.db.CreateAnnotation(r.Context(), UserID(r.Context()), assetID, db.AnnotationCreate{
-		Kind:          req.Kind,
-		CFI:           req.CFI,
+		Locator:       req.Locator,
 		Quote:         req.Quote,
 		ContextBefore: req.ContextBefore,
 		ContextAfter:  req.ContextAfter,
@@ -330,8 +349,9 @@ func (s *Server) handleAPIAnnotationUpdate(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	ann, err := s.db.UpdateAnnotation(r.Context(), UserID(r.Context()), assetID, annotationID, db.AnnotationUpdate{
-		Note:  req.Note,
-		Color: req.Color,
+		Revision: req.Revision,
+		Note:     req.Note,
+		Color:    req.Color,
 	})
 	if writeReaderStateError(w, r, err) {
 		return
@@ -351,7 +371,13 @@ func (s *Server) handleAPIAnnotationDelete(w http.ResponseWriter, r *http.Reques
 	if _, ok := s.requireAssetAccess(w, r, assetID); !ok {
 		return
 	}
-	err := s.db.DeleteAnnotation(r.Context(), UserID(r.Context()), assetID, annotationID)
+	var req struct {
+		Revision int64 `json:"revision"`
+	}
+	if !readJSON(w, r, &req) {
+		return
+	}
+	err := s.db.DeleteAnnotation(r.Context(), UserID(r.Context()), assetID, annotationID, req.Revision)
 	if writeReaderStateError(w, r, err) {
 		return
 	}
@@ -363,13 +389,15 @@ func writeReaderStateError(w http.ResponseWriter, r *http.Request, err error) bo
 		return false
 	}
 	switch {
+	case errors.Is(err, db.ErrReadingConflict):
+		http.Error(w, "Changed in another reader. Reload to see the saved version.", http.StatusConflict)
 	case errors.Is(err, db.ErrAssetNotFound):
 		http.Error(w, "Asset not found", http.StatusNotFound)
 	case errors.Is(err, db.ErrInvalidReaderInput):
 		http.Error(w, err.Error(), http.StatusBadRequest)
 	case errors.Is(err, db.ErrAnnotationNotFound):
 		http.Error(w, "Annotation not found", http.StatusNotFound)
-	case errors.Is(err, db.ErrInvalidAnnotation):
+	case errors.Is(err, db.ErrInvalidAnnotation), errors.Is(err, db.ErrInvalidLocator):
 		http.Error(w, err.Error(), http.StatusBadRequest)
 	default:
 		serverError(w, r, err)

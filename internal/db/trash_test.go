@@ -110,6 +110,15 @@ func TestRestoreBringsBookBack(t *testing.T) {
 
 func TestPurgeRemovesRowsAndRefusesLiveBook(t *testing.T) {
 	d := newTrashTestDB(t)
+	mustExec(t, d, `
+		INSERT INTO user_annotations (user_id, asset_id, locator, quote, note)
+			VALUES (1, 1, '{"cfi":"epubcfi(/6/2!/4/2,/1:0,/1:4)"}', 'Text', 'A note');
+		INSERT INTO reading_sessions (user_id, asset_id, source, source_id, time_zone,
+			started_at, segment_started_at, observed_at, last_activity_at)
+			VALUES (1, 1, 'web', randomblob(16), 'UTC', 0, 0, 0, 0);
+		INSERT INTO user_book_reading_events (user_id, book_id, from_status, to_status, source)
+			VALUES (1, 1, 'unread', 'reading', 'web_reader');
+	`)
 
 	// A live book cannot be purged — purge is the trash-only, irreversible half.
 	tx, _ := d.BeginWrite(context.Background())

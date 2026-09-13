@@ -60,7 +60,7 @@ function createTrashToolbar(container: HTMLElement): HTMLElement {
             if (n === 0) return;
             const ok = await confirmModal({
                 title: 'Empty trash?',
-                body: `Permanently delete all ${n} book${n === 1 ? '' : 's'} in the trash and their files. This cannot be undone.`,
+                body: `Permanently delete all ${n} book${n === 1 ? '' : 's'} in the trash and their files, along with all readers' highlights, notes, and reading history for these books. This cannot be undone.`,
                 confirmLabel: 'Empty trash',
                 danger: true,
             });
@@ -117,7 +117,7 @@ function createTrashCard(container: HTMLElement, b: TrashedBook, isAdmin: boolea
     el.querySelector<HTMLButtonElement>('.btn-purge')?.addEventListener('click', async () => {
         const ok = await confirmModal({
             title: 'Delete permanently?',
-            body: `“${b.title}” and its files will be permanently deleted. This cannot be undone.`,
+            body: `“${b.title}” and its files will be permanently deleted, along with all readers' highlights, notes, and reading history for this book. This cannot be undone.`,
             confirmLabel: 'Delete permanently',
             danger: true,
         });

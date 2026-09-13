@@ -90,7 +90,7 @@ func TestKOReaderSyncRoutes(t *testing.T) {
 		t.Fatalf("bob progress = %+v, want empty object", missing)
 	}
 
-	mustExec(t, database, "UPDATE assets SET koreader_hash = 'mapped-doc' WHERE id = 1")
+	mustExec(t, database, "INSERT INTO koreader_hashes VALUES (1, unhex('77777777777777777777777777777777'))")
 	for _, tc := range []struct {
 		percentage float64
 		want       string
@@ -99,7 +99,7 @@ func TestKOReaderSyncRoutes(t *testing.T) {
 		{1, db.ReadingStatusFinished},
 	} {
 		w = serveKOReader(t, handler, http.MethodPut, "/kosync/"+aliceToken+"/syncs/progress", koReaderProgressRequest{
-			Document:   "mapped-doc",
+			Document:   "77777777777777777777777777777777",
 			Progress:   "mapped-position",
 			Percentage: tc.percentage,
 			Device:     "KOReader",

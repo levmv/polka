@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestAssetKOReaderHash(t *testing.T) {
@@ -16,10 +17,10 @@ func TestAssetKOReaderHash(t *testing.T) {
 	mustExec(t, database, `INSERT INTO assets (id, book_id, storage_path, filename, extension, original_sha256, current_sha256)
 		VALUES (1, 1, 'book.epub', 'book.epub', '.epub', ?, ?), (2, 1, 'book.pdf', 'book.pdf', '.pdf', ?, ?)`, epubHash[:], epubHash[:], pdfHash[:], pdfHash[:])
 
-	if err := database.CacheAssetKOReaderHash(t.Context(), 1, epubHash[:], "abc123"); err != nil {
+	if err := database.CacheAssetKOReaderHash(t.Context(), 1, epubHash[:], "0123456789abcdef0123456789abcdef"); err != nil {
 		t.Fatalf("CacheAssetKOReaderHash: %v", err)
 	}
-	target, err := ResolveKOReaderHash(database.Read(t.Context()), "abc123")
+	target, err := ResolveKOReaderHash(database.Read(t.Context()), "0123456789abcdef0123456789abcdef")
 	if err != nil || target.Ambiguous || target.AssetID != 1 || target.BookID != 1 {
 		t.Fatalf("ResolveKOReaderHash = %+v err=%v; want asset1/1", target, err)
 	}
@@ -27,33 +28,71 @@ func TestAssetKOReaderHash(t *testing.T) {
 		t.Fatalf("missing hash target=%+v err=%v; want empty", target, err)
 	}
 
-	if err := database.CacheAssetKOReaderHash(t.Context(), 2, pdfHash[:], "abc123"); err != nil {
+	if err := database.CacheAssetKOReaderHash(t.Context(), 2, pdfHash[:], "0123456789abcdef0123456789abcdef"); err != nil {
 		t.Fatalf("CacheAssetKOReaderHash second same-book asset: %v", err)
 	}
-	target, err = ResolveKOReaderHash(database.Read(t.Context()), "abc123")
+	target, err = ResolveKOReaderHash(database.Read(t.Context()), "0123456789abcdef0123456789abcdef")
 	if err != nil || target.Ambiguous || target.AssetID != 1 || target.BookID != 1 {
 		t.Fatalf("same-book hash target = %+v err=%v; want one unambiguous book", target, err)
 	}
 	mustExec(t, database, `
 		INSERT INTO books (id, title, sort_title) VALUES (2, 'Other', 'Other');
 		INSERT INTO assets (id, book_id, storage_path, filename, extension, koreader_hash, original_sha256, current_sha256)
-		VALUES (3, 2, 'other.epub', 'other.epub', '.epub', 'abc123', randomblob(32), randomblob(32))
+		VALUES (3, 2, 'other.epub', 'other.epub', '.epub', '0123456789abcdef0123456789abcdef', randomblob(32), randomblob(32));
+		INSERT INTO koreader_hashes VALUES (3, unhex('0123456789abcdef0123456789abcdef'));
 	`)
 
-	target, err = ResolveKOReaderHash(database.Read(t.Context()), "abc123")
+	target, err = ResolveKOReaderHash(database.Read(t.Context()), "0123456789abcdef0123456789abcdef")
 	if err != nil || !target.Ambiguous || target.AssetID != 0 || target.BookID != 0 {
 		t.Fatalf("cross-book hash target = %+v err=%v; want ambiguous without arbitrary target", target, err)
 	}
 	mustExec(t, database, "UPDATE books SET deleted_at = unixepoch() WHERE id = 2")
 
-	target, err = ResolveKOReaderHash(database.Read(t.Context()), "abc123")
+	target, err = ResolveKOReaderHash(database.Read(t.Context()), "0123456789abcdef0123456789abcdef")
 	if err != nil || target.Ambiguous || target.AssetID != 1 || target.BookID != 1 {
 		t.Fatalf("live hash target with trashed collision = %+v err=%v; want asset1/1", target, err)
 	}
 	mustExec(t, database, "UPDATE books SET deleted_at = unixepoch() WHERE id = 1")
 
-	if target, err := ResolveKOReaderHash(database.Read(t.Context()), "abc123"); err != nil || target != (KOReaderHashTarget{}) {
+	if target, err := ResolveKOReaderHash(database.Read(t.Context()), "0123456789abcdef0123456789abcdef"); err != nil || target != (KOReaderHashTarget{}) {
 		t.Fatalf("trashed-only hash target = %+v err=%v; want empty", target, err)
+	}
+}
+
+func TestAssetKOReaderHashOptionalWrite(t *testing.T) {
+	database := newTestDB(t)
+	hash := sha256.Sum256([]byte("EPUB"))
+	mustExec(t, database, "INSERT INTO books (id, title, sort_title) VALUES (1, 'Book', 'Book')")
+	mustExec(t, database, `INSERT INTO assets (id, book_id, storage_path, filename, extension, original_sha256, current_sha256)
+		VALUES (1, 1, 'book.epub', 'book.epub', '.epub', ?, ?)`, hash[:], hash[:])
+	cache := func(ctx context.Context) error {
+		return database.CacheAssetKOReaderHash(ctx, 1, hash[:], "11111111111111111111111111111111")
+	}
+	tx, err := database.BeginWrite(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	if err := cache(ctx); err != nil || ctx.Err() != nil {
+		t.Fatalf("optional cache waited for the busy writer: %v, %v", err, ctx.Err())
+	}
+	cancel()
+	if err := cache(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("caller cancellation was hidden: %v", err)
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, database, `CREATE TRIGGER reject_hash BEFORE INSERT ON koreader_hashes
+		BEGIN SELECT RAISE(ABORT, 'hash bookkeeping failed'); END`)
+	if err := cache(t.Context()); err == nil || !strings.Contains(err.Error(), "hash bookkeeping failed") {
+		t.Fatalf("database error was hidden: %v", err)
+	}
+	var cached string
+	if err := database.Read(t.Context()).QueryRow("SELECT coalesce(koreader_hash, '') FROM assets WHERE id = 1").Scan(&cached); err != nil || cached != "" {
+		t.Fatalf("failed bookkeeping left a partial cache: %q, %v", cached, err)
 	}
 }
 
@@ -67,8 +106,8 @@ func TestAssetKOReaderHashUsesCurrentBytes(t *testing.T) {
 		want     string
 	}{
 		{"restored during download", oldHash[:], "", ""},
-		{"rewritten during download", oldHash[:], "writeback-hash", "writeback-hash"},
-		{"current download", currentHash[:], "", "download-hash"},
+		{"rewritten during download", oldHash[:], "22222222222222222222222222222222", "22222222222222222222222222222222"},
+		{"current download", currentHash[:], "", "11111111111111111111111111111111"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			database := newTestDB(t)
@@ -76,7 +115,7 @@ func TestAssetKOReaderHashUsesCurrentBytes(t *testing.T) {
 			mustExec(t, database, `INSERT INTO assets
 				(id, book_id, storage_path, filename, extension, original_sha256, current_sha256, koreader_hash)
 				VALUES (1, 1, 'book.epub', 'book.epub', '.epub', ?, ?, NULLIF(?, ''))`, oldHash[:], currentHash[:], tt.cached)
-			if err := database.CacheAssetKOReaderHash(t.Context(), 1, tt.observed, "download-hash"); err != nil {
+			if err := database.CacheAssetKOReaderHash(t.Context(), 1, tt.observed, "11111111111111111111111111111111"); err != nil {
 				t.Fatal(err)
 			}
 			var got string
@@ -85,6 +124,15 @@ func TestAssetKOReaderHashUsesCurrentBytes(t *testing.T) {
 			}
 			if got != tt.want {
 				t.Fatalf("cached hash = %q; want %q", got, tt.want)
+			}
+			var known bool
+			if err := database.Read(t.Context()).QueryRow(`SELECT EXISTS (
+                SELECT 1 FROM koreader_hashes WHERE asset_id=1 AND hash=unhex('11111111111111111111111111111111')
+            )`).Scan(&known); err != nil {
+				t.Fatal(err)
+			}
+			if !known {
+				t.Fatal("lost the downloaded copy's hash during a concurrent replacement")
 			}
 		})
 	}
@@ -98,12 +146,13 @@ func TestKOReaderAmbiguousHashSavesProviderStateWithoutAdvancingABook(t *testing
 			(1, 'First', 'First'),
 			(2, 'Second', 'Second');
 		INSERT INTO assets (id, book_id, storage_path, filename, extension, koreader_hash, original_sha256, current_sha256) VALUES
-			(1, 1, 'first.epub', 'first.epub', '.epub', 'shared-hash', randomblob(32), randomblob(32)),
-			(2, 2, 'second.epub', 'second.epub', '.epub', 'shared-hash', randomblob(32), randomblob(32))
+			(1, 1, 'first.epub', 'first.epub', '.epub', '33333333333333333333333333333333', randomblob(32), randomblob(32)),
+			(2, 2, 'second.epub', 'second.epub', '.epub', '33333333333333333333333333333333', randomblob(32), randomblob(32));
+		INSERT INTO koreader_hashes SELECT id, unhex(koreader_hash) FROM assets;
 	`)
 
 	saved, change, err := database.SaveKOReaderProgressAndAdvanceStatus(context.Background(), user.ID, KOReaderProgress{
-		DocumentHash: "shared-hash",
+		DocumentHash: "33333333333333333333333333333333",
 		Progress:     "chapter-4",
 		Percentage:   0.6,
 		Device:       "KOReader",
@@ -191,7 +240,8 @@ func TestKOReaderProgressAndStatusCommitTogether(t *testing.T) {
 	mustExec(t, database, `
 		INSERT INTO books (id, title, sort_title) VALUES (144, 'Atomic', 'Atomic');
 		INSERT INTO assets (id, book_id, storage_path, filename, extension, koreader_hash, original_sha256, current_sha256)
-		VALUES (1, 144, 'atomic.epub', 'atomic.epub', '.epub', 'atomic-hash', randomblob(32), randomblob(32));
+		VALUES (1, 144, 'atomic.epub', 'atomic.epub', '.epub', '44444444444444444444444444444444', randomblob(32), randomblob(32));
+		INSERT INTO koreader_hashes SELECT id, unhex(koreader_hash) FROM assets;
 		CREATE TRIGGER reject_kosync_status
 		BEFORE INSERT ON user_book_reading_events
 		BEGIN
@@ -200,7 +250,7 @@ func TestKOReaderProgressAndStatusCommitTogether(t *testing.T) {
 	`)
 
 	_, _, err := database.SaveKOReaderProgressAndAdvanceStatus(context.Background(), user.ID, KOReaderProgress{
-		DocumentHash: "atomic-hash",
+		DocumentHash: "44444444444444444444444444444444",
 		Progress:     "chapter-4",
 		Percentage:   0.4,
 		Device:       "KOReader",
@@ -209,7 +259,77 @@ func TestKOReaderProgressAndStatusCommitTogether(t *testing.T) {
 	if err == nil {
 		t.Fatal("atomic KOSync save succeeded with rejecting status trigger")
 	}
-	if _, err := GetKOReaderProgress(database.Read(t.Context()), user.ID, "atomic-hash"); !errors.Is(err, ErrKOReaderProgressNotFound) {
+	if _, err := GetKOReaderProgress(database.Read(t.Context()), user.ID, "44444444444444444444444444444444"); !errors.Is(err, ErrKOReaderProgressNotFound) {
 		t.Fatalf("KOSync position survived rolled-back status write: %v", err)
+	}
+}
+
+func TestKOReaderHashesRecordDownloadsAndSurviveFileChanges(t *testing.T) {
+	database := newTestDB(t)
+	oldHash, newHash := strings.Repeat("aa", 16), strings.Repeat("bb", 16)
+	original := sha256.Sum256([]byte("original book"))
+	mustExec(t, database, `INSERT INTO books(id,title,sort_title) VALUES(1,'First','First')`)
+	mustExec(t, database, `INSERT INTO assets(id,book_id,storage_path,filename,extension,original_sha256,current_sha256)
+        VALUES(1,1,'first.epub','first.epub','.epub',?,?)`, original[:], original[:])
+	assertHashes := func(wantCache string, wantCount int) {
+		t.Helper()
+		var cache string
+		var count int
+		if err := database.Read(t.Context()).QueryRow(`
+            SELECT COALESCE(koreader_hash, ''), (SELECT count(*) FROM koreader_hashes WHERE asset_id=1)
+            FROM assets WHERE id=1`).Scan(&cache, &count); err != nil {
+			t.Fatal(err)
+		}
+		if cache != wantCache || count != wantCount {
+			t.Fatalf("cache=%q, known hashes=%d; want %q, %d", cache, count, wantCache, wantCount)
+		}
+	}
+	assertHashes("", 0)
+	if err := database.CacheAssetKOReaderHash(t.Context(), 1, original[:], oldHash); err != nil {
+		t.Fatal(err)
+	}
+	assertHashes(oldHash, 1)
+	// Metadata-only intermediate versions never accumulate in the hash table.
+	var rewritten [32]byte
+	for _, content := range []string{"updated metadata", "another metadata edit"} {
+		rewritten = sha256.Sum256([]byte(content))
+		if err := database.Transact(t.Context(), func(tx *Tx) error {
+			return MarkMetadataWritebackSuccess(tx, 1, "first.epub", rewritten[:], 100, 1)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		assertHashes("", 1)
+	}
+	// A later download records the current version. Repeated downloads and an
+	// unchanged write-back preserve the cache and do not duplicate associations.
+	for range 2 {
+		if err := database.CacheAssetKOReaderHash(t.Context(), 1, rewritten[:], newHash); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := database.Transact(t.Context(), func(tx *Tx) error {
+		return MarkMetadataWritebackSuccess(tx, 1, "first.epub", rewritten[:], 100, 2)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	assertHashes(newHash, 2)
+	if err := RecordAssetRestore(database.Write(t.Context()), 1, rewritten[:], 100); err != nil {
+		t.Fatal(err)
+	}
+	assertHashes(newHash, 2)
+	if err := RecordAssetRestore(database.Write(t.Context()), 1, original[:], 10); err != nil {
+		t.Fatal(err)
+	}
+	assertHashes("", 2)
+	if err := database.CacheAssetKOReaderHash(t.Context(), 1, original[:], oldHash); err != nil {
+		t.Fatal(err)
+	}
+	assertHashes(oldHash, 2)
+	// Both previously downloaded copies still identify the book after restore.
+	for _, hash := range []string{oldHash, newHash} {
+		target, err := ResolveKOReaderHash(database.Read(t.Context()), hash)
+		if err != nil || target.BookID != 1 || target.Ambiguous {
+			t.Fatalf("known hash %s: %+v %v", hash, target, err)
+		}
 	}
 }

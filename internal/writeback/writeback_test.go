@@ -65,13 +65,17 @@ func TestRunWritesDirtyEPUBAndUpdatesAssetIdentity(t *testing.T) {
 	var currentSize, writebackRev int64
 	var writebackError sql.NullString
 	if err := database.Read(t.Context()).QueryRow(`
-		SELECT current_sha256, current_size, koreader_hash, writeback_rev, writeback_error
+		SELECT current_sha256, current_size, COALESCE(koreader_hash, ''), writeback_rev, writeback_error
 		FROM assets WHERE id = ?
 	`, assetID).Scan(&currentHash, &currentSize, &koHash, &writebackRev, &writebackError); err != nil {
 		t.Fatalf("query asset identity: %v", err)
 	}
-	if !bytes.Equal(currentHash, sha256ForTest(rewritten)) || currentSize != int64(len(rewritten)) || koHash == "" || writebackRev != 1 || writebackError.Valid {
+	if !bytes.Equal(currentHash, sha256ForTest(rewritten)) || currentSize != int64(len(rewritten)) || koHash != "" || writebackRev != 1 || writebackError.Valid {
 		t.Fatalf("asset identity = hash:%x size:%d ko:%q rev:%d err:%+v", currentHash, currentSize, koHash, writebackRev, writebackError)
+	}
+	var knownHashes int
+	if err := database.Read(t.Context()).QueryRow("SELECT count(*) FROM koreader_hashes").Scan(&knownHashes); err != nil || knownHashes != 0 {
+		t.Fatalf("writeback registered an undownloaded file: %d hashes, err=%v", knownHashes, err)
 	}
 	assertNoPendingAttempts(t, database, assetID)
 

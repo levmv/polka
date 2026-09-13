@@ -23,7 +23,8 @@ function ensureHost(): HTMLElement {
     return host;
 }
 
-export function showToast(message: string, opts: ToastOptions = {}): void {
+// The returned function closes only this notification, if it is still current.
+export function showToast(message: string, opts: ToastOptions = {}): () => void {
     const parent = ensureHost();
     dismissCurrent();
 
@@ -33,6 +34,9 @@ export function showToast(message: string, opts: ToastOptions = {}): void {
     const duration = opts.duration ?? (type === 'error' ? 10000 : hasAction ? 7000 : 3000);
 
     const toast = document.createElement('div');
+    const dismiss = (): void => {
+        if (current?.el === toast) dismissCurrent();
+    };
     toast.className = `toast toast-${type}`;
     toast.setAttribute('role', type === 'error' ? 'alert' : 'status');
 
@@ -48,7 +52,7 @@ export function showToast(message: string, opts: ToastOptions = {}): void {
         action.className = 'toast-action';
         action.textContent = label;
         action.addEventListener('click', () => {
-            dismissCurrent();
+            dismiss();
             onClick();
         });
         toast.appendChild(action);
@@ -60,15 +64,16 @@ export function showToast(message: string, opts: ToastOptions = {}): void {
         close.className = 'toast-close';
         close.setAttribute('aria-label', 'Dismiss');
         close.innerHTML = '&times;';
-        close.addEventListener('click', () => dismissCurrent());
+        close.addEventListener('click', dismiss);
         toast.appendChild(close);
     }
 
     parent.appendChild(toast);
     requestAnimationFrame(() => toast.classList.add('toast-visible'));
 
-    const timer = window.setTimeout(dismissCurrent, duration);
+    const timer = window.setTimeout(dismiss, duration);
     current = { el: toast, timer };
+    return dismiss;
 }
 
 function dismissCurrent(): void {

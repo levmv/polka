@@ -7,6 +7,7 @@ import {
   deleteTestUserAsAdmin,
   login,
   loginByRequest,
+  readerMutationFields,
 } from '../helpers';
 
 test.describe('Library workflows', () => {
@@ -67,17 +68,12 @@ test.describe('Library workflows', () => {
         const asset = book.assets.find((a: any) =>
           ['.epub', '.fb2', '.pdf'].includes(a.extension),
         );
-        const save = await fetch(`/api/reader/assets/${asset.id}/state`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            progress: 0.37,
-            locator: { engine: 'browser-test', id: 'continue' },
-          }),
-        });
-        if (!save.ok) throw new Error(`save reader state status ${save.status}`);
         return { title: book.title, assetId: asset.id };
       });
+      const save = await page.request.put(`/api/reader/assets/${target.assetId}/state`, {
+        data: { ...await readerMutationFields(page, target.assetId), progress: 0.37, locator: {} },
+      });
+      expect(save.ok()).toBe(true);
 
       await page.goto('/');
       const rail = page.locator('#continue-reading');
@@ -86,7 +82,6 @@ test.describe('Library workflows', () => {
       await expect(card).toBeVisible();
       // The card shows progress as a bar; the reading of it is the accessible name.
       await expect(card).toHaveAttribute('aria-label', /37% read/);
-      await page.screenshot({ path: 'screenshots/continue-reading.png', fullPage: true });
 
       // ?from=library so closing the reader returns to the rail, not to the book.
       const readPath = `/read/asset/${encodeURIComponent(target.assetId)}?from=library`;
@@ -155,11 +150,6 @@ test.describe('Library workflows', () => {
     const addFromFolder = modal.getByRole('button', { name: 'Add from folder…' });
     await expect(addFromFolder).toHaveAttribute('aria-expanded', 'false');
     await expect(modal.getByPlaceholder('/srv/books')).toHaveCount(0);
-    await page.screenshot({
-        path: 'screenshots/settings-storage.png',
-        fullPage: true,
-        animations: 'disabled',
-    });
 
     await addFromFolder.click();
     await expect(modal.getByPlaceholder('/srv/books')).toBeVisible();
@@ -167,11 +157,6 @@ test.describe('Library workflows', () => {
       'aria-expanded',
       'true',
     );
-    await page.screenshot({
-      path: 'screenshots/settings-storage-import.png',
-      fullPage: true,
-      animations: 'disabled',
-    });
     await modal.getByRole('button', { name: 'Hide' }).click();
     await expect(modal.getByPlaceholder('/srv/books')).toHaveCount(0);
 
@@ -549,7 +534,6 @@ test.describe('Library workflows', () => {
     await expect(dialog.getByRole('combobox', { name: 'Device' })).toBeVisible();
     await expect(dialog.locator('.send-device-plan')).toContainText('EPUB');
     await expect(dialog.getByRole('button', { name: 'Send' })).toBeEnabled();
-    await page.screenshot({ path: 'screenshots/send-device-inline-add.png', fullPage: true });
   });
 
   test('Trash: remove a book, restore it, then permanently delete it', async ({ page }) => {
@@ -583,7 +567,6 @@ test.describe('Library workflows', () => {
     await expect(trashCard).toBeVisible();
     await expect(trashCard.locator('.trash-card-meta')).toContainText('Trashed');
     await expect(trashCard.locator('.btn-purge')).toBeVisible(); // admin only
-    await page.screenshot({ path: 'screenshots/trash.png', fullPage: true });
 
     // Restore brings it back to the library.
     await trashCard.locator('.btn-restore').click();
@@ -631,7 +614,7 @@ test.describe('Library workflows', () => {
     expect(update.ok()).toBe(true);
     const book = await update.json();
     const highlight = await page.request.post(`/api/reader/assets/${book.assets[0].id}/annotations`, {
-      data: { cfi: 'epubcfi(/6/2!/4/2/1:0)', quote: 'A passage worth returning to.', note: 'Keep this question for the next discussion.' },
+      data: { locator: { cfi: 'epubcfi(/6/2!/4/2/1:0)' }, quote: 'A passage worth returning to.', note: 'Keep this question for the next discussion.' },
     });
     expect(highlight.ok()).toBe(true);
     await page.reload();
@@ -646,7 +629,6 @@ test.describe('Library workflows', () => {
     await expect(visibleTags).toHaveText(tags.slice(0, 5));
     await expect(tagsMore).toHaveText(`+${tags.length - 5}`);
     await expect(page.getByRole('heading', { name: 'Highlights & notes' })).toBeInViewport({ ratio: 1 });
-    await page.screenshot({ animations: 'disabled', path: 'screenshots/book-compact-desktop.png', fullPage: true });
 
     await more.click();
     await expect(more).toHaveText('Show less');
@@ -662,7 +644,6 @@ test.describe('Library workflows', () => {
     await expect(card).toBeVisible();
     await card.locator('.book-title-link').click();
     await expect(visibleTags).toHaveCount(5);
-    await page.screenshot({ animations: 'disabled', path: 'screenshots/book-compact-mobile.png', fullPage: true });
     await tagsMore.click();
     await expect(visibleTags).toHaveCount(tags.length);
   });

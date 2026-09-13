@@ -292,6 +292,9 @@ func TestDownloadHandler(t *testing.T) {
 	if gotHash != wantHash {
 		t.Fatalf("koreader hash = %q; want %q", gotHash, wantHash)
 	}
+	if target, err := db.ResolveKOReaderHash(database.Read(t.Context()), wantHash); err != nil || target.AssetID != 1 || target.Ambiguous {
+		t.Fatalf("downloaded file cannot be matched for KOReader: %+v, %v", target, err)
+	}
 
 	// Once present, the DB-owned identity is reused. Supported file replacement
 	// paths update or clear it themselves; an ordinary download is read-only.
@@ -634,6 +637,17 @@ func TestDownloadAsEPUBToKEPUB(t *testing.T) {
 	if !strings.Contains(xhtml, "koboSpan") || !strings.Contains(xhtml, "Kobo body.") {
 		t.Fatalf("KEPUB text.xhtml missing Kobo spans/body:\n%s", xhtml)
 	}
+	convertedHash, err := koreader.PartialMD5(bytes.NewReader(w.Body.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target, err := db.ResolveKOReaderHash(database.Read(t.Context()), convertedHash); err != nil || target.AssetID != 2 || target.BookID != 128 || target.Ambiguous {
+		t.Fatalf("converted download cannot be matched for KOReader: %+v, %v", target, err)
+	}
+	var cachedOriginal string
+	if err := database.Read(t.Context()).QueryRow("SELECT COALESCE(koreader_hash, '') FROM assets WHERE id = 2").Scan(&cachedOriginal); err != nil || cachedOriginal != "" {
+		t.Fatalf("converted download replaced original hash cache: %q, %v", cachedOriginal, err)
+	}
 	entries, err := os.ReadDir(filepath.Join(dir, "tmp", "conversion"))
 	if err != nil {
 		t.Fatalf("read conversion temp directory: %v", err)
@@ -933,7 +947,7 @@ func TestReaderRoutesServeReadablePrimaryAssets(t *testing.T) {
 	if convertedVersion == "" {
 		t.Fatal("test build has no Polka version for converted asset cache key")
 	}
-	if body := w.Body.String(); !strings.Contains(body, `data-reader-url="/read/assets/3?v=0123456789abcdef"`) || !strings.Contains(body, `data-reader-fallback-url="/download/3/as/kepub?v=`+convertedVersion+`"`) || !strings.Contains(body, `reader-epub-stage`) || !strings.Contains(body, `/static/reader.js`) {
+	if body := w.Body.String(); !strings.Contains(body, `data-reader-url="/read/assets/3?v=0123456789abcdef&amp;source=`) || !strings.Contains(body, `data-reader-fallback-url="/download/3/as/kepub?v=`+convertedVersion+`&amp;source=`) || !strings.Contains(body, `reader-epub-stage`) || !strings.Contains(body, `/static/reader.js`) {
 		t.Fatalf("read page did not render EPUB reader shell: %s", body)
 	}
 	if got := w.Header().Get("Cache-Control"); got != "private, no-cache" {
@@ -1166,7 +1180,7 @@ func TestReaderRoutesServeReadablePrimaryAssets(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("cbr read page status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
 	}
-	if body := w.Body.String(); !strings.Contains(body, `data-reader-url="/read/assets/13?v=`+convertedVersion+`"`) || !strings.Contains(body, `reader-epub-stage`) || !strings.Contains(body, `data-reader-format="cbz"`) {
+	if body := w.Body.String(); !strings.Contains(body, `data-reader-url="/read/assets/13?v=`+convertedVersion+`&amp;source=`) || !strings.Contains(body, `reader-epub-stage`) || !strings.Contains(body, `data-reader-format="cbz"`) {
 		t.Fatalf("read page did not render normalized CBR reader shell: %s", body)
 	}
 
@@ -1188,7 +1202,7 @@ func TestReaderRoutesServeReadablePrimaryAssets(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("cb7 read page status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
 	}
-	if body := w.Body.String(); !strings.Contains(body, `data-reader-url="/read/assets/14?v=`+convertedVersion+`"`) || !strings.Contains(body, `reader-epub-stage`) || !strings.Contains(body, `data-reader-format="cbz"`) {
+	if body := w.Body.String(); !strings.Contains(body, `data-reader-url="/read/assets/14?v=`+convertedVersion+`&amp;source=`) || !strings.Contains(body, `reader-epub-stage`) || !strings.Contains(body, `data-reader-format="cbz"`) {
 		t.Fatalf("read page did not render normalized CB7 reader shell: %s", body)
 	}
 

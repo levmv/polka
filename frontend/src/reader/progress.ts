@@ -1,13 +1,13 @@
 import { clamp } from '../dom';
-import type { ReaderLocator } from '../types';
+import { showReaderError } from './chrome';
 import type { FoliateRelocateDetail, FoliateTarget, FoliateViewElement } from './foliate-engine';
+import { foliateLocation } from './location';
 import type { ReaderPosition, ReaderStateSaver } from './state-saver';
 
 export interface ReaderPositionSaver {
     enableSaving(): void;
     markUserNavigation(): void;
-    flush(): Promise<void>;
-    destroy(): void;
+    restorePosition(state: ReaderPosition): Promise<void>;
 }
 
 export async function restoreReaderPosition(
@@ -15,21 +15,34 @@ export async function restoreReaderPosition(
     state: ReaderPosition | null,
     target?: string,
 ): Promise<void> {
-    const lastLocation = target ?? (state ? storedLocation(state) : null);
-    await view.init({ lastLocation, showTextStart: !lastLocation });
+    let lastLocation = target ?? (state ? storedLocation(state) : null);
+    if (!target && typeof lastLocation === 'string') {
+        let hasChapter = false;
+        try {
+            hasChapter = !!view.book?.sections?.[view.resolveCFI(lastLocation).index];
+        } catch {
+            // A position from another copy may have an unusable CFI.
+        }
+        if (!hasChapter) lastLocation = fractionLocation(state);
+    }
+    try {
+        await view.init({ lastLocation, showTextStart: !lastLocation });
+    } catch (error) {
+        if (target || typeof lastLocation !== 'string') throw error;
+        // Resolving a CFI's chapter does not validate its DOM node or offset.
+        // Try the saved percentage once if that anchor fails during loading.
+        lastLocation = fractionLocation(state);
+        await view.init({ lastLocation, showTextStart: !lastLocation });
+    }
 }
 
 function storedLocation(state: ReaderPosition): FoliateTarget | null {
-    const locator = state.locator;
-    if (locator.engine === 'foliate') {
-        if (typeof locator.cfi === 'string' && locator.cfi) {
-            return locator.cfi;
-        }
-        if (typeof locator.fraction === 'number') {
-            return { fraction: clampFraction(locator.fraction) };
-        }
-    }
-    if (state.progress > 0 && state.progress < 1) {
+    if (state.locator.cfi) return state.locator.cfi;
+    return fractionLocation(state);
+}
+
+function fractionLocation(state: ReaderPosition | null): FoliateTarget | null {
+    if (state && state.progress > 0 && state.progress <= 1) {
         return { fraction: clampFraction(state.progress) };
     }
     return null;
@@ -42,29 +55,28 @@ export function wirePositionSaving(
     options: { savingEnabled?: boolean } = {},
 ): ReaderPositionSaver {
     let savingEnabled = options.savingEnabled ?? true;
-    let skipNextRelocate = !savingEnabled;
     let userNavigationSeen = false;
     let saveTimer: number | undefined;
     let displayLocationSpan = 0;
     let progressLayoutKey = '';
+    let currentPosition: ReaderPosition | null = null;
+    let navigation = 0;
 
     const flushPending = (options: { keepalive?: boolean } = {}): Promise<void> => {
         window.clearTimeout(saveTimer);
         saveTimer = undefined;
+        userNavigationSeen = false;
         return stateSaver.flush(options);
     };
 
     const scheduleSave = (detail: FoliateRelocateDetail, progress: number): void => {
         if (!savingEnabled) return;
-        if (skipNextRelocate && !userNavigationSeen) {
-            skipNextRelocate = false;
-            return;
-        }
-        if (!userNavigationSeen && progress <= 0.001) return;
+        // Rendering, restoration and layout changes are not new observations.
+        if (!userNavigationSeen) return;
 
         stateSaver.queue({
             progress,
-            locator: foliateLocator(detail, progress),
+            locator: foliateLocation(page, view, detail.cfi, detail.range),
         });
         window.clearTimeout(saveTimer);
         saveTimer = window.setTimeout(() => {
@@ -75,6 +87,7 @@ export function wirePositionSaving(
     const relocateHandler = (event: Event) => {
         const detail = (event as CustomEvent<FoliateRelocateDetail>).detail;
         const progress = clampFraction(detail.fraction ?? 0);
+        currentPosition = { progress, locator: { cfi: detail.cfi } };
         const layoutKey = progressDisplayLayoutKey(page, view);
         if (layoutKey !== progressLayoutKey) {
             progressLayoutKey = layoutKey;
@@ -84,49 +97,38 @@ export function wirePositionSaving(
         scheduleSave(detail, progress);
     };
 
-    const pageHideHandler = () => {
-        void flushPending({ keepalive: true });
-    };
-
-    const visibilityHandler = () => {
-        if (document.visibilityState === 'hidden') {
-            void flushPending({ keepalive: true });
-        } else {
-            void flushPending();
-        }
-    };
-
     view.addEventListener('relocate', relocateHandler);
-    window.addEventListener('pagehide', pageHideHandler);
-    document.addEventListener('visibilitychange', visibilityHandler);
 
     return {
         enableSaving(): void {
             savingEnabled = true;
-            skipNextRelocate = true;
             userNavigationSeen = false;
         },
         markUserNavigation(): void {
+            navigation++;
             userNavigationSeen = true;
-            skipNextRelocate = false;
         },
-        flush: flushPending,
-        destroy(): void {
+        async restorePosition(state): Promise<void> {
             window.clearTimeout(saveTimer);
-            view.removeEventListener('relocate', relocateHandler);
-            window.removeEventListener('pagehide', pageHideHandler);
-            document.removeEventListener('visibilitychange', visibilityHandler);
+            userNavigationSeen = false;
+            const previous = currentPosition;
+            const beforeRestore = navigation;
+            try {
+                await restoreReaderPosition(view, state);
+            } catch (error) {
+                // A bad remote anchor must not leave a working reader blank.
+                // Do not undo a page turn made while restoration was loading.
+                if (navigation === beforeRestore) {
+                    try {
+                        await restoreReaderPosition(view, previous);
+                    } catch {
+                        showReaderError(page, 'Could not open this book.');
+                    }
+                }
+                throw error;
+            }
         },
     };
-}
-
-function foliateLocator(detail: FoliateRelocateDetail, progress: number): ReaderLocator {
-    const locator: ReaderLocator = {
-        engine: 'foliate',
-        fraction: progress,
-    };
-    if (detail.cfi) locator.cfi = detail.cfi;
-    return locator;
 }
 
 function progressDisplayLayoutKey(page: HTMLElement, view: FoliateViewElement): string {

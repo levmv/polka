@@ -1,9 +1,11 @@
 import { readFile } from 'node:fs/promises';
+import type { Annotation } from '../../frontend/src/types';
 import { expect, type Page, test } from './fixtures';
 import {
   createReaderTestUser,
   deleteTestUserAsAdmin,
   loginByRequest,
+  readerMutationFields,
   type TestUser,
 } from './helpers';
 
@@ -32,7 +34,6 @@ test.describe('Reader selection toolbar', () => {
     const toc = page.locator('#reader-toc-panel');
     await toc.getByRole('button', { name: 'FB2 Reader Book' }).click();
     await expect(toc).toBeHidden();
-    await page.screenshot({ path: 'screenshots/reader-fb2.png', fullPage: true });
     await stubClipboard(page);
 
     const selected = await selectFirstText(page);
@@ -89,7 +90,8 @@ test.describe('Reader selection toolbar', () => {
       .toBe(1);
     const list = await fetchAnnotations(page, assetId);
     const annotation = list[0];
-    expect(annotation.quote).toBe(selected.replace(/\s+/g, ' ').trim().slice(0, 1200));
+    expect(annotation.quote).toBe(selected);
+    expect(annotation.locator.path).toMatch(/\.xhtml$/);
 
     await expect.poll(() => renderedHighlightCount(page)).toBeGreaterThan(0);
 
@@ -104,14 +106,14 @@ test.describe('Reader selection toolbar', () => {
     await expect(toolbar.getByRole('button', { name: 'Highlight', exact: true })).toBeHidden();
     await expect(toolbar.getByRole('button', { name: 'Add note' })).toBeVisible();
 
-    await showAnnotationActions(page, annotation.cfi);
+    await showAnnotationActions(page, annotation.locator.cfi);
     const popover = page.locator('.reader-annotation-popover');
     await expect(popover).toBeHidden();
     await expect(toolbar.getByRole('button', { name: 'Highlight', exact: true })).toBeHidden();
     await expect(toolbar.getByRole('button', { name: 'Search' })).toBeVisible();
     await toolbar.getByRole('button', { name: 'Add note' }).click();
     await expect(popover).toBeVisible();
-    const note = popover.locator('.reader-annotation-note');
+    const note = popover.locator('.annotation-note-input');
     await note.focus();
     await page.evaluate(() => {
       window.dispatchEvent(new Event('resize'));
@@ -127,10 +129,9 @@ test.describe('Reader selection toolbar', () => {
     );
     await expect.poll(async () => (await fetchAnnotations(page, assetId))[0]?.color).toBe('blue');
 
-    await showAnnotationActions(page, annotation.cfi);
+    await showAnnotationActions(page, annotation.locator.cfi);
     await expect(toolbar.getByRole('button', { name: 'Edit note' })).toBeVisible();
     await expect(toolbar).toHaveCSS('opacity', '1');
-    await page.screenshot({ path: 'screenshots/reader-highlight-actions.png', fullPage: true });
 
     await page.locator('.reader-annotations-toggle').click();
     const panel = page.locator('.reader-annotations-panel');
@@ -150,7 +151,6 @@ test.describe('Reader selection toolbar', () => {
     await expect(
       page.getByRole('menuitem', { name: 'Export all as Markdown' }),
     ).toBeVisible();
-    await page.screenshot({ path: 'screenshots/annotation-export-menu.png', fullPage: true });
 
     const downloadPromise = page.waitForEvent('download');
     await exportItem.click();
@@ -164,13 +164,12 @@ test.describe('Reader selection toolbar', () => {
     await exportPage.setContent(exported);
     await expect(exportPage.getByRole('heading', { name: 'With Cover Book' })).toBeVisible();
     await expect(exportPage.locator('.note')).toHaveText('Reader note');
-    await exportPage.screenshot({ path: 'screenshots/annotation-export.png', fullPage: true });
     await exportPage.close();
 
     // A different saved position makes the passage link exercise navigation.
     await page.setViewportSize({ width: 390, height: 600 });
     const saved = await page.request.put(`/api/reader/assets/${assetId}/state`, {
-      data: { progress: 0.8, locator: { engine: 'foliate', fraction: 0.8 } },
+      data: { ...await readerMutationFields(page, assetId), progress: 0.8, locator: {} },
     });
     expect(saved.ok()).toBe(true);
     await highlights.locator('.book-annotation-quote').click();
@@ -190,14 +189,15 @@ test.describe('Reader selection toolbar', () => {
       if (!doc || !view.lastLocation?.range) return false;
       const range = target.anchor(doc);
       return view.lastLocation.range.isPointInRange(range.startContainer, range.startOffset);
-    }, annotation.cfi)).toBe(true);
+    }, annotation.locator.cfi)).toBe(true);
     await expect.poll(() => renderedHighlightCount(page)).toBeGreaterThan(0);
-    await showAnnotationPopover(page, annotation.cfi);
-    await expect(popover.locator('.reader-annotation-note')).toHaveValue('Updated from book page');
+    await showAnnotationPopover(page, annotation.locator.cfi);
+    await expect(popover.locator('.annotation-note-input')).toHaveValue('Updated from book page');
     await expect(popover.getByRole('radio', { name: 'Green', exact: true })).toBeChecked();
   });
 
-  test('saves a directly-created note before closing the reader', async ({ page }) => {
+  test('saves a note deleted elsewhere before closing the reader', async ({ page, browserErrors }) => {
+    browserErrors.allow((message) => message.includes('409'));
     const assetId = await openReader(page, 'With Cover Book');
     const selected = await selectFirstText(page);
     const toolbar = page.locator('.reader-selection-toolbar');
@@ -206,10 +206,9 @@ test.describe('Reader selection toolbar', () => {
     await toolbar.getByRole('button', { name: 'Add note' }).click();
     const popover = page.locator('.reader-annotation-popover');
     await expect(popover).toBeVisible();
-    await expect(popover.locator('.reader-annotation-quote')).toHaveText(
+    await expect(popover.locator('.annotation-editor-quote')).toHaveText(
       selected.replace(/\s+/g, ' ').trim().slice(0, 1200),
     );
-    await page.screenshot({ path: 'screenshots/reader-note-popover.png', fullPage: true });
 
     const annotations = await fetchAnnotations(page, assetId);
     expect(annotations).toHaveLength(1);
@@ -232,7 +231,11 @@ test.describe('Reader selection toolbar', () => {
       await route.fulfill({ response });
     });
 
-    await popover.locator('.reader-annotation-note').fill('Direct note');
+    await popover.locator('.annotation-note-input').fill('Direct note');
+    const deleted = await page.request.delete(`/api/reader/assets/${assetId}/annotations/${annotation.id}`, {
+      data: { revision: annotation.revision },
+    });
+    expect(deleted.ok()).toBe(true);
     const closeClick = page.locator('.reader-close').click();
     await expect.poll(() => noteRequestHeld).toBe(true);
     await expect(page.locator('.reader-page')).toBeVisible();
@@ -245,7 +248,9 @@ test.describe('Reader selection toolbar', () => {
     );
   });
 
-  test('deletes a highlight from its action toolbar after confirmation', async ({ page }) => {
+  test('deletes a highlight only after confirming and reviewing a concurrent note change', async ({ page, browserErrors }) => {
+    browserErrors.allow((message) => message.includes('409'));
+    await page.setViewportSize({ width: 390, height: 600 });
     const assetId = await openReader(page, 'With Cover Book');
     await selectFirstText(page);
     const toolbar = page.locator('.reader-selection-toolbar');
@@ -255,26 +260,101 @@ test.describe('Reader selection toolbar', () => {
     await expect.poll(() => renderedHighlightCount(page)).toBeGreaterThan(0);
 
     const [annotation] = await fetchAnnotations(page, assetId);
-    await showAnnotationActions(page, annotation.cfi);
+    await showAnnotationActions(page, annotation.locator.cfi);
     const deleteButton = toolbar.getByRole('button', { name: 'Delete highlight' });
     await expect(deleteButton).toBeVisible();
 
     page.once('dialog', async (dialog) => {
-      expect(dialog.message()).toBe('Delete this highlight?');
+      expect(dialog.message()).toBe('Delete this highlight and its note?');
       await dialog.dismiss();
     });
     await deleteButton.click();
-    await expect(toolbar).toBeVisible();
+    const popover = page.locator('.reader-annotation-popover');
+    await expect(popover).toBeHidden();
     await expect.poll(async () => (await fetchAnnotations(page, assetId)).length).toBe(1);
+    await showAnnotationActions(page, annotation.locator.cfi);
 
-    page.once('dialog', async (dialog) => {
-      expect(dialog.message()).toBe('Delete this highlight?');
-      await dialog.accept();
+    const updated = await page.request.patch(`/api/reader/assets/${assetId}/annotations/${annotation.id}`, {
+      data: { revision: annotation.revision, note: 'A newer note worth reviewing.' },
     });
+    expect(updated.ok()).toBe(true);
+    page.once('dialog', (dialog) => dialog.accept());
     await deleteButton.click();
     await expect(toolbar).toBeHidden();
+    await expect(popover.getByRole('textbox', { name: 'Note', exact: true })).toHaveValue('A newer note worth reviewing.');
+    page.once('dialog', (dialog) => dialog.accept());
+    await popover.getByRole('button', { name: 'Delete', exact: true }).click();
     await expect.poll(async () => (await fetchAnnotations(page, assetId)).length).toBe(0);
     await expect.poll(() => renderedHighlightCount(page)).toBe(0);
+  });
+
+  test('recovers highlights after a load failure without losing an open conflicting draft', async ({ page, browserErrors }) => {
+    browserErrors.allow((message) => message.includes('503') || message.includes('409') || message.includes('Failed to load annotations'));
+    await page.setViewportSize({ width: 390, height: 600 });
+    const assetId = await openReader(page, 'With Cover Book');
+    const toolbar = page.locator('.reader-selection-toolbar');
+    const panel = page.locator('.reader-annotations-panel');
+    const popover = page.locator('.reader-annotation-popover');
+    await selectFirstText(page);
+    await toolbar.getByRole('button', { name: 'Highlight', exact: true }).click();
+    await expect.poll(async () => (await fetchAnnotations(page, assetId)).length).toBe(1);
+    const [original] = await fetchAnnotations(page, assetId);
+    let failLoad = true;
+    let reads = 0;
+    const url = `**/api/reader/assets/${assetId}/annotations`;
+    await page.route(url, (route) => {
+      if (route.request().method() !== 'GET') return route.continue();
+      reads++;
+      return failLoad ? route.fulfill({ status: 503, body: 'Temporary failure' }) : route.continue();
+    });
+    try {
+      await page.reload();
+      await expect(page.locator('.reader-epub-stage')).toHaveAttribute('data-reader-ready', 'true');
+      await expect.poll(() => renderedHighlightCount(page)).toBe(0);
+      await page.locator('.reader-annotations-toggle').click();
+      await expect(panel.locator('.reader-annotations-status')).toHaveText('Could not load all highlights.');
+      const beforeRetry = reads;
+      await panel.getByRole('button', { name: 'Try again' }).click();
+      await expect.poll(() => reads).toBeGreaterThan(beforeRetry);
+      await expect(panel.getByRole('button', { name: 'Try again' })).toBeVisible();
+      await panel.getByRole('button', { name: 'Close highlights' }).click();
+
+      // Reading and annotating remain usable while loading is unavailable.
+      // Reselecting this passage returns its existing annotation identity.
+      await selectFirstText(page);
+      await toolbar.getByRole('button', { name: 'Add note' }).click();
+      const note = popover.getByRole('textbox', { name: 'Note', exact: true });
+      await note.fill('Keep this unsaved draft.');
+      const updated = await page.request.patch(`/api/reader/assets/${assetId}/annotations/${original.id}`, {
+        data: { revision: original.revision, note: 'A note from another reader.', color: 'blue' },
+      });
+      expect(updated.ok()).toBe(true);
+      const remote = await updated.json();
+      failLoad = false;
+      await page.evaluate(() => window.dispatchEvent(new Event('online')));
+      await expect(panel.locator('.reader-annotations-status')).toHaveText('1 highlight');
+      await expect(note).toHaveValue('Keep this unsaved draft.');
+      await expect.poll(() => renderedHighlightCount(page)).toBeGreaterThan(0);
+
+      // Recovery may refresh the list, but cannot adopt the remote revision for
+      // an older draft. Closing must leave that conflict visible and resolvable.
+      await page.locator('.reader-close').click();
+      const conflict = popover.locator('.annotation-saved-note');
+      await expect(conflict.locator('blockquote')).toHaveText(remote.note);
+      await page.keyboard.press('Escape');
+      await expect(page.locator('.reader-page')).toBeVisible();
+      await expect(note).toHaveValue('Keep this unsaved draft.');
+      await expect(popover.getByRole('button', { name: 'Cancel', exact: true })).toBeInViewport();
+      await popover.getByRole('button', { name: 'Overwrite', exact: true }).click();
+      await expect(popover).toBeHidden();
+      const [saved] = await fetchAnnotations(page, assetId);
+      expect(saved).toMatchObject({ id: original.id, note: 'Keep this unsaved draft.', color: 'blue' });
+      await page.locator('.reader-close').click();
+      await expect(page.locator('.detail-title')).toHaveText('With Cover Book');
+      expect(await fetchAnnotations(page, assetId)).toEqual([saved]);
+    } finally {
+      await page.unroute(url);
+    }
   });
 
   test('waits for one note save before opening another editor', async ({ page }) => {
@@ -326,13 +406,13 @@ test.describe('Reader selection toolbar', () => {
       noteResponseDelivered();
     });
 
-    await showAnnotationPopover(page, first.cfi);
+    await showAnnotationPopover(page, first.locator.cfi);
     const popover = page.locator('.reader-annotation-popover');
-    await popover.locator('.reader-annotation-note').fill('First note');
+    await popover.locator('.annotation-note-input').fill('First note');
     await popover.getByRole('button', { name: 'Done' }).click();
     await expect.poll(() => noteRequestHeld).toBe(true);
 
-    await showAnnotationActions(page, second.cfi);
+    await showAnnotationActions(page, second.locator.cfi);
     const toolbar = page.locator('.reader-selection-toolbar');
     await expect(toolbar).toBeHidden();
 
@@ -340,8 +420,8 @@ test.describe('Reader selection toolbar', () => {
     await responseDelivered;
     await expect(toolbar).toBeVisible();
     await toolbar.getByRole('button', { name: 'Add note' }).click();
-    await expect(popover.locator('.reader-annotation-quote')).toHaveText(second.quote);
-    await expect(popover.locator('.reader-annotation-note')).toHaveValue('');
+    await expect(popover.locator('.annotation-editor-quote')).toHaveText(second.quote);
+    await expect(popover.locator('.annotation-note-input')).toHaveValue('');
     await page.unroute(noteURL);
 
     const saved = await fetchAnnotations(page, assetId);
@@ -443,12 +523,12 @@ async function selectFirstText(page: Page, targetIndex = 0): Promise<string> {
 async function fetchAnnotations(
   page: Page,
   assetId: number,
-): Promise<Array<{ id: number; cfi: string; quote: string; note?: string; color: string }>> {
+): Promise<Array<Annotation & { locator: { cfi: string; path: string } }>> {
   const res = await page.request.get(
     `/api/reader/assets/${assetId}/annotations`,
   );
   if (!res.ok()) throw new Error(`annotations status ${res.status()}`);
-  return (await res.json()) as Array<{ id: number; cfi: string; quote: string; note?: string; color: string }>;
+  return await res.json();
 }
 
 async function showAnnotationActions(page: Page, cfi: string): Promise<void> {

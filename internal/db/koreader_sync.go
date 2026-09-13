@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -35,34 +36,68 @@ type KOReaderHashTarget struct {
 	Ambiguous bool
 }
 
-// CacheAssetKOReaderHash uses a short writer deadline for download bookkeeping.
-// It ignores hashes computed for a concurrently replaced file.
+// CacheAssetKOReaderHash records an original download with a short writer
+// deadline. The downloaded hash is kept even after a concurrent replacement;
+// the current-file cache is updated only while the expected SHA-256 matches.
 func (db *DB) CacheAssetKOReaderHash(ctx context.Context, assetID int64, currentSHA256 []byte, hash string) error {
-	_, err := db.ExecBestEffort(ctx, `
-		UPDATE assets SET koreader_hash = ?
-		WHERE id = ? AND current_sha256 = ?
-		  AND (koreader_hash IS NULL OR koreader_hash = '')
-	`, hash, assetID, currentSHA256)
+	_, err := bestEffortWrite(ctx, func(writeCtx context.Context) error {
+		return db.Transact(writeCtx, func(tx *Tx) error {
+			_, err := tx.Exec(`
+				UPDATE assets SET koreader_hash = ?
+				WHERE id = ? AND current_sha256 = ?
+				  AND (koreader_hash IS NULL OR koreader_hash = '')
+			`, hash, assetID, currentSHA256)
+			if err != nil {
+				return err
+			}
+			return rememberKOReaderHash(tx, assetID, hash)
+		})
+	})
 	if err != nil {
 		return fmt.Errorf("cache asset koreader hash: %w", err)
 	}
 	return nil
 }
 
+const rememberKOReaderHashSQL = `INSERT INTO koreader_hashes(asset_id, hash) VALUES (?, ?)
+    ON CONFLICT(asset_id, hash) DO NOTHING`
+
+// RememberKOReaderHash records a converted download with a short writer deadline,
+// leaving the original file's cache unchanged.
+func (db *DB) RememberKOReaderHash(ctx context.Context, assetID int64, hash string) error {
+	decoded, err := hex.DecodeString(hash)
+	if err != nil {
+		return fmt.Errorf("decode asset KOReader hash: %w", err)
+	}
+	_, err = db.ExecBestEffort(ctx, rememberKOReaderHashSQL, assetID, decoded)
+	return err
+}
+
+func rememberKOReaderHash(tx *Tx, assetID int64, hash string) error {
+	decoded, err := hex.DecodeString(hash)
+	if err != nil {
+		return fmt.Errorf("decode asset KOReader hash: %w", err)
+	}
+	_, err = tx.Exec(rememberKOReaderHashSQL, assetID, decoded)
+	return err
+}
+
 func ResolveKOReaderHash(queryer Queryer, documentHash string) (KOReaderHashTarget, error) {
 	documentHash = strings.TrimSpace(documentHash)
-	if documentHash == "" {
+	hash, err := hex.DecodeString(documentHash)
+	if err != nil || len(hash) != 16 {
 		return KOReaderHashTarget{}, nil
 	}
 	rows, err := queryer.Query(`
 		SELECT MIN(a.id), a.book_id
-		FROM assets a
+		FROM koreader_hashes h
+		JOIN assets a ON a.id = h.asset_id
 		JOIN books b ON b.id = a.book_id
-		WHERE a.koreader_hash = ? AND b.deleted_at IS NULL
+		WHERE h.hash = ? AND b.deleted_at IS NULL
 		GROUP BY a.book_id
 		ORDER BY a.book_id
 		LIMIT 2
-	`, documentHash)
+	`, hash)
 	if err != nil {
 		return KOReaderHashTarget{}, fmt.Errorf("resolve asset by koreader hash: %w", err)
 	}
@@ -184,7 +219,7 @@ func validateKOReaderProgress(p KOReaderProgress) error {
 	if p.Device == "" {
 		return errorWithDetail(ErrKOReaderInvalidInput, "device required")
 	}
-	if p.Percentage < 0 || p.Percentage > 1 {
+	if !(p.Percentage >= 0 && p.Percentage <= 1) {
 		return errorWithDetail(ErrKOReaderInvalidInput, "percentage must be between 0 and 1")
 	}
 	if len(p.DocumentHash) > 256 || len(p.Progress) > 4096 || len(p.Device) > 256 || len(p.DeviceID) > 256 {

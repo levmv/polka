@@ -15,8 +15,9 @@ interface ActivitySegment {
 
 export interface ReadingActivity {
     start(): void;
+    resume(): void;
+    suspend(finish: boolean): void;
     recordAction(): void;
-    observeScrolling(target: EventTarget): void;
 }
 
 export function createReadingActivity(assetId: number): ReadingActivity {
@@ -29,7 +30,6 @@ export function createReadingActivity(assetId: number): ReadingActivity {
     let ready = false;
     let timer: number | undefined;
     let actionTimer: number | undefined;
-    const observed = new WeakSet<EventTarget>();
 
     const visible = () => document.visibilityState === 'visible';
     const sample = (clock: ReadingActivityClock) => clock.sample(performance.now(), Date.now());
@@ -222,40 +222,14 @@ export function createReadingActivity(assetId: number): ReadingActivity {
         clearTimers();
     };
 
-    document.addEventListener('visibilitychange', () => {
-        if (visible()) begin();
-        else stop(false);
-    });
-    window.addEventListener('pagehide', (event) => stop(!event.persisted));
-    window.addEventListener('pageshow', begin);
-
     return {
         start() {
             ready = true;
             begin();
         },
+        resume: begin,
+        suspend: stop,
         recordAction,
-        observeScrolling(target) {
-            if (observed.has(target)) return;
-            observed.add(target);
-            const scrolling = (event: Event) => {
-                if (event.isTrusted) recordAction();
-            };
-            target.addEventListener('wheel', scrolling, { passive: true });
-            target.addEventListener('touchmove', scrolling, { passive: true });
-            target.addEventListener('keydown', (event) => {
-                const key = event as KeyboardEvent;
-                const element = key.target as Element | null;
-                if (element?.closest('input, textarea, select, [contenteditable="true"]')) return;
-                if (
-                    key.isTrusted &&
-                    ['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(
-                        key.key,
-                    )
-                )
-                    recordAction();
-            });
-        },
     };
 }
 
