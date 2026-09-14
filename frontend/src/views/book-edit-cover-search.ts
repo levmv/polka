@@ -119,7 +119,9 @@ function renderCoverSearchResult(result: CoverSearchResult, index: number): stri
     const label = `Use cover ${index + 1} from ${source}`;
     return `
         <button type="button" class="cover-search-result" data-cover-search-token="${escapeHtml(result.token)}" aria-label="${escapeHtml(label)}">
-            <img src="${escapeHtml(result.preview_url)}" alt="" class="cover-search-image">
+            <span class="cover-search-frame">
+                <img src="${escapeHtml(result.preview_url)}" alt="" class="cover-search-image">
+            </span>
             <span class="cover-search-result-meta">
                 <span class="cover-search-source">${escapeHtml(source)}</span>
                 ${resolution ? `<span class="cover-search-size">${escapeHtml(resolution)}</span>` : ''}

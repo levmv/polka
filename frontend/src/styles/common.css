@@ -623,7 +623,7 @@ textarea.form-input {
 }
 
 .date-picker-mode-btn:hover,
-.date-picker-mode-btn:focus-visible {
+.date-picker-mode-btn:focus {
     color: var(--text-main);
     outline: 0;
 }
@@ -667,7 +667,7 @@ textarea.form-input {
 }
 
 .date-picker-nav:hover,
-.date-picker-nav:focus-visible {
+.date-picker-nav:focus {
     border-color: var(--accent);
     outline: 0;
 }
@@ -708,7 +708,7 @@ textarea.form-input {
 }
 
 .date-picker-cell:hover,
-.date-picker-cell:focus-visible {
+.date-picker-cell:focus {
     border-color: var(--accent);
     outline: 0;
 }
@@ -760,7 +760,7 @@ textarea.form-input {
 }
 
 .date-picker-trigger:hover,
-.date-picker-trigger:focus-visible {
+.date-picker-trigger:focus {
     border-color: var(--accent);
     outline: 0;
 }
@@ -888,9 +888,9 @@ body.modal-open {
 }
 
 .modal-close:hover,
-.modal-close:focus-visible,
+.modal-close:focus,
 .page-close:hover,
-.page-close:focus-visible {
+.page-close:focus {
     background: var(--border-color);
     outline: 0;
 }
@@ -916,7 +916,7 @@ body.modal-open {
 }
 
 .page-close:hover,
-.page-close:focus-visible {
+.page-close:focus {
     color: var(--text-main);
 }
 

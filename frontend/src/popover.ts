@@ -39,7 +39,8 @@ export function createPopover(trigger: HTMLElement, render: RenderFn): ManagedPo
             trigger.setAttribute('aria-expanded', 'true');
             positionFloating(trigger.getBoundingClientRect(), root);
             document.addEventListener('pointerdown', handleDocumentPointerDown);
-            document.addEventListener('keydown', handleDocumentKeydown);
+            // Capture Escape before the containing modal handles it.
+            document.addEventListener('keydown', handleDocumentKeydown, true);
             window.addEventListener('resize', reposition);
             window.addEventListener('scroll', reposition, true);
             window.setTimeout(() => focusFirst(root), 0);
@@ -52,7 +53,7 @@ export function createPopover(trigger: HTMLElement, render: RenderFn): ManagedPo
             window.removeEventListener('scroll', reposition, true);
             openPopover = null;
             document.removeEventListener('pointerdown', handleDocumentPointerDown);
-            document.removeEventListener('keydown', handleDocumentKeydown);
+            document.removeEventListener('keydown', handleDocumentKeydown, true);
             if (document.contains(trigger)) trigger.focus({ preventScroll: true });
         },
         isOpen(): boolean {
@@ -93,6 +94,7 @@ export function createPopover(trigger: HTMLElement, render: RenderFn): ManagedPo
     function handleDocumentKeydown(event: KeyboardEvent): void {
         if (event.key !== 'Escape') return;
         event.preventDefault();
+        event.stopPropagation();
         controller.close();
     }
 

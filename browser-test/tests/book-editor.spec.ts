@@ -38,24 +38,30 @@ test.describe('Book editor', () => {
     await expect(authorSortInput).toHaveValue('Author, Test');
     await expect(authorSortHint).toHaveText('');
 
+    await page.route(
+      '**/api/authors/sort-name',
+      async (route) => {
+        const response = await route.fetch();
+        await modal.locator(`#author-sort-note-${uiID}`).click();
+        await authorSortInput.fill('Later Sort, Test');
+        await route.fulfill({ response });
+      },
+      { times: 1 },
+    );
     await authorSortInput.fill('Author Sort, Test');
     await expect(modal.locator('.edit-save-btn')).toBeEnabled();
     await modal.locator('.edit-save-btn').click();
+    await expect(modal.locator('.edit-save-btn')).toBeEnabled();
+    await expect(authorSortInput).toHaveValue('Later Sort, Test');
+    await expect(authorSortInput).toBeFocused();
 
-    await expect
-      .poll(async () => {
-        return await page.evaluate(async () => {
-          const res = await fetch('/api/authors/info?name=Test%20Author');
-          if (!res.ok) return '';
-          return (await res.json()).sort_name;
-        });
-      })
-      .toBe('Author Sort, Test');
+    const authorInfo = await page.request.get('/api/authors/info?name=Test%20Author');
+    expect((await authorInfo.json()).sort_name).toBe('Author Sort, Test');
+    await modal.locator('.edit-save-btn').click();
+    await expect(modal.locator('.save-indicator')).toContainText('Saved');
   });
 
-  test('Book edit PATCH sends only dirty fields and preserves a concurrent change', async ({
-    page,
-  }) => {
+  test('Save & Next preserves pending edits and concurrent server changes', async ({ page }) => {
     await page.goto('/');
     const titleLink = page.getByRole('link', { name: 'Foundation', exact: true });
     await expect(titleLink).toBeVisible();
@@ -85,22 +91,47 @@ test.describe('Book editor', () => {
       { id: bookID, publisher: concurrentPublisher },
     );
 
-    const patchRequest = page.waitForRequest((request) => {
-      const url = new URL(request.url());
-      return request.method() === 'PATCH' && url.pathname === `/api/books/${bookID}`;
+    const publisher = modal.locator('input[name="publisher"]');
+    const description = modal.locator('.rich-editor-content');
+    let descriptionHTML = '';
+    let firstSave = true;
+    await page.route(`**/api/books/${bookID}`, async (route) => {
+      if (route.request().method() !== 'PATCH' || !firstSave) return route.continue();
+      firstSave = false;
+      expect(route.request().postDataJSON()).toEqual({ authors: null });
+      const response = await route.fetch();
+      await authorsInput.fill('Draft Author');
+      await publisher.fill('Draft Press');
+      await description.fill('Description written while saving');
+      descriptionHTML = await description.innerHTML();
+      await route.fulfill({ response });
     });
     await authorsInput.fill('');
-    await modal.locator('.edit-save-btn').click();
-    expect((await patchRequest).postDataJSON()).toEqual({ authors: null });
-    await expect(modal.locator('.save-indicator')).toContainText('Saved');
+    await modal.getByRole('button', { name: /^Save & Next:/ }).click();
+    await expect(modal.locator('.edit-save-btn')).toBeEnabled();
+    await expect(modal.locator('input[name="title"]')).toHaveValue('Foundation');
+    await expect(authorsInput).toHaveValue('Draft Author');
+    await expect(publisher).toHaveValue('Draft Press');
+    await expect(description).toHaveJSProperty('innerHTML', descriptionHTML);
 
-    await expect
-      .poll(async () => {
-        const response = await page.request.get(`/api/books/${bookID}`);
-        const book = await response.json();
-        return { publisher: book.publisher, authors: book.authors_list };
-      })
-      .toEqual({ publisher: concurrentPublisher, authors: [] });
+    const savedBook = await page.request.get(`/api/books/${bookID}`);
+    expect(await savedBook.json()).toMatchObject({
+      publisher: concurrentPublisher,
+      authors_list: [],
+    });
+
+    await modal.locator('[data-edit-field="publisher"] .edit-field-revert').click();
+    await expect(publisher).toHaveValue(concurrentPublisher);
+    const nextPatch = page.waitForRequest(
+      (request) =>
+        request.method() === 'PATCH' && new URL(request.url()).pathname === `/api/books/${bookID}`,
+    );
+    await modal.locator('.edit-save-btn').click();
+    expect((await nextPatch).postDataJSON()).toEqual({
+      authors: 'Draft Author',
+      description: descriptionHTML,
+    });
+    await expect(modal.locator('.save-indicator')).toContainText('Saved');
     await page.keyboard.press('Escape');
     await expect(modal).not.toBeVisible();
   });
@@ -265,6 +296,7 @@ test.describe('Book editor', () => {
       book.has_cover = true;
       book.cover_version = (book.cover_version || 0) + 1;
 
+      await publisherInput.fill('Written during cover save');
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -314,7 +346,8 @@ test.describe('Book editor', () => {
     expect(metadataRequests).toBe(1);
 
     await page.getByRole('button', { name: 'Save', exact: true }).click();
-    await expect(page.locator('.edit-modal .save-indicator')).toContainText('Saved');
+    await expect(page.locator('.edit-modal .save-indicator')).toContainText('1 unsaved change');
+    await expect(publisherInput).toHaveValue('Written during cover save');
     await expect(coverContainer).not.toHaveClass(/is-dirty/);
     await expect(page.locator('.edit-cover-revert')).toBeHidden();
     expect(uploadRequests).toBe(2);

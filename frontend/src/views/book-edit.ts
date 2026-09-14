@@ -20,7 +20,14 @@ import { beginGlobalLoading } from '../loading-indicator';
 import { confirmModal, openModal, registerOverlayReopen, updateOverlayEntry } from '../modal';
 import { titleSort } from '../titles';
 import { showToast } from '../toast';
-import type { Author, Book, BookSequenceItem, BookSequenceWindow, BookSummary } from '../types';
+import type {
+    Author,
+    Book,
+    BookSequenceItem,
+    BookSequenceWindow,
+    BookSummary,
+    BookUpdate,
+} from '../types';
 import { activeBookDetailHost, type BookDetailHost } from './book-detail-host';
 import {
     type CoverDraftController,
@@ -36,7 +43,6 @@ import {
     readEditForm,
     sameEditFieldValue,
     setEditFieldValue,
-    stateKey,
     submitPayload,
     syncFieldDecorations,
     validateTitle,
@@ -69,30 +75,48 @@ function renderDateHint(el: HTMLElement | null, b: Book) {
     el.style.display = 'flex';
 }
 
-function syncEditFormFromBook(form: HTMLFormElement, b: Book, uiID: string = String(b.id)) {
-    const f = form as any;
-    f.title.value = b.title || '';
-    f.sort_title.value = b.sort_title || b.title || '';
-    f.authors.value = formatAuthorsForEdit(b.authors_list);
-    f.series.value = b.series || '';
-    f.series_index.value = b.series_index == null ? '' : String(b.series_index);
-    f.tags.value = b.tags || '';
-    f.language.value = b.language || '';
-    f.publisher.value = b.publisher || '';
-    f.date.value = b.date_human || b.date || '';
-    f.identifiers.value = b.identifiers || '';
-    f.description.value = b.description_source || '';
-
-    const editor = form.querySelector<HTMLElement>('.rich-editor-content');
-    if (editor) {
-        if (b.description_html) {
-            editor.innerHTML = b.description_html;
-        } else {
-            editor.textContent = b.description_source || '';
+function syncEditFormFromBook(
+    form: HTMLFormElement,
+    b: Book,
+    uiID: string = String(b.id),
+    previous?: BookUpdate | FormData,
+): BookUpdate {
+    const saved: BookUpdate = {
+        title: b.title || '',
+        sort_title: b.sort_title || b.title || null,
+        authors: formatAuthorsForEdit(b.authors_list) || null,
+        series: b.series || null,
+        series_index: b.series_index ?? null,
+        tags: b.tags || null,
+        description: b.description_source || null,
+        language: b.language || null,
+        publisher: b.publisher || null,
+        date: b.date_human || b.date || null,
+        identifiers: b.identifiers || null,
+    };
+    for (const field of Object.keys(saved) as EditFieldName[]) {
+        const input = form.querySelector<HTMLInputElement | HTMLTextAreaElement>(
+            `[name="${field}"]`,
+        );
+        if (!input) continue;
+        const before = previous instanceof FormData ? previous.get(field) : previous?.[field];
+        // Compare raw text so a response also preserves an unfinished word or number.
+        if (previous && input.value !== String(before ?? '')) continue;
+        const value = String(saved[field] ?? '');
+        if (input.value !== value) input.value = value;
+        if (field === 'description') {
+            const editor = form.querySelector<HTMLElement>('.rich-editor-content');
+            if (!editor) continue;
+            if (b.description_html) {
+                if (editor.innerHTML !== b.description_html) editor.innerHTML = b.description_html;
+            } else if (editor.textContent !== value) {
+                editor.textContent = value;
+            }
         }
     }
 
     renderStoredEditCover(b, uiID);
+    return saved;
 }
 
 const BOOK_EDIT_OVERLAY = 'book-edit';
@@ -390,6 +414,16 @@ function openLoadedEditModal(
         if (authorSortInput) authorSortInput.value = authorSortState.baseSortName;
         syncAuthorSortDisclosure();
     };
+    const acceptSavedAuthorSort = (book: Book, submittedSort?: string) => {
+        const next = authorSortStateFromBook(book);
+        if (next.baseName !== currentPrimaryAuthorName()) return;
+        const before = submittedSort ?? currentAuthorSortBase();
+        const unchanged =
+            authorSortState.baseName !== next.baseName || authorSortInput?.value === before;
+        authorSortState = { ...next, forcedOpen: authorSortState.forcedOpen };
+        if (unchanged && authorSortInput) authorSortInput.value = next.baseSortName;
+        syncAuthorSortDisclosure();
+    };
     const openAuthorSortEditor = () => {
         authorSortState = { ...authorSortState, forcedOpen: true, error: '' };
         syncAuthorSortDisclosure();
@@ -463,7 +497,7 @@ function openLoadedEditModal(
         syncAuthorSortDisclosure();
     });
 
-    const formIsDirty = () => stateKey(readEditForm(form)) !== stateKey(savedState);
+    const formIsDirty = () => dirtyEditFields(readEditForm(form), savedState).length > 0;
     const isDirty = () => formIsDirty() || !!coverDraft?.hasPending() || authorSortDirty();
     const dirtyFieldCount = () =>
         dirtyEditFields(readEditForm(form), savedState).length +
@@ -577,8 +611,7 @@ function openLoadedEditModal(
             host?.showBook(b, listContext);
             overlay = { ...overlay, target: String(b.id) };
             updateOverlayEntry(overlay);
-            syncEditFormFromBook(form, b, uiID);
-            savedState = readEditForm(form);
+            savedState = syncEditFormFromBook(form, b, uiID);
             fetchedFieldSources.clear();
             coverDraft?.resetToStored();
             titleSortControls.close();
@@ -610,17 +643,18 @@ function openLoadedEditModal(
         let saved: Book | null = null;
         const authorChange = { changed: false, previous: '', next: '' };
         // Each successful step becomes the saved baseline even if a later step fails.
-        const acceptSavedBook = (updated: Book) => {
+        const acceptSavedBook = (updated: Book, previous: BookUpdate | FormData = savedState) => {
             notifyBooksUpdated([b], [updated]);
             if (closed) return;
             host?.applySaved(updated);
             Object.assign(b, updated);
-            syncEditFormFromBook(form, b, uiID);
+            savedState = syncEditFormFromBook(form, b, uiID, previous);
+            acceptSavedAuthorSort(b);
+            titleSortControls.resetFollow();
             coverDraft?.renderPending();
-            savedState = readEditForm(form);
             if (savedFlashTimer) window.clearTimeout(savedFlashTimer);
             savedFlashTimer = undefined;
-            if (flash && !coverDraft?.hasPending()) {
+            if (flash && !isDirty()) {
                 savedFlashTimer = flashSaved(uiID, () => {
                     savedFlashTimer = undefined;
                     updateDirtyState();
@@ -633,16 +667,14 @@ function openLoadedEditModal(
             if (!validateTitle(form, uiID)) return null;
             const previousState = savedState;
             const payload = submitPayload(readEditForm(form), previousState);
+            const submitted = new FormData(form);
             saving = true;
             updateDirtyState();
             try {
                 const updated = await updateBook(b.id, payload);
-                acceptSavedBook(updated);
+                acceptSavedBook(updated, submitted);
                 if (closed) return updated;
                 fetchedFieldSources.clear();
-                titleSortControls.close();
-                titleSortControls.resetFollow();
-                if (!authorSortChange) resetAuthorSortFromBook(b);
                 const prevAuthors = previousState.authors || '';
                 const nextAuthors = savedState.authors || '';
                 if (prevAuthors !== nextAuthors) {
@@ -682,7 +714,7 @@ function openLoadedEditModal(
                 if (closed) return saved;
                 Object.assign(b, saved);
                 host?.applySaved(saved);
-                resetAuthorSortFromBook(b);
+                acceptSavedAuthorSort(b, authorSortChange.sortName);
                 try {
                     const updated = await fetchBook(b.id);
                     if (closed) return saved;
@@ -713,9 +745,6 @@ function openLoadedEditModal(
                 acceptSavedBook(updated);
                 if (closed) return updated;
                 fetchedFieldSources.clear();
-                titleSortControls.close();
-                titleSortControls.resetFollow();
-                resetAuthorSortFromBook(b);
                 saved = updated;
             } catch {
                 return null;
@@ -739,7 +768,7 @@ function openLoadedEditModal(
         const resolvedTarget = target;
         if (isDirty()) {
             const saved = await commitCurrent(false);
-            if (!saved) return;
+            if (!saved || isDirty()) return;
         }
         if (!closed) void switchToBook(resolvedTarget);
     };
@@ -892,8 +921,8 @@ function renderEditHeader(uiID: string): string {
                         <button type="button" id="btn-edit-next-${uiID}" class="edit-nav-btn edit-nav-icon-btn" disabled aria-label="Next book" title="Next book">${icon('arrow_back', 18, 'edit-nav-next-icon')}</button>
                     </div>
                 </div>
+                <div id="save-indicator-${uiID}" class="save-indicator" aria-live="polite"></div>
                 <div class="edit-header-actions">
-                    <div id="save-indicator-${uiID}" class="save-indicator" aria-live="polite"></div>
                     <button type="button" id="btn-edit-fetch-metadata-${uiID}" class="metadata-fetch-action">Fetch meta</button>
                     <button type="submit" form="edit-book-form-${uiID}" id="btn-edit-save-${uiID}" class="edit-save-btn" disabled>Save</button>
                     <button class="modal-close edit-header-close" type="button" data-modal-close aria-label="Close">${icon('close', 24)}</button>

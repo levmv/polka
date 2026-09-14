@@ -40,10 +40,6 @@ export function readEditForm(form: HTMLFormElement): BookUpdate {
     };
 }
 
-export function stateKey(state: BookUpdate): string {
-    return JSON.stringify(state);
-}
-
 export function validateTitle(form: HTMLFormElement, uiID: string): boolean {
     const titleInput = form.querySelector<HTMLInputElement>('input[name="title"]');
     const valid = !!titleInput?.value.trim();
