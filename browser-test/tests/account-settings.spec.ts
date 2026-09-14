@@ -18,6 +18,27 @@ async function openSettings(page: Page, tab: string): Promise<Locator> {
   return modal;
 }
 
+async function holdNextSave(page: Page, url: string) {
+  let release!: () => void;
+  let saved!: () => void;
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const started = new Promise<void>((resolve) => {
+    saved = resolve;
+  });
+  let held = false;
+  await page.route(url, async (route) => {
+    if (route.request().method() !== 'PUT' || held) return route.continue();
+    held = true;
+    const response = await route.fetch();
+    saved();
+    await released;
+    await route.fulfill({ response });
+  });
+  return { started, release };
+}
+
 test.describe('Account settings', () => {
   test('loading library settings preserves a personal setting being edited', async ({ page }) => {
     let release!: () => void;
@@ -44,6 +65,55 @@ test.describe('Account settings', () => {
       await input.fill(previous);
     } finally {
       release();
+    }
+  });
+
+  test('keeps current choices across independent saves and reopening Settings', async ({
+    page,
+  }) => {
+    const modal = await openSettings(page, 'General');
+    const zone = modal.getByRole('combobox', { name: 'Time zone', exact: true });
+    const initialZone = await zone.inputValue();
+    const nextZone = initialZone === 'Europe/Berlin' ? 'UTC' : 'Europe/Berlin';
+    const hold = await holdNextSave(page, '**/api/settings');
+    try {
+      await zone.fill(nextZone);
+      await zone.press('Tab');
+      await hold.started;
+
+      await modal.getByLabel('Theme', { exact: true }).click();
+      await page.getByRole('option', { name: 'Light', exact: true }).click();
+      await expect
+        .poll(async () => (await page.request.get('/api/settings')).json())
+        .toMatchObject({ theme: 'light', time_zone: nextZone });
+
+      await page.keyboard.press('Escape');
+      await expect(modal).toHaveCount(0);
+      await page.locator('.account-settings').click();
+      await expect(zone).toHaveValue(nextZone);
+      await expect(modal.getByLabel('Theme', { exact: true })).toContainText('Light');
+
+      const cancelled = page.waitForEvent('requestfailed', {
+        predicate: (request) =>
+          request.url().endsWith('/api/settings') &&
+          request.method() === 'PUT' &&
+          request.postDataJSON().time_zone === nextZone,
+      });
+      await zone.fill(initialZone);
+      await zone.press('Tab');
+      await cancelled;
+      await expect
+        .poll(async () => (await page.request.get('/api/settings')).json())
+        .toMatchObject({ theme: 'light', time_zone: initialZone });
+
+      hold.release();
+      await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+      await page.reload();
+      await page.locator('.account-settings').click();
+      await expect(zone).toHaveValue(initialZone);
+      await expect(modal.getByLabel('Theme', { exact: true })).toContainText('Light');
+    } finally {
+      hold.release();
     }
   });
 
@@ -195,19 +265,37 @@ test.describe('Account settings', () => {
   test('reveals email settings only once an admin turns sending on', async ({ page }) => {
     const modal = await openSettings(page, 'Email delivery');
     const sendingSwitch = modal.getByRole('switch', { name: 'Sending books by email' });
+    const hold = await holdNextSave(page, '**/api/admin/delivery');
 
     await expect(sendingSwitch).toHaveAttribute('aria-checked', 'false');
     await expect(modal.getByRole('heading', { name: 'Mail server' })).toHaveCount(0);
     await expect(modal.getByRole('heading', { name: 'Send devices' })).toHaveCount(0);
 
-    await sendingSwitch.click();
-    await expect(sendingSwitch).toHaveAttribute('aria-checked', 'true');
-    await expect(modal.getByRole('heading', { name: 'Mail server' })).toBeVisible();
-    await expect(modal.getByRole('heading', { name: 'Send devices' })).toBeVisible();
-    await expect(modal.getByRole('heading', { name: 'Recent sends' })).toBeVisible();
+    try {
+      await sendingSwitch.click();
+      await hold.started;
+      await expect(sendingSwitch).toHaveAttribute('aria-checked', 'true');
+      await expect(modal.getByRole('heading', { name: 'Mail server' })).toBeVisible();
+      await expect(modal.getByRole('heading', { name: 'Send devices' })).toBeVisible();
+      await expect(modal.getByRole('heading', { name: 'Recent sends' })).toBeVisible();
+      await expect(sendingSwitch).toBeFocused();
 
-    await sendingSwitch.click();
-    await expect(modal.getByRole('heading', { name: 'Mail server' })).toHaveCount(0);
+      const saved = page.waitForResponse(
+        (response) =>
+          response.url().endsWith('/api/admin/delivery') &&
+          response.request().postDataJSON().enabled === false,
+      );
+      await page.keyboard.press('Space');
+      await expect(modal.getByRole('heading', { name: 'Mail server' })).toHaveCount(0);
+      await expect(sendingSwitch).toBeFocused();
+      await saved;
+      hold.release();
+      await expect(sendingSwitch).toHaveAttribute('aria-checked', 'false');
+      await openSettings(page, 'Email delivery');
+      await expect(sendingSwitch).toHaveAttribute('aria-checked', 'false');
+    } finally {
+      hold.release();
+    }
   });
 
   test('manages scoped users', async ({ page }) => {

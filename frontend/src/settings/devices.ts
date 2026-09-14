@@ -5,11 +5,9 @@ import {
     fetchDeliveryDevices,
     fetchEmailDeliverySettings,
     saveEmailDeliverySettings,
-    saveSendEnabled,
     sendEmailDeliveryTest,
     updateDeliveryDevice,
 } from '../api';
-import { sendEnabled, setSendEnabled } from '../bootstrap';
 import { createSelect, type ManagedSelect } from '../components/select';
 import { createToggle } from '../components/toggle';
 import { formField, textEl } from '../dom';
@@ -23,6 +21,7 @@ import type {
     DeliveryPreset,
     EmailDeliverySettings,
 } from '../types';
+import { sendingSetting } from './state';
 import {
     type AsyncLoadState,
     buttonEl,
@@ -61,9 +60,51 @@ export function createDevicesPanel(
         focusRecipients,
         loadError: '',
     };
+    const sections = document.createElement('div');
+    const setting = sendingSetting();
+    const toggle =
+        currentUser.role === 'admin'
+            ? createToggle({
+                  ariaLabel: 'Sending books by email',
+                  checked: setting.value,
+                  onChange: (checked) => {
+                      if (checked) state.loadError = '';
+                      setting.set(checked);
+                  },
+              })
+            : null;
+    const rows = document.createElement('div');
+    rows.className = 'settings-rows';
+    if (toggle) {
+        rows.append(
+            settingsRow(
+                'Sending',
+                'Send books to a Kindle, PocketBook, or any reader email address.',
+                toggle.el,
+            ),
+        );
+    }
+    const renderSections = () => renderDeliverySections(sections, currentUser, state);
+    let unsubscribeSending: (() => void) | null = null;
     return {
-        render: (root) => renderDevicesPanel(root, currentUser, state),
+        render: (root) => {
+            if (!root.isConnected) return;
+            unsubscribeSending?.();
+            root.replaceChildren(textEl('h3', 'settings-section-title', 'Email delivery'));
+            if (toggle) {
+                toggle.setChecked(setting.value);
+                root.append(rows);
+            }
+            root.append(sections);
+            unsubscribeSending = setting.subscribe((checked) => {
+                toggle?.setChecked(checked);
+                renderSections();
+            });
+            renderSections();
+        },
         unmount: () => {
+            unsubscribeSending?.();
+            unsubscribeSending = null;
             state.focusRecipients = false;
             state.securitySelect?.destroy();
             state.securitySelect = null;
@@ -73,7 +114,7 @@ export function createDevicesPanel(
 
 // Nothing below the switch exists for a library that does not send books. An
 // admin still sees the switch itself, because turning it on is the way in.
-function renderDevicesPanel(
+function renderDeliverySections(
     root: HTMLElement,
     currentUser: CurrentUser,
     state: DevicesState,
@@ -83,12 +124,8 @@ function renderDevicesPanel(
     state.securitySelect = null;
     root.replaceChildren();
     const isAdmin = currentUser.role === 'admin';
-    const rerender = () => renderDevicesPanel(root, currentUser, state);
-
-    root.append(textEl('h3', 'settings-section-title', 'Email delivery'));
-
-    if (isAdmin) root.append(createSendSwitchRow(rerender));
-    if (!sendEnabled()) return;
+    const rerender = () => renderDeliverySections(root, currentUser, state);
+    if (!sendingSetting().value) return;
 
     if (
         renderAsyncSection(state, {
@@ -122,34 +159,6 @@ function renderDevicesPanel(
             .querySelector<HTMLButtonElement>('.settings-section-action button')
             ?.focus({ preventScroll: true });
     }
-}
-
-function createSendSwitchRow(rerender: () => void): HTMLElement {
-    const rows = document.createElement('div');
-    rows.className = 'settings-rows';
-    const apply = async (checked: boolean) => {
-        try {
-            setSendEnabled(await saveSendEnabled(checked));
-        } catch (err) {
-            showToast(errorMessage(err, 'Failed to save sending setting'), { type: 'error' });
-            toggle.setChecked(!checked);
-            return;
-        }
-        rerender();
-    };
-    const toggle = createToggle({
-        ariaLabel: 'Sending books by email',
-        checked: sendEnabled(),
-        onChange: (checked) => void apply(checked),
-    });
-    rows.append(
-        settingsRow(
-            'Sending',
-            'Send books to a Kindle, PocketBook, or any reader email address.',
-            toggle.el,
-        ),
-    );
-    return rows;
 }
 
 function createEmailDeliveryBlock(state: DevicesState, rerender: () => void): HTMLElement {

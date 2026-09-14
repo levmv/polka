@@ -1,10 +1,4 @@
-import {
-    fetchAdminStorageStatus,
-    fetchBookJumps,
-    fetchBooks,
-    fetchCurrentUser,
-    fetchUserSettings,
-} from '../api';
+import { fetchAdminStorageStatus, fetchBookJumps, fetchBooks, fetchCurrentUser } from '../api';
 import {
     type BookListContext,
     bookURL,
@@ -29,16 +23,11 @@ import {
 } from '../router';
 import { queryTerm, seriesLibraryURL } from '../search-query';
 import { openSettingsModal } from '../settings';
+import { loadPersonalSettings, type PersonalSettings, writebackSetting } from '../settings/state';
 import { openCreateShelfDialog } from '../shelf-dialog';
 import { notifyShelvesChanged } from '../sidebar-shelves';
 import { showToast } from '../toast';
-import type {
-    AdminStorageStatus,
-    BookJump,
-    BookSequenceWindow,
-    BookSummary,
-    UserSettings,
-} from '../types';
+import type { BookJump, BookSequenceWindow, BookSummary } from '../types';
 import { openEditModal } from './book-edit';
 import { type ContinueReadingRail, createContinueReadingRail } from './continue-reading';
 import { createLibrarySelection, type LibrarySelection } from './library-selection';
@@ -96,7 +85,7 @@ interface LibraryViewState {
     loadingMore: boolean;
     loadFailure: { message: string; retry(): void } | null;
     loadMoreObserver: IntersectionObserver | null;
-    userSettings: UserSettings | null;
+    userSettings: PersonalSettings | null;
     canCurateCatalog: boolean;
     canManageStorage: boolean;
     canWriteback: boolean;
@@ -291,11 +280,18 @@ export function initLibrary(root: HTMLElement): RouteController {
             void fetchAdminStorageStatus()
                 .then((status) => {
                     if (state.phase === 'destroyed') return;
-                    applyAdminStorageStatus(state, status);
+                    const mode = writebackSetting(status.writeback.mode);
+                    const update = () => {
+                        state.canWriteback = mode.value === 'manual';
+                        state.selection?.refreshActions();
+                    };
+                    update();
+                    addCleanup(mode.subscribe(update));
                 })
                 .catch(() => {
                     if (state.phase === 'destroyed') return;
-                    applyAdminStorageStatus(state, null);
+                    state.canWriteback = false;
+                    state.selection?.refreshActions();
                 });
         }
         if (!state.loadingBooks && state.books.length === 0) {
@@ -368,20 +364,6 @@ export function initLibrary(root: HTMLElement): RouteController {
     document.addEventListener(CATALOG_CHANGED, handleCatalogChanged);
     addCleanup(() => document.removeEventListener(CATALOG_CHANGED, handleCatalogChanged));
 
-    const handleUserSettings = (event: Event) => {
-        const settings = (event as CustomEvent<UserSettings>).detail;
-        if (!settings || typeof settings.show_continue_reading !== 'boolean') return;
-        applyUserSettings(state, settings, true);
-    };
-    window.addEventListener('polka:user-settings', handleUserSettings);
-    addCleanup(() => window.removeEventListener('polka:user-settings', handleUserSettings));
-
-    const handleAdminStorage = (event: Event) => {
-        applyAdminStorageStatus(state, (event as CustomEvent<AdminStorageStatus>).detail || null);
-    };
-    window.addEventListener('polka:admin-storage', handleAdminStorage);
-    addCleanup(() => window.removeEventListener('polka:admin-storage', handleAdminStorage));
-
     // Deferred while suspended: the rail's capacity depends on a viewport this
     // instance is not showing in. resume() recomputes it.
     const handleResize = () => {
@@ -391,10 +373,17 @@ export function initLibrary(root: HTMLElement): RouteController {
     addCleanup(() => window.removeEventListener('resize', handleResize));
     addCleanup(() => document.body.classList.remove('has-library-jump-rail'));
 
-    void fetchUserSettings()
+    void loadPersonalSettings()
         .then((settings) => {
             if (state.phase === 'destroyed') return;
-            applyUserSettings(state, settings, false);
+            state.userSettings = settings;
+            addCleanup(
+                settings.show_continue_reading.subscribe(() => {
+                    state.rail.invalidate();
+                    syncContinueReading(state);
+                }),
+            );
+            syncContinueReading(state);
         })
         .catch(() => {
             /* main bootstrap keeps the default theme/settings behavior */
@@ -496,21 +485,6 @@ export function initLibrary(root: HTMLElement): RouteController {
 
 function renderedBookSelector(state: LibraryViewState): string {
     return state.view === 'table' ? '.table-row' : '.book-card';
-}
-
-function applyAdminStorageStatus(state: LibraryViewState, status: AdminStorageStatus | null): void {
-    state.canWriteback = status?.writeback.mode === 'manual';
-    state.selection?.refreshActions();
-}
-
-function applyUserSettings(
-    state: LibraryViewState,
-    settings: UserSettings,
-    resetRail: boolean,
-): void {
-    state.userSettings = settings;
-    if (resetRail) state.rail.invalidate();
-    syncContinueReading(state);
 }
 
 function readLibraryViewMode(): LibraryViewMode {
@@ -760,7 +734,8 @@ function cancelInFlightLoads(state: LibraryViewState): void {
 function syncContinueReading(state: LibraryViewState): void {
     if (state.phase !== 'active') return;
     state.rail.sync(
-        shouldShowContinueReading(state) && state.userSettings?.show_continue_reading === true,
+        shouldShowContinueReading(state) &&
+            state.userSettings?.show_continue_reading.value === true,
     );
 }
 

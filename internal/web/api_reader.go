@@ -108,15 +108,6 @@ func annotationDTOs(rows []db.Annotation) []AnnotationDTO {
 }
 
 func (s *Server) handleAPIContinueReading(w http.ResponseWriter, r *http.Request) {
-	settings, err := db.GetUserSettings(s.db.Read(r.Context()), UserID(r.Context()))
-	if writeUserSettingsError(w, r, err) {
-		return
-	}
-	if !settings.ShowContinueReading {
-		writeJSON(w, http.StatusOK, []ContinueReadingDTO{})
-		return
-	}
-
 	limit := 8
 	if raw := r.URL.Query().Get("limit"); raw != "" {
 		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {

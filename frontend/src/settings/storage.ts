@@ -282,11 +282,6 @@ function folderImportControl(state: StorageState, rerender: () => void): HTMLEle
             state.loaded = true;
             state.folderImportPreview = null;
             state.folderImportResult = result.failed > 0 ? result : null;
-            window.dispatchEvent(
-                new CustomEvent<AdminStorageStatus>('polka:admin-storage', {
-                    detail: result.storage,
-                }),
-            );
             if (result.imported > 0) notifyCatalogChanged();
             if (result.failed === 0) showToast(folderImportResultText(result));
         } catch (err) {

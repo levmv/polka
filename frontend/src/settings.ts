@@ -1,8 +1,8 @@
-import { sendEnabled } from './bootstrap';
 import { openModal } from './modal';
 import { createAppsPanel } from './settings/apps';
 import { createDevicesPanel } from './settings/devices';
 import { createGeneralPanel } from './settings/general';
+import { sendingSetting } from './settings/state';
 import { createStoragePanel } from './settings/storage';
 import { buttonEl, type SettingsPanel } from './settings/ui';
 import { createUsersPanel } from './settings/users';
@@ -62,7 +62,7 @@ export function openSettingsModal(
     if (currentUser.role === 'admin') availableTabs.push('storage');
     availableTabs.push('apps', 'users');
     // Admins can enable email delivery; other roles see it only when enabled.
-    if (sendEnabled() || currentUser.role === 'admin') availableTabs.push('devices');
+    if (sendingSetting().value || currentUser.role === 'admin') availableTabs.push('devices');
     let activeTab: SettingsTab = availableTabs.includes(initialTab) ? initialTab : 'general';
 
     // Per-tab containers keep late async renders from overwriting the active tab.

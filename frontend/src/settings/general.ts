@@ -1,19 +1,13 @@
-import {
-    fetchAdminStorageStatus,
-    fetchUserSettings,
-    retryFailedWriteback,
-    saveAdminStorageStatus,
-    saveUserSettings,
-} from '../api';
+import { fetchAdminStorageStatus, retryFailedWriteback } from '../api';
 import { appVersion } from '../bootstrap';
-import { createSelect, type ManagedSelect } from '../components/select';
+import { createSelect } from '../components/select';
 import { createToggle } from '../components/toggle';
 import { textEl } from '../dom';
 import { errorMessage } from '../errors';
-import { applyTheme } from '../theme';
 import { suggestedTimeZones } from '../time-zone';
 import { showToast } from '../toast';
-import type { AdminStorageStatus, CurrentUser, ThemePreference, UserSettings } from '../types';
+import type { AdminStorageStatus, CurrentUser, ThemePreference } from '../types';
+import { loadPersonalSettings, type PersonalSettings, writebackSetting } from './state';
 import {
     type AsyncLoadState,
     errorNote,
@@ -25,13 +19,13 @@ import {
 } from './ui';
 
 type GeneralState = AsyncLoadState & {
-    settings: UserSettings | null;
+    settings: PersonalSettings | null;
     status: AdminStorageStatus | null;
     storageLoading: boolean;
     storageError: string;
     writebackHost: HTMLElement | null;
-    themeSelect: ManagedSelect | null;
-    writebackSelect: ManagedSelect | null;
+    cleanup: (() => void)[];
+    destroyWriteback: (() => void) | null;
 };
 
 export function createGeneralPanel(currentUser: CurrentUser): SettingsPanel {
@@ -43,8 +37,8 @@ export function createGeneralPanel(currentUser: CurrentUser): SettingsPanel {
         storageLoading: false,
         storageError: '',
         writebackHost: null,
-        themeSelect: null,
-        writebackSelect: null,
+        cleanup: [],
+        destroyWriteback: null,
         loadError: '',
     };
     return {
@@ -54,17 +48,12 @@ export function createGeneralPanel(currentUser: CurrentUser): SettingsPanel {
 }
 
 function destroyGeneralControls(state: GeneralState): void {
-    state.themeSelect?.destroy();
-    state.writebackSelect?.destroy();
-    state.themeSelect = null;
-    state.writebackSelect = null;
+    for (const cleanup of state.cleanup.splice(0)) cleanup();
+    state.destroyWriteback?.();
+    state.destroyWriteback = null;
     state.writebackHost = null;
 }
 
-// The General panel autosaves: personal controls persist through PUT
-// /api/settings; admin-only catalog-level rows save through their owning admin
-// APIs. Success is its own feedback; only failures surface, as a toast or local
-// settings row.
 function renderGeneralPanel(
     root: HTMLElement,
     currentUser: CurrentUser,
@@ -79,7 +68,7 @@ function renderGeneralPanel(
         renderAsyncSection(state, {
             target: root,
             load: async () => {
-                state.settings = await fetchUserSettings();
+                state.settings = await loadPersonalSettings();
             },
             rerender: () => renderGeneralPanel(root, currentUser, state),
             errorFallback: 'Failed to load settings',
@@ -92,52 +81,25 @@ function renderGeneralPanel(
     if (!state.settings) return;
     const settings = state.settings;
 
-    // Persist a partial change immediately. On failure, toast and revert the
-    // control to its previous on-screen value.
-    const persist = async (patch: Partial<UserSettings>, revert: () => void) => {
-        try {
-            const saved = await saveUserSettings(patch);
-            state.settings = saved;
-            applyTheme(saved.theme);
-            window.dispatchEvent(
-                new CustomEvent<UserSettings>('polka:user-settings', { detail: saved }),
-            );
-        } catch (err) {
-            showToast(errorMessage(err, 'Failed to save'), { type: 'error' });
-            revert();
-        }
-    };
-
     const themeSelect = createSelect({
         ariaLabel: 'Theme',
-        value: settings.theme,
+        value: settings.theme.value,
         options: [
             { value: 'system', label: 'System' },
             { value: 'light', label: 'Light' },
             { value: 'dark', label: 'Dark' },
             { value: 'sepia', label: 'Sepia' },
         ],
-        onChange: (value) => {
-            const previous = state.settings?.theme ?? settings.theme;
-            applyTheme(value as ThemePreference);
-            void persist({ theme: value as ThemePreference }, () => {
-                themeSelect.setValue(previous);
-                applyTheme(previous);
-            });
-        },
+        onChange: (value) => settings.theme.set(value as ThemePreference),
     });
-
-    state.themeSelect = themeSelect;
+    state.cleanup.push(themeSelect.destroy, settings.theme.subscribe(themeSelect.setValue));
 
     const continueToggle = createToggle({
         ariaLabel: 'Show Continue reading rail',
-        checked: settings.show_continue_reading,
-        onChange: (checked) => {
-            void persist({ show_continue_reading: checked }, () =>
-                continueToggle.setChecked(!checked),
-            );
-        },
+        checked: settings.show_continue_reading.value,
+        onChange: settings.show_continue_reading.set,
     });
+    state.cleanup.push(settings.show_continue_reading.subscribe(continueToggle.setChecked));
 
     const rows = document.createElement('div');
     rows.className = 'settings-rows';
@@ -149,25 +111,26 @@ function renderGeneralPanel(
     timeZoneInput.setAttribute('list', 'settings-time-zones');
     timeZoneInput.autocomplete = 'off';
     timeZoneInput.spellcheck = false;
-    timeZoneInput.value = settings.time_zone;
+    timeZoneInput.value = settings.time_zone.value;
     timeZoneInput.placeholder = 'Europe/Berlin';
     const timeZones = document.createElement('datalist');
     timeZones.id = 'settings-time-zones';
-    for (const zone of suggestedTimeZones(settings.time_zone)) {
+    for (const zone of suggestedTimeZones(settings.time_zone.value)) {
         const option = document.createElement('option');
         option.value = zone;
         timeZones.append(option);
     }
     timeZoneInput.addEventListener('change', () => {
-        const previous = state.settings?.time_zone ?? settings.time_zone;
         const next = timeZoneInput.value.trim();
         timeZoneInput.value = next;
-        if (next !== previous) {
-            void persist({ time_zone: next }, () => {
-                timeZoneInput.value = previous;
-            });
-        }
+        settings.time_zone.set(next);
     });
+    state.cleanup.push(
+        settings.time_zone.subscribe((value, previous) => {
+            // A save response must not overwrite text that is still being edited.
+            if (timeZoneInput.value === previous) timeZoneInput.value = value;
+        }),
+    );
     timeZoneField.append(timeZoneInput, timeZones);
     rows.append(
         settingsRow('Theme', 'How polka looks. System follows your device.', themeSelect.el),
@@ -208,8 +171,8 @@ function appendWritebackRow(rows: HTMLElement, state: GeneralState): void {
         // Tab changes can replace the host during a request. Update the latest
         // host without rebuilding the personal controls and losing their edits.
         if (!state.writebackHost) return;
-        state.writebackSelect?.destroy();
-        state.writebackSelect = null;
+        state.destroyWriteback?.();
+        state.destroyWriteback = null;
         state.writebackHost.replaceChildren(
             state.status
                 ? writebackControl(state, rerender)
@@ -248,24 +211,25 @@ function writebackControl(state: GeneralState, rerender: () => void): HTMLElemen
     const wrap = document.createElement('div');
     wrap.className = 'settings-writeback-control';
     const wb = state.status?.writeback;
+    if (!wb) return wrap;
+    const setting = writebackSetting(wb.mode);
 
     const select = createSelect({
         ariaLabel: 'Metadata write-back mode',
-        value: wb?.mode ?? 'manual',
+        value: setting.value,
         options: [
             { value: 'manual', label: 'Manual' },
             { value: 'auto', label: 'Auto' },
             { value: 'off', label: 'Off' },
         ],
-        onChange: (mode) =>
-            void saveWritebackMode(
-                state,
-                mode as AdminStorageStatus['writeback']['mode'],
-                rerender,
-            ),
+        onChange: (mode) => setting.set(mode as AdminStorageStatus['writeback']['mode']),
     });
 
-    state.writebackSelect = select;
+    const unsubscribe = setting.subscribe(select.setValue);
+    state.destroyWriteback = () => {
+        unsubscribe();
+        select.destroy();
+    };
     wrap.append(select.el, writebackCountsLine(state, rerender));
     return wrap;
 }
@@ -291,11 +255,6 @@ function writebackCountsLine(state: GeneralState, rerender: () => void): HTMLEle
                 try {
                     const result = await retryFailedWriteback();
                     state.status = result.storage;
-                    window.dispatchEvent(
-                        new CustomEvent<AdminStorageStatus>('polka:admin-storage', {
-                            detail: result.storage,
-                        }),
-                    );
                     showToast(
                         result.queued === 0
                             ? 'No failed metadata writes'
@@ -311,22 +270,4 @@ function writebackCountsLine(state: GeneralState, rerender: () => void): HTMLEle
         );
     }
     return line;
-}
-
-async function saveWritebackMode(
-    state: GeneralState,
-    mode: AdminStorageStatus['writeback']['mode'],
-    rerender: () => void,
-): Promise<void> {
-    try {
-        state.status = await saveAdminStorageStatus({ writeback: { mode } });
-        window.dispatchEvent(
-            new CustomEvent<AdminStorageStatus>('polka:admin-storage', { detail: state.status }),
-        );
-    } catch (err) {
-        showToast(errorMessage(err, 'Failed to save write-back mode'), { type: 'error' });
-    }
-    // Re-render either way: on success to refresh the counts, on failure to snap
-    // the select back to the stored mode.
-    rerender();
 }

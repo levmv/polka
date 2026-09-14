@@ -17,7 +17,6 @@ import {
     listURLForContext,
     readBookListContextFromLocation,
 } from '../book-list-context';
-import { SEND_ENABLED_EVENT, sendEnabled } from '../bootstrap';
 import { notifyCatalogChanged } from '../catalog-events';
 import { coverImgHtml } from '../cover';
 import { escapeHtml, formField, textEl } from '../dom';
@@ -44,6 +43,7 @@ import {
 } from '../router';
 import { queryTerm, seriesLibraryURL } from '../search-query';
 import { openSettingsModal } from '../settings';
+import { sendingSetting } from '../settings/state';
 import { inlineSettingsButton } from '../settings/ui';
 import { showToast } from '../toast';
 import type {
@@ -477,7 +477,7 @@ function renderBookDetail(
         b.assets.forEach((a: Asset) => {
             assetsHtml += assetDownloadHtml(a);
         });
-        if (sendEnabled()) {
+        if (sendingSetting().value) {
             assetsHtml += `
                 <button id="btn-send-book" class="action-btn" type="button">
                     ${icon('upload', 16)}Send
@@ -661,8 +661,7 @@ function renderBookDetail(
     const handleSendEnabled = () => {
         if (view.book?.id === b.id) renderBookDetail(view, container, opts);
     };
-    window.addEventListener(SEND_ENABLED_EVENT, handleSendEnabled);
-    cleanup.push(() => window.removeEventListener(SEND_ENABLED_EVENT, handleSendEnabled));
+    cleanup.push(sendingSetting().subscribe(handleSendEnabled));
 
     const destroy = () => {
         for (const fn of cleanup.splice(0).reverse()) fn();

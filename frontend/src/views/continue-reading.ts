@@ -1,5 +1,6 @@
-import { fetchContinueReading, saveUserSettings } from '../api';
+import { fetchContinueReading } from '../api';
 import { coverUrl } from '../cover';
+import { loadPersonalSettings } from '../settings/state';
 import type { ContinueReadingItem } from '../types';
 
 // One desktop row's worth; older books belong to the library view below.
@@ -34,20 +35,11 @@ export function createContinueReadingRail(
     const button = root.querySelector<HTMLButtonElement>('#continue-reading-dismiss');
 
     const dismiss = async () => {
-        if (!button || !section) return;
-        button.disabled = true;
         try {
-            const settings = await saveUserSettings({ show_continue_reading: false });
-            window.dispatchEvent(new CustomEvent('polka:user-settings', { detail: settings }));
-            if (destroyed) return;
-            visible = false;
-            loaded = true;
-            items = [];
-            section.hidden = true;
+            const settings = await loadPersonalSettings();
+            settings.show_continue_reading.set(false);
         } catch (e) {
             console.error('Failed to hide Continue reading:', e);
-        } finally {
-            if (!destroyed) button.disabled = false;
         }
     };
     button?.addEventListener('click', dismiss);

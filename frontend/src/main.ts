@@ -1,4 +1,4 @@
-import { fetchCurrentUser, fetchUserSettings } from './api';
+import { fetchCurrentUser } from './api';
 import {
     historyStateWithScroll,
     newEntryID,
@@ -30,11 +30,12 @@ import {
     type ScrollPosition,
     setAppNavigate,
 } from './router';
+import { loadPersonalSettings } from './settings/state';
 import { initSidebarAccount } from './sidebar-account';
 import { initSidebarCuration } from './sidebar-curation';
 import { initSidebarShelves, syncSidebarShelfActive } from './sidebar-shelves';
 import { initSidebarUpload } from './sidebar-upload';
-import { applyCachedTheme, applyTheme } from './theme';
+import { applyCachedTheme } from './theme';
 import { initAuthors } from './views/authors-view';
 import { initBookDetail } from './views/book-view';
 import { initCleanup } from './views/cleanup-view';
@@ -125,14 +126,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const currentUserPromise = fetchCurrentUser();
     initSidebarUpload(currentUserPromise);
     initSidebarShelves();
-    fetchUserSettings()
-        .then((settings) => {
-            applyTheme(settings.theme);
-            window.dispatchEvent(new CustomEvent('polka:user-settings', { detail: settings }));
-        })
-        .catch(() => {
-            /* keep cached/system theme */
-        });
+    loadPersonalSettings().catch(() => {
+        /* keep cached/system theme */
+    });
 
     const router = initRouter(routes);
     const navigate = initNavigation(router, () => setSidebarOpen(false));

@@ -407,6 +407,11 @@ func TestAPIContinueReading(t *testing.T) {
 	defer database.Close()
 
 	user := mustUser(t, database, "reader", db.RoleMember)
+	if _, err := database.SaveUserSettings(t.Context(), user.ID, db.UserSettingsPatch{
+		ShowContinueReading: new(false),
+	}); err != nil {
+		t.Fatal(err)
+	}
 	mustExec(t, database, `
 			INSERT INTO user_asset_state (user_id, asset_id, progress, locator, updated_at)
 			VALUES (?, 1, 0.42, '{"cfi":"epubcfi(/6/2)"}', 100);
@@ -431,23 +436,5 @@ func TestAPIContinueReading(t *testing.T) {
 	}
 	if items[0].ID != 1 || items[0].AssetID != 1 || items[0].Progress != 0.42 || len(items[0].Assets) != 1 {
 		t.Fatalf("continue item = %+v", items[0])
-	}
-
-	if _, err := database.SaveUserSettings(t.Context(), user.ID, db.UserSettingsPatch{
-		ShowContinueReading: new(false),
-	}); err != nil {
-		t.Fatalf("hide continue reading: %v", err)
-	}
-	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, user.ID, http.MethodGet, "/api/reader/continue", nil))
-	if w.Code != http.StatusOK {
-		t.Fatalf("hidden continue status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
-	}
-	items = nil
-	if err := json.UnmarshalRead(w.Body, &items); err != nil {
-		t.Fatalf("decode hidden continue items: %v", err)
-	}
-	if len(items) != 0 {
-		t.Fatalf("got %d hidden continue items, want 0", len(items))
 	}
 }

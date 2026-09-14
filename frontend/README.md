@@ -75,6 +75,8 @@ visible page or URL. `history-state.ts` decides when to retain or resume it;
   mutation, including completion after its initiating UI closes.
 - Account and reader preferences share one settings record. Save only changed
   fields to avoid overwriting another surface's choices.
+- Simple autosaved settings share page-lifetime values in `settings/state.ts`.
+  Mounted controls subscribe to those values and release subscriptions on unmount.
 - Use `textContent` or `escapeHtml()` for external text. Insert HTML only from
   trusted renderers or server-sanitized fields. Display book descriptions from
   `description_html`; `description_source` belongs to editing.

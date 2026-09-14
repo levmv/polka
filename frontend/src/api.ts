@@ -327,7 +327,10 @@ export async function fetchUserSettings(): Promise<UserSettings> {
 
 export type UserSettingsUpdate = Partial<Omit<UserSettings, 'updated_at'>>;
 
-export async function saveUserSettings(payload: UserSettingsUpdate): Promise<UserSettings> {
+export async function saveUserSettings(
+    payload: UserSettingsUpdate,
+    signal?: AbortSignal,
+): Promise<UserSettings> {
     const request: UserSettingsUpdate = {
         theme: payload.theme,
         show_continue_reading: payload.show_continue_reading,
@@ -338,11 +341,10 @@ export async function saveUserSettings(payload: UserSettingsUpdate): Promise<Use
         reader_column_width: payload.reader_column_width,
         reader_line_height: payload.reader_line_height,
     };
-    const saved = await fetchJSON<UserSettings>(
-        '/api/settings',
-        'Failed to save settings',
-        jsonBody('PUT', request),
-    );
+    const saved = await fetchJSON<UserSettings>('/api/settings', 'Failed to save settings', {
+        ...jsonBody('PUT', request),
+        signal,
+    });
     userSettingsPromise = null;
     return saved;
 }
@@ -424,20 +426,23 @@ export async function fetchAdminStorageStatus(): Promise<AdminStorageStatus> {
     );
 }
 
-export async function saveAdminStorageStatus(payload: {
-    ingest?: {
-        enabled?: boolean;
-        delete_sources?: boolean;
-        path?: string;
-    };
-    writeback?: {
-        mode?: WritebackStatus['mode'];
-    };
-}): Promise<AdminStorageStatus> {
+export async function saveAdminStorageStatus(
+    payload: {
+        ingest?: {
+            enabled?: boolean;
+            delete_sources?: boolean;
+            path?: string;
+        };
+        writeback?: {
+            mode?: WritebackStatus['mode'];
+        };
+    },
+    signal?: AbortSignal,
+): Promise<AdminStorageStatus> {
     return await fetchJSON<AdminStorageStatus>(
         '/api/admin/storage',
         'Failed to save storage settings',
-        jsonBody('PATCH', payload),
+        { ...jsonBody('PATCH', payload), signal },
     );
 }
 
@@ -473,11 +478,11 @@ export async function retryFailedWriteback(): Promise<WritebackRetryResult> {
     );
 }
 
-export async function saveSendEnabled(enabled: boolean): Promise<boolean> {
+export async function saveSendEnabled(enabled: boolean, signal?: AbortSignal): Promise<boolean> {
     const saved = await fetchJSON<{ enabled: boolean }>(
         '/api/admin/delivery',
         'Failed to save sending setting',
-        jsonBody('PUT', { enabled }),
+        { ...jsonBody('PUT', { enabled }), signal },
     );
     return saved.enabled === true;
 }
