@@ -47,36 +47,17 @@ test.describe('Account settings', () => {
     }
   });
 
-  test('shows reading app setup and manages credentials', async ({ page, context }) => {
+  test('shows reading app setup and manages app passwords', async ({ page, context }) => {
     await context.grantPermissions(['clipboard-read', 'clipboard-write']);
-    const shelfName = 'Kobo Query';
-    await createQueryShelf(page, shelfName, 'author:"Noise Author" tag:"private"');
     let modal = await openSettings(page, 'Reading apps');
 
     const opdsSetup = modal.locator('.settings-opds-setup');
     await expect(opdsSetup.locator('.settings-opds-url')).toHaveValue(/\/opds$/);
     await expect(opdsSetup.getByRole('textbox', { name: 'Username' })).toHaveValue('polka');
 
-    await modal.getByRole('button', { name: 'Set up Kobo' }).click();
-    const submodal = page.locator('.modal-compact');
-    await submodal.getByLabel('Shelf').selectOption({ label: `${shelfName} · smart shelf` });
-    await submodal.getByRole('button', { name: 'Create' }).click();
-
-    await expect(submodal.getByRole('heading', { name: 'Connect Kobo' })).toBeVisible();
-    const koboSetupURL = await submodal
-      .getByRole('textbox', { name: 'Kobo setup URL' })
-      .inputValue();
-    await submodal.getByRole('button', { name: 'Done' }).click();
-
-    modal = await openSettings(page, 'Reading apps');
-    await modal.locator('.settings-kobo-row').getByText(shelfName, { exact: true }).click();
-    await expect(submodal.getByRole('textbox', { name: 'Kobo setup URL' })).toHaveValue(
-      koboSetupURL,
-    );
-    await submodal.getByRole('button', { name: 'Done' }).click();
-
     const tokenName = 'koreader';
     await modal.getByRole('button', { name: 'New app password' }).click();
+    const submodal = page.locator('.modal-compact');
     await submodal.getByLabel('Name').fill(tokenName);
     await submodal.getByRole('button', { name: 'Create' }).click();
 
@@ -128,9 +109,59 @@ test.describe('Account settings', () => {
     await expect(submodal).toHaveCount(0);
     await page.locator('.modal-confirm').getByRole('button', { name: 'Revoke' }).click();
     await expect(tokenRow).toHaveCount(0);
+  });
 
-    await modal.locator('.settings-kobo-row').getByRole('button', { name: 'Revoke' }).click();
-    await expect(submodal).toHaveCount(0);
+  test('sets up Kobo, changes its shelf, and recovers from shelf deletion', async ({ page }) => {
+    const shelfIDs: number[] = [];
+    for (const name of ['On Kobo', 'Next books']) {
+      const response = await page.request.post('/api/shelves', {
+        data: { name, kind: 'query', query: 'author:"Noise Author"' },
+      });
+      expect(response.ok()).toBe(true);
+      shelfIDs.push((await response.json()).id);
+    }
+    let modal = await openSettings(page, 'Reading apps');
+    await modal.getByRole('button', { name: 'Set up Kobo' }).click();
+    const dialog = page.locator('.modal-compact');
+    await dialog.getByLabel('Shelf').selectOption({ label: 'On Kobo · smart shelf' });
+    await dialog.getByRole('button', { name: 'Create' }).click();
+    await expect(dialog.getByRole('heading', { name: 'Connect Kobo' })).toBeVisible();
+    const setupURL = await dialog.getByRole('textbox', { name: 'Kobo setup URL' }).inputValue();
+    await dialog.getByRole('button', { name: 'Done' }).click();
+
+    modal = await openSettings(page, 'Reading apps');
+    const row = modal.locator('.settings-kobo-row');
+    await row.getByText('On Kobo', { exact: true }).click();
+    await expect(dialog.getByRole('textbox', { name: 'Kobo setup URL' })).toHaveValue(setupURL);
+    await dialog.getByRole('button', { name: 'Done' }).click();
+
+    await row.getByRole('button', { name: 'Change shelf' }).click();
+    await expect(dialog).toContainText('Books outside the new shelf will be removed');
+    await dialog.getByLabel('Shelf').selectOption(String(shelfIDs[1]));
+    await dialog.getByRole('button', { name: 'Save', exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(row).toContainText('Next books');
+    await row.getByRole('button', { name: 'Details', exact: true }).click();
+    await expect(dialog.getByRole('textbox', { name: 'Kobo setup URL' })).toHaveValue(setupURL);
+    await dialog.getByRole('button', { name: 'Done' }).click();
+
+    const deleted = await page.request.delete(`/api/shelves/${shelfIDs[1]}`);
+    expect(deleted.ok()).toBe(true);
+    modal = await openSettings(page, 'Reading apps');
+    await expect(row).toContainText('No shelf selected');
+    await expect(row).toContainText('Its books will be removed from Kobo on the next sync');
+    await row.getByRole('button', { name: 'Details', exact: true }).click();
+    await expect(dialog.getByRole('textbox', { name: 'Kobo setup URL' })).toHaveValue(setupURL);
+    await dialog.getByRole('button', { name: 'Done' }).click();
+
+    await row.getByRole('button', { name: 'Change shelf' }).click();
+    await dialog.getByLabel('Shelf').selectOption(String(shelfIDs[0]));
+    await dialog.getByRole('button', { name: 'Save', exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(row).toContainText('On Kobo');
+
+    await row.getByRole('button', { name: 'Revoke' }).click();
+    await expect(dialog).toHaveCount(0);
     await page.locator('.modal-confirm').getByRole('button', { name: 'Revoke' }).click();
     await expect(modal.getByRole('button', { name: 'Set up Kobo' })).toBeVisible();
   });
@@ -161,22 +192,22 @@ test.describe('Account settings', () => {
     await expect(modal.locator('.settings-user-row', { hasText: 'admin' })).toBeVisible();
   });
 
-  test('reveals device sending only once an admin turns it on', async ({ page }) => {
-    const modal = await openSettings(page, 'Devices');
-    const sendingSwitch = modal.getByRole('switch', { name: 'Sending books to a device' });
+  test('reveals email settings only once an admin turns sending on', async ({ page }) => {
+    const modal = await openSettings(page, 'Email delivery');
+    const sendingSwitch = modal.getByRole('switch', { name: 'Sending books by email' });
 
     await expect(sendingSwitch).toHaveAttribute('aria-checked', 'false');
-    await expect(modal.getByRole('heading', { name: 'Email delivery' })).toHaveCount(0);
+    await expect(modal.getByRole('heading', { name: 'Mail server' })).toHaveCount(0);
     await expect(modal.getByRole('heading', { name: 'Send devices' })).toHaveCount(0);
 
     await sendingSwitch.click();
     await expect(sendingSwitch).toHaveAttribute('aria-checked', 'true');
-    await expect(modal.getByRole('heading', { name: 'Email delivery' })).toBeVisible();
+    await expect(modal.getByRole('heading', { name: 'Mail server' })).toBeVisible();
     await expect(modal.getByRole('heading', { name: 'Send devices' })).toBeVisible();
     await expect(modal.getByRole('heading', { name: 'Recent sends' })).toBeVisible();
 
     await sendingSwitch.click();
-    await expect(modal.getByRole('heading', { name: 'Email delivery' })).toHaveCount(0);
+    await expect(modal.getByRole('heading', { name: 'Mail server' })).toHaveCount(0);
   });
 
   test('manages scoped users', async ({ page }) => {

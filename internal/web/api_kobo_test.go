@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -30,7 +31,7 @@ func TestAPIKoboConnectionLifecycleAndIsolation(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	req := jsonRequest(t, s, alice.ID, http.MethodPost, "/api/kobo-connection", koboConnectionCreateRequest{ShelfID: shelf.ID})
+	req := jsonRequest(t, s, alice.ID, http.MethodPost, "/api/kobo-connection", koboConnectionShelfRequest{ShelfID: shelf.ID})
 	req.Host = "books.example"
 	req.Header.Set("X-Forwarded-Proto", "https")
 	handler.ServeHTTP(w, req)
@@ -79,9 +80,44 @@ func TestAPIKoboConnectionLifecycleAndIsolation(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, bob.ID, http.MethodPost, "/api/kobo-connection", koboConnectionCreateRequest{ShelfID: shelf.ID}))
+	handler.ServeHTTP(w, jsonRequest(t, s, bob.ID, http.MethodPost, "/api/kobo-connection", koboConnectionShelfRequest{ShelfID: shelf.ID}))
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("invisible shelf create = %d %s", w.Code, w.Body.String())
+	}
+
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodPost, "/api/kobo-connection", koboConnectionShelfRequest{ShelfID: shelf.ID}))
+	if w.Code != http.StatusConflict {
+		t.Fatalf("duplicate create = %d %s", w.Code, w.Body.String())
+	}
+	newShelf, err := database.CreateShelf(t.Context(), alice.ID, db.ShelfPersonal, "At home", db.ShelfManual, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodPatch, "/api/kobo-connection", koboConnectionShelfRequest{ShelfID: newShelf.ID}))
+	var changed KoboConnectionDTO
+	decodeJSON(t, w, &changed)
+	changedURL, err := url.Parse(changed.SetupURL)
+	if err != nil || changedURL.Path != setupURL.Path || changed.ID != created.ID || changed.ShelfID != newShelf.ID {
+		t.Fatalf("changed connection = %+v, err %v", changed, err)
+	}
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodDelete, "/api/shelves/"+strconv.FormatInt(newShelf.ID, 10), nil))
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("delete selected shelf = %d %s", w.Code, w.Body.String())
+	}
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodGet, "/api/kobo-connection", nil))
+	var detached KoboConnectionDTO
+	decodeJSON(t, w, &detached)
+	if detached.ID != created.ID || detached.ShelfID != 0 || detached.ShelfName != "" {
+		t.Fatalf("detached connection = %+v", detached)
+	}
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, setupURL.Path+"/v1/library/sync", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("detached connection sync = %d %s", w.Code, w.Body.String())
 	}
 
 	w = httptest.NewRecorder()

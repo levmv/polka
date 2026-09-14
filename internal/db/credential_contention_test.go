@@ -17,7 +17,7 @@ func TestDeviceAuthenticationWhileWriterIsHeld(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	connection, err := database.ReplaceKoboConnection(t.Context(), user.ID, shelf.ID)
+	connection, err := database.CreateKoboConnection(t.Context(), user.ID, shelf.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

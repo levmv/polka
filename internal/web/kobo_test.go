@@ -55,7 +55,7 @@ func TestKoboNativeLibraryRoutesAndRevocation(t *testing.T) {
 	if err := database.AddBookToShelf(t.Context(), shelf.ID, user.ID, 143); err != nil {
 		t.Fatal(err)
 	}
-	connection, err := database.ReplaceKoboConnection(context.Background(), user.ID, shelf.ID)
+	connection, err := database.CreateKoboConnection(context.Background(), user.ID, shelf.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,7 +287,7 @@ func TestKoboMetadataRequiresCurrentUserScope(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	connection, err := database.ReplaceKoboConnection(context.Background(), reader.ID, shelf.ID)
+	connection, err := database.CreateKoboConnection(context.Background(), reader.ID, shelf.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -17,13 +17,14 @@ const KoboSyncPageLimit = 100
 
 var (
 	ErrKoboConnectionNotFound = errors.New("kobo connection not found")
+	ErrKoboConnectionExists   = errors.New("kobo connection already exists")
 	ErrKoboInvalidCursor      = errors.New("invalid kobo sync cursor")
 )
 
 type KoboConnection struct {
 	ID         int64
 	UserID     int64
-	ShelfID    int64
+	ShelfID    sql.NullInt64
 	ShelfName  string
 	Token      string
 	Revision   int64
@@ -65,40 +66,60 @@ type koboCandidate struct {
 	Fingerprint []byte
 }
 
-// ReplaceKoboConnection creates a fresh URL credential for one selected shelf.
-// Replacing instead of editing makes both revocation and a shelf change atomic:
-// the old token and its projection disappear in the same transaction.
-func (db *DB) ReplaceKoboConnection(ctx context.Context, userID, shelfID int64) (*KoboConnection, error) {
-	shelf, err := GetShelfForUser(db.Read(ctx), shelfID, userID)
-	if err != nil {
-		return nil, err
-	}
+// CreateKoboConnection creates a retrievable URL credential for a selected shelf.
+func (db *DB) CreateKoboConnection(ctx context.Context, userID, shelfID int64) (*KoboConnection, error) {
 	token := newDeviceToken()
-
-	err = db.Transact(ctx, func(tx *Tx) error {
-		if _, err := tx.Exec("DELETE FROM kobo_connections WHERE user_id = ?", userID); err != nil {
-			return fmt.Errorf("replace kobo connection: %w", err)
+	var connection *KoboConnection
+	err := db.Transact(ctx, func(tx *Tx) error {
+		shelf, err := GetShelfForUser(tx, shelfID, userID)
+		if err != nil {
+			return err
 		}
 		if _, err := tx.Exec(`
 			INSERT INTO kobo_connections (user_id, shelf_id, token)
 			VALUES (?, ?, ?)
 		`, userID, shelf.ID, token); err != nil {
+			if isUniqueViolation(err) {
+				return ErrKoboConnectionExists
+			}
 			return fmt.Errorf("insert kobo connection: %w", err)
 		}
-		return nil
+		connection, err = KoboConnectionForUser(tx, userID)
+		return err
 	})
-	if err != nil {
-		return nil, err
-	}
-	return KoboConnectionForUser(db.Read(ctx), userID)
+	return connection, err
+}
+
+// SetKoboConnectionShelf preserves the credential and revision history. The next
+// sync reconciles the new shelf against the previous one, including removals.
+func (db *DB) SetKoboConnectionShelf(ctx context.Context, userID, shelfID int64) (*KoboConnection, error) {
+	var connection *KoboConnection
+	err := db.Transact(ctx, func(tx *Tx) error {
+		if _, err := GetShelfForUser(tx, shelfID, userID); err != nil {
+			return err
+		}
+		result, err := tx.Exec(`
+			UPDATE kobo_connections SET shelf_id = ?, updated_at = unixepoch()
+			WHERE user_id = ?
+		`, shelfID, userID)
+		if err != nil {
+			return fmt.Errorf("change kobo shelf: %w", err)
+		}
+		if n, _ := result.RowsAffected(); n == 0 {
+			return ErrKoboConnectionNotFound
+		}
+		connection, err = KoboConnectionForUser(tx, userID)
+		return err
+	})
+	return connection, err
 }
 
 func KoboConnectionForUser(queryer Queryer, userID int64) (*KoboConnection, error) {
 	return scanKoboConnection(queryer.QueryRow(`
-		SELECT kc.id, kc.user_id, kc.shelf_id, s.name, kc.token, kc.revision,
+		SELECT kc.id, kc.user_id, kc.shelf_id, COALESCE(s.name, ''), kc.token, kc.revision,
 		       kc.created_at, kc.updated_at, kc.last_used_at
 		FROM kobo_connections kc
-		JOIN shelves s ON s.id = kc.shelf_id
+		LEFT JOIN shelves s ON s.id = kc.shelf_id
 		WHERE kc.user_id = ?
 	`, userID))
 }
@@ -138,10 +159,10 @@ func (db *DB) KoboConnectionByToken(ctx context.Context, token string) (*KoboCon
 		return nil, false, nil
 	}
 	connection, err := scanKoboConnection(db.Read(ctx).QueryRow(`
-		SELECT kc.id, kc.user_id, kc.shelf_id, s.name, kc.token, kc.revision,
+		SELECT kc.id, kc.user_id, kc.shelf_id, COALESCE(s.name, ''), kc.token, kc.revision,
 		       kc.created_at, kc.updated_at, kc.last_used_at
 		FROM kobo_connections kc
-		JOIN shelves s ON s.id = kc.shelf_id
+		LEFT JOIN shelves s ON s.id = kc.shelf_id
 		WHERE kc.token = ?
 	`, token))
 	if errors.Is(err, ErrKoboConnectionNotFound) {
@@ -200,20 +221,16 @@ func (db *DB) SyncKoboConnection(ctx context.Context, connectionID, after int64,
 
 func loadKoboSyncState(tx *Tx, connectionID int64) (*KoboConnection, *Shelf, VisibilityScope, error) {
 	var connection KoboConnection
-	var shelf Shelf
-	var kind, role, contentScope string
-	var query, queryMatch sql.NullString
+	var role, contentScope string
 	err := tx.QueryRow(`
 		SELECT kc.id, kc.user_id, kc.shelf_id, kc.revision,
-		       s.name, s.kind, s.query, s.query_match,
 		       u.role, u.content_scope
 		FROM kobo_connections kc
-		JOIN shelves s ON s.id = kc.shelf_id
 		JOIN users u ON u.id = kc.user_id
 		WHERE kc.id = ?
 	`, connectionID).Scan(
 		&connection.ID, &connection.UserID, &connection.ShelfID, &connection.Revision,
-		&shelf.Name, &kind, &query, &queryMatch, &role, &contentScope,
+		&role, &contentScope,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil, VisibilityScope{}, ErrKoboConnectionNotFound
@@ -221,17 +238,19 @@ func loadKoboSyncState(tx *Tx, connectionID int64) (*KoboConnection, *Shelf, Vis
 	if err != nil {
 		return nil, nil, VisibilityScope{}, fmt.Errorf("get kobo sync context: %w", err)
 	}
-	shelf.ID = connection.ShelfID
-	shelf.Kind = ShelfKind(kind)
-	shelf.Query = query.String
-	shelf.QueryMatch = queryMatch.String
-	connection.ShelfName = shelf.Name
-
 	scope := FullVisibilityScope()
 	if role == RoleReader && contentScope == ContentScopeShelves {
 		scope = VisibilityScope{UserID: connection.UserID, ContentScope: ContentScopeShelves}
 	}
-	return &connection, &shelf, scope, nil
+	var shelf *Shelf
+	if connection.ShelfID.Valid {
+		shelf, err = GetShelfForUser(tx, connection.ShelfID.Int64, connection.UserID)
+		// An inaccessible shelf is empty; other read errors must abort sync.
+		if err != nil && !errors.Is(err, ErrShelfNotFound) {
+			return nil, nil, VisibilityScope{}, err
+		}
+	}
+	return &connection, shelf, scope, nil
 }
 
 func reconcileKoboItems(tx *Tx, connection *KoboConnection, shelf *Shelf, scope VisibilityScope) (int64, error) {
@@ -327,6 +346,9 @@ func reconcileKoboItems(tx *Tx, connection *KoboConnection, shelf *Shelf, scope 
 }
 
 func listKoboCandidates(tx *Tx, userID int64, shelf *Shelf, scope VisibilityScope, capacityHint int) ([]koboCandidate, error) {
+	if shelf == nil {
+		return nil, nil
+	}
 	var withSQL, fromSQL, whereSQL string
 	var args []any
 

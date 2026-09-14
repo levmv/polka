@@ -432,10 +432,8 @@ func (s *Server) routes() (*http.ServeMux, error) {
 	s.route(mux, "PUT /kosync/{token}/syncs/progress", db.RoleReader, s.handleKOReaderProgressSave)
 	s.route(mux, "GET /kosync/{token}/syncs/progress/{document}", db.RoleReader, s.handleKOReaderProgress)
 
-	// Experimental native Kobo library sync. This uses a dedicated connection
-	// URL, not a general app password: the connection owns one selected shelf and
-	// every metadata/content lookup is narrowed to its last reconciled projection
-	// as well as the account's current content scope.
+	// Native Kobo sync uses a dedicated credential for one shelf. Metadata and
+	// downloads enforce its projection and the owner's current content scope.
 	s.route(mux, "GET /kobo/{token}", db.RoleReader, s.handleKoboRoot)
 	s.route(mux, "GET /kobo/{token}/{$}", db.RoleReader, s.handleKoboRoot)
 	s.route(mux, "GET /kobo/{token}/v1/initialization", db.RoleReader, s.handleKoboInitialization)
@@ -466,6 +464,7 @@ func (s *Server) routes() (*http.ServeMux, error) {
 	s.route(mux, "DELETE /api/app-tokens/{id}", db.RoleReader, s.handleAPIAppTokenDelete)
 	s.route(mux, "GET /api/kobo-connection", db.RoleReader, s.handleAPIKoboConnection)
 	s.route(mux, "POST /api/kobo-connection", db.RoleReader, s.handleAPIKoboConnectionCreate)
+	s.route(mux, "PATCH /api/kobo-connection", db.RoleReader, s.handleAPIKoboConnectionShelf)
 	s.route(mux, "DELETE /api/kobo-connection", db.RoleReader, s.handleAPIKoboConnectionDelete)
 	s.route(mux, "GET /api/users", db.RoleAdmin, s.handleAPIUsers)
 	s.route(mux, "POST /api/users", db.RoleAdmin, s.handleAPIUserCreate)

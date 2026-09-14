@@ -333,14 +333,6 @@ func MergeDuplicateBooks(tx *Tx, scope VisibilityScope, req DuplicateMergeReques
 		return DuplicateMergeResult{}, fmt.Errorf("delete duplicate loser shelf memberships: %w", err)
 	}
 
-	if _, err := tx.Exec(`
-		UPDATE delivery_jobs
-		SET book_id = ?, updated_at = unixepoch()
-		WHERE book_id IN (`+loserPlaceholders+`)
-	`, args...); err != nil {
-		return DuplicateMergeResult{}, fmt.Errorf("merge duplicate delivery jobs: %w", err)
-	}
-
 	if err := mergeDuplicateReadingData(tx, req.SurvivorID, loserIDs); err != nil {
 		return DuplicateMergeResult{}, err
 	}

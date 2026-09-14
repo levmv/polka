@@ -134,8 +134,8 @@ func TestMergeDuplicateBooksMovesAssetsShelvesAndSafeFillIns(t *testing.T) {
 	mustExec(t, database, "INSERT INTO shelves (id, name, kind, owner_id, position) VALUES (2, 'Shelf', 'manual', ?, 1)", user.ID)
 	mustExec(t, database, "INSERT INTO shelf_books (shelf_id, book_id, position) VALUES (2, 2, 5)")
 	mustExec(t, database, `
-		INSERT INTO delivery_jobs (id, user_id, device_name, device_email, preset, book_id, asset_id, title, filename)
-		VALUES (1, ?, 'Device', 'reader@example.test', 'generic', 2, 2, 'Foundation', 'asset_pdf.pdf')
+		INSERT INTO delivery_jobs (id, user_id, device_name, device_email, preset, asset_id, title, filename)
+		VALUES (1, ?, 'Device', 'reader@example.test', 'generic', 2, 'Foundation', 'asset_pdf.pdf')
 	`, user.ID)
 	mustExec(t, database, `
 		INSERT INTO user_asset_state (user_id, asset_id, progress, locator, updated_at)
@@ -208,12 +208,12 @@ func TestMergeDuplicateBooksMovesAssetsShelvesAndSafeFillIns(t *testing.T) {
 		t.Fatalf("loser shelf rows = %d, want 0", shelfRows)
 	}
 
-	var deliveryBookID int64
-	if err := database.Read(t.Context()).QueryRow("SELECT book_id FROM delivery_jobs WHERE id = 1").Scan(&deliveryBookID); err != nil {
+	job, err := GetDeliveryJobByID(database.Read(t.Context()), 1)
+	if err != nil {
 		t.Fatalf("query delivery job: %v", err)
 	}
-	if deliveryBookID != 1 {
-		t.Fatalf("delivery job book_id = %d, want 1", deliveryBookID)
+	if !job.AssetID.Valid || job.AssetID.Int64 != 2 || job.Title != "Foundation" {
+		t.Fatalf("delivery job = %+v, want original source and title", job)
 	}
 
 	readerState, err := GetReaderState(database.Read(t.Context()), user.ID, 2)

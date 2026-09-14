@@ -383,12 +383,13 @@ CREATE TABLE user_annotations (
 CREATE UNIQUE INDEX idx_user_annotations_selection ON user_annotations(user_id, asset_id, coalesce(json_extract(locator, '$.cfi'), locator)) WHERE deleted = 0;
 CREATE INDEX idx_user_annotations_asset ON user_annotations(user_id, asset_id, created_at) WHERE deleted = 0;
 
--- One native Kobo connection per account, projecting one shelf. Its setup URL
--- remains retrievable; replacing the connection revokes the previous URL.
+-- A native Kobo connection projects a selected shelf. Deleting the shelf
+-- detaches it; the credential and change feed survive so the next sync can
+-- remove the previously projected books.
 CREATE TABLE kobo_connections (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id      INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
-    shelf_id     INTEGER NOT NULL REFERENCES shelves(id),
+    shelf_id     INTEGER REFERENCES shelves(id) ON DELETE SET NULL,
     token        TEXT NOT NULL UNIQUE,
     revision     INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0),
     created_at   INTEGER NOT NULL DEFAULT (unixepoch()),
@@ -465,6 +466,7 @@ CREATE UNIQUE INDEX idx_delivery_devices_one_default
 
 -- Queue and delivery history. Device details and title are snapshots taken
 -- when queued; later edits do not change the planned recipient or history.
+-- History survives catalog deletion; asset_id locates the source for pending work.
 CREATE TABLE delivery_jobs (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -472,7 +474,6 @@ CREATE TABLE delivery_jobs (
     device_name  TEXT NOT NULL,
     device_email TEXT NOT NULL,
     preset       TEXT NOT NULL,
-    book_id      INTEGER NOT NULL REFERENCES books(id),
     asset_id     INTEGER REFERENCES assets(id) ON DELETE SET NULL,
     title        TEXT NOT NULL,
     target       TEXT, -- Conversion target format; NULL sends the original file.

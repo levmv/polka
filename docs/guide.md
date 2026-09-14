@@ -197,15 +197,20 @@ and create a setup URL. On a mounted Kobo, open
 
 polka sends EPUB and KEPUB books from the shelf, generating KEPUB from EPUB
 when necessary, and removes books from the device after they leave the shelf.
-Replacing or revoking the connection invalidates the old URL. Kobo sync is
-experimental and does not yet sync reading position. Treat its setup URL as a
-password: use HTTPS or a trusted private network.
+Use Change shelf to choose another shelf without changing the setup URL. Books
+outside the new shelf are removed on the next sync. Deleting the selected shelf
+also removes its books from Kobo on the next sync; you can select a new shelf in
+Settings. Revoking the connection invalidates its URL and stops syncing, leaving
+books already downloaded to the device in place. Kobo sync does not yet sync
+reading position. Treat its setup URL as a password: use HTTPS or a trusted
+private network.
 
 ### Email delivery
 
 To enable email delivery, an administrator turns on Sending in
-Settings → Devices and configures SMTP. Each account can then add Kindle,
-PocketBook, or other email destinations and send books from the book page.
+Settings → Email delivery and configures SMTP. Each account can then add its
+Kindle, PocketBook, or other email destinations in the same section and send
+books from the book page.
 When necessary, polka converts the book to a format accepted by the device.
 
 ### Download and conversion

@@ -2119,9 +2119,9 @@ body.has-library-jump-rail #content {
     gap: 0.75rem;
 }
 
-.send-device-inline-actions {
-    display: flex;
-    justify-content: flex-start;
+.send-device-body .settings-inline-btn {
+    font-size: 0.9rem;
+    font-weight: 400;
 }
 
 /* Book editor */
@@ -3422,7 +3422,7 @@ body.has-library-jump-rail #content {
     line-height: 1.45;
 }
 
-/* A primary action (Add user, New app password) that sits above its list. */
+/* A primary action that sits above its list. */
 .settings-section-action {
     margin: 0.4rem 0 0.7rem;
 }
@@ -3430,7 +3430,15 @@ body.has-library-jump-rail #content {
 .settings-subsection-title {
     margin: 0 0 0.25rem;
     color: var(--text-main);
-    font-size: 14px;
+    font-size: 1rem;
+    font-weight: 600;
+}
+
+.settings-subsection-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 1rem;
 }
 
 /* Autosaving preference rows: label (+ muted description) left, control right,
@@ -3632,27 +3640,6 @@ body.has-library-jump-rail #content {
     border-top: 1px solid var(--border-color);
 }
 
-.settings-app-passwords {
-    margin-top: 0.2rem;
-}
-
-.settings-kobo-title {
-    display: flex;
-    align-items: baseline;
-    gap: 0.55rem;
-}
-
-.settings-experimental-badge {
-    padding: 0.12rem 0.38rem;
-    color: var(--text-muted);
-    background: var(--card-bg);
-    border: 1px solid var(--border-color);
-    border-radius: 999px;
-    font-size: 0.68rem;
-    font-weight: 600;
-    letter-spacing: 0.02em;
-}
-
 .settings-kobo-row {
     margin-top: 0.55rem;
 }
@@ -3764,6 +3751,12 @@ body.has-library-jump-rail #content {
     border-top: 0;
 }
 
+/* Reading apps reserves dividers for section boundaries. */
+.settings-kobo-row,
+.settings-app-passwords .settings-item-row {
+    border-top: 0;
+}
+
 .settings-item-row.is-clickable {
     cursor: pointer;
 }
@@ -3783,6 +3776,12 @@ body.has-library-jump-rail #content {
     font-weight: 700;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.settings-delivery-row .settings-item-name,
+.settings-kobo-row .settings-item-name,
+.settings-app-passwords .settings-item-name {
+    font-weight: normal;
 }
 
 .settings-item-meta {

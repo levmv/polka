@@ -44,9 +44,13 @@ type DevicesState = AsyncLoadState & {
     devices: DeliveryDevice[];
     deliveries: DeliveryJob[];
     securitySelect: ManagedSelect | null;
+    focusRecipients: boolean;
 };
 
-export function createDevicesPanel(currentUser: CurrentUser): SettingsPanel {
+export function createDevicesPanel(
+    currentUser: CurrentUser,
+    focusRecipients = false,
+): SettingsPanel {
     const state: DevicesState = {
         loaded: false,
         loading: false,
@@ -54,11 +58,13 @@ export function createDevicesPanel(currentUser: CurrentUser): SettingsPanel {
         devices: [],
         deliveries: [],
         securitySelect: null,
+        focusRecipients,
         loadError: '',
     };
     return {
         render: (root) => renderDevicesPanel(root, currentUser, state),
         unmount: () => {
+            state.focusRecipients = false;
             state.securitySelect?.destroy();
             state.securitySelect = null;
         },
@@ -79,7 +85,7 @@ function renderDevicesPanel(
     const isAdmin = currentUser.role === 'admin';
     const rerender = () => renderDevicesPanel(root, currentUser, state);
 
-    root.append(textEl('h3', 'settings-section-title', 'Devices'));
+    root.append(textEl('h3', 'settings-section-title', 'Email delivery'));
 
     if (isAdmin) root.append(createSendSwitchRow(rerender));
     if (!sendEnabled()) return;
@@ -98,7 +104,7 @@ function renderDevicesPanel(
                 state.email = email;
             },
             rerender,
-            errorFallback: 'Failed to load devices',
+            errorFallback: 'Failed to load email delivery settings',
         })
     ) {
         return;
@@ -107,7 +113,15 @@ function renderDevicesPanel(
     if (isAdmin && state.email) {
         root.append(createEmailDeliveryBlock(state, rerender));
     }
-    root.append(createDeviceListBlock(state, rerender), createDeliveryHistoryBlock(state));
+    const recipients = createDeviceListBlock(state, rerender);
+    root.append(recipients, createDeliveryHistoryBlock(state));
+    if (state.focusRecipients) {
+        state.focusRecipients = false;
+        recipients.scrollIntoView({ block: 'start' });
+        recipients
+            .querySelector<HTMLButtonElement>('.settings-section-action button')
+            ?.focus({ preventScroll: true });
+    }
 }
 
 function createSendSwitchRow(rerender: () => void): HTMLElement {
@@ -124,7 +138,7 @@ function createSendSwitchRow(rerender: () => void): HTMLElement {
         rerender();
     };
     const toggle = createToggle({
-        ariaLabel: 'Sending books to a device',
+        ariaLabel: 'Sending books by email',
         checked: sendEnabled(),
         onChange: (checked) => void apply(checked),
     });
@@ -142,7 +156,7 @@ function createEmailDeliveryBlock(state: DevicesState, rerender: () => void): HT
     const section = document.createElement('section');
     section.className = 'settings-block';
     section.append(
-        textEl('h4', 'settings-subsection-title', 'Email delivery'),
+        textEl('h4', 'settings-subsection-title', 'Mail server'),
         textEl(
             'div',
             'settings-block-hint',
@@ -365,6 +379,7 @@ function createDeliveryHistoryBlock(state: DevicesState): HTMLElement {
             settingsItemRow({
                 name: job.title,
                 meta: `${job.status} · ${job.device_name}${job.error ? ` · ${job.error}` : ''}`,
+                rowClass: 'settings-delivery-row',
             }),
         );
     }

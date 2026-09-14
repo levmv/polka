@@ -1,6 +1,5 @@
 import {
     createDelivery,
-    createDeliveryDevice,
     deleteBook,
     ensureBookPageCount,
     fetchBook,
@@ -44,6 +43,8 @@ import {
     replaceLocationURL,
 } from '../router';
 import { queryTerm, seriesLibraryURL } from '../search-query';
+import { openSettingsModal } from '../settings';
+import { inlineSettingsButton } from '../settings/ui';
 import { showToast } from '../toast';
 import type {
     Asset,
@@ -734,49 +735,31 @@ function openSendBookModal(book: Book): void {
     });
     modal.open(send);
 
-    let selectedPlan: DeliveryPlan | null = null;
-    let preferredDeviceID = 0;
-    const state: SendBookModalState = {
-        get preferredDeviceID() {
-            return preferredDeviceID;
-        },
-        setPreferredDeviceID(deviceID) {
-            preferredDeviceID = deviceID;
-        },
-        setSelectedPlan(plan) {
-            selectedPlan = plan;
-        },
-        reloadAfterDeviceAdd(deviceID) {
-            preferredDeviceID = deviceID;
-            load();
-        },
-    };
-
-    const load = () =>
-        fetchSendOptions(book.id)
-            .then((options) => {
-                renderSendBookOptions(body, send, options, state);
-            })
-            .catch((err) => {
-                body.replaceChildren(
-                    textEl(
-                        'div',
-                        'dialog-note dialog-note-error',
-                        errorMessage(err, 'Load send options failed'),
-                    ),
-                );
-            });
-    load();
+    const selection: SendBookSelection = { deviceID: 0, plan: null };
+    fetchSendOptions(book.id)
+        .then((options) => {
+            if (body.isConnected) renderSendBookOptions(body, send, options, selection);
+        })
+        .catch((err) => {
+            if (!body.isConnected) return;
+            body.replaceChildren(
+                textEl(
+                    'div',
+                    'dialog-note dialog-note-error',
+                    errorMessage(err, 'Load send options failed'),
+                ),
+            );
+        });
 
     send.addEventListener('click', async () => {
-        if (!selectedPlan) return;
+        if (!selection.plan) return;
         send.disabled = true;
         try {
             const job = await createDelivery({
                 book_id: book.id,
-                device_id: preferredDeviceID,
-                asset_id: selectedPlan.asset_id,
-                target: selectedPlan.target,
+                device_id: selection.deviceID,
+                asset_id: selection.plan.asset_id,
+                target: selection.plan.target,
             });
             modal.close();
             showToast('Queued');
@@ -788,23 +771,21 @@ function openSendBookModal(book: Book): void {
     });
 }
 
-type SendBookModalState = {
-    readonly preferredDeviceID: number;
-    reloadAfterDeviceAdd(deviceID: number): void;
-    setPreferredDeviceID(deviceID: number): void;
-    setSelectedPlan(plan: DeliveryPlan | null): void;
+type SendBookSelection = {
+    deviceID: number;
+    plan: DeliveryPlan | null;
 };
 
 function renderSendBookOptions(
     body: HTMLElement,
     send: HTMLButtonElement,
     options: SendOptions,
-    state: SendBookModalState,
+    selection: SendBookSelection,
 ): void {
     body.replaceChildren();
     send.hidden = false;
     send.disabled = true;
-    state.setSelectedPlan(null);
+    selection.plan = null;
 
     if (!options.configured) {
         body.append(
@@ -812,17 +793,35 @@ function renderSendBookOptions(
         );
         return;
     }
+    const manageRecipients = inlineSettingsButton('Manage recipients', async () => {
+        manageRecipients.disabled = true;
+        try {
+            const me = await fetchCurrentUser();
+            if (body.isConnected) openSettingsModal(me, 'email-recipients');
+        } catch (err) {
+            if (body.isConnected) {
+                showToast(errorMessage(err, 'Failed to open settings'), { type: 'error' });
+            }
+        } finally {
+            manageRecipients.disabled = false;
+        }
+    });
     if (options.devices.length === 0) {
         send.hidden = true;
-        renderInlineDeviceAdd(body, state.reloadAfterDeviceAdd);
+        body.append(
+            textEl(
+                'div',
+                'dialog-note',
+                'Add a recipient in Email delivery settings to send books.',
+            ),
+            manageRecipients,
+        );
+        manageRecipients.focus();
         return;
     }
 
     const defaultOption =
-        options.devices.find((option) => option.device.id === state.preferredDeviceID) ||
-        options.devices.find((option) => option.device.is_default) ||
-        options.devices[0] ||
-        null;
+        options.devices.find((option) => option.device.is_default) || options.devices[0] || null;
     if (!defaultOption) return;
 
     const deviceSelect = document.createElement('select');
@@ -839,32 +838,17 @@ function renderSendBookOptions(
     const planArea = document.createElement('div');
     planArea.className = 'send-device-plan-area';
 
-    const addDevice = document.createElement('button');
-    addDevice.type = 'button';
-    addDevice.className = 'dialog-btn';
-    addDevice.textContent = 'Add device';
-    addDevice.addEventListener('click', () => {
-        send.hidden = true;
-        send.disabled = true;
-        body.replaceChildren();
-        renderInlineDeviceAdd(body, state.reloadAfterDeviceAdd);
-    });
-
-    const actions = document.createElement('div');
-    actions.className = 'send-device-inline-actions';
-    actions.append(addDevice);
-
-    body.append(deviceField, planArea, actions);
+    body.append(deviceField, planArea, manageRecipients);
 
     const syncPlan = () => {
         planArea.replaceChildren();
         const option =
             options.devices.find((item) => item.device.id === Number(deviceSelect.value)) || null;
-        state.setPreferredDeviceID(option?.device.id || 0);
+        selection.deviceID = option?.device.id || 0;
         const choices = option?.choices || [];
         if (!option || choices.length === 0) {
             send.disabled = true;
-            state.setSelectedPlan(null);
+            selection.plan = null;
             planArea.append(
                 textEl(
                     'div',
@@ -878,7 +862,7 @@ function renderSendBookOptions(
         const note = textEl('div', 'dialog-note send-device-plan', '');
         const selectChoice = (choiceID: string) => {
             const choice = choices.find((item) => planChoiceID(item) === choiceID) || choices[0];
-            state.setSelectedPlan(choice);
+            selection.plan = choice;
             note.textContent = planDetails(choice);
         };
 
@@ -904,94 +888,6 @@ function renderSendBookOptions(
     deviceSelect.addEventListener('change', syncPlan);
     syncPlan();
     deviceSelect.focus();
-}
-
-function renderInlineDeviceAdd(
-    body: HTMLElement,
-    reloadAfterDeviceAdd: (deviceID: number) => void,
-): void {
-    const form = document.createElement('form');
-    form.className = 'dialog-fields';
-
-    const name = document.createElement('input');
-    name.type = 'text';
-    name.autocomplete = 'off';
-    name.required = true;
-    name.className = 'dialog-input';
-
-    const email = document.createElement('input');
-    email.type = 'email';
-    email.autocomplete = 'email';
-    email.required = true;
-    email.className = 'dialog-input';
-
-    const preset = document.createElement('select');
-    preset.className = 'dialog-input';
-    for (const item of [
-        { value: 'kindle', label: 'Kindle' },
-        { value: 'pocketbook', label: 'PocketBook' },
-        { value: 'generic', label: 'Generic email' },
-    ]) {
-        const option = document.createElement('option');
-        option.value = item.value;
-        option.textContent = item.label;
-        preset.append(option);
-    }
-
-    let presetTouched = false;
-    preset.addEventListener('change', () => {
-        presetTouched = true;
-    });
-    email.addEventListener('input', () => {
-        if (!presetTouched) preset.value = suggestedPresetForEmail(email.value);
-    });
-
-    const submit = document.createElement('button');
-    submit.type = 'submit';
-    submit.className = 'dialog-btn dialog-primary-btn';
-    submit.textContent = 'Add device';
-
-    form.append(
-        textEl('div', 'dialog-help', 'Add a reader email address, then send this book.'),
-        formField('Name', name),
-        formField('Email', email),
-        formField('Preset', preset),
-        submit,
-    );
-    body.append(form);
-
-    form.addEventListener('submit', async (event) => {
-        event.preventDefault();
-        submit.disabled = true;
-        try {
-            const device = await createDeliveryDevice({
-                name: name.value.trim(),
-                email: email.value.trim(),
-                preset: preset.value as DeliveryPreset,
-            });
-            showToast(`Added ${device.name}`);
-            reloadAfterDeviceAdd(device.id);
-        } catch (err) {
-            showToast(errorMessage(err, 'Add device failed'), { type: 'error' });
-            submit.disabled = false;
-        }
-    });
-
-    name.focus();
-}
-
-function suggestedPresetForEmail(email: string): DeliveryPreset {
-    const value = email.trim().toLowerCase();
-    if (
-        value.endsWith('@kindle.com') ||
-        value.endsWith('@free.kindle.com') ||
-        value.endsWith('@kindle.cn') ||
-        value.endsWith('@free.kindle.cn')
-    ) {
-        return 'kindle';
-    }
-    if (value.endsWith('@pbsync.com')) return 'pocketbook';
-    return 'generic';
 }
 
 function planChoiceID(plan: DeliveryPlan): string {

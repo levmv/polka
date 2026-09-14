@@ -398,7 +398,9 @@ test.describe('Library workflows', () => {
     await expect(page.locator('.book-card', { hasText: 'No Cover Book' })).toBeVisible();
   });
 
-  test('Send dialog adds a device inline and prepares a plan', async ({ page }) => {
+  test('Send opens recipient settings and reloads recipients from the same book', async ({
+    page,
+  }) => {
     // Sending is off by default, so the button exists only once an admin asks
     // for the feature.
     const enabledRes = await page.request.put('/api/admin/delivery', {
@@ -421,19 +423,55 @@ test.describe('Library workflows', () => {
     await expect(card).toBeVisible();
     await card.locator('.book-title').click();
     await expect(page.locator('.detail-title')).toContainText('With Cover Book');
+    const bookURL = page.url();
 
     await page.getByRole('button', { name: 'Send' }).click();
     const dialog = page.locator('.modal-compact');
     await expect(dialog.getByRole('heading', { name: 'Send to device' })).toBeVisible();
-    await expect(dialog.getByText('Add a reader email address')).toBeVisible();
+    await expect(dialog.getByText('Add a recipient in Email delivery settings')).toBeVisible();
+    await dialog.getByRole('button', { name: 'Manage recipients' }).click();
+    const settings = page.locator('.settings-modal');
+    const addDevice = settings.getByRole('button', { name: 'Add device', exact: true });
+    await expect(settings.getByRole('tab', { name: 'Email delivery' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    await expect(addDevice).toBeFocused();
+    await expect(addDevice).toBeInViewport({ ratio: 1 });
 
-    await dialog.getByRole('textbox', { name: 'Name' }).fill('Kindle');
-    await dialog.getByRole('textbox', { name: 'Email' }).fill('reader@kindle.com');
-    await expect(dialog.getByRole('combobox', { name: 'Preset' })).toHaveValue('kindle');
-    await dialog.getByRole('button', { name: 'Add device' }).click();
+    await addDevice.click();
+    await dialog.getByRole('textbox', { name: 'Name', exact: true }).fill('Kindle');
+    await dialog.getByRole('textbox', { name: 'Email', exact: true }).fill('reader@kindle.com');
+    await dialog.getByRole('button', { name: 'Add device', exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    await settings.locator('.modal-close').click();
+    await expect(settings).toHaveCount(0);
+    await expect(page).toHaveURL(bookURL);
+    await expect(page.locator('.detail-title')).toContainText('With Cover Book');
 
+    await page.locator('#btn-send-book').click();
     await expect(dialog.getByRole('combobox', { name: 'Device' })).toBeVisible();
+    await expect(dialog.getByRole('combobox', { name: 'Device' })).toContainText('Kindle');
     await expect(dialog.locator('.send-device-plan')).toContainText('EPUB');
+    await expect(dialog.getByRole('button', { name: 'Send' })).toBeEnabled();
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await dialog.getByRole('button', { name: 'Manage recipients' }).click();
+    await expect(addDevice).toBeFocused();
+    await expect(addDevice).toBeInViewport({ ratio: 1 });
+    await expect(settings.getByRole('tab', { name: 'Email delivery' })).toBeInViewport({
+      ratio: 0.99,
+    });
+    const deviceRow = settings.locator('.settings-item-row', { hasText: 'reader@kindle.com' });
+    await deviceRow.getByRole('button', { name: 'Edit', exact: true }).click();
+    await dialog.getByRole('textbox', { name: 'Name', exact: true }).fill('Travel Kindle');
+    await dialog.getByRole('button', { name: 'Save device', exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    await settings.locator('.modal-close').click();
+    await expect(settings).toHaveCount(0);
+    await expect(page).toHaveURL(bookURL);
+    await page.locator('#btn-send-book').click();
+    await expect(dialog.getByRole('combobox', { name: 'Device' })).toContainText('Travel Kindle');
     await expect(dialog.getByRole('button', { name: 'Send' })).toBeEnabled();
   });
 

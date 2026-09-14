@@ -18,7 +18,6 @@ import (
 
 const (
 	deliveryJobDefaultLimit = 20
-	deliveryJobMaxLimit     = 100
 
 	deliveryMessageFailed            = "Delivery failed."
 	deliveryMessagePrepareFailed     = "Could not prepare file for delivery."
@@ -126,7 +125,6 @@ type DeliveryJobDTO struct {
 	DeviceName  string `json:"device_name"`
 	DeviceEmail string `json:"device_email"`
 	Preset      string `json:"preset"`
-	BookID      int64  `json:"book_id"`
 	AssetID     int64  `json:"asset_id,omitzero"`
 	Title       string `json:"title"`
 	Target      string `json:"target,omitempty"`
@@ -439,7 +437,6 @@ func (s *Server) handleAPIDeliveryCreate(w http.ResponseWriter, r *http.Request)
 		DeviceName:  device.Name,
 		DeviceEmail: device.Email,
 		Preset:      device.Preset,
-		BookID:      book.ID,
 		AssetID:     sql.NullInt64{Int64: plan.AssetID, Valid: true},
 		Title:       book.Title,
 		Target:      sql.NullString{String: string(plan.Target), Valid: plan.Target != ""},
@@ -458,7 +455,7 @@ func (s *Server) handleAPIDeliveries(w http.ResponseWriter, r *http.Request) {
 	limit := deliveryJobDefaultLimit
 	if raw := r.URL.Query().Get("limit"); raw != "" {
 		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
-			limit = min(n, deliveryJobMaxLimit)
+			limit = n
 		}
 	}
 	jobs, err := db.ListDeliveryJobs(s.db.Read(r.Context()), UserID(r.Context()), limit)
@@ -559,7 +556,6 @@ func deliveryJobDTO(job db.DeliveryJob) DeliveryJobDTO {
 		DeviceName:  job.DeviceName,
 		DeviceEmail: job.DeviceEmail,
 		Preset:      job.Preset,
-		BookID:      job.BookID,
 		Title:       job.Title,
 		Filename:    job.Filename,
 		Status:      job.Status,

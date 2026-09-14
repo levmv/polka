@@ -10,7 +10,7 @@ import (
 
 type KoboConnectionDTO struct {
 	ID         int64  `json:"id"`
-	ShelfID    int64  `json:"shelf_id"`
+	ShelfID    int64  `json:"shelf_id,omitzero"`
 	ShelfName  string `json:"shelf_name"`
 	SetupURL   string `json:"setup_url"`
 	CreatedAt  int64  `json:"created_at"`
@@ -18,14 +18,14 @@ type KoboConnectionDTO struct {
 	LastUsedAt *int64 `json:"last_used_at,omitzero"`
 }
 
-type koboConnectionCreateRequest struct {
+type koboConnectionShelfRequest struct {
 	ShelfID int64 `json:"shelf_id"`
 }
 
 func koboConnectionDTO(r *http.Request, connection *db.KoboConnection) KoboConnectionDTO {
 	dto := KoboConnectionDTO{
 		ID:        connection.ID,
-		ShelfID:   connection.ShelfID,
+		ShelfID:   connection.ShelfID.Int64,
 		ShelfName: connection.ShelfName,
 		SetupURL:  absoluteURL(r, "/kobo/"+url.PathEscape(connection.Token), nil),
 		CreatedAt: connection.CreatedAt,
@@ -53,7 +53,7 @@ func (s *Server) handleAPIKoboConnection(w http.ResponseWriter, r *http.Request)
 
 func (s *Server) handleAPIKoboConnectionCreate(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "private, no-store")
-	var req koboConnectionCreateRequest
+	var req koboConnectionShelfRequest
 	if !readJSON(w, r, &req) {
 		return
 	}
@@ -61,25 +61,49 @@ func (s *Server) handleAPIKoboConnectionCreate(w http.ResponseWriter, r *http.Re
 		http.Error(w, "Shelf is required", http.StatusBadRequest)
 		return
 	}
-	connection, err := s.db.ReplaceKoboConnection(r.Context(), UserID(r.Context()), req.ShelfID)
-	if errors.Is(err, db.ErrShelfNotFound) {
-		http.Error(w, "Shelf not found", http.StatusBadRequest)
-		return
-	}
-	if err != nil {
-		serverError(w, r, err)
+	connection, err := s.db.CreateKoboConnection(r.Context(), UserID(r.Context()), req.ShelfID)
+	if writeKoboConnectionError(w, r, err) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, koboConnectionDTO(r, connection))
 }
 
-func (s *Server) handleAPIKoboConnectionDelete(w http.ResponseWriter, r *http.Request) {
-	if err := s.db.DeleteKoboConnection(r.Context(), UserID(r.Context())); err != nil {
-		if errors.Is(err, db.ErrKoboConnectionNotFound) {
-			http.Error(w, "Kobo connection not found", http.StatusNotFound)
-			return
-		}
+func (s *Server) handleAPIKoboConnectionShelf(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "private, no-store")
+	var req koboConnectionShelfRequest
+	if !readJSON(w, r, &req) {
+		return
+	}
+	if req.ShelfID <= 0 {
+		http.Error(w, "Shelf is required", http.StatusBadRequest)
+		return
+	}
+	connection, err := s.db.SetKoboConnectionShelf(r.Context(), UserID(r.Context()), req.ShelfID)
+	if writeKoboConnectionError(w, r, err) {
+		return
+	}
+	writeJSON(w, http.StatusOK, koboConnectionDTO(r, connection))
+}
+
+func writeKoboConnectionError(w http.ResponseWriter, r *http.Request, err error) bool {
+	if err == nil {
+		return false
+	}
+	switch {
+	case errors.Is(err, db.ErrShelfNotFound):
+		http.Error(w, "Shelf not found", http.StatusBadRequest)
+	case errors.Is(err, db.ErrKoboConnectionNotFound):
+		http.Error(w, "Kobo connection not found", http.StatusNotFound)
+	case errors.Is(err, db.ErrKoboConnectionExists):
+		http.Error(w, "Kobo is already connected; change its shelf or revoke the connection first", http.StatusConflict)
+	default:
 		serverError(w, r, err)
+	}
+	return true
+}
+
+func (s *Server) handleAPIKoboConnectionDelete(w http.ResponseWriter, r *http.Request) {
+	if writeKoboConnectionError(w, r, s.db.DeleteKoboConnection(r.Context(), UserID(r.Context()))) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

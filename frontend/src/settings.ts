@@ -8,30 +8,22 @@ import { buttonEl, type SettingsPanel } from './settings/ui';
 import { createUsersPanel } from './settings/users';
 import type { CurrentUser } from './types';
 
-// Settings is a left-rail modal with a few focused sections:
-//   General  — important standalone preferences and admin-wide library policy.
-//   Devices  — email delivery settings, reader addresses, and recent sends.
-//   Users    — the people who can sign in. A flat list: your own row first,
-//              and (for admins) everyone else, all managed through small modals.
-//   Reading apps — how external readers connect: OPDS catalog + app passwords.
-//   Storage  — admin-only managed paths, layout, import, and ingest status.
-// Mutations (passwords, new users, new tokens) open a stacked secondary modal
-// rather than an inline form, so each panel stays a calm list. Their results are
-// reported through a toast, not an inline status line.
-type SettingsTab = 'general' | 'devices' | 'users' | 'apps' | 'storage';
+type SettingsTab = 'general' | 'storage' | 'apps' | 'users' | 'devices';
+type SettingsDestination = SettingsTab | 'email-recipients';
 
 const TAB_LABELS: Record<SettingsTab, string> = {
     general: 'General',
-    devices: 'Devices',
     storage: 'Storage',
-    users: 'Users',
     apps: 'Reading apps',
+    users: 'Users',
+    devices: 'Email delivery',
 };
 
 export function openSettingsModal(
     currentUser: CurrentUser,
-    initialTab: SettingsTab = 'general',
+    destination: SettingsDestination = 'general',
 ): void {
+    const initialTab = destination === 'email-recipients' ? 'devices' : destination;
     const { modal, root } = openModal({
         body: `
             <div class="settings-sidebar">
@@ -60,17 +52,17 @@ export function openSettingsModal(
     const storagePanel = createStoragePanel();
     const panels: Record<SettingsTab, SettingsPanel> = {
         general: createGeneralPanel(currentUser),
-        devices: createDevicesPanel(currentUser),
         storage: storagePanel,
-        users: createUsersPanel(currentUser),
         apps: createAppsPanel(),
+        users: createUsersPanel(currentUser),
+        devices: createDevicesPanel(currentUser, destination === 'email-recipients'),
     };
 
-    // Admins need Devices to enable sending; other roles see it only when enabled.
     const availableTabs: SettingsTab[] = ['general'];
-    if (sendEnabled() || currentUser.role === 'admin') availableTabs.push('devices');
     if (currentUser.role === 'admin') availableTabs.push('storage');
-    availableTabs.push('users', 'apps');
+    availableTabs.push('apps', 'users');
+    // Admins can enable email delivery; other roles see it only when enabled.
+    if (sendEnabled() || currentUser.role === 'admin') availableTabs.push('devices');
     let activeTab: SettingsTab = availableTabs.includes(initialTab) ? initialTab : 'general';
 
     // Per-tab containers keep late async renders from overwriting the active tab.
@@ -103,9 +95,9 @@ export function openSettingsModal(
     });
 
     renderPanel();
-    modal.open(
-        tabButtons.get(activeTab) || root.querySelector<HTMLElement>('.settings-tab') || undefined,
-    );
+    const initialTabButton = tabButtons.get(activeTab);
+    modal.open(initialTabButton);
+    initialTabButton?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 }
 
 function renderTabs(

@@ -622,6 +622,14 @@ export async function createKoboConnection(shelfId: number): Promise<KoboConnect
     );
 }
 
+export async function changeKoboShelf(shelfId: number): Promise<KoboConnection> {
+    return await fetchJSON<KoboConnection>(
+        '/api/kobo-connection',
+        'Failed to change Kobo shelf',
+        jsonBody('PATCH', { shelf_id: shelfId }),
+    );
+}
+
 export async function revokeKoboConnection(): Promise<void> {
     await apiFetch('/api/kobo-connection', 'Failed to revoke Kobo connection', {
         method: 'DELETE',

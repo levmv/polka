@@ -240,7 +240,6 @@ func TestPrepareDeliveryCopyCopiesNativeAssetToTemp(t *testing.T) {
 
 	s := &Server{db: database, dataDir: dir}
 	job := db.DeliveryJob{
-
 		AssetID:  sql.NullInt64{Int64: 1, Valid: true},
 		Filename: "The Hobbit.epub",
 	}
@@ -287,7 +286,6 @@ func TestPrepareDeliveryCopyWaitsForStorageMutationBeforeReportingMissing(t *tes
 	queue := workslot.New()
 	s := &Server{db: database, dataDir: dir, storageQueue: queue}
 	job := db.DeliveryJob{
-
 		AssetID:  sql.NullInt64{Int64: 1, Valid: true},
 		Filename: "The Hobbit.epub",
 	}
@@ -314,61 +312,120 @@ func TestPrepareDeliveryCopyWaitsForStorageMutationBeforeReportingMissing(t *tes
 	}
 }
 
-func TestRunDeliveryJobUsesTransportAndMarksSent(t *testing.T) {
-	database, dir := setupTestDB(t)
-	defer database.Close()
-	seedDeliveryEmailSettings(t, database, 25)
+func TestRunDeliveryJobLifecycle(t *testing.T) {
+	tests := []struct {
+		name        string
+		purgeWhen   string
+		purgeTarget string
+		sendErr     error
+		wantStatus  string
+		wantError   string
+		wantCalls   int
+	}{
+		{"sent", "", "", nil, db.DeliveryStatusSent, "", 1},
+		{"queued", "before", "/api/books/1/purge", nil, db.DeliveryStatusFailed, deliveryMessageFileMissing, 0},
+		{"sending succeeds", "during", "/api/trash", nil, db.DeliveryStatusSent, "", 1},
+		{"sending fails", "during", "/api/books/1/purge", errors.New("send failed"), db.DeliveryStatusFailed, deliveryMessageFailed, 1},
+		{"already sent", "after", "/api/books/1/purge", nil, db.DeliveryStatusSent, "", 1},
+		{"already failed", "after", "/api/trash", errors.New("send failed"), db.DeliveryStatusFailed, deliveryMessageFailed, 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			database, dir := setupTestDB(t)
+			defer database.Close()
+			seedDeliveryEmailSettings(t, database, 25)
+			user := mustUser(t, database, "sender", db.RoleReader)
+			admin := mustUser(t, database, "admin", db.RoleAdmin)
+			job := createQueuedDeliveryJob(t, database, user.ID, sql.NullString{})
+			s := newTestServer(database, dir)
+			s.storageQueue = workslot.New()
+			handler := testRoutes(t, s)
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			purge := func() {
+				t.Helper()
+				if err := db.SoftDeleteBook(database.Write(ctx), 1, admin.ID); err != nil {
+					t.Fatal(err)
+				}
+				w := httptest.NewRecorder()
+				req := jsonRequest(t, s, admin.ID, http.MethodDelete, tt.purgeTarget, nil)
+				handler.ServeHTTP(w, req.WithContext(ctx))
+				if w.Code != http.StatusOK && w.Code != http.StatusNoContent {
+					t.Fatalf("purge = %d: %s", w.Code, w.Body)
+				}
+				assetPath := filepath.Join(dir, "Tolkien", "The_Hobbit", "a_1.epub")
+				if _, err := os.Stat(assetPath); !os.IsNotExist(err) {
+					t.Fatalf("purged source stat = %v, want not exist", err)
+				}
+			}
+			var copyPath string
+			transport := &stubDeliveryTransport{
+				send: func(ctx context.Context, copy delivery.DeliveryCopy, profile delivery.SMTPProfile) error {
+					copyPath = copy.Path
+					if tt.purgeWhen == "during" {
+						purge()
+					}
+					if profile.Subject != job.Title || profile.To != job.DeviceEmail {
+						t.Fatalf("send lost original title or recipient: %+v", profile)
+					}
+					if profile.Config.Host != "smtp.example.org" {
+						t.Fatalf("SMTP host = %q, want smtp.example.org", profile.Config.Host)
+					}
+					current, err := db.GetDeliveryJobByID(database.Read(ctx), job.ID)
+					if err != nil {
+						t.Fatalf("get job during transport: %v", err)
+					}
+					if current.Status != db.DeliveryStatusSending {
+						t.Fatalf("status during transport = %q, want sending", current.Status)
+					}
+					contents, err := os.ReadFile(copy.Path)
+					if err != nil || string(contents) != "epub content" {
+						t.Fatalf("send copy = %q, err %v", contents, err)
+					}
+					return tt.sendErr
+				},
+			}
+			s.deliveryTransport = transport
+			if tt.purgeWhen == "before" {
+				purge()
+			}
+			if err := s.runDeliveryJob(ctx, job.ID); err != nil {
+				t.Fatalf("run delivery: %v", err)
+			}
+			if tt.purgeWhen == "after" {
+				purge()
+			}
+			if transport.calls != tt.wantCalls {
+				t.Fatalf("transport calls = %d, want %d", transport.calls, tt.wantCalls)
+			}
+			if copyPath != "" {
+				if _, err := os.Stat(copyPath); !os.IsNotExist(err) {
+					t.Fatalf("temporary copy stat = %v, want not exist", err)
+				}
+			}
 
-	user := mustUser(t, database, "sender", db.RoleReader)
-	job := createQueuedDeliveryJob(t, database, user.ID, sql.NullString{})
-
-	var copyPath string
-	transport := &stubDeliveryTransport{
-		send: func(ctx context.Context, copy delivery.DeliveryCopy, profile delivery.SMTPProfile) error {
-			copyPath = copy.Path
-			if profile.To != "reader@kindle.com" || profile.Subject != "The Hobbit" {
-				t.Fatalf("profile = %+v, want reader subject", profile)
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, jsonRequest(t, s, user.ID, http.MethodGet, "/api/deliveries", nil))
+			var history []DeliveryJobDTO
+			decodeJSON(t, w, &history)
+			if len(history) != 1 {
+				t.Fatalf("history = %+v, want retained delivery", history)
 			}
-			if profile.Config.Host != "smtp.example.org" {
-				t.Fatalf("SMTP host = %q, want smtp.example.org", profile.Config.Host)
+			got := history[0]
+			var wantAssetID int64
+			if tt.purgeWhen == "" {
+				wantAssetID = job.AssetID.Int64
 			}
-			got, err := os.ReadFile(copy.Path)
-			if err != nil {
-				t.Fatalf("read delivery copy during transport: %v", err)
+			if got.ID != job.ID || got.Title != job.Title || got.DeviceName != job.DeviceName ||
+				got.DeviceEmail != job.DeviceEmail || got.Filename != job.Filename || got.AssetID != wantAssetID ||
+				got.Status != tt.wantStatus || got.Error != tt.wantError ||
+				(got.SentAt > 0) != (tt.wantStatus == db.DeliveryStatusSent) {
+				t.Fatalf("history = %+v, want original snapshots and %s (%q)", got, tt.wantStatus, tt.wantError)
 			}
-			if string(got) != "epub content" {
-				t.Fatalf("delivery copy content = %q", got)
+			if tt.wantCalls > 0 && got.SizeBytes != int64(len("epub content")) {
+				t.Fatalf("job size = %d, want %d", got.SizeBytes, len("epub content"))
 			}
-			current, err := db.GetDeliveryJobByID(database.Read(ctx), job.ID)
-			if err != nil {
-				t.Fatalf("get job during transport: %v", err)
-			}
-			if current.Status != db.DeliveryStatusSending {
-				t.Fatalf("status during transport = %q, want sending", current.Status)
-			}
-			return nil
-		},
-	}
-	s := &Server{db: database, dataDir: dir, deliveryTransport: transport}
-
-	if err := s.runDeliveryJob(context.Background(), job.ID); err != nil {
-		t.Fatalf("runDeliveryJob: %v", err)
-	}
-	if transport.calls != 1 {
-		t.Fatalf("transport calls = %d, want 1", transport.calls)
-	}
-	if _, err := os.Stat(copyPath); !os.IsNotExist(err) {
-		t.Fatalf("delivery temp copy after success stat err = %v, want not exist", err)
-	}
-	reloaded, err := db.GetDeliveryJobByID(database.Read(t.Context()), job.ID)
-	if err != nil {
-		t.Fatalf("reload job: %v", err)
-	}
-	if reloaded.Status != db.DeliveryStatusSent || reloaded.Error != "" || !reloaded.SentAt.Valid {
-		t.Fatalf("job after success = %+v, want sent with sent_at", reloaded)
-	}
-	if !reloaded.SizeBytes.Valid || reloaded.SizeBytes.Int64 != int64(len("epub content")) {
-		t.Fatalf("job size = %+v, want %d", reloaded.SizeBytes, len("epub content"))
+		})
 	}
 }
 
@@ -676,7 +733,6 @@ func createQueuedDeliveryJob(t *testing.T, database *db.DB, userID int64, target
 		DeviceName:  "Kindle",
 		DeviceEmail: "reader@kindle.com",
 		Preset:      db.DeliveryPresetKindle,
-		BookID:      1,
 		AssetID:     sql.NullInt64{Int64: 1, Valid: true},
 		Title:       "The Hobbit",
 		Target:      target,

@@ -265,7 +265,7 @@ export interface AppToken {
 
 export interface KoboConnection {
     id: number;
-    shelf_id: number;
+    shelf_id?: number;
     shelf_name: string;
     setup_url: string;
     created_at: number;
@@ -408,7 +408,6 @@ export interface DeliveryJob {
     device_name: string;
     device_email: string;
     preset: DeliveryPreset;
-    book_id: number;
     asset_id?: number;
     title: string;
     target?: string;

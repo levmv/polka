@@ -22,9 +22,12 @@ const (
 	DeliveryStatusFailed     = "failed"
 )
 
+// DeliveryHistoryLimit caps completed sends per user and delivery list responses.
+const DeliveryHistoryLimit = 100
+
 const (
 	deliveryDeviceColumns = `id, user_id, name, email, preset, is_default, created_at, updated_at`
-	deliveryJobColumns    = `id, user_id, device_id, device_name, device_email, preset, book_id,
+	deliveryJobColumns    = `id, user_id, device_id, device_name, device_email, preset,
 		asset_id, title, target, filename, size_bytes, status, error,
 		created_at, updated_at, sent_at`
 )
@@ -56,7 +59,6 @@ type DeliveryJob struct {
 	DeviceName  string
 	DeviceEmail string
 	Preset      string
-	BookID      int64
 	AssetID     sql.NullInt64
 	Title       string
 	Target      sql.NullString
@@ -342,16 +344,19 @@ func (db *DB) CreateDeliveryJob(ctx context.Context, job DeliveryJob) (*Delivery
 	}
 	var saved *DeliveryJob
 	err := db.Transact(ctx, func(tx *Tx) error {
+		if err := pruneDeliveryHistory(tx, job.UserID); err != nil {
+			return err
+		}
 		var err error
 		saved, err = scanDeliveryJobRow(tx.QueryRow(`
 			INSERT INTO delivery_jobs (
-				user_id, device_id, device_name, device_email, preset, book_id,
+				user_id, device_id, device_name, device_email, preset,
 				asset_id, title, target, filename, size_bytes, status, error
 			)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			RETURNING `+deliveryJobColumns,
 			job.UserID, job.DeviceID, job.DeviceName, job.DeviceEmail, job.Preset,
-			job.BookID, job.AssetID, job.Title, job.Target, job.Filename, job.SizeBytes,
+			job.AssetID, job.Title, job.Target, job.Filename, job.SizeBytes,
 			job.Status, job.Error))
 		return err
 	})
@@ -359,6 +364,24 @@ func (db *DB) CreateDeliveryJob(ctx context.Context, job DeliveryJob) (*Delivery
 		return nil, fmt.Errorf("create delivery job: %w", err)
 	}
 	return saved, nil
+}
+
+// Active jobs are excluded. Later completions can exceed the limit until the
+// owner's next enqueue.
+func pruneDeliveryHistory(execer Execer, userID int64) error {
+	_, err := execer.Exec(`
+		DELETE FROM delivery_jobs
+		WHERE id IN (
+			SELECT id FROM delivery_jobs
+			WHERE user_id = ? AND status IN ('sent', 'failed')
+			ORDER BY created_at DESC, id DESC
+			LIMIT -1 OFFSET ?
+		)
+	`, userID, DeliveryHistoryLimit)
+	if err != nil {
+		return fmt.Errorf("prune delivery history: %w", err)
+	}
+	return nil
 }
 
 func GetDeliveryJob(queryer Queryer, userID, jobID int64) (*DeliveryJob, error) {
@@ -420,14 +443,14 @@ func ListDeliveryJobs(queryer Queryer, userID int64, limit int) ([]DeliveryJob, 
 	}
 	if limit <= 0 {
 		limit = 20
-	} else if limit > 100 {
-		limit = 100
+	} else if limit > DeliveryHistoryLimit {
+		limit = DeliveryHistoryLimit
 	}
 	rows, err := queryer.Query(`
 		SELECT `+deliveryJobColumns+`
 		FROM delivery_jobs
 		WHERE user_id = ?
-		ORDER BY created_at DESC
+		ORDER BY created_at DESC, id DESC
 		LIMIT ?
 	`, userID, limit)
 	if err != nil {
@@ -521,7 +544,7 @@ func scanDeliveryJobRow(row rowScanner) (*DeliveryJob, error) {
 	var job DeliveryJob
 	if err := row.Scan(
 		&job.ID, &job.UserID, &job.DeviceID, &job.DeviceName, &job.DeviceEmail,
-		&job.Preset, &job.BookID, &job.AssetID, &job.Title, &job.Target,
+		&job.Preset, &job.AssetID, &job.Title, &job.Target,
 		&job.Filename, &job.SizeBytes, &job.Status, &job.Error,
 		&job.CreatedAt, &job.UpdatedAt, &job.SentAt,
 	); err != nil {

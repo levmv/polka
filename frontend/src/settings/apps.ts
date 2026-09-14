@@ -1,4 +1,5 @@
 import {
+    changeKoboShelf,
     createAppToken,
     createKoboConnection,
     fetchAppTokens,
@@ -38,8 +39,8 @@ type KoboState = AsyncLoadState & {
 // this value fixed because Basic authentication cannot encode ':' in a user ID.
 const appPasswordBasicUsername = 'polka';
 
-// An experimental Kobo endpoint must not hide stable app-password and OPDS
-// settings when it fails, so these sections load independently.
+// Load connection sections independently so one failed request does not hide
+// the other connection settings.
 export function createAppsPanel(): SettingsPanel {
     const state: AppsState = {
         loaded: false,
@@ -85,23 +86,23 @@ function renderAppPasswords(root: HTMLElement, state: AppsState): void {
 
     const rerender = () => renderAppPasswords(root, state);
 
-    const action = document.createElement('div');
-    action.className = 'settings-section-action';
-    const create = buttonEl('dialog-btn dialog-primary-btn', 'New app password', () =>
-        openCreateAppPasswordModal(state, rerender),
-    );
-    create.disabled = !state.loaded;
-    action.append(create);
-
-    root.append(
+    const header = document.createElement('div');
+    header.className = 'settings-subsection-header';
+    const intro = document.createElement('div');
+    intro.append(
         textEl('h4', 'settings-subsection-title', 'App passwords'),
         textEl(
             'div',
             'settings-block-hint',
             'Create one per app or device. Revoke it later without changing your account password.',
         ),
-        action,
     );
+    const create = buttonEl('dialog-btn', 'New app password', () =>
+        openCreateAppPasswordModal(state, rerender),
+    );
+    create.disabled = !state.loaded;
+    header.append(intro, create);
+    root.append(header);
 
     const list = document.createElement('div');
     list.className = 'settings-item-list';
@@ -141,20 +142,18 @@ function renderKoboConnection(root: HTMLElement, state: KoboState): void {
     root.className = 'settings-kobo-connection';
     const rerender = () => renderKoboConnection(root, state);
 
-    const title = document.createElement('div');
-    title.className = 'settings-kobo-title';
-    title.append(
+    const intro = document.createElement('div');
+    intro.append(
         textEl('h4', 'settings-subsection-title', 'Kobo sync'),
-        textEl('span', 'settings-experimental-badge', 'Experimental'),
-    );
-    root.append(
-        title,
         textEl(
             'div',
             'settings-block-hint',
             'Put one shelf in your Kobo library. Books are added, updated, and removed on the next device sync.',
         ),
     );
+    const header = document.createElement('div');
+    header.append(intro);
+    root.append(header);
 
     if (
         renderAsyncSection(state, {
@@ -179,8 +178,12 @@ function renderKoboConnection(root: HTMLElement, state: KoboState): void {
         const details = buttonEl('dialog-btn', 'Details', () =>
             openKoboConnectionDetails(connection.setup_url),
         );
+        const changeShelf = buttonEl('dialog-btn', 'Change shelf', () =>
+            openKoboSetupModal(state, rerender),
+        );
+        changeShelf.disabled = state.shelves.length === 0;
         const actions = [
-            buttonEl('dialog-btn', 'Replace…', () => openKoboSetupModal(state, rerender)),
+            changeShelf,
             buttonEl('dialog-btn dialog-danger-btn', 'Revoke', async () => {
                 const confirmed = await confirmModal({
                     title: 'Revoke Kobo connection',
@@ -203,24 +206,31 @@ function renderKoboConnection(root: HTMLElement, state: KoboState): void {
         ];
         root.append(
             settingsItemRow({
-                name: connection.shelf_name,
-                meta: `Connected ${formatTokenDate(connection.created_at)} · Last used ${formatTokenDate(connection.last_used_at)}`,
+                name: connection.shelf_name || 'No shelf selected',
+                meta: connection.shelf_id
+                    ? `Connected ${formatTokenDate(connection.created_at)} · Last used ${formatTokenDate(connection.last_used_at)}`
+                    : 'The previous shelf was deleted. Its books will be removed from Kobo on the next sync.',
                 primaryAction: details,
                 actions,
                 rowClass: 'settings-kobo-row',
             }),
         );
+        if (state.shelves.length === 0) {
+            root.append(
+                textEl(
+                    'div',
+                    'settings-item-empty',
+                    'Create a shelf to choose a new one for Kobo.',
+                ),
+            );
+        }
         return;
     }
 
-    const action = document.createElement('div');
-    action.className = 'settings-section-action';
-    const setup = buttonEl('dialog-btn dialog-primary-btn', 'Set up Kobo', () =>
-        openKoboSetupModal(state, rerender),
-    );
+    const setup = buttonEl('dialog-btn', 'Set up Kobo', () => openKoboSetupModal(state, rerender));
     setup.disabled = state.shelves.length === 0;
-    action.append(setup);
-    root.append(action);
+    header.className = 'settings-subsection-header';
+    header.append(setup);
     if (state.shelves.length === 0) {
         root.append(
             textEl('div', 'settings-item-empty', 'Create a shelf first, then return here.'),
@@ -240,32 +250,38 @@ function openKoboSetupModal(state: KoboState, rerender: () => void): void {
         option.textContent = item.kind === 'query' ? `${item.name} · smart shelf` : item.name;
         shelf.append(option);
     }
-    if (state.koboConnection) shelf.value = String(state.koboConnection.shelf_id);
+    const connection = state.koboConnection;
+    if (connection?.shelf_id && state.shelves.some((item) => item.id === connection.shelf_id)) {
+        shelf.value = String(connection.shelf_id);
+    }
     fields.append(
         textEl(
             'div',
             'dialog-help',
-            state.koboConnection
-                ? 'Creating a new URL revokes the current Kobo connection.'
+            connection
+                ? 'Books outside the new shelf will be removed from Kobo on its next sync. The setup URL stays the same.'
                 : 'Choose the shelf that should appear on this Kobo.',
         ),
         formField('Shelf', shelf),
     );
 
     openFormModal({
-        title: state.koboConnection ? 'Replace Kobo connection' : 'Set up Kobo',
-        submitLabel: state.koboConnection ? 'Replace' : 'Create',
+        title: connection ? 'Change Kobo shelf' : 'Set up Kobo',
+        submitLabel: connection ? 'Save' : 'Create',
         fields,
         focus: shelf,
         onSubmit: async () => {
             try {
-                const created = await createKoboConnection(Number(shelf.value));
-                state.koboConnection = created;
+                const saved = connection
+                    ? await changeKoboShelf(Number(shelf.value))
+                    : await createKoboConnection(Number(shelf.value));
+                state.koboConnection = saved;
                 rerender();
-                openKoboConnectionDetails(created.setup_url);
+                if (connection) showToast('Kobo shelf changed');
+                else openKoboConnectionDetails(saved.setup_url);
                 return true;
             } catch (err) {
-                showToast(errorMessage(err, 'Create Kobo connection failed'), { type: 'error' });
+                showToast(errorMessage(err, 'Save Kobo connection failed'), { type: 'error' });
                 return false;
             }
         },
