@@ -8,15 +8,13 @@ PUBLIC_SEED_INPUT ?= browser-test/fixtures
 LOCAL_SEED_INPUT ?= local/corpus/dev-seed
 SEED_INPUT ?= $(if $(wildcard $(LOCAL_SEED_INPUT)),$(LOCAL_SEED_INPUT),$(PUBLIC_SEED_INPUT))
 
-.PHONY: help test build serve seed reseed browser-test pdfium-wasm pdfium-wasm-verify node-deps frontend
+.PHONY: help test build serve seed reseed browser-test pdfium-wasm node-deps frontend
 
 help:
 	@echo "polka:"
 	@echo "  make test          autoformat, then run checks (vet, biome, tsc, frontend/unit build, go test)"
 	@echo "  make build         bundle the frontend, then build the binary"
 	@echo "  make pdfium-wasm   prepare the bundled PDF renderer (cached between builds)"
-	@echo "  make pdfium-wasm-verify"
-	@echo "                    verify the tailored PDFium module and dependency pin"
 	@echo "  make seed          import the dev seed into the dev library (idempotent)"
 	@echo "  make reseed        wipe the dev library and rebuild it from scratch"
 	@echo "  make serve         build, auto-seed on first run, and serve the dev library"
@@ -31,7 +29,7 @@ node_modules/.package-lock.json: package.json package-lock.json
 frontend: node-deps
 	npm run build
 
-test: pdfium-wasm
+test: node-deps pdfium-wasm
 	@gofmt -w $(GOFMT_FILES)
 	npm run lint:fix
 	npm run typecheck
@@ -42,11 +40,8 @@ test: pdfium-wasm
 	CGO_ENABLED=0 go test -tags nodynamic ./...
 
 # Derivation instructions and provenance live in internal/pdfcover/README.md.
-pdfium-wasm: node-deps
+pdfium-wasm:
 	GOOS= GOARCH= go run ./internal/pdfcover/wasmtool prepare
-
-pdfium-wasm-verify:
-	GOOS= GOARCH= go run ./internal/pdfcover/wasmtool verify
 
 build: pdfium-wasm
 	$(MAKE) frontend

@@ -1,25 +1,35 @@
 {
   "schema": 1,
   "go_pdfium": {
-    "version": "v1.19.6",
-    "commit": "457c1591a17408dd92fabda8dd3339aa38e60cdf",
-    "pdfium_version": 7961,
-    "wasm_bytes": 5225611,
-    "wasm_sha256": "a9da632fc69e963f94c68dda017eec3e512284c9113d6e3be21f35086de3c0c3"
+    "version": "v1.20.0",
+    "commit": "6ff9abaa8b4119050917fc6e3bfba458e88a295d",
+    "pdfium_version": 8044,
+    "wasm_bytes": 5752581,
+    "wasm_sha256": "f651270c675cac90702b762f4b95d2b34e365cdb374065e40af016f4f0f304ea"
   },
   "binaryen": {
-    "version": "108.0.0",
-    "wasm_opt_sha256": "df0b0e580159044cb76c5012882f6124b15683d681b584bef33beb863321cc84",
+    "version": "132",
+    "archive_sha256": "f2f49e583f5eafbe2af5da8470177d4d10aedf149752f5dd97736f54eba6f6a2",
+    "wasm_opt_js_sha256": "d5d2b00890bdba1fc5f4359a71e110df663472c1df361305f4d5f60dceb3a8ce",
+    "wasm_opt_wasm_sha256": "6e95eaf47cabf109503381d234c90dfe382935b6fa31e044ecc343d0a5400130",
     "arguments": [
-      "--all-features",
+      "--mvp-features",
+      "--enable-mutable-globals",
+      "--enable-sign-ext",
+      "--enable-nontrapping-float-to-int",
+      "--enable-bulk-memory",
+      "--enable-multivalue",
+      "--enable-reference-types",
+      "--enable-simd",
+      "--enable-exception-handling",
       "--remove-unused-module-elements",
       "-O2"
     ]
   },
   "output": {
     "path": "internal/pdfcover/generated/pdfium-cover.wasm",
-    "bytes": 4151595,
-    "sha256": "9340d7b954d9755cc5d5710bff0229538a4e9b2429d56a33ac8042b9a6f7be54"
+    "bytes": 4607809,
+    "sha256": "45184a2075300994f73d64b6df7f296d0818282bbb8fee13a369255ef3a54a69"
   },
   "imports": [
     "env.FPDF_FILEACCESS_CB",
@@ -45,13 +55,7 @@
     "env.FX_FILEAVAIL_IS_DATA_AVAILABLE_CB",
     "env.IFSDK_PAUSE_NeedToPauseNow_CB",
     "env.UNSUPPORT_INFO_HANDLER_CB",
-    "env._emscripten_throw_longjmp",
     "env.emscripten_notify_memory_growth",
-    "env.invoke_ii",
-    "env.invoke_iii",
-    "env.invoke_iiii",
-    "env.invoke_iiiii",
-    "env.invoke_viii",
     "wasi_snapshot_preview1.clock_time_get",
     "wasi_snapshot_preview1.environ_get",
     "wasi_snapshot_preview1.environ_sizes_get",
@@ -97,6 +101,6 @@
     "free",
     "malloc",
     "memory",
-    "setThrew"
+    "memset"
   ]
 }

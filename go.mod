@@ -5,7 +5,7 @@ go 1.27.1
 require (
 	github.com/bodgit/sevenzip v1.6.5
 	github.com/gen2brain/avif v0.6.0
-	github.com/klippa-app/go-pdfium v1.19.6
+	github.com/klippa-app/go-pdfium v1.20.0
 	github.com/levmv/chardet v0.1.0
 	github.com/nwaples/rardecode/v2 v2.4.1
 	github.com/tetratelabs/wazero v1.12.0

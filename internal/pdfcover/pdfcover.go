@@ -22,6 +22,8 @@ import (
 	"github.com/klippa-app/go-pdfium/responses"
 	"github.com/klippa-app/go-pdfium/webassembly"
 	"github.com/tetratelabs/wazero"
+	"github.com/tetratelabs/wazero/api"
+	"github.com/tetratelabs/wazero/experimental"
 
 	"github.com/levmv/polka/internal/covers"
 )
@@ -130,12 +132,15 @@ func (r *Renderer) BackendInfo() BackendInfo { return r.backend }
 func (r *Renderer) ensureWASM() error {
 	r.once.Do(func() {
 		pool, err := r.poolFactory(webassembly.Config{
-			MinIdle:       1,
-			MaxIdle:       1,
-			MaxTotal:      1,
-			WASM:          pdfiumCoverWASM,
-			FSConfig:      wazero.NewFSConfig(),
-			RuntimeConfig: wazero.NewRuntimeConfig().WithMemoryLimitPages(pdfiumMemoryLimitPages).WithCloseOnContextDone(true),
+			MinIdle:  1,
+			MaxIdle:  1,
+			MaxTotal: 1,
+			WASM:     pdfiumCoverWASM,
+			FSConfig: wazero.NewFSConfig(),
+			// PDFium's setjmp/longjmp uses WebAssembly exception handling.
+			RuntimeConfig: wazero.NewRuntimeConfig().
+				WithCoreFeatures(api.CoreFeaturesV2 | experimental.CoreFeaturesExceptionHandling).
+				WithMemoryLimitPages(pdfiumMemoryLimitPages).WithCloseOnContextDone(true),
 		})
 		if err != nil {
 			r.initErr = fmt.Errorf("init pdfium: %w", err)

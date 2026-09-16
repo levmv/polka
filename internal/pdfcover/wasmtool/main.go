@@ -21,7 +21,6 @@ import (
 const (
 	manifestPath = "internal/pdfcover/pdfium-wasm.json"
 	goPDFiumPath = "github.com/klippa-app/go-pdfium"
-	wasmOptPath  = "node_modules/binaryen/bin/wasm-opt"
 )
 
 type manifest struct {
@@ -33,12 +32,8 @@ type manifest struct {
 		WASMBytes     int    `json:"wasm_bytes"`
 		WASMSHA256    string `json:"wasm_sha256"`
 	} `json:"go_pdfium"`
-	Binaryen struct {
-		Version       string   `json:"version"`
-		WASMOptSHA256 string   `json:"wasm_opt_sha256"`
-		Arguments     []string `json:"arguments"`
-	} `json:"binaryen"`
-	Output struct {
+	Binaryen binaryenSpec `json:"binaryen"`
+	Output   struct {
 		Path   string `json:"path"`
 		Bytes  int    `json:"bytes"`
 		SHA256 string `json:"sha256"`
@@ -55,67 +50,50 @@ func main() {
 }
 
 func run(args []string) error {
-	if len(args) == 0 {
-		return errors.New("usage: pdfium-wasm <prepare|verify|derive> [options]")
+	if len(args) == 0 || (args[0] != "prepare" && args[0] != "verify") {
+		return errors.New("usage: pdfium-wasm <prepare|verify> [options]")
 	}
-
-	switch args[0] {
-	case "prepare":
-		flags := flag.NewFlagSet("prepare", flag.ContinueOnError)
-		root := flags.String("root", ".", "Polka repository root")
-		if err := flags.Parse(args[1:]); err != nil {
-			return err
-		}
-		if flags.NArg() != 0 {
-			return errors.New("usage: pdfium-wasm prepare [-root DIR]")
-		}
-		return prepare(*root)
-	case "verify":
-		flags := flag.NewFlagSet("verify", flag.ContinueOnError)
-		root := flags.String("root", ".", "Polka repository root")
-		input := flags.String("input", "", "optional upstream pdfium.wasm to verify")
-		wasmOpt := flags.String("wasm-opt", "", "optional pinned wasm-opt to verify")
-		if err := flags.Parse(args[1:]); err != nil {
-			return err
-		}
-		if flags.NArg() != 0 {
-			return errors.New("usage: pdfium-wasm verify [-root DIR] [-input FILE] [-wasm-opt FILE]")
-		}
-		return verify(*root, *input, *wasmOpt)
-	case "derive":
-		flags := flag.NewFlagSet("derive", flag.ContinueOnError)
-		root := flags.String("root", ".", "Polka repository root")
-		input := flags.String("input", "", "upstream go-pdfium pdfium.wasm")
-		wasmOpt := flags.String("wasm-opt", "", "pinned Binaryen Node.js wasm-opt script")
-		if err := flags.Parse(args[1:]); err != nil {
-			return err
-		}
-		if flags.NArg() != 0 || *input == "" || *wasmOpt == "" {
-			return errors.New("usage: pdfium-wasm derive [-root DIR] -input FILE -wasm-opt FILE")
-		}
-		return derive(*root, *input, *wasmOpt)
-	default:
-		return fmt.Errorf("unknown command %q; want prepare, verify or derive", args[0])
+	flags := flag.NewFlagSet(args[0], flag.ContinueOnError)
+	root := flags.String("root", ".", "Polka repository root")
+	var force bool
+	if args[0] == "prepare" {
+		flags.BoolVar(&force, "force", false, "regenerate even if the cached module is valid")
 	}
-}
-
-func prepare(root string) error {
-	spec, err := loadManifest(root)
+	if err := flags.Parse(args[1:]); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return errors.New("unexpected positional arguments")
+	}
+	spec, err := loadManifest(*root)
 	if err != nil {
 		return err
 	}
-	if err := verifyDependencyPins(root, spec); err != nil {
+	if err := verifyGoPDFiumVersion(filepath.Join(*root, "go.mod"), spec.GoPDFium.Version); err != nil {
 		return err
 	}
-	if _, err := checkedModule(filepath.Join(root, spec.Output.Path), spec); err == nil {
-		return nil
+	if !force {
+		output, err := checkedModule(filepath.Join(*root, spec.Output.Path), spec)
+		if args[0] == "verify" {
+			if err != nil {
+				return fmt.Errorf("tailored module: %w", err)
+			}
+			fmt.Printf("verified %s (%d bytes, PDFium %d from go-pdfium %s)\n",
+				spec.Output.Path, len(output), spec.GoPDFium.PDFiumVersion, spec.GoPDFium.Version)
+		}
+		if err == nil {
+			return nil
+		}
 	}
+	return prepare(*root, spec)
+}
 
+func prepare(root string, spec manifest) error {
 	fmt.Println("Preparing PDFium WebAssembly; subsequent builds reuse the verified module.")
-	command := exec.Command("go", "mod", "download", "-json", goPDFiumPath+"@"+spec.GoPDFium.Version)
-	command.Dir = root
-	command.Stderr = os.Stderr
-	data, downloadErr := command.Output()
+	download := exec.Command("go", "mod", "download", "-json", goPDFiumPath+"@"+spec.GoPDFium.Version)
+	download.Dir = root
+	download.Stderr = os.Stderr
+	data, downloadErr := download.Output()
 	var module struct {
 		Dir   string
 		Error string
@@ -135,70 +113,23 @@ func prepare(root string) error {
 	if module.Dir == "" {
 		return errors.New("go mod download returned no go-pdfium module directory")
 	}
-	return derive(root, filepath.Join(module.Dir, "webassembly", "pdfium.wasm"), filepath.Join(root, wasmOptPath))
-}
-
-func verify(root, inputPath, wasmOptPath string) error {
-	spec, err := loadManifest(root)
-	if err != nil {
-		return err
-	}
-	if err := verifyDependencyPins(root, spec); err != nil {
-		return err
-	}
-	outputPath := filepath.Join(root, spec.Output.Path)
-	output, err := checkedModule(outputPath, spec)
-	if err != nil {
-		return fmt.Errorf("tailored module: %w", err)
-	}
-	if inputPath != "" {
-		if _, err := checkedFile(inputPath, spec.GoPDFium.WASMBytes, spec.GoPDFium.WASMSHA256); err != nil {
-			return fmt.Errorf("upstream module: %w", err)
-		}
-	}
-	if wasmOptPath != "" {
-		if _, err := checkedFile(wasmOptPath, 0, spec.Binaryen.WASMOptSHA256); err != nil {
-			return fmt.Errorf("wasm-opt: %w", err)
-		}
-	}
-
-	fmt.Printf("verified %s (%d bytes, PDFium %d from go-pdfium %s)\n",
-		spec.Output.Path, len(output), spec.GoPDFium.PDFiumVersion, spec.GoPDFium.Version)
-	return nil
-}
-
-func derive(root, inputPath, wasmOptPath string) error {
-	spec, err := loadManifest(root)
-	if err != nil {
-		return err
-	}
-	if err := verifyDependencyPins(root, spec); err != nil {
-		return err
-	}
+	inputPath := filepath.Join(module.Dir, "webassembly", "pdfium.wasm")
 	input, err := checkedFile(inputPath, spec.GoPDFium.WASMBytes, spec.GoPDFium.WASMSHA256)
 	if err != nil {
 		return fmt.Errorf("upstream module: %w", err)
 	}
-	if _, err := checkedFile(wasmOptPath, 0, spec.Binaryen.WASMOptSHA256); err != nil {
-		return fmt.Errorf("wasm-opt: %w", err)
-	}
-
-	keep := make(map[string]struct{}, len(spec.Exports))
-	for _, name := range spec.Exports {
-		if _, duplicate := keep[name]; duplicate {
-			return fmt.Errorf("manifest contains duplicate export %q", name)
-		}
-		keep[name] = struct{}{}
-	}
-	filtered, removed, err := filterExports(input, keep)
+	// Keep runtime helpers such as memset in the manifest: go-pdfium uses them
+	// to avoid copying Go buffers for guest-memory operations.
+	removed, err := exportsToRemove(input, spec.Exports)
 	if err != nil {
-		return fmt.Errorf("filter exports: %w", err)
+		return err
 	}
-	if err := verifyExports(filtered, spec.Exports); err != nil {
-		return fmt.Errorf("filtered module: %w", err)
+	if err := verifyImports(input, spec.Imports); err != nil {
+		return fmt.Errorf("upstream module: %w", err)
 	}
-	if err := verifyImports(filtered, spec.Imports); err != nil {
-		return fmt.Errorf("filtered module: %w", err)
+	wasmOptPath, err := prepareBinaryen(root, spec.Binaryen)
+	if err != nil {
+		return err
 	}
 
 	destination := filepath.Join(root, spec.Output.Path)
@@ -210,13 +141,19 @@ func derive(root, inputPath, wasmOptPath string) error {
 		return err
 	}
 	defer os.RemoveAll(tempDir)
-	filteredPath := filepath.Join(tempDir, "filtered.wasm")
 	outputPath := filepath.Join(tempDir, "pdfium-cover.wasm")
-	if err := os.WriteFile(filteredPath, filtered, 0o644); err != nil {
-		return err
+	commandArgs := []string{wasmOptPath}
+	if len(removed) > 0 {
+		removePath := filepath.Join(tempDir, "remove-exports.txt")
+		if err := os.WriteFile(removePath, []byte(strings.Join(removed, "\n")), 0o644); err != nil {
+			return err
+		}
+		commandArgs = append(commandArgs, "--remove-exports=@"+removePath)
 	}
-	commandArgs := append([]string{wasmOptPath}, spec.Binaryen.Arguments...)
-	commandArgs = append(commandArgs, filteredPath, "-o", outputPath)
+	// Manifest feature flags must match wazero's support. --all-features can
+	// enable Binaryen encodings that the runtime cannot read.
+	commandArgs = append(commandArgs, spec.Binaryen.Arguments...)
+	commandArgs = append(commandArgs, inputPath, "-o", outputPath)
 	command := exec.Command("node", commandArgs...)
 	command.Env = append(os.Environ(), "BINARYEN_CORES=1")
 	command.Stdout = os.Stdout
@@ -235,7 +172,7 @@ func derive(root, inputPath, wasmOptPath string) error {
 		return err
 	}
 	fmt.Printf("derived %s: removed %d exports, %d -> %d bytes\n",
-		spec.Output.Path, removed, len(input), len(output))
+		spec.Output.Path, len(removed), len(input), len(output))
 	return nil
 }
 
@@ -253,26 +190,6 @@ func loadManifest(root string) (manifest, error) {
 		return manifest{}, errors.New("manifest is incomplete or uses an unsupported schema")
 	}
 	return result, nil
-}
-
-func verifyDependencyPins(root string, spec manifest) error {
-	if err := verifyGoPDFiumVersion(filepath.Join(root, "go.mod"), spec.GoPDFium.Version); err != nil {
-		return err
-	}
-	data, err := os.ReadFile(filepath.Join(root, "package.json"))
-	if err != nil {
-		return err
-	}
-	var pkg struct {
-		DevDependencies map[string]string `json:"devDependencies"`
-	}
-	if err := json.Unmarshal(data, &pkg); err != nil {
-		return fmt.Errorf("decode package.json: %w", err)
-	}
-	if actual := pkg.DevDependencies["binaryen"]; actual != spec.Binaryen.Version {
-		return fmt.Errorf("package.json uses binaryen %q; tailored module expects %s", actual, spec.Binaryen.Version)
-	}
-	return nil
 }
 
 func verifyGoPDFiumVersion(path, expected string) error {
@@ -351,123 +268,97 @@ func verifyImports(module []byte, expected []string) error {
 	return nil
 }
 
-func filterExports(input []byte, keep map[string]struct{}) ([]byte, int, error) {
-	if len(input) < 8 || !bytes.Equal(input[:8], []byte("\x00asm\x01\x00\x00\x00")) {
-		return nil, 0, errors.New("not a WebAssembly 1.0 module")
+func exportsToRemove(module []byte, keep []string) ([]string, error) {
+	names, err := exportNames(module)
+	if err != nil {
+		return nil, err
 	}
-	var output bytes.Buffer
-	output.Write(input[:8])
-	removed := 0
-	foundExports := false
-	for offset := 8; offset < len(input); {
-		id := input[offset]
-		offset++
-		size, sizeBytes, err := readU32(input[offset:])
-		if err != nil {
-			return nil, 0, err
+	var removed, retained []string
+	for _, name := range names {
+		if slices.Contains(keep, name) {
+			retained = append(retained, name)
+		} else {
+			removed = append(removed, name)
 		}
-		offset += sizeBytes
-		end := offset + int(size)
-		if end < offset || end > len(input) {
-			return nil, 0, errors.New("section extends past input")
-		}
-		payload := input[offset:end]
-		offset = end
-		if id != 7 {
-			output.WriteByte(id)
-			writeU32(&output, uint32(len(payload)))
-			output.Write(payload)
-			continue
-		}
-		if foundExports {
-			return nil, 0, errors.New("module has multiple export sections")
-		}
-		foundExports = true
-
-		count, countBytes, err := readU32(payload)
-		if err != nil {
-			return nil, 0, err
-		}
-		cursor := countBytes
-		var entries bytes.Buffer
-		var kept uint32
-		for range count {
-			start := cursor
-			name, next, err := readExportName(payload, cursor)
-			if err != nil {
-				return nil, 0, err
-			}
-			cursor = next
-			if _, ok := keep[name]; ok {
-				entries.Write(payload[start:cursor])
-				kept++
-			} else {
-				removed++
-			}
-		}
-		if cursor != len(payload) {
-			return nil, 0, errors.New("trailing export-section bytes")
-		}
-		var filtered bytes.Buffer
-		writeU32(&filtered, kept)
-		filtered.Write(entries.Bytes())
-		output.WriteByte(id)
-		writeU32(&output, uint32(filtered.Len()))
-		output.Write(filtered.Bytes())
 	}
-	if !foundExports {
-		return nil, 0, errors.New("module has no export section")
+	slices.Sort(retained)
+	keep = slices.Sorted(slices.Values(keep))
+	if !slices.Equal(retained, keep) {
+		return nil, fmt.Errorf("upstream exports selected by manifest are %q; want %q", retained, keep)
 	}
-	return output.Bytes(), removed, nil
+	return removed, nil
 }
 
 func exportNames(module []byte) ([]string, error) {
-	if len(module) < 8 || !bytes.Equal(module[:8], []byte("\x00asm\x01\x00\x00\x00")) {
-		return nil, errors.New("not a WebAssembly 1.0 module")
+	payload, err := wasmSection(module, 7)
+	if err != nil {
+		return nil, err
 	}
-	for offset := 8; offset < len(module); {
-		id := module[offset]
-		offset++
-		size, sizeBytes, err := readU32(module[offset:])
+	count, cursor, err := readU32(payload)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for range count {
+		name, next, err := readExportName(payload, cursor)
 		if err != nil {
 			return nil, err
 		}
-		offset += sizeBytes
-		end := offset + int(size)
-		if end < offset || end > len(module) {
-			return nil, errors.New("section extends past input")
-		}
-		if id != 7 {
-			offset = end
-			continue
-		}
-		payload := module[offset:end]
-		count, countBytes, err := readU32(payload)
-		if err != nil {
-			return nil, err
-		}
-		cursor := countBytes
-		names := make([]string, 0, count)
-		for range count {
-			name, next, err := readExportName(payload, cursor)
-			if err != nil {
-				return nil, err
-			}
-			names = append(names, name)
-			cursor = next
-		}
-		if cursor != len(payload) {
-			return nil, errors.New("trailing export-section bytes")
-		}
-		return names, nil
+		names = append(names, name)
+		cursor = next
 	}
-	return nil, errors.New("module has no export section")
+	if cursor != len(payload) {
+		return nil, errors.New("trailing export-section bytes")
+	}
+	return names, nil
 }
 
 func importNames(module []byte) ([]string, error) {
+	payload, err := wasmSection(module, 2)
+	if err != nil {
+		return nil, err
+	}
+	count, cursor, err := readU32(payload)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for range count {
+		moduleName, next, err := readName(payload, cursor)
+		if err != nil {
+			return nil, err
+		}
+		importName, next, err := readName(payload, next)
+		if err != nil {
+			return nil, err
+		}
+		cursor = next
+		if cursor >= len(payload) {
+			return nil, errors.New("short import entry")
+		}
+		kind := payload[cursor]
+		cursor++
+		if kind != 0 {
+			return nil, fmt.Errorf("unsupported non-function import kind %d", kind)
+		}
+		_, indexBytes, err := readU32(payload[cursor:])
+		if err != nil {
+			return nil, err
+		}
+		cursor += indexBytes
+		names = append(names, moduleName+"."+importName)
+	}
+	if cursor != len(payload) {
+		return nil, errors.New("trailing import-section bytes")
+	}
+	return names, nil
+}
+
+func wasmSection(module []byte, wanted byte) ([]byte, error) {
 	if len(module) < 8 || !bytes.Equal(module[:8], []byte("\x00asm\x01\x00\x00\x00")) {
 		return nil, errors.New("not a WebAssembly 1.0 module")
 	}
+	var payload []byte
 	for offset := 8; offset < len(module); {
 		id := module[offset]
 		offset++
@@ -480,48 +371,18 @@ func importNames(module []byte) ([]string, error) {
 		if end < offset || end > len(module) {
 			return nil, errors.New("section extends past input")
 		}
-		if id != 2 {
-			offset = end
-			continue
+		if id == wanted {
+			if payload != nil {
+				return nil, fmt.Errorf("module has multiple sections %d", wanted)
+			}
+			payload = module[offset:end]
 		}
-		payload := module[offset:end]
-		count, countBytes, err := readU32(payload)
-		if err != nil {
-			return nil, err
-		}
-		cursor := countBytes
-		names := make([]string, 0, count)
-		for range count {
-			moduleName, next, err := readName(payload, cursor)
-			if err != nil {
-				return nil, err
-			}
-			importName, next, err := readName(payload, next)
-			if err != nil {
-				return nil, err
-			}
-			cursor = next
-			if cursor >= len(payload) {
-				return nil, errors.New("short import entry")
-			}
-			kind := payload[cursor]
-			cursor++
-			if kind != 0 {
-				return nil, fmt.Errorf("unsupported non-function import kind %d", kind)
-			}
-			_, indexBytes, err := readU32(payload[cursor:])
-			if err != nil {
-				return nil, err
-			}
-			cursor += indexBytes
-			names = append(names, moduleName+"."+importName)
-		}
-		if cursor != len(payload) {
-			return nil, errors.New("trailing import-section bytes")
-		}
-		return names, nil
+		offset = end
 	}
-	return nil, errors.New("module has no import section")
+	if payload == nil {
+		return nil, fmt.Errorf("module has no section %d", wanted)
+	}
+	return payload, nil
 }
 
 func readExportName(payload []byte, cursor int) (string, int, error) {
@@ -569,18 +430,4 @@ func readU32(input []byte) (uint32, int, error) {
 		}
 	}
 	return 0, 0, errors.New("invalid u32 LEB128")
-}
-
-func writeU32(output *bytes.Buffer, value uint32) {
-	for {
-		current := byte(value & 0x7f)
-		value >>= 7
-		if value != 0 {
-			current |= 0x80
-		}
-		output.WriteByte(current)
-		if value == 0 {
-			return
-		}
-	}
 }

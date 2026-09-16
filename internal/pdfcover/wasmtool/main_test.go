@@ -1,8 +1,8 @@
 package main
 
 import (
-	"bytes"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json/v2"
 	"fmt"
 	"os"
@@ -12,11 +12,10 @@ import (
 	"testing"
 )
 
-func TestPrepareCache(t *testing.T) {
+func TestModuleCache(t *testing.T) {
 	module := append(testImportModule(t, "env.callback"), testModule(t, "keep")[8:]...)
 	spec := manifest{Schema: 1, Imports: []string{"env.callback"}, Exports: []string{"keep"}}
 	spec.GoPDFium.Version = "v1.0.0"
-	spec.Binaryen.Version = "108.0.0"
 	spec.Output.Path = "internal/pdfcover/generated/pdfium-cover.wasm"
 	spec.Output.Bytes = len(module)
 	spec.Output.SHA256 = fmt.Sprintf("%x", sha256.Sum256(module))
@@ -27,23 +26,25 @@ func TestPrepareCache(t *testing.T) {
 
 	for _, tc := range []struct {
 		name    string
+		args    []string
 		module  []byte
 		goPin   string
-		npmPin  string
 		wantErr string
 	}{
-		{"valid", module, "v1.0.0", "108.0.0", ""},
-		{"missing", nil, "v1.0.0", "108.0.0", "download go-pdfium"},
-		{"corrupt", make([]byte, len(module)), "v1.0.0", "108.0.0", "download go-pdfium"},
-		{"changed Go pin", module, "v1.0.1", "108.0.0", "go.mod uses"},
-		{"changed npm pin", module, "v1.0.0", "109.0.0", "package.json uses"},
+		{"valid", []string{"prepare"}, module, "v1.0.0", ""},
+		{"forced", []string{"prepare", "-force"}, module, "v1.0.0", "download go-pdfium"},
+		{"missing", []string{"prepare"}, nil, "v1.0.0", "download go-pdfium"},
+		{"corrupt", []string{"prepare"}, make([]byte, len(module)), "v1.0.0", "download go-pdfium"},
+		{"changed Go pin", []string{"prepare"}, module, "v1.0.1", "go.mod uses"},
+		{"verify valid", []string{"verify"}, module, "v1.0.0", ""},
+		{"verify missing", []string{"verify"}, nil, "v1.0.0", "tailored module"},
+		{"verify corrupt", []string{"verify"}, make([]byte, len(module)), "v1.0.0", "tailored module"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
 			files := map[string][]byte{
-				manifestPath:   manifestJSON,
-				"go.mod":       []byte(fmt.Sprintf("module fixture\nrequire %s %s\n", goPDFiumPath, tc.goPin)),
-				"package.json": []byte(fmt.Sprintf(`{"devDependencies":{"binaryen":%q}}`, tc.npmPin)),
+				manifestPath: manifestJSON,
+				"go.mod":     []byte(fmt.Sprintf("module fixture\nrequire %s %s\n", goPDFiumPath, tc.goPin)),
 			}
 			if tc.module != nil {
 				files[spec.Output.Path] = tc.module
@@ -59,39 +60,42 @@ func TestPrepareCache(t *testing.T) {
 			}
 
 			// Reusing a valid artifact needs neither downloads nor an optimizer.
-			// Invalid artifacts must reach preparation instead of being accepted.
+			// Prepare must rebuild invalid artifacts; verify must only report them.
 			t.Setenv("PATH", t.TempDir())
-			err := prepare(root)
+			err := run(append(slices.Clone(tc.args), "-root", root))
 			if tc.wantErr == "" {
 				if err != nil {
 					t.Fatal(err)
 				}
 			} else if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
-				t.Fatalf("prepare error = %v, want %q", err, tc.wantErr)
+				t.Fatalf("run error = %v, want %q", err, tc.wantErr)
 			}
 		})
 	}
 }
 
-func TestFilterExports(t *testing.T) {
+func TestExportsToRemove(t *testing.T) {
 	input := testModule(t, "keep", "remove", "also-keep")
-	filtered, removed, err := filterExports(input, map[string]struct{}{
-		"keep":      {},
-		"also-keep": {},
-	})
-	if err != nil {
-		t.Fatalf("filterExports: %v", err)
-	}
-	if removed != 1 {
-		t.Fatalf("removed = %d, want 1", removed)
-	}
-	names, err := exportNames(filtered)
-	if err != nil {
-		t.Fatalf("exportNames: %v", err)
-	}
-	want := []string{"keep", "also-keep"}
-	if !slices.Equal(names, want) {
-		t.Fatalf("exports = %q, want %q", names, want)
+	for _, tc := range []struct {
+		name    string
+		keep    []string
+		removed []string
+		wantErr bool
+	}{
+		{"subset", []string{"keep", "also-keep"}, []string{"remove"}, false},
+		{"all", []string{"also-keep", "remove", "keep"}, nil, false},
+		{"missing required export", []string{"missing"}, nil, true},
+		{"duplicate required export", []string{"keep", "keep"}, nil, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			removed, err := exportsToRemove(input, tc.keep)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("exportsToRemove error = %v, wantErr %v", err, tc.wantErr)
+			}
+			if !slices.Equal(removed, tc.removed) {
+				t.Fatalf("removed = %q, want %q", removed, tc.removed)
+			}
+		})
 	}
 }
 
@@ -107,16 +111,24 @@ func TestImportNames(t *testing.T) {
 	}
 }
 
-func TestFilterExportsRejectsInvalidModule(t *testing.T) {
-	if _, _, err := filterExports([]byte("not wasm"), nil); err == nil {
-		t.Fatalf("filterExports unexpectedly accepted invalid input")
-	}
-}
-
-func TestFilterExportsRejectsShortEntry(t *testing.T) {
-	module := append([]byte("\x00asm\x01\x00\x00\x00"), 7, 1, 1)
-	if _, _, err := filterExports(module, nil); err == nil {
-		t.Fatalf("filterExports unexpectedly accepted a short export entry")
+func TestExportNamesRejectsInvalidModule(t *testing.T) {
+	header := "\x00asm\x01\x00\x00\x00"
+	for _, tc := range []struct {
+		name   string
+		module []byte
+	}{
+		{"invalid header", []byte("not wasm")},
+		{"missing section", []byte(header)},
+		{"short section", append([]byte(header), 7, 3, 1)},
+		{"short entry", append([]byte(header), 7, 1, 1)},
+		{"trailing bytes", append([]byte(header), 7, 2, 0, 0)},
+		{"duplicate sections", append(testModule(t, "keep"), testModule(t, "other")[8:]...)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := exportNames(tc.module); err == nil {
+				t.Fatal("exportNames unexpectedly accepted invalid input")
+			}
+		})
 	}
 }
 
@@ -128,42 +140,33 @@ func TestReadU32RejectsOverflow(t *testing.T) {
 
 func testModule(t *testing.T, names ...string) []byte {
 	t.Helper()
-	var payload bytes.Buffer
-	writeU32(&payload, uint32(len(names)))
+	payload := binary.AppendUvarint(nil, uint64(len(names)))
 	for index, name := range names {
-		writeU32(&payload, uint32(len(name)))
-		payload.WriteString(name)
-		payload.WriteByte(0) // function
-		writeU32(&payload, uint32(index))
+		payload = binary.AppendUvarint(payload, uint64(len(name)))
+		payload = append(payload, name...)
+		payload = append(payload, 0) // function
+		payload = binary.AppendUvarint(payload, uint64(index))
 	}
-	var module bytes.Buffer
-	module.WriteString("\x00asm\x01\x00\x00\x00")
-	module.WriteByte(7)
-	writeU32(&module, uint32(payload.Len()))
-	module.Write(payload.Bytes())
-	return module.Bytes()
+	module := append([]byte("\x00asm\x01\x00\x00\x00"), 7)
+	module = binary.AppendUvarint(module, uint64(len(payload)))
+	return append(module, payload...)
 }
 
 func testImportModule(t *testing.T, names ...string) []byte {
 	t.Helper()
-	var payload bytes.Buffer
-	writeU32(&payload, uint32(len(names)))
+	payload := binary.AppendUvarint(nil, uint64(len(names)))
 	for _, name := range names {
-		moduleName, importName, found := bytes.Cut([]byte(name), []byte{'.'})
+		moduleName, importName, found := strings.Cut(name, ".")
 		if !found {
 			t.Fatalf("import %q has no module separator", name)
 		}
-		writeU32(&payload, uint32(len(moduleName)))
-		payload.Write(moduleName)
-		writeU32(&payload, uint32(len(importName)))
-		payload.Write(importName)
-		payload.WriteByte(0) // function
-		writeU32(&payload, 0)
+		payload = binary.AppendUvarint(payload, uint64(len(moduleName)))
+		payload = append(payload, moduleName...)
+		payload = binary.AppendUvarint(payload, uint64(len(importName)))
+		payload = append(payload, importName...)
+		payload = append(payload, 0, 0) // function, type index
 	}
-	var module bytes.Buffer
-	module.WriteString("\x00asm\x01\x00\x00\x00")
-	module.WriteByte(2)
-	writeU32(&module, uint32(payload.Len()))
-	module.Write(payload.Bytes())
-	return module.Bytes()
+	module := append([]byte("\x00asm\x01\x00\x00\x00"), 2)
+	module = binary.AppendUvarint(module, uint64(len(payload)))
+	return append(module, payload...)
 }
