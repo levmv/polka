@@ -3,7 +3,8 @@ POLKA THIRD-PARTY NOTICES
 Polka distributions include third-party software under its own licenses.
 This file reproduces the corresponding copyright notices and license terms.
 Exact dependency versions and source pins are recorded in go.mod,
-package-lock.json, and internal/pdfcover/pdfium-wasm.json.
+package-lock.json, internal/pdfcover/pdfium-wasm.json, and
+frontend/fonts/README.md.
 
 The PDFium notices were collected from bblanchon/pdfium-binaries tag
 chromium/7961 (c6529b5) for PDFium commit
@@ -12,6 +13,10 @@ chromium/7961 (c6529b5) for PDFium commit
 Polka includes github.com/hashicorp/golang-lru/v2 version 2.0.7 under the
 Mozilla Public License 2.0. Corresponding source code is available at:
 https://github.com/hashicorp/golang-lru/tree/v2.0.7
+
+Polka uses Liberation Sans 2.1.5 under the SIL Open Font License 1.1 as
+PDF.js fallback fonts. The WOFF2 files, license, and provenance are included
+in frontend/fonts/.
 
 Build-only tools such as esbuild, TypeScript, Biome, and Playwright are not
 included in the Polka runtime distribution and are not covered here.
@@ -4964,7 +4969,7 @@ pdfjs-dist/standard-fonts-LICENSE-FOXIT
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ===============================================================================
-pdfjs-dist/standard-fonts-LICENSE-LIBERATION
+liberation-sans/OFL.txt
 ===============================================================================
 
 Digitized data copyright (c) 2010 Google Corporation
@@ -5364,28 +5369,25 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 pdfjs-dist/wasm-LICENSE-PDFJS-QCMS
 ===============================================================================
 
-Copyright (c) 2025, Mozilla Foundation
+MIT License
 
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions are met:
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-1. Redistributions of source code must retain the above copyright notice, this
-   list of conditions and the following disclaimer.
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
-2. Redistributions in binary form must reproduce the above copyright notice,
-   this list of conditions and the following disclaimer in the documentation
-   and/or other materials provided with the distribution.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
-FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
-OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 
 ===============================================================================
 pdfjs-dist/wasm-LICENSE-QCMS

@@ -23,6 +23,7 @@
 /internal/web/static/pdfjs/
 /internal/web/static/ThirdPartyNotices.txt
 /internal/web/static/LICENSE.txt
+/internal/web/static/**/*.gz
 
 # Compiled Go test binaries
 *.test
@@ -37,5 +38,3 @@
 # Python bytecode (browser-test fixture generator)
 __pycache__/
 *.pyc
-/internal/web/static/**/*.gz
-/.claude/

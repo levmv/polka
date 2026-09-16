@@ -155,6 +155,8 @@ class PDFReader {
             wasmUrl: `${PDF_RESOURCE_ROOT}/wasm/`,
             useWasm: true,
             useWorkerFetch: true,
+            // Bundled WOFF2 substitutes use the browser's FontFace loader.
+            useSystemFonts: true,
             enableXfa: false,
             disableRange: false,
             // Range loading without speculative auto-fetch keeps large files

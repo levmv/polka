@@ -173,6 +173,8 @@ func staticContentType(name string) string {
 		return "application/manifest+json"
 	case ".wasm":
 		return "application/wasm"
+	case ".woff2":
+		return "font/woff2"
 	case ".bcmap":
 		return "application/octet-stream"
 	}

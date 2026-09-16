@@ -8,24 +8,24 @@
     "typecheck": "tsc --noEmit -p frontend/tsconfig.json && tsc --noEmit -p browser-test/tsconfig.json",
     "lint": "biome check frontend/build.mjs frontend/src frontend/test browser-test biome.json",
     "lint:fix": "biome check --write frontend/build.mjs frontend/src frontend/test browser-test biome.json",
-    "test:unit": "node --experimental-strip-types --test frontend/test/*.test.mjs",
+    "test:unit": "node --test frontend/test/*.test.mjs",
     "test:browser-list": "cd browser-test && playwright test --list >/dev/null",
     "e2e": "cd browser-test && playwright test",
     "screenshot": "node browser-test/screenshot.mjs"
   },
   "engines": {
-    "node": ">=22.13.0"
+    "node": ">=24.0.0"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.0",
-    "@playwright/test": "^1.62.1",
-    "@types/node": "^22.20.2",
+    "@biomejs/biome": "^2.5.13",
+    "@playwright/test": "^1.63.0",
+    "@types/node": "^24.13.4",
     "binaryen": "108.0.0",
-    "esbuild": "^0.28.1",
+    "esbuild": "^0.28.2",
     "typescript": "^7.0.2"
   },
   "dependencies": {
     "foliate-js": "1.0.1",
-    "pdfjs-dist": "6.2.108"
+    "pdfjs-dist": "6.3.289"
   }
 }

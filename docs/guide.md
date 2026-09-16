@@ -10,7 +10,7 @@ conversion tools.
 
 ### Build from source
 
-Building requires Go 1.27.0 or newer, Node.js 22.13 or newer with npm, and
+Building requires Go 1.27 or newer, Node.js 24 or newer with npm, and
 Make. These are build-time requirements only.
 
 The first build downloads dependencies and prepares the bundled PDF renderer;

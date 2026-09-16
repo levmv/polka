@@ -2,11 +2,33 @@
 // Run from the repo root (`npm run build`).
 
 import { copyFile, cp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import * as esbuild from 'esbuild';
 
 const staticRoot = 'internal/web/static';
+
+const pdfFontNames = ['Regular', 'Bold', 'Italic', 'BoldItalic'].map(
+    (style) => `LiberationSans-${style}`,
+);
+
+// The reader uses browser font substitution with XFA disabled, so its fallback
+// fonts can be WOFF2. Keep this adaptation here without modifying node_modules.
+const pdfFonts = {
+    name: 'pdf-fonts',
+    setup(build) {
+        build.onLoad({ filter: /[/\\]pdf\.worker\.mjs$/ }, async ({ path }) => {
+            let contents = await readFile(path, 'utf8');
+            for (const name of pdfFontNames) {
+                if (!contents.includes(`${name}.ttf`)) {
+                    throw new Error(`PDF.js no longer references ${name}.ttf; review font loading`);
+                }
+                contents = contents.replaceAll(`${name}.ttf`, `${name}.woff2`);
+            }
+            return { contents, loader: 'js' };
+        });
+    },
+};
 
 const common = {
     bundle: true,
@@ -14,6 +36,7 @@ const common = {
     target: ['es2018'],
     logLevel: 'warning',
     write: true,
+    plugins: [pdfFonts],
 };
 
 for (const [entry, name, allowedEngine] of [
@@ -49,16 +72,25 @@ await esbuild.build({
 });
 
 // PDF.js loads CMaps, color profiles, standard fonts, and image decoders on
-// demand. Keep those version-matched with the pinned package, including their
-// own license files, and let go:embed absorb the generated directory.
+// demand. Keep package resources version-matched, replacing its Liberation 1.x
+// fonts with our OFL-licensed WOFF2 files. See fonts/README.md for provenance.
 const pdfResourceRoot = `${staticRoot}/pdfjs`;
+const replacedFonts = new Set([...pdfFontNames.map((name) => `${name}.ttf`), 'LICENSE_LIBERATION']);
 await rm(pdfResourceRoot, { recursive: true, force: true });
 await mkdir(pdfResourceRoot, { recursive: true });
 for (const directory of ['cmaps', 'iccs', 'standard_fonts', 'wasm']) {
     await cp(`node_modules/pdfjs-dist/${directory}`, `${pdfResourceRoot}/${directory}`, {
         recursive: true,
+        filter: (source) => !replacedFonts.has(basename(source)),
     });
 }
+for (const name of pdfFontNames) {
+    await copyFile(
+        `frontend/fonts/${name}.woff2`,
+        `${pdfResourceRoot}/standard_fonts/${name}.woff2`,
+    );
+}
+await copyFile('frontend/fonts/OFL.txt', `${pdfResourceRoot}/standard_fonts/LICENSE_LIBERATION`);
 
 // Keep the distribution self-contained by embedding its license and the
 // canonical third-party notice file.
@@ -70,9 +102,8 @@ await copyFile('ThirdPartyNotices.txt', `${staticRoot}/ThirdPartyNotices.txt`);
 // plain install without a compressing reverse proxy still gets the small wire
 // size. The server picks the `.gz` sibling when the client accepts gzip and
 // falls back to the original otherwise, so a missing sibling is never an error.
-// Only text-like and wasm payloads qualify: the pdf.js cmaps and bundled fonts
-// barely shrink and would add hundreds of files to the embedded tree for a few
-// percent.
+// Only text-like and wasm payloads qualify. WOFF2 is already compressed; CMaps
+// and the remaining font resources are kept as supplied by PDF.js.
 const compressibleExtensions = ['.js', '.css', '.svg', '.webmanifest', '.json', '.wasm'];
 const minCompressionSaving = 0.15;
 

@@ -193,6 +193,11 @@ export function pdf(
   secondLine = '',
 ): UploadFile {
   const pageLabels = ['First PDF page', 'Second PDF page', 'Third PDF page'];
+  const fontStyles = ['Bold', 'Oblique', 'BoldOblique'];
+  const fontResources = [
+    '/F1 9 0 R',
+    ...fontStyles.map((_, index) => `/F${index + 2} ${14 + index} 0 R`),
+  ].join(' ');
   const objects = new Map<number, Buffer>();
   objects.set(1, Buffer.from('<< /Type /Catalog /Pages 2 0 R /Outlines 11 0 R >>'));
   objects.set(2, Buffer.from('<< /Type /Pages /Count 3 /Kids [3 0 R 5 0 R 7 0 R] >>'));
@@ -202,13 +207,22 @@ export function pdf(
     const contentID = pageID + 1;
     const bottomTarget = index === 2 ? '\nBT /F1 24 Tf 72 72 Td (Bottom PDF target) Tj ET' : '';
     const extraLine = secondLine ? `\nBT /F1 24 Tf 72 660 Td (${pdfEscape(secondLine)}) Tj ET` : '';
+    const fontSamples =
+      index === 0
+        ? fontStyles
+            .map(
+              (style, index) =>
+                `\nBT /F${index + 2} 24 Tf 72 ${600 - index * 40} Td (Helvetica-${style}) Tj ET`,
+            )
+            .join('')
+        : '';
     const content = Buffer.from(
-      `BT /F1 24 Tf 72 700 Td (${pdfEscape(pageLabels[index])}) Tj ET${extraLine}${bottomTarget}`,
+      `BT /F1 24 Tf 72 700 Td (${pdfEscape(pageLabels[index])}) Tj ET${extraLine}${bottomTarget}${fontSamples}`,
     );
     objects.set(
       pageID,
       Buffer.from(
-        `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Rotate ${rotations[index] ?? 0} /Resources << /Font << /F1 9 0 R >> >> /Contents ${contentID} 0 R >>`,
+        `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Rotate ${rotations[index] ?? 0} /Resources << /Font << ${fontResources} >> >> /Contents ${contentID} 0 R >>`,
       ),
     );
     objects.set(
@@ -233,10 +247,18 @@ export function pdf(
     Buffer.from('<< /Title (Final PDF page) /Parent 11 0 R /Prev 12 0 R /Dest [7 0 R /Fit] >>'),
   );
 
+  for (const [index, style] of fontStyles.entries()) {
+    objects.set(
+      14 + index,
+      Buffer.from(`<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-${style} >>`),
+    );
+  }
+
+  const size = Math.max(...objects.keys()) + 1;
   const chunks: Buffer[] = [Buffer.from('%PDF-1.4\n')];
-  const offsets = new Array<number>(14).fill(0);
+  const offsets = new Array<number>(size).fill(0);
   let offset = chunks[0].length;
-  for (let id = 1; id <= 13; id++) {
+  for (let id = 1; id < size; id++) {
     const object = Buffer.concat([
       Buffer.from(`${id} 0 obj\n`),
       objects.get(id) || Buffer.from('<<>>'),
@@ -250,11 +272,11 @@ export function pdf(
   const xrefOffset = offset;
   const xref = [
     'xref',
-    '0 14',
+    `0 ${size}`,
     '0000000000 65535 f ',
     ...offsets.slice(1).map((value) => `${String(value).padStart(10, '0')} 00000 n `),
     'trailer',
-    '<< /Size 14 /Root 1 0 R /Info 10 0 R >>',
+    `<< /Size ${size} /Root 1 0 R /Info 10 0 R >>`,
     'startxref',
     String(xrefOffset),
     '%%EOF',

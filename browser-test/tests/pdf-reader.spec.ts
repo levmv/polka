@@ -3,8 +3,27 @@ import { pdf } from './book-fixtures';
 import { expect, test } from './fixtures';
 import { importTestBook, readerMutationFields } from './helpers';
 
+type FontTestWindow = typeof window & { pdfFallbackFonts: Map<string, FontFace> };
+
 test('PDF reader behavior', async ({ page, browserName, browserErrors }) => {
   test.setTimeout(45_000);
+  if (browserName === 'chromium') {
+    await page.addInitScript(() => {
+      const fonts = new Map<string, FontFace>();
+      (window as FontTestWindow).pdfFallbackFonts = fonts;
+      // Exercise the bundled fonts even on hosts with Arial or Liberation installed.
+      window.FontFace = new Proxy(window.FontFace, {
+        construct(target, args) {
+          const name =
+            typeof args[1] === 'string' && args[1].match(/LiberationSans-\w+\.woff2/)?.[0];
+          if (name) args[1] = args[1].replace(/local\([^)]*\),?/g, '');
+          const font = Reflect.construct(target, args);
+          if (name) fonts.set(name, font);
+          return font;
+        },
+      });
+    });
+  }
   browserErrors.allow(
     (message) =>
       browserName === 'webkit' &&
@@ -35,6 +54,23 @@ test('PDF reader behavior', async ({ page, browserName, browserErrors }) => {
     await expect(page.locator('[data-pdf-text-layer]')).toContainText('First PDF page');
     await expect(page.locator('[data-pdf-page-input]')).toHaveValue('1');
     await expect(page.locator('[data-pdf-page-total]')).toHaveText('3');
+
+    if (browserName === 'chromium') {
+      const fonts = await page.evaluate(() =>
+        Object.fromEntries(
+          Array.from((window as FontTestWindow).pdfFallbackFonts, ([name, font]) => [
+            name,
+            font.status,
+          ]),
+        ),
+      );
+      expect(fonts, 'bundled PDF fonts').toEqual({
+        'LiberationSans-Regular.woff2': 'loaded',
+        'LiberationSans-Bold.woff2': 'loaded',
+        'LiberationSans-Italic.woff2': 'loaded',
+        'LiberationSans-BoldItalic.woff2': 'loaded',
+      });
+    }
 
     await page.getByRole('button', { name: 'Next page' }).click();
     await expect(page.locator('[data-pdf-page-input]')).toHaveValue('2');

@@ -5,8 +5,6 @@ Vanilla TypeScript, bundled by [build.mjs](build.mjs) into
 and PDF.js reader have separate bundles. Each engine belongs only in its own
 reader bundle; keep the app and shared reader UI independent of both engines.
 
-Repository-wide contribution rules live in [AGENTS.md](../AGENTS.md).
-
 ## Development
 
 Run commands from the repository root:
@@ -40,6 +38,7 @@ practical constraint.
 | Form and list widgets | [src/components/](src/components/) |
 | Dialogs, action menus, floating panels and notifications | [src/modal.ts](src/modal.ts), [src/menu.ts](src/menu.ts), [src/popover.ts](src/popover.ts), [src/toast.ts](src/toast.ts) |
 | Reader entry points | [src/reader/index.ts](src/reader/index.ts) (Foliate), [src/reader/pdf-index.ts](src/reader/pdf-index.ts) (PDF.js) |
+| PDF fallback fonts | [fonts/](fonts/README.md) |
 | Reader lifecycle and position | [src/reader/lifecycle.ts](src/reader/lifecycle.ts), [src/reader/position-sync.ts](src/reader/position-sync.ts), [src/reader/state-saver.ts](src/reader/state-saver.ts) |
 | Highlights and notes | [src/components/annotation-editor.ts](src/components/annotation-editor.ts) (shared editor), [src/reader/annotations.ts](src/reader/annotations.ts) (reader UI), [src/reader/annotation-surface.ts](src/reader/annotation-surface.ts) (engine interface) |
 | Styles and icons | [src/styles/](src/styles/), [src/icons.ts](src/icons.ts) |
