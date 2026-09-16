@@ -47,6 +47,12 @@ func TestWASMFallbackRendersWithoutHostFilesystem(t *testing.T) {
 	if len(rendered) == 0 || pages != 1 {
 		t.Fatalf("RenderFirstPageJPEG returned %d bytes and %d pages; want a cover and one page", len(rendered), pages)
 	}
+	// The one-inch page at 1 DPI produces a single pixel even with a healthy
+	// renderer. Reject it as a cover while retaining the known page count.
+	rendered, pages, err = r.RenderFirstPageJPEG(t.Context(), bytes.NewReader(pdf), int64(len(pdf)), 1)
+	if err == nil || !strings.Contains(err.Error(), "1x1") || rendered != nil || pages != 1 {
+		t.Fatalf("single-pixel render = %d bytes, %d pages, %v; want no cover, one page and dimension error", len(rendered), pages, err)
+	}
 
 	// Block one real PDFium render inside wazero. The deadline must cancel that
 	// call, invalidate its worker, and leave the pool able to create a clean
@@ -146,7 +152,7 @@ func (b *oneShotRenderBlocker) beforeRender(ctx context.Context, _ api.Module, _
 }
 
 func TestRendererUsesProbedPoppler(t *testing.T) {
-	jpegBytes := testJPEG(t)
+	jpegBytes := testJPEG(t, 2, 3)
 	var renderArgs []string
 	command := func(_ context.Context, _ string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		if slices.Equal(args, []string{"-v"}) {
@@ -187,6 +193,40 @@ func TestRendererUsesProbedPoppler(t *testing.T) {
 	wantArgs := []string{"-f", "1", "-l", "1", "-singlefile", "-r", "96", "-jpeg", "-jpegopt", "quality=90", "-"}
 	if !slices.Equal(renderArgs, wantArgs) {
 		t.Fatalf("pdftoppm args = %q, want %q", renderArgs, wantArgs)
+	}
+}
+
+func TestPopplerRenderCoverDimensions(t *testing.T) {
+	for _, tc := range []struct {
+		width, height int
+		wantError     bool
+	}{
+		{1, 1, true},
+		{1, 2, false},
+		{2, 1, false},
+	} {
+		t.Run(fmt.Sprintf("%dx%d", tc.width, tc.height), func(t *testing.T) {
+			jpegBytes := testJPEG(t, tc.width, tc.height)
+			r := newRenderer(rendererConfig{
+				backend: BackendInfo{Backend: BackendPoppler},
+				command: func(_ context.Context, _ string, _ []string, _ io.Reader, stdout, _ io.Writer) error {
+					_, err := stdout.Write(jpegBytes)
+					return err // A successful exit does not guarantee a usable cover.
+				},
+				poolFactory: func(webassembly.Config) (pdfium.Pool, error) {
+					t.Error("unexpected WASM initialization after Poppler render")
+					return nil, errors.New("unexpected WASM initialization")
+				},
+			})
+			got, _, err := r.RenderFirstPageJPEG(t.Context(), bytes.NewReader([]byte("pdf")), 3, 0)
+			if tc.wantError {
+				if err == nil || !strings.Contains(err.Error(), "poppler returned a degenerate 1x1 PDF cover") || got != nil {
+					t.Fatalf("render = %d bytes, %v; want no cover and dimension error", len(got), err)
+				}
+			} else if err != nil || !bytes.Equal(got, jpegBytes) {
+				t.Fatalf("render = %d bytes, %v; want the rendered cover", len(got), err)
+			}
+		})
 	}
 }
 
@@ -322,9 +362,9 @@ func TestLimitedBufferBoundsProviderOutput(t *testing.T) {
 	}
 }
 
-func testJPEG(t *testing.T) []byte {
+func testJPEG(t *testing.T, width, height int) []byte {
 	t.Helper()
-	img := image.NewNRGBA(image.Rect(0, 0, 2, 3))
+	img := image.NewNRGBA(image.Rect(0, 0, width, height))
 	img.Set(0, 0, color.NRGBA{R: 0x80, G: 0x40, B: 0x20, A: 0xff})
 	var encoded bytes.Buffer
 	if err := jpeg.Encode(&encoded, img, &jpeg.Options{Quality: 90}); err != nil {

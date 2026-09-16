@@ -187,8 +187,13 @@ func (r *Renderer) RenderFirstPageJPEG(ctx context.Context, pdf io.ReadSeeker, s
 	if len(result.jpeg) > maxRenderedCoverBytes {
 		return nil, result.pages, fmt.Errorf("rendered PDF cover exceeds %d bytes", maxRenderedCoverBytes)
 	}
-	if _, err := covers.Inspect(result.jpeg); err != nil {
+	info, err := covers.Inspect(result.jpeg)
+	if err != nil {
 		return nil, result.pages, fmt.Errorf("%s returned invalid JPEG: %w", r.backend.Backend, err)
+	}
+	// Poppler can report success for a damaged PDF while returning one pixel.
+	if info.Width == 1 && info.Height == 1 {
+		return nil, result.pages, fmt.Errorf("%s returned a degenerate 1x1 PDF cover", r.backend.Backend)
 	}
 	return result.jpeg, result.pages, nil
 }
