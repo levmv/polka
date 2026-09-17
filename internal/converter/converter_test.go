@@ -20,6 +20,7 @@ import (
 	"golang.org/x/text/encoding/charmap"
 
 	"github.com/levmv/polka/internal/bookmeta"
+	"github.com/levmv/polka/internal/epubtest"
 	"github.com/levmv/polka/internal/format"
 )
 
@@ -1005,11 +1006,15 @@ func TestConvertHTMLToEPUBKeepsDataURIImages(t *testing.T) {
 func TestConvertXHTMLToEPUB(t *testing.T) {
 	src := []byte(`<?xml version="1.0" encoding="UTF-8"?>
 <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en">
-  <head><title>XHTML Book</title></head>
+  <head><title>XHTML Book</title><!--` + strings.Repeat("ASCII header ", 100) + `--></head>
   <body>
     <section>
       <h1>XHTML Heading</h1>
-      <p>Body with <strong>safe inline markup</strong>.</p>
+      <p>Reader’s text with <strong>safe inline markup</strong> — café.</p>
+      <p>Before<![CDATA[ <literal> &amp; after]]>.</p>
+      <pre>
+  indented text
+	and a tab</pre>
       <style>body { color: red; }</style>
     </section>
   </body>
@@ -1022,7 +1027,9 @@ func TestConvertXHTMLToEPUB(t *testing.T) {
 	xhtml := zipEntry(t, out.Bytes(), "OEBPS/text.xhtml")
 	for _, want := range []string{
 		`<h1 id="heading-1">XHTML Heading</h1>`,
-		"<p>Body with <strong>safe inline markup</strong>.</p>",
+		"<p>Reader’s text with <strong>safe inline markup</strong> — café.</p>",
+		`<p>Before &lt;literal&gt; &amp;amp; after.</p>`,
+		"<pre>\n  indented text\n\tand a tab</pre>",
 	} {
 		if !strings.Contains(xhtml, want) {
 			t.Fatalf("text.xhtml missing %q:\n%s", want, xhtml)
@@ -1434,7 +1441,7 @@ func TestConvertHTMLZXHTMLIndexToEPUB(t *testing.T) {
 		"index.xhtml": []byte(`<?xml version="1.0" encoding="UTF-8"?>
 <html xmlns="http://www.w3.org/1999/xhtml">
   <head><title>Archived XHTML</title></head>
-  <body><p>Readable XHTMLZ body.</p></body>
+  <body><p>Readable<![CDATA[ <XHTMLZ> &amp; body]]>.</p></body>
 </html>`),
 	})
 	var out bytes.Buffer
@@ -1442,7 +1449,7 @@ func TestConvertHTMLZXHTMLIndexToEPUB(t *testing.T) {
 		t.Fatalf("Convert HTMLZ XHTML to EPUB: %v", err)
 	}
 	xhtml := zipEntry(t, out.Bytes(), "OEBPS/text.xhtml")
-	if !strings.Contains(xhtml, "<p>Readable XHTMLZ body.</p>") {
+	if !strings.Contains(xhtml, "<p>Readable &lt;XHTMLZ&gt; &amp;amp; body.</p>") {
 		t.Fatalf("text.xhtml missing XHTMLZ body:\n%s", xhtml)
 	}
 	opf := zipEntry(t, out.Bytes(), "OEBPS/content.opf")
@@ -1478,7 +1485,15 @@ func TestConvertEPUBToKEPUB(t *testing.T) {
 		"OEBPS/text.xhtml": []byte(`<?xml version="1.0" encoding="UTF-8"?>
 <html xmlns="http://www.w3.org/1999/xhtml">
   <head><title>Kobo Source</title></head>
-  <body><p>First sentence. Second sentence.</p><p><img src="cover.png" alt="cover"/></p></body>
+  <body>
+    <a id="start"/><p><span id="page"/>First sentence. Second sentence.</p><p><img src="cover.png" alt="cover"/></p>
+    <p>Before<![CDATA[ <em>literal markup</em> &amp; after]]>.</p>
+    <p>Numeric references: &#134; &#x0080; <![CDATA[&#134;]]>.</p>
+    <pre><![CDATA[
+  a < b
+	& literal text]]></pre>
+    <p><a href="#start">Back.</a></p>
+  </body>
 </html>`),
 		"OEBPS/cover.png":                converterTinyPNG,
 		"META-INF/calibre_bookmarks.txt": []byte("old bookmarks"),
@@ -2312,9 +2327,11 @@ func TestTransformKEPUBContentProducesXMLCompatibleXHTML(t *testing.T) {
 	out, err := transformKEPUBContent([]byte(`<?xml version="1.0" encoding="utf-8"?>
 <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
   <head>
-    <title>XML-sensitive content</title>
+    <title><![CDATA[XML-sensitive <title> &amp;]]></title>
     <style>.note::before { content: "a &lt; b"; }</style>
     <script>if (a &lt; b &amp;&amp; c &gt; d) { window.ok = true; }</script>
+    <style><![CDATA[.note::after { content: "a < b & c"; }]]></style>
+    <script><![CDATA[if (a < b && c > d) { window.ok = true; }]]></script>
   </head>
   <body>
     <!-- preserved comment -->
@@ -2335,7 +2352,10 @@ func TestTransformKEPUBContentProducesXMLCompatibleXHTML(t *testing.T) {
 		`xmlns:xlink="http://www.w3.org/1999/xlink"`,
 		`xlink:href="#shape"`,
 		`<!-- preserved comment -->`,
+		`<title>XML-sensitive &lt;title&gt; &amp;amp;</title>`,
 		`if (a &lt; b &amp;&amp; c &gt; d)`,
+		`<style><![CDATA[.note::after { content: "a < b & c"; }]]></style>`,
+		`<script><![CDATA[if (a < b && c > d) { window.ok = true; }]]></script>`,
 	} {
 		if !strings.Contains(xhtml, want) {
 			t.Fatalf("transformed XHTML missing %q:\n%s", want, xhtml)
@@ -2387,9 +2407,20 @@ func TestTransformKEPUBContentRepairsRecoverableXMLDefects(t *testing.T) {
 }
 
 func TestTransformKEPUBContentRejectsNonXMLRawText(t *testing.T) {
-	_, err := transformKEPUBContent([]byte(`<html xmlns="http://www.w3.org/1999/xhtml"><head><script>if (a < b && c > d) {}</script></head><body><p>Text.</p></body></html>`))
-	if err == nil || !strings.Contains(err.Error(), "not XML-compatible") {
-		t.Fatalf("transformKEPUBContent error = %v; want XML compatibility diagnostic", err)
+	for _, tc := range []struct {
+		name    string
+		source  string
+		wantErr string
+	}{
+		{"unescaped script", `<html xmlns="http://www.w3.org/1999/xhtml"><head><script>if (a < b && c > d) {}</script></head><body><p>Text.</p></body></html>`, "not XML-compatible"},
+		{"unterminated CDATA", `<html><body><p><![CDATA[unterminated text`, "unterminated"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := transformKEPUBContent([]byte(tc.source))
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("transformKEPUBContent error = %v; want %q", err, tc.wantErr)
+			}
+		})
 	}
 }
 
@@ -2513,10 +2544,15 @@ func assertKEPUBConversionContract(t *testing.T, source, output []byte, opfPath 
 		t.Fatalf("output spine = %#v; want %#v", outputSpine, sourceSpine)
 	}
 	for _, name := range sourceDocs {
-		sourceText := testKEPUBReadingText(t, zipEntryBytes(t, source, name))
-		outputText := testKEPUBReadingText(t, zipEntryBytes(t, output, name))
+		sourceDoc := zipEntryBytes(t, source, name)
+		outputDoc := zipEntryBytes(t, output, name)
+		sourceText := testKEPUBReadingText(t, sourceDoc)
+		outputText := testKEPUBReadingText(t, outputDoc)
 		if outputText != sourceText {
 			t.Fatalf("output reading text for %s = %q; want %q", name, outputText, sourceText)
+		}
+		if err := epubtest.CompareContent(sourceDoc, outputDoc); err != nil {
+			t.Fatalf("content preservation for %s: %v", name, err)
 		}
 	}
 }
@@ -2542,15 +2578,37 @@ func testKEPUBSpineIDs(t *testing.T, opf []byte) []string {
 
 func testKEPUBReadingText(t *testing.T, raw []byte) string {
 	t.Helper()
-	doc, err := nethtml.Parse(bytes.NewReader(raw))
-	if err != nil {
-		t.Fatalf("parse KEPUB reading text: %v", err)
+	// An XML reader sees XHTML text that the converter's HTML parser may discard.
+	decoder := xml.NewDecoder(bytes.NewReader(raw))
+	var text strings.Builder
+	inBody, foundBody := false, false
+	for {
+		token, err := decoder.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("parse KEPUB reading text: %v", err)
+		}
+		switch value := token.(type) {
+		case xml.StartElement:
+			if value.Name.Local == "body" {
+				inBody, foundBody = true, true
+			}
+		case xml.EndElement:
+			if value.Name.Local == "body" {
+				inBody = false
+			}
+		case xml.CharData:
+			if inBody {
+				text.Write(value)
+			}
+		}
 	}
-	body := firstHTMLElement(doc, "body")
-	if body == nil {
+	if !foundBody {
 		t.Fatal("KEPUB content has no body")
 	}
-	return strings.Join(strings.Fields(testHTMLText(body)), " ")
+	return strings.Join(strings.Fields(text.String()), " ")
 }
 
 func testKEPUBSpanSnapshots(t *testing.T, raw []byte) []testKEPUBSpanSnapshot {
@@ -2959,6 +3017,8 @@ func TestConvertKindleDocumentToEPUB(t *testing.T) {
 			Href:  "text/flow-0001.html#filepos12",
 		}},
 	}
+	// KF8 assembly can concatenate complete HTML documents into one text flow.
+	doc.Flows[0].Data = append(doc.Flows[0].Data, []byte(`<html><head><title>Hidden document title</title></head><body><p>Second chapter.</p></body></html>`)...)
 
 	var out bytes.Buffer
 	if err := convertKindleDocumentToEPUB(context.Background(), &out, doc, ConversionOptions{}); err != nil {
@@ -2974,10 +3034,14 @@ func TestConvertKindleDocumentToEPUB(t *testing.T) {
 		`<img src="images/flow-0003.svg" alt="svg"/>`,
 		`<video src="media/00003.mp4" controls="controls" title="Test video">Video fallback</video>`,
 		`<audio src="media/00004.mp3" controls="controls" title="Test audio">Audio fallback</audio>`,
+		`<p>Second chapter.</p>`,
 	} {
 		if !strings.Contains(xhtml, want) {
 			t.Fatalf("text.xhtml missing %q:\n%s", want, xhtml)
 		}
+	}
+	if strings.Contains(xhtml, "Hidden document title") {
+		t.Fatalf("text.xhtml exposed document metadata as reading text:\n%s", xhtml)
 	}
 	nav := zipEntry(t, out.Bytes(), "OEBPS/nav.xhtml")
 	if !strings.Contains(nav, `<a href="text.xhtml#filepos12">Chapter</a>`) {

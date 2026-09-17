@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/binary"
+	"strings"
 	"testing"
 	"unicode/utf16"
 
@@ -142,13 +143,15 @@ func TestExtractHTMLMetadata(t *testing.T) {
 	}
 }
 
-func TestExtractHTMLMetadataDecodesLegacyText(t *testing.T) {
+func TestExtractHTMLMetadataEncodings(t *testing.T) {
 	title := "\u041a\u043d\u0438\u0433\u0430"
 	author := "\u0410\u0432\u0442\u043e\u0440"
+	longHeader := "<!--" + strings.Repeat("ASCII header ", 100) + "-->"
 	for _, tt := range []struct {
 		name       string
 		src        string
 		wantAuthor bool
+		utf8       bool
 	}{
 		{
 			name: "quoted declaration",
@@ -165,6 +168,10 @@ func TestExtractHTMLMetadataDecodesLegacyText(t *testing.T) {
 			wantAuthor: true,
 		},
 		{
+			name: "content-type declaration",
+			src:  `<meta http-equiv="Content-Type" content="text/html; charset=windows-1251"><title>` + title + `</title>`,
+		},
+		{
 			name: "undeclared",
 			src:  `<title>` + title + `</title>`,
 		},
@@ -173,9 +180,22 @@ func TestExtractHTMLMetadataDecodesLegacyText(t *testing.T) {
 			src: `<title>` + title + `</title>
   <meta name="description" content="The word charset here is prose, not an encoding declaration.">`,
 		},
+		{
+			name: "UTF-8 after long ASCII header",
+			src:  longHeader + `<title>` + title + `</title>`,
+			utf8: true,
+		},
+		{
+			name: "declaration outside HTML sniffing window",
+			src:  longHeader + `<meta charset="utf-8"><title>` + title + `</title>`,
+			utf8: true,
+		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			data := windows1251HTML(t, "<!doctype html><html><head>"+tt.src+"</head></html>")
+			data := []byte("<!doctype html><html><head>" + tt.src + "</head></html>")
+			if !tt.utf8 {
+				data = windows1251HTML(t, string(data))
+			}
 			r := bytes.NewReader(data)
 			meta, err := ExtractHTMLMetadata(r, r.Size())
 			if err != nil {

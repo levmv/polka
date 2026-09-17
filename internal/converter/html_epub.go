@@ -22,7 +22,7 @@ import (
 	"github.com/levmv/polka/internal/format"
 )
 
-func convertHTMLSourceToEPUB(ctx context.Context, w io.Writer, src io.ReaderAt, size int64, opts ConversionOptions) error {
+func convertHTMLSourceToEPUB(ctx context.Context, w io.Writer, src io.ReaderAt, from format.Format, size int64, opts ConversionOptions) error {
 	if size < 0 {
 		return fmt.Errorf("source size is invalid")
 	}
@@ -33,6 +33,12 @@ func convertHTMLSourceToEPUB(ctx context.Context, w io.Writer, src io.ReaderAt, 
 	decoded, err := format.DecodeHTMLToUTF8(raw)
 	if err != nil {
 		return fmt.Errorf("decode HTML source: %w", err)
+	}
+	if from == format.FormatXHTML {
+		decoded, err = prepareXHTMLForHTML(decoded)
+		if err != nil {
+			return err
+		}
 	}
 	var assets []epubAsset
 	imageResolver := htmlDataImageResolver(&assets)
@@ -67,6 +73,12 @@ func convertHTMLZSourceToEPUB(ctx context.Context, w io.Writer, src io.ReaderAt,
 	decoded, err := format.DecodeHTMLToUTF8(raw)
 	if err != nil {
 		return fmt.Errorf("decode HTMLZ entry %s: %w", entry.Name, err)
+	}
+	if ext := strings.ToLower(path.Ext(entry.Name)); ext == ".xhtml" || ext == ".xhtm" {
+		decoded, err = prepareXHTMLForHTML(decoded)
+		if err != nil {
+			return err
+		}
 	}
 	meta := format.MetadataFromHTML(raw)
 	extracted, err := htmlZMetadataForEPUB(ctx, zr)
@@ -300,7 +312,7 @@ func renderHTMLElement(out *strings.Builder, n *html.Node, inPre bool, resolvers
 		renderHTMLChildren(out, n, inPre, resolvers, state)
 		return
 	}
-	if tag == "head" {
+	if tag == "head" || tag == "title" {
 		return
 	}
 	if tag == "br" {

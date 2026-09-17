@@ -64,6 +64,13 @@ func TestCheckEPUBInternalLinksDetectsBrokenReferences(t *testing.T) {
 			mutate: func(map[string]string) {},
 		},
 		{
+			name: "missing first rootfile with usable second rootfile",
+			mutate: func(files map[string]string) {
+				files["META-INF/container.xml"] = strings.Replace(files["META-INF/container.xml"],
+					`<rootfiles>`, `<rootfiles><rootfile full-path="missing.opf" media-type="application/oebps-package+xml"/>`, 1)
+			},
+		},
+		{
 			name: "manifest item target missing",
 			mutate: func(files map[string]string) {
 				files["OEBPS/content.opf"] = strings.Replace(files["OEBPS/content.opf"],

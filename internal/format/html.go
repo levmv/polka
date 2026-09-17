@@ -8,6 +8,7 @@ import (
 	"fmt"
 	stdhtml "html"
 	"io"
+	"mime"
 	"path"
 	"regexp"
 	"slices"
@@ -15,7 +16,9 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"golang.org/x/net/html"
 	"golang.org/x/net/html/charset"
+	"golang.org/x/text/encoding"
 
 	"github.com/levmv/polka/internal/bookmeta"
 )
@@ -547,46 +550,62 @@ func stripHTMLTags(src string) string {
 	return b.String()
 }
 
-// DecodeHTMLToUTF8 applies the HTML charset sniffing rules before metadata
-// extraction or sanitizer parsing. It handles BOMs, <meta charset>, http-equiv
-// charset declarations, valid UTF-8 sniffing, and the HTML default encoding.
+// DecodeHTMLToUTF8 uses HTML charset detection for BOMs and charset declarations,
+// and otherwise detects text encoding from the complete input.
 func DecodeHTMLToUTF8(raw []byte) ([]byte, error) {
 	if len(raw) == 0 {
 		return nil, nil
 	}
-	if !htmlHasEncodingSignal(raw) && !utf8.Valid(raw) {
+	var declared encoding.Encoding
+	if bytes.HasPrefix(raw, []byte{0xef, 0xbb, 0xbf}) || hasUTF16BOM(raw) {
+		declared, _, _ = charset.DetermineEncoding(raw, "")
+	} else {
+		declared = htmlDeclaredEncoding(raw)
+	}
+	if declared == nil {
+		if utf8.Valid(raw) {
+			return raw, nil
+		}
 		return []byte(DecodeTextToUTF8(raw)), nil
 	}
-	r, err := htmlReaderToUTF8(bytes.NewReader(raw))
-	if err != nil {
-		return nil, err
-	}
-	decoded, err := io.ReadAll(r)
-	if err != nil {
-		return nil, err
-	}
-	return trimUTF8BOM(decoded), nil
+	decoded, err := declared.NewDecoder().Bytes(raw)
+	return trimUTF8BOM(decoded), err
 }
 
-func htmlHasEncodingSignal(raw []byte) bool {
-	if bytes.HasPrefix(raw, []byte{0xef, 0xbb, 0xbf}) || hasUTF16BOM(raw) {
-		return true
-	}
-	if len(raw) > 4096 {
-		raw = raw[:4096]
-	}
-	for _, match := range htmlMetaRe.FindAllStringSubmatch(string(raw), -1) {
-		attrs := htmlAttributes(match[1])
-		if strings.TrimSpace(attrs["charset"]) != "" {
-			return true
+func htmlDeclaredEncoding(raw []byte) encoding.Encoding {
+	// Use the HTML prescan's window, without its Windows-1252 default.
+	// The caller can detect undeclared text from the complete input instead.
+	z := html.NewTokenizer(bytes.NewReader(raw[:min(len(raw), 1024)]))
+	for {
+		switch z.Next() {
+		case html.ErrorToken:
+			return nil
+		case html.StartTagToken, html.SelfClosingTagToken:
+			token := z.Token()
+			if token.Data != "meta" {
+				continue
+			}
+			attrs := make(map[string]string, len(token.Attr))
+			for _, attr := range token.Attr {
+				if _, exists := attrs[attr.Key]; !exists {
+					attrs[attr.Key] = attr.Val
+				}
+			}
+			label := attrs["charset"]
+			if label == "" && strings.EqualFold(attrs["http-equiv"], "content-type") {
+				_, params, _ := mime.ParseMediaType(attrs["content"])
+				label = params["charset"]
+			}
+			if e, name := charset.Lookup(label); e != nil {
+				// HTML meta declarations of UTF-16 mean UTF-8; a BOM above
+				// is required to select actual UTF-16 input.
+				if strings.HasPrefix(name, "utf-16") {
+					return encoding.Nop
+				}
+				return e
+			}
 		}
-		content := strings.ToLower(attrs["content"])
-		httpEquiv := strings.ToLower(attrs["http-equiv"])
-		if strings.Contains(content, "charset") && strings.Contains(httpEquiv, "content-type") {
-			return true
-		}
 	}
-	return false
 }
 
 func htmlReaderToUTF8(r io.Reader) (io.Reader, error) {

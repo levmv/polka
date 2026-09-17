@@ -168,7 +168,7 @@ func convertSourceToEPUB(ctx context.Context, w io.Writer, src io.ReaderAt, from
 		return convertKindleSourceToEPUB(ctx, w, src, from, size, opts)
 	}
 	if from == format.FormatHTML || from == format.FormatXHTML {
-		return convertHTMLSourceToEPUB(ctx, w, src, size, opts)
+		return convertHTMLSourceToEPUB(ctx, w, src, from, size, opts)
 	}
 	if from == format.FormatHTMLZ {
 		return convertHTMLZSourceToEPUB(ctx, w, src, size, opts)

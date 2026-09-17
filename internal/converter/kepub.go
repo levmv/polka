@@ -493,6 +493,10 @@ func kepubXMLAttrsWithLocations(tag string) []kepubXMLAttr {
 
 func transformKEPUBContent(raw []byte) ([]byte, error) {
 	raw = stripXMLDeclaration(raw)
+	raw, err := prepareXHTMLForHTML(raw)
+	if err != nil {
+		return nil, err
+	}
 	doc, err := html.Parse(bytes.NewReader(raw))
 	if err != nil {
 		return nil, fmt.Errorf("parse EPUB content document: %w", err)
@@ -733,6 +737,13 @@ func transformKEPUBNode(n *html.Node, state *kepubSpanState) {
 func normalizeKEPUBContentModels(n *html.Node) {
 	if n.Type == html.ElementNode && strings.EqualFold(n.Data, "hgroup") && kepubHGroupNeedsDiv(n) {
 		n.Data = "div"
+	}
+	if n.Type == html.ElementNode && n.Data == "pre" {
+		if first := n.FirstChild; first != nil && first.Type == html.TextNode && strings.HasPrefix(first.Data, "\n") {
+			// html.Render adds a newline for HTML's <pre> parsing. An empty
+			// first text node suppresses it without changing serialized XML.
+			n.InsertBefore(&html.Node{Type: html.TextNode}, first)
+		}
 	}
 	for child := n.FirstChild; child != nil; child = child.NextSibling {
 		normalizeKEPUBContentModels(child)

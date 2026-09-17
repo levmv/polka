@@ -439,11 +439,13 @@ func epubOPFPath(files map[string]*zip.File) (string, error) {
 		}
 		for _, attr := range start.Attr {
 			if attr.Name.Local == "full-path" && strings.TrimSpace(attr.Value) != "" {
-				return path.Clean(attr.Value), nil
+				if name := path.Clean(strings.TrimSpace(attr.Value)); files[name] != nil {
+					return name, nil
+				}
 			}
 		}
 	}
-	return "", fmt.Errorf("EPUB container.xml has no rootfile full-path")
+	return "", fmt.Errorf("EPUB container.xml has no packaged rootfile")
 }
 
 func epubItemIsXHTML(mediaType, name string) bool {
