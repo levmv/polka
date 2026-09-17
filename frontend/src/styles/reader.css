@@ -730,6 +730,14 @@ body.reader-shell .layout {
     background: var(--reader-bg-color);
 }
 
+.reader-pagination-measure {
+    position: fixed;
+    top: 0;
+    left: 0;
+    visibility: hidden;
+    pointer-events: none;
+}
+
 /* Expand Foliate's clipped container along the writing mode's inline axis. */
 .reader-epub-view[data-reader-writing-mode="horizontal"]::part(container) {
     grid-column: 1 / -1;
@@ -854,6 +862,29 @@ body.reader-shell .layout {
     border-radius: 999px;
     background: var(--reader-progress-bg);
     text-align: center;
+}
+
+.reader-progress-counting::after {
+    content: "";
+    display: inline-block;
+    width: 0.65em;
+    height: 0.65em;
+    margin-left: 0.4em;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    border-radius: 50%;
+    opacity: 0.6;
+    animation: spinner 1s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .reader-progress-counting::after {
+        content: "…";
+        width: auto;
+        height: auto;
+        border: 0;
+        animation: none;
+    }
 }
 
 .reader-chrome-hidden .reader-header,

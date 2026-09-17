@@ -5,7 +5,7 @@
             "frontend/src/**/*.ts",
             "frontend/src/**/*.css",
             "frontend/test/**/*.mjs",
-            "frontend/build.mjs",
+            "frontend/*.mjs",
             "browser-test/**/*.mjs",
             "browser-test/**/*.ts"
         ]

@@ -1,4 +1,5 @@
 import { Buffer } from 'node:buffer';
+import { readFileSync } from 'node:fs';
 
 export type UploadFile = {
   name: string;
@@ -147,6 +148,78 @@ export function epub(title: string, author: string, name: string, description = 
 
 export function epubWithVerticalWriting(title: string, author: string, name: string): UploadFile {
   return buildEPUB(title, author, name, { verticalWriting: true });
+}
+
+export function paginationEPUB({
+  vertical = false,
+  importedStylesheet = 'imported.css',
+}: {
+  vertical?: boolean;
+  importedStylesheet?: string;
+} = {}): UploadFile {
+  const names = ['first', 'second', 'third'];
+  const chapters = names.map((name, index) => {
+    const paragraphs = Array.from(
+      { length: [8, 15, 5][index] },
+      (_, n) =>
+        `<p id="p${n}">${name} paragraph ${n + 1}. ${'A small synthetic book checks real screen turns, chapter boundaries, and changing text size. '.repeat(3)}</p>`,
+    ).join('');
+    return {
+      name: `OPS/${name}.xhtml`,
+      data: Buffer.from(
+        `<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml"><head><title>${name}</title><link rel="stylesheet" href="shared.css"/>${index === 2 ? `<style>@import url("${xmlEscape(importedStylesheet)}");</style><style/><style type="text/plain">Ignored text</style>` : ''}</head><body><h1>${name}</h1>${index > 0 ? '<img src="illustration.svg" alt="Synthetic illustration"/>' : ''}${paragraphs}${index === 2 ? '<div style="break-before:page"><img id="last-illustration" src="last.svg" loading="lazy" alt="Final illustration"/></div>' : ''}</body></html>`,
+      ),
+    };
+  });
+  const opf = `<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">pagination-${vertical}</dc:identifier><dc:title>Screen pagination</dc:title><dc:language>en</dc:language></metadata><manifest>${names.map((name) => `<item id="${name}" href="${name}.xhtml" media-type="application/xhtml+xml"${name === 'second' ? ' media-overlay="overlay"' : ''}/>`).join('')}<item id="css" href="shared.css" media-type="text/css"/><item id="imported-css" href="imported.css" media-type="text/css"/><item id="nested-css" href="nested.css" media-type="text/css"/><item id="font" href="font.woff2" media-type="font/woff2"/><item id="image" href="illustration.svg" media-type="image/svg+xml"/><item id="last-image" href="last.svg" media-type="image/svg+xml"/><item id="overlay" href="overlay.smil" media-type="application/smil+xml"/></manifest><spine>${names.map((name) => `<itemref idref="${name}"/>`).join('')}</spine></package>`;
+  return {
+    name: 'pagination.epub',
+    mimeType: 'application/epub+zip',
+    buffer: zipStore([
+      { name: 'mimetype', data: Buffer.from('application/epub+zip') },
+      {
+        name: 'META-INF/container.xml',
+        data: Buffer.from(
+          '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0"><rootfiles><rootfile full-path="OPS/book.opf" media-type="application/oebps-package+xml"/></rootfiles></container>',
+        ),
+      },
+      { name: 'OPS/book.opf', data: Buffer.from(opf) },
+      { name: 'OPS/imported.css', data: Buffer.from('@import "nested.css";') },
+      { name: 'OPS/nested.css', data: Buffer.from('p#p0 { padding-top: 160px; }') },
+      // Media-overlay metadata must not start a player in the measuring view.
+      {
+        name: 'OPS/overlay.smil',
+        data: Buffer.from('<smil xmlns="http://www.w3.org/ns/SMIL" version="3.0"><body/></smil>'),
+      },
+      {
+        name: 'OPS/shared.css',
+        // Uppercase P must not match XHTML paragraphs, including when measured.
+        data: Buffer.from(`@font-face { font-family: PaginationFixture; src: url(font.woff2); }
+          P { padding: 80px !important; }
+          body { ${vertical ? 'writing-mode: vertical-rl;' : ''} }
+          p { font-family: PaginationFixture; }`),
+      },
+      {
+        name: 'OPS/font.woff2',
+        data: readFileSync(
+          new URL('../../frontend/fonts/LiberationSans-Regular.woff2', import.meta.url),
+        ),
+      },
+      {
+        name: 'OPS/illustration.svg',
+        data: Buffer.from(
+          '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="90"><rect width="160" height="90" fill="#789"/></svg>',
+        ),
+      },
+      {
+        name: 'OPS/last.svg',
+        data: Buffer.from(
+          '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="550"><rect width="400" height="550" fill="#679"/></svg>',
+        ),
+      },
+      ...chapters,
+    ]),
+  };
 }
 
 export function epubWithNonstandardZIPSignature(

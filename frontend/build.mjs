@@ -1,10 +1,12 @@
 // Bundle the frontend into internal/web/static, where go:embed picks it up.
 // Run from the repo root (`npm run build`).
 
+import { createHash } from 'node:crypto';
 import { copyFile, cp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import * as esbuild from 'esbuild';
+import { foliateReader } from './foliate-build.mjs';
 
 const staticRoot = 'internal/web/static';
 
@@ -36,7 +38,7 @@ const common = {
     target: ['es2018'],
     logLevel: 'warning',
     write: true,
-    plugins: [pdfFonts],
+    plugins: [pdfFonts, foliateReader],
 };
 
 for (const [entry, name, allowedEngine] of [
@@ -70,6 +72,18 @@ await esbuild.build({
     // Keep explicit edge offsets; minification would otherwise introduce inset.
     supported: { 'inset-property': false },
 });
+
+// Invalidate saved screen counts whenever the reader or its styles change.
+const readerPath = `${staticRoot}/reader.js`;
+const readerCode = await readFile(readerPath, 'utf8');
+const readerLayoutVersion = createHash('sha256')
+    .update(readerCode)
+    .update(await readFile(`${staticRoot}/style.css`))
+    .digest('hex');
+await writeFile(
+    readerPath,
+    `const POLKA_READER_LAYOUT_VERSION = "${readerLayoutVersion}";\n${readerCode}`,
+);
 
 // PDF.js loads CMaps, color profiles, standard fonts, and image decoders on
 // demand. Keep package resources version-matched, replacing its Liberation 1.x

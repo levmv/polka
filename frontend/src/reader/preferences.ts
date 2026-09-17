@@ -4,6 +4,7 @@ import type { ReaderFlow, ReaderPreferences } from '../types';
 import { focusReaderSurface, revealChrome } from './chrome';
 import {
     applyFoliateDisplay,
+    applyReaderCanvasColor,
     DEFAULT_READER_COLUMN_WIDTH,
     DEFAULT_READER_DISPLAY_STYLE,
     type FoliateViewElement,
@@ -44,6 +45,7 @@ export function wireReaderPreferences(
     page: HTMLElement,
     view: FoliateViewElement,
     initialPreferences: ReaderPreferences,
+    onChange: (preferences: ReaderPreferences) => void,
 ): void {
     const toggle = page.querySelector<HTMLButtonElement>('[data-reader-display-toggle]');
     if (!toggle) return;
@@ -115,15 +117,12 @@ export function wireReaderPreferences(
 
     function previewPreference(partial: Partial<ReaderPreferences>): void {
         currentPreferences = normalizeReaderPreferences({ ...currentPreferences, ...partial });
-        applyReaderPreferences(page, view, currentPreferences);
-        renderDisplayPanel(page, view, controls, currentPreferences);
+        updateDisplay();
     }
 
     function commitPreference(partial: Partial<ReaderPreferences>): void {
         const sequence = ++saveSequence;
-        currentPreferences = normalizeReaderPreferences({ ...currentPreferences, ...partial });
-        applyReaderPreferences(page, view, currentPreferences);
-        renderDisplayPanel(page, view, controls, currentPreferences);
+        previewPreference(partial);
 
         const request = saveChain
             .catch(() => savedPreferences)
@@ -135,16 +134,20 @@ export function wireReaderPreferences(
                 if (sequence !== saveSequence) return;
                 savedPreferences = normalizeReaderPreferences(saved);
                 currentPreferences = savedPreferences;
-                applyReaderPreferences(page, view, currentPreferences);
-                renderDisplayPanel(page, view, controls, currentPreferences);
+                updateDisplay();
             })
             .catch((e) => {
                 if (sequence !== saveSequence) return;
                 console.error('Failed to save reader preferences:', e);
                 currentPreferences = savedPreferences;
-                applyReaderPreferences(page, view, currentPreferences);
-                renderDisplayPanel(page, view, controls, currentPreferences);
+                updateDisplay();
             });
+    }
+
+    function updateDisplay(): void {
+        applyReaderPreferences(page, view, currentPreferences);
+        renderDisplayPanel(page, view, controls, currentPreferences);
+        onChange(currentPreferences);
     }
 }
 
@@ -162,6 +165,7 @@ export function applyReaderPreferences(
     page.dataset.readerLineHeight = String(normalized.reader_line_height);
     page.style.setProperty('--reader-bg-color', palette.background);
     page.style.setProperty('--reader-text-color', palette.text);
+    applyReaderCanvasColor(palette.background);
     applyFoliateDisplay(view, normalized);
     setCurrentFoliateDocumentJustification(view, normalized.reader_style !== 'original');
 }

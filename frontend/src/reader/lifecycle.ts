@@ -7,16 +7,19 @@ export interface ReaderLifecycle {
     markUserNavigation(): void;
 }
 
-// A reader owns the document, including its bfcache lifetime. Connect browser
-// events here; position sync, annotations and time accounting own their policies.
+// Share browser lifecycle events across reader components, including bfcache restores.
 export function wireReaderLifecycle(
     page: HTMLElement,
     stage: HTMLElement,
     position: ReaderStateSaver,
     activity: ReadingActivity,
-    options: { onNavigate?: () => void; onResume?: () => void } = {},
+    options: {
+        onNavigate?: () => void;
+        onResume?: () => void;
+        onSuspend?: (finish: boolean) => void;
+    } = {},
 ): ReaderLifecycle {
-    const { onNavigate, onResume } = options;
+    const { onNavigate, onResume, onSuspend } = options;
     const documents = new WeakSet<Document>();
     let started = false;
     const resume = (): void => {
@@ -93,11 +96,13 @@ export function wireReaderLifecycle(
                 } else {
                     position.suspend();
                     activity.suspend(false);
+                    onSuspend?.(false);
                 }
             });
             window.addEventListener('pagehide', (event) => {
                 position.suspend();
                 activity.suspend(!event.persisted);
+                onSuspend?.(!event.persisted);
             });
             window.addEventListener('pageshow', (event) => {
                 if (event.persisted) resume();

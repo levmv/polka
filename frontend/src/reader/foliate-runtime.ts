@@ -13,17 +13,16 @@ import {
     type FoliateLoadDetail,
     type FoliateViewElement,
     fetchFoliateBookFile,
-    fitFoliateCoverDocument,
     openFoliateBookFile,
     readerDisplayPalette,
-    setFoliateDocumentJustification,
     suppressTransientFoliateRenderErrors,
-    syncFoliateWritingMode,
     waitForRendererContents,
     wireCurrentFoliateDocuments,
+    wireFoliateDocumentStyling,
 } from './foliate-engine';
 import { wireFoliateSelection } from './foliate-selection';
 import { wireReaderLifecycle } from './lifecycle';
+import { createReaderPagination } from './pagination';
 import {
     DEFAULT_READER_PREFERENCES,
     normalizeReaderPreferences,
@@ -89,9 +88,14 @@ async function initFoliateReader(
         fallbackURL,
     );
     const positionSaver = wirePositionSaving(page, view, stateSaver, { savingEnabled: false });
+    const pagination = createReaderPagination(page, view, preferences);
     const lifecycle = wireReaderLifecycle(page, stage, stateSaver, activity, {
         onNavigate: positionSaver.markUserNavigation,
-        onResume: () => void annotations.load(),
+        onResume: () => {
+            void annotations.load();
+            pagination.resume();
+        },
+        onSuspend: pagination.suspend,
     });
     const onNavigate = lifecycle.markUserNavigation;
     view.addEventListener('link', onNavigate);
@@ -137,7 +141,7 @@ async function initFoliateReader(
     await restoreReaderPosition(view, state, annotations.location(annotationID)?.cfi);
     positionSaver.enableSaving();
     void stateSaver.flush();
-    wireReaderPreferences(page, view, preferences);
+    wireReaderPreferences(page, view, preferences, pagination.setPreferences);
     await waitForRendererContents(view);
     wireCurrentFoliateDocuments(view, (doc) => {
         lifecycle.observeDocument(doc);
@@ -152,6 +156,7 @@ async function initFoliateReader(
     stage.focus({ preventScroll: true });
     revealChrome(page);
     lifecycle.start();
+    pagination.start();
     touchReaderState(assetId)
         .then(handleReadingStatusChange)
         .catch((e) => {
@@ -202,14 +207,4 @@ function createReaderFoliateView(page: HTMLElement, stage: HTMLElement): Foliate
     const view = createFoliateView(stage);
     wireFoliateDocumentStyling(page, view);
     return view;
-}
-
-function wireFoliateDocumentStyling(page: HTMLElement, view: FoliateViewElement): void {
-    view.addEventListener('load', (event) => {
-        const detail = (event as CustomEvent<FoliateLoadDetail>).detail;
-        const sectionID = view.book?.sections?.[detail.index ?? -1]?.id;
-        fitFoliateCoverDocument(detail.doc, sectionID, detail.index);
-        setFoliateDocumentJustification(detail.doc, page.dataset.readerStyle !== 'original');
-        syncFoliateWritingMode(view, detail.doc);
-    });
 }

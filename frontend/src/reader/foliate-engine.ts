@@ -29,8 +29,17 @@ export interface FoliateTOCItem {
 }
 
 export interface FoliateBook {
+    dir?: string;
+    metadata?: { title?: string; language?: string | string[] };
     toc?: FoliateTOCItem[];
-    sections?: Array<{ id?: string }>;
+    sections?: FoliateSection[];
+}
+
+export interface FoliateSection {
+    id?: string | number;
+    linear?: string;
+    load: () => string | Promise<string>;
+    unload?: () => void;
 }
 
 interface FoliateComicSection {
@@ -75,6 +84,17 @@ export interface FoliateAnnotation {
 }
 
 export interface FoliateRendererElement extends HTMLElement {
+    // Background-only hook supplied by frontend/foliate-build.mjs.
+    loadDocument?: (
+        frame: HTMLIFrameElement,
+        source: string,
+        signal?: AbortSignal,
+    ) => Promise<void>;
+    loadSignal?: AbortSignal;
+    goTo: (target: { index: number }) => Promise<void>;
+    index?: number;
+    page?: number;
+    pages?: number;
     setStyles?: (styles: string | [string, string]) => void;
     getContents?: () => Array<{ doc?: Document; index?: number }>;
 }
@@ -83,6 +103,8 @@ export interface FoliateViewElement extends HTMLElement {
     book?: FoliateBook;
     renderer?: FoliateRendererElement;
     isFixedLayout?: boolean;
+    lastLocation?: FoliateRelocateDetail;
+    close: () => void;
     open: (book: string | File | FoliateBook) => Promise<void>;
     init: (options: {
         lastLocation?: FoliateTarget | null;
@@ -114,11 +136,6 @@ export interface FoliateRelocateDetail {
     cfi?: string;
     range?: Range;
     fraction?: number;
-    location?: {
-        current?: number;
-        next?: number;
-        total?: number;
-    };
     tocItem?: {
         label?: string;
         href?: string;
@@ -132,6 +149,29 @@ export interface FoliateRendererRelocateDetail {
 export interface FoliateLoadDetail {
     doc: Document;
     index?: number;
+}
+
+// Reflowable pages are screens within the current section; fixed-layout pages
+// are sections of the book, including when the renderer shows a spread.
+export function foliatePagePosition(
+    view: FoliateViewElement,
+): { index: number; current: number; total: number } | undefined {
+    const renderer = view.renderer;
+    if (!renderer) return;
+    if (view.isFixedLayout) {
+        const index = renderer.index;
+        if (index !== undefined && index >= 0) {
+            return { index, current: index + 1, total: view.book?.sections?.length ?? 0 };
+        }
+    } else {
+        const index = renderer.getContents?.()[0]?.index;
+        const pages = renderer.pages;
+        if (index !== undefined && pages !== undefined && Number.isFinite(pages) && pages >= 2) {
+            // Foliate adds a sentinel screen before and after each section.
+            const total = Math.max(1, pages - 2);
+            return { index, current: Math.min(total, Math.max(1, renderer.page ?? 1)), total };
+        }
+    }
 }
 
 export interface ReaderDisplayPalette {
@@ -465,7 +505,16 @@ export function applyFoliateDisplay(view: FoliateViewElement, prefs: ReaderPrefe
     renderer.style.background = palette.background;
     applyReaderLayoutMetrics(view, columnWidth);
     renderer.setStyles?.(readerContentCSS(style, prefs, palette));
-    applyReaderCanvasColor(palette.background);
+}
+
+export function wireFoliateDocumentStyling(page: HTMLElement, view: FoliateViewElement): void {
+    view.addEventListener('load', (event) => {
+        const detail = (event as CustomEvent<FoliateLoadDetail>).detail;
+        const sectionID = view.book?.sections?.[detail.index ?? -1]?.id;
+        fitFoliateCoverDocument(detail.doc, String(sectionID ?? ''), detail.index);
+        setFoliateDocumentJustification(detail.doc, page.dataset.readerStyle !== 'original');
+        syncFoliateWritingMode(view, detail.doc);
+    });
 }
 
 // Safari can expose the page canvas around its chrome, so keep the theme color

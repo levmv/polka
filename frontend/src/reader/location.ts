@@ -71,33 +71,25 @@ function adjacentText(
     return result;
 }
 
-function foliateSection(
-    page: HTMLElement,
-    view: FoliateViewElement,
-    index?: number,
-    range?: Range,
-) {
-    // Other Foliate importers generate documents without source chapter paths.
-    if (
-        !['epub', 'kepub'].includes(page.dataset.readerFormat || '') &&
-        !page.dataset.readerFallback
-    )
-        return undefined;
-    if (index === undefined && range) {
-        index = view.renderer
-            ?.getContents?.()
-            .find((item) => item.doc === range.startContainer.ownerDocument)?.index;
-    }
-    return view.book?.sections?.[index ?? -1];
-}
-
 export function foliateSectionPath(
     page: HTMLElement,
     view: FoliateViewElement,
     index?: number,
     range?: Range,
 ): string {
-    return foliateSection(page, view, index, range)?.id || '';
+    // Other Foliate importers generate documents without source chapter paths.
+    if (
+        !['epub', 'kepub'].includes(page.dataset.readerFormat || '') &&
+        !page.dataset.readerFallback
+    )
+        return '';
+    if (index === undefined && range) {
+        index = view.renderer
+            ?.getContents?.()
+            .find((item) => item.doc === range.startContainer.ownerDocument)?.index;
+    }
+    const id = view.book?.sections?.[index ?? -1]?.id;
+    return typeof id === 'string' ? id : '';
 }
 
 export function foliateLocation(
@@ -106,6 +98,6 @@ export function foliateLocation(
     cfi?: string,
     range?: Range,
 ): Locator {
-    const path = foliateSection(page, view, undefined, range)?.id;
+    const path = foliateSectionPath(page, view, undefined, range);
     return { ...(cfi ? { cfi } : {}), ...(path ? { path } : {}) };
 }
