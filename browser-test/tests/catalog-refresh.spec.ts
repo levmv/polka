@@ -183,7 +183,7 @@ test('Bulk removal invalidates an older Continue reading response', async ({ pag
       const book = await (await page.request.get(`/api/books/${id}`)).json();
       expect(
         (
-          await page.request.put(`/api/reader/assets/${book.assets[0].id}/state`, {
+          await page.request.put(`/api/reader/assets/${book.assets[0].id}/position`, {
             data: {
               ...(await readerMutationFields(page, book.assets[0].id)),
               progress: 0.37,

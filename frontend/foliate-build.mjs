@@ -7,6 +7,11 @@ export const foliateReader = {
         build.onLoad({ filter: /[/\\]foliate-js[/\\]paginator\.js$/ }, async ({ path }) => {
             let contents = await readFile(path, 'utf8');
             for (const [before, after] of [
+                // Paragraph CFIs may start with a hidden footnote/bookmark anchor.
+                [
+                    'if (node?.nodeType === 1) return node',
+                    'if (node?.nodeType === 1 && node.getClientRects().length) return node',
+                ],
                 [
                     'return new Promise(resolve => {\n            this.#iframe',
                     'return new Promise((resolve, reject) => {\n            const signal = this.container.loadSignal\n            this.#iframe',

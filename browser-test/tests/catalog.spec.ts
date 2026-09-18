@@ -130,7 +130,7 @@ test.describe('Catalog', () => {
       detail.assets.find((asset) => asset.is_primary && asset.can_read) ??
       detail.assets.find((asset) => asset.can_read);
     if (!readableAsset) throw new Error('missing readable asset');
-    const positionRes = await page.request.put(`/api/reader/assets/${readableAsset.id}/state`, {
+    const positionRes = await page.request.put(`/api/reader/assets/${readableAsset.id}/position`, {
       data: {
         ...(await readerMutationFields(page, readableAsset.id)),
         progress: 0.42,

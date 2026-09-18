@@ -167,21 +167,32 @@ export interface LocatorRect {
     height: number;
 }
 
-export interface ReaderStateWrite {
-    revision: number;
+export interface ReaderPosition {
     progress: number;
     locator: Locator;
+}
+
+export interface SavedReaderPosition extends ReaderPosition {
+    revision: number;
+}
+
+export interface ReaderPositionWrite extends SavedReaderPosition {
     device_id: string;
     device_name: string;
 }
 
-export interface ReaderState extends ReaderStateWrite {
-    asset_id: number;
+export interface ReaderPositionSaveResult {
+    revision: number;
     book_id: number;
-    updated_at?: number;
     reading_status: ReadingStatusState;
     status_changed?: boolean;
     status_transition_id?: number;
+}
+
+export interface ReaderProgress {
+    // Null means no reading yet or a reset; zero means the beginning.
+    progress: number | null;
+    reading_status: ReadingStatusState;
 }
 
 export type AnnotationColor = 'yellow' | 'green' | 'blue' | 'pink' | 'purple';

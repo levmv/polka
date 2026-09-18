@@ -49,7 +49,7 @@ func TestAuthMiddleware(t *testing.T) {
 	check("api→401", "/api/books", "", http.StatusUnauthorized, false)
 	check("read asset→401", "/read/assets/1", "", http.StatusUnauthorized, false)
 	check("opds→401", "/opds", "", http.StatusUnauthorized, false)
-	check("kosync→401", "/kosync/dead/users/auth", "", http.StatusUnauthorized, false)
+	check("kosync→401", "/kosync/users/auth", "", http.StatusUnauthorized, false)
 	check("cover→401", "/covers/1", "", http.StatusUnauthorized, false)
 	check("setup open", "/setup", "", http.StatusOK, true)
 	check("static open", "/static/app.js", "", http.StatusOK, true)
@@ -192,7 +192,8 @@ func TestAuthMiddlewareAppToken(t *testing.T) {
 			t.Errorf("kosync context user id = %d, want %d", got, u.ID)
 		}
 	}))
-	reqKO := httptest.NewRequest("GET", "/kosync/"+token+"/users/auth", nil)
+	reqKO := httptest.NewRequest("GET", "/kosync/users/auth", nil)
+	setKOReaderAuth(reqKO, u.Username, token)
 	wKO := httptest.NewRecorder()
 	hKO.ServeHTTP(wKO, reqKO)
 	if wKO.Code != http.StatusOK || !kosyncRan {
@@ -201,12 +202,13 @@ func TestAuthMiddlewareAppToken(t *testing.T) {
 
 	var badKOSyncRan bool
 	hBadKO := s.authMiddleware(okHandler(&badKOSyncRan))
-	reqBadKO := httptest.NewRequest("GET", "/kosync/not-a-token/users/auth", nil)
+	reqBadKO := httptest.NewRequest("GET", "/kosync/users/auth", nil)
+	setKOReaderAuth(reqBadKO, u.Username, "wrong-password")
 	sid, err := s.sessions.issue(t.Context(), u.ID)
 	if err != nil {
 		t.Fatalf("issue browser session: %v", err)
 	}
-	// A browser cookie must not bypass the credential embedded in a KOReader URL.
+	// A browser cookie must not bypass KOSync authentication.
 	reqBadKO.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sid})
 	wBadKO := httptest.NewRecorder()
 	hBadKO.ServeHTTP(wBadKO, reqBadKO)
@@ -220,6 +222,7 @@ func TestAuthMiddlewareAppToken(t *testing.T) {
 	hAPI := s.authMiddleware(okHandler(&apiRan))
 	reqAPI := httptest.NewRequest("GET", "/api/books", nil)
 	reqAPI.SetBasicAuth("alice", token)
+	setKOReaderAuth(reqAPI, u.Username, token)
 	wAPI := httptest.NewRecorder()
 	hAPI.ServeHTTP(wAPI, reqAPI)
 	if wAPI.Code != http.StatusUnauthorized {
@@ -245,7 +248,8 @@ func TestAuthMiddlewareAppToken(t *testing.T) {
 
 	var revokedKOSyncRan bool
 	hRevokedKO := s.authMiddleware(okHandler(&revokedKOSyncRan))
-	reqRevokedKO := httptest.NewRequest("GET", "/kosync/"+token+"/users/auth", nil)
+	reqRevokedKO := httptest.NewRequest("GET", "/kosync/users/auth", nil)
+	setKOReaderAuth(reqRevokedKO, u.Username, token)
 	wRevokedKO := httptest.NewRecorder()
 	hRevokedKO.ServeHTTP(wRevokedKO, reqRevokedKO)
 	if wRevokedKO.Code != http.StatusUnauthorized || revokedKOSyncRan {

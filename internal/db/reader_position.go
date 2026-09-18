@@ -31,8 +31,8 @@ func validateReaderPosition(input ReaderPositionWrite) (ReaderPositionWrite, err
 }
 
 // Device metadata, server receipt times and the expected revision are not part
-// of the position. Equivalent saves only refresh recency, preserving the saved
-// source and any subsequent manual reading-status change.
+// of the position. Equivalent saves preserve its time and source, along with
+// any subsequent manual reading-status change.
 func sameReaderPosition(current *ReaderState, input ReaderPositionWrite) bool {
 	// Opening and reset have no saved observation, even at zero percent.
 	return current.DeviceID != "" && current.Progress == input.Progress && current.Locator.Equal(input.Locator)

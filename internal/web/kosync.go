@@ -4,6 +4,7 @@ import (
 	"encoding/json/jsontext"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/levmv/polka/internal/db"
 )
@@ -14,8 +15,7 @@ type koReaderAuthDTO struct {
 
 type koReaderProgressRequest struct {
 	Document string `json:"document"`
-	// Metadata is optional in the KOSync protocol. Polka owns book metadata in
-	// SQLite, but it must still accept this client-supplied advisory object.
+	// Accept optional KOReader metadata without changing the catalog.
 	Metadata   jsontext.Value `json:"metadata"`
 	Progress   string         `json:"progress"`
 	Percentage float64        `json:"percentage"`
@@ -26,7 +26,7 @@ type koReaderProgressRequest struct {
 type koReaderProgressDTO struct {
 	Document   string  `json:"document,omitempty"`
 	Progress   string  `json:"progress,omitempty"`
-	Percentage float64 `json:"percentage,omitzero"`
+	Percentage float64 `json:"percentage"`
 	Device     string  `json:"device,omitempty"`
 	DeviceID   string  `json:"device_id,omitempty"`
 	Timestamp  int64   `json:"timestamp,omitzero"`
@@ -50,15 +50,15 @@ func (s *Server) handleKOReaderProgressSave(w http.ResponseWriter, r *http.Reque
 	if !readJSON(w, r, &req) {
 		return
 	}
-	if !s.allowKOReaderDocument(w, r, req.Document) {
+	if _, ok := s.requireKOReaderDocument(w, r, req.Document); !ok {
 		return
 	}
 
-	progress, _, err := s.db.SaveKOReaderProgressAndAdvanceStatus(r.Context(), UserID(r.Context()), db.KOReaderProgress{
+	progress, err := s.db.SaveKOReaderProgress(r.Context(), UserID(r.Context()), db.KOReaderProgress{
 		DocumentHash: req.Document,
-		Progress:     req.Progress,
-		Percentage:   req.Percentage,
-		Device:       req.Device,
+		Position:     req.Progress,
+		Progress:     req.Percentage,
+		DeviceName:   req.Device,
 		DeviceID:     req.DeviceID,
 	})
 	if err != nil {
@@ -69,49 +69,51 @@ func (s *Server) handleKOReaderProgressSave(w http.ResponseWriter, r *http.Reque
 		serverError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, koReaderProgressDTO{
-		Document:  progress.DocumentHash,
-		Timestamp: progress.UpdatedAt,
-	})
+	writeJSON(w, http.StatusOK, struct {
+		Document  string `json:"document"`
+		Timestamp int64  `json:"timestamp"`
+	}{strings.TrimSpace(req.Document), progress.UpdatedAt})
 }
 
 func (s *Server) handleKOReaderProgress(w http.ResponseWriter, r *http.Request) {
-	document := r.PathValue("document")
-	if !s.allowKOReaderDocument(w, r, document) {
+	document := strings.TrimSpace(r.PathValue("document"))
+	if document == "" || len(document) > 256 {
+		http.Error(w, db.ErrKOReaderInvalidInput.Error(), http.StatusBadRequest)
 		return
 	}
-	progress, err := db.GetKOReaderProgress(s.db.Read(r.Context()), UserID(r.Context()), document)
-	if errors.Is(err, db.ErrKOReaderProgressNotFound) {
-		writeJSON(w, http.StatusOK, map[string]any{})
+	target, ok := s.requireKOReaderDocument(w, r, document)
+	if !ok {
 		return
 	}
+	progress, err := s.koReaderState(r.Context(), UserID(r.Context()), target.AssetID, document)
 	if err != nil {
-		if errors.Is(err, db.ErrKOReaderInvalidInput) {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
 		serverError(w, r, err)
 		return
 	}
+
+	if progress == nil || progress.Position == "" {
+		writeJSON(w, http.StatusOK, map[string]any{})
+		return
+	}
 	writeJSON(w, http.StatusOK, koReaderProgressDTO{
-		Document:   progress.DocumentHash,
-		Progress:   progress.Progress,
-		Percentage: progress.Percentage,
-		Device:     progress.Device,
+		Document:   document,
+		Progress:   progress.Position,
+		Percentage: progress.Progress,
+		Device:     progress.DeviceName,
 		DeviceID:   progress.DeviceID,
 		Timestamp:  progress.UpdatedAt,
 	})
 }
 
-func (s *Server) allowKOReaderDocument(w http.ResponseWriter, r *http.Request, documentHash string) bool {
+func (s *Server) requireKOReaderDocument(w http.ResponseWriter, r *http.Request, documentHash string) (db.KOReaderHashTarget, bool) {
 	target, err := db.ResolveKOReaderHash(s.db.Read(r.Context()), documentHash)
 	if err != nil {
 		serverError(w, r, err)
-		return false
+		return target, false
 	}
-	if target.BookID == 0 || target.Ambiguous {
-		return true
+	if target.BookID == 0 {
+		return target, true
 	}
-	_, accessOK := s.requireAssetAccess(w, r, target.AssetID)
-	return accessOK
+	_, accessOK := s.requireBookAccess(w, r, target.BookID)
+	return target, accessOK
 }

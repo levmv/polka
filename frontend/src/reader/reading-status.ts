@@ -1,9 +1,9 @@
 import { undoReadingStatus } from '../api';
 import { errorMessage } from '../errors';
 import { showToast } from '../toast';
-import type { ReaderState } from '../types';
+import type { ReaderPositionSaveResult } from '../types';
 
-export function handleReadingStatusChange(state: ReaderState): void {
+export function handleReadingStatusChange(state: ReaderPositionSaveResult): void {
     if (
         !state.status_changed ||
         state.reading_status?.status !== 'finished' ||

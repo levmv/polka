@@ -20,6 +20,7 @@ import (
 	"golang.org/x/net/html"
 
 	"github.com/levmv/polka/internal/format"
+	"github.com/levmv/polka/internal/xmlutil"
 )
 
 func convertHTMLSourceToEPUB(ctx context.Context, w io.Writer, src io.ReaderAt, from format.Format, size int64, opts ConversionOptions) error {
@@ -35,7 +36,7 @@ func convertHTMLSourceToEPUB(ctx context.Context, w io.Writer, src io.ReaderAt, 
 		return fmt.Errorf("decode HTML source: %w", err)
 	}
 	if from == format.FormatXHTML {
-		decoded, err = prepareXHTMLForHTML(decoded)
+		decoded, err = xmlutil.PrepareXHTMLForHTML(decoded)
 		if err != nil {
 			return err
 		}
@@ -75,7 +76,7 @@ func convertHTMLZSourceToEPUB(ctx context.Context, w io.Writer, src io.ReaderAt,
 		return fmt.Errorf("decode HTMLZ entry %s: %w", entry.Name, err)
 	}
 	if ext := strings.ToLower(path.Ext(entry.Name)); ext == ".xhtml" || ext == ".xhtm" {
-		decoded, err = prepareXHTMLForHTML(decoded)
+		decoded, err = xmlutil.PrepareXHTMLForHTML(decoded)
 		if err != nil {
 			return err
 		}
@@ -242,7 +243,7 @@ func htmlBodyToEPUBWithImages(raw []byte, sourcePath string, imageResolver htmlI
 }
 
 func htmlBodyToEPUB(raw []byte, sourcePath string, resolvers htmlEPUBResolvers) (string, []epubNavItem, map[string]bool, error) {
-	raw = removeInvalidXML10Chars(raw)
+	raw = xmlutil.RemoveInvalidXML10Chars(raw)
 	doc, err := html.Parse(bytes.NewReader(raw))
 	if err != nil {
 		return "", nil, nil, fmt.Errorf("parse HTML source: %w", err)

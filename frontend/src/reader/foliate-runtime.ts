@@ -1,4 +1,4 @@
-import { fetchReaderState, fetchUserSettings, touchReaderState } from '../api';
+import { fetchReaderPosition, fetchUserSettings, touchReader } from '../api';
 import { errorMessage } from '../errors';
 import type { ReaderPreferences } from '../types';
 import { createReadingActivity } from './activity';
@@ -23,15 +23,15 @@ import {
 import { wireFoliateSelection } from './foliate-selection';
 import { wireReaderLifecycle } from './lifecycle';
 import { createReaderPagination } from './pagination';
+import { createPositionSaver } from './position-saver';
 import {
     DEFAULT_READER_PREFERENCES,
     normalizeReaderPreferences,
     wireReaderPreferences,
 } from './preferences';
-import { restoreReaderPosition, wirePositionSaving } from './progress';
+import { restoreFoliatePosition, wireFoliatePosition } from './progress';
 import { handleReadingStatusChange } from './reading-status';
 import { wireReaderSearch } from './search';
-import { createReaderStateSaver } from './state-saver';
 import { wireReaderTOC } from './toc';
 
 export function initReader(): void {
@@ -56,14 +56,14 @@ async function initFoliateReader(
     const readURL = page.dataset.readerUrl;
     if (!stage || !readURL) return;
     const fallbackURL = page.dataset.readerFallbackUrl || '';
-    const stateSaver = createReaderStateSaver(assetId, {
-        onStateSaved: handleReadingStatusChange,
-        restorePosition: (state) => positionSaver.restorePosition(state),
+    const positionSaver = createPositionSaver(assetId, {
+        onPositionSaved: handleReadingStatusChange,
+        restorePosition: (state) => foliatePosition.restorePosition(state),
     });
     const activity = createReadingActivity(assetId);
 
-    const statePromise = fetchReaderState(assetId).catch((e) => {
-        console.error('Failed to fetch reader state:', e);
+    const statePromise = fetchReaderPosition(assetId).catch((e) => {
+        console.error('Failed to fetch reading position:', e);
         return null;
     });
     const preferencesPromise = fetchUserSettings().catch((e) => {
@@ -87,10 +87,12 @@ async function initFoliateReader(
         format,
         fallbackURL,
     );
-    const positionSaver = wirePositionSaving(page, view, stateSaver, { savingEnabled: false });
+    const foliatePosition = wireFoliatePosition(page, view, positionSaver, {
+        savingEnabled: false,
+    });
     const pagination = createReaderPagination(page, view, preferences);
-    const lifecycle = wireReaderLifecycle(page, stage, stateSaver, activity, {
-        onNavigate: positionSaver.markUserNavigation,
+    const lifecycle = wireReaderLifecycle(page, stage, positionSaver, activity, {
+        onNavigate: foliatePosition.markUserNavigation,
         onResume: () => {
             void annotations.load();
             pagination.resume();
@@ -129,7 +131,7 @@ async function initFoliateReader(
     });
 
     const state = await statePromise;
-    stateSaver.initialize(state);
+    positionSaver.initialize(state);
     // FB2 mounts its first document more reliably in scrolled flow. Apply the
     // user's saved preference immediately after Foliate finishes init.
     if (format === 'fb2') {
@@ -138,9 +140,9 @@ async function initFoliateReader(
     const annotationID = Number(
         new URLSearchParams(window.location.hash.slice(1)).get('annotation'),
     );
-    await restoreReaderPosition(view, state, annotations.location(annotationID)?.cfi);
-    positionSaver.enableSaving();
-    void stateSaver.flush();
+    await restoreFoliatePosition(view, state, annotations.location(annotationID)?.cfi);
+    foliatePosition.enableSaving();
+    void positionSaver.flush();
     wireReaderPreferences(page, view, preferences, pagination.setPreferences);
     await waitForRendererContents(view);
     wireCurrentFoliateDocuments(view, (doc) => {
@@ -157,11 +159,9 @@ async function initFoliateReader(
     revealChrome(page);
     lifecycle.start();
     pagination.start();
-    touchReaderState(assetId)
-        .then(handleReadingStatusChange)
-        .catch((e) => {
-            console.error('Failed to update reader state:', e);
-        });
+    touchReader(assetId).catch((e) => {
+        console.error('Failed to record book opening:', e);
+    });
 }
 
 async function openFoliateBookWithFallback(
@@ -171,10 +171,8 @@ async function openFoliateBookWithFallback(
     format: string,
     fallbackURL: string,
 ): Promise<FoliateViewElement> {
-    // Transport/storage failures should surface as-is. Only a file that was
-    // fetched successfully but rejected by Foliate earns the normalization
-    // retry, otherwise an ordinary 404 or interrupted request would start a
-    // needless conversion.
+    // Only retry files rejected by Foliate. Network and storage errors should
+    // propagate without triggering conversion.
     const sourceFile = await fetchFoliateBookFile(readURL, format);
     let view = createReaderFoliateView(page, stage);
     try {
@@ -184,10 +182,8 @@ async function openFoliateBookWithFallback(
         view.remove();
         if (!fallbackURL) throw sourceError;
 
-        // Foliate is intentionally stricter than Polka's EPUB package reader.
-        // If direct opening fails, retry through the existing bounded KEPUB
-        // normalization path. The original asset remains untouched and remains
-        // the identity used for progress and annotations.
+        // KEPUB conversion can repair package defects that Foliate rejects.
+        // Progress and annotations remain attached to the original asset.
         view = createReaderFoliateView(page, stage);
         try {
             const fallbackFile = await fetchFoliateBookFile(fallbackURL, 'kepub');

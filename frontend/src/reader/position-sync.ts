@@ -1,15 +1,15 @@
-import type { ReaderState, ReaderStateWrite } from '../types';
+import type { ReaderPositionSaveResult, ReaderPositionWrite, SavedReaderPosition } from '../types';
 
-type Observation = Omit<ReaderStateWrite, 'revision'>;
+type Observation = Omit<ReaderPositionWrite, 'revision'>;
 export type PositionWriteResult =
-    | { kind: 'saved'; state: ReaderState }
+    | { kind: 'saved'; saved: ReaderPositionSaveResult }
     | { kind: 'conflict' | 'rejected' | 'unconfirmed' };
 
 interface PositionSyncIO {
-    read(): Promise<ReaderState>;
-    write(payload: ReaderStateWrite, keepalive: boolean): Promise<PositionWriteResult>;
-    restore(state: ReaderState): Promise<void>;
-    onSaved(state: ReaderState): void;
+    read(): Promise<SavedReaderPosition>;
+    write(payload: ReaderPositionWrite, keepalive: boolean): Promise<PositionWriteResult>;
+    restore(state: SavedReaderPosition): Promise<void>;
+    onSaved(result: ReaderPositionSaveResult): void;
     retryLater(): void;
 }
 
@@ -19,8 +19,8 @@ interface PositionSyncIO {
 export class ReaderPositionSync {
     private baseRevision: number | null = null;
     private pending: Observation | null = null;
-    private unconfirmed: { observation: Observation; payload: ReaderStateWrite } | null = null;
-    private deferred: ReaderState | null = null;
+    private unconfirmed: { observation: Observation; payload: ReaderPositionWrite } | null = null;
+    private deferred: SavedReaderPosition | null = null;
     private refreshRequested = false;
     private canRestore: (() => boolean) | null = null;
     private running: Promise<void> | null = null;
@@ -30,7 +30,7 @@ export class ReaderPositionSync {
         this.io = io;
     }
 
-    initialize(state: ReaderState | null): void {
+    initialize(state: SavedReaderPosition | null): void {
         this.baseRevision = state?.revision ?? null;
     }
 
@@ -130,11 +130,11 @@ export class ReaderPositionSync {
         const result = await this.io.write(request.payload, keepalive);
         switch (result.kind) {
             case 'saved':
-                this.baseRevision = result.state.revision;
+                this.baseRevision = result.saved.revision;
                 if (this.pending === request.observation) this.pending = null;
                 this.unconfirmed = null;
                 this.deferred = null;
-                if (!keepalive) this.io.onSaved(result.state);
+                if (!keepalive) this.io.onSaved(result.saved);
                 return 'continue';
             case 'conflict':
                 this.unconfirmed = null;
@@ -151,15 +151,13 @@ export class ReaderPositionSync {
     }
 }
 
-// Only divergent new observations compete by progress. A saved local position
-// is just an old copy and follows the server, including a move backwards.
-// Reset deliberately follows this same rule: another open reader with pending
-// progress may restore it after learning the reset's revision. We accept this
-// rare race rather than persist separate reset history.
+// A saved local position follows the server, including moves backwards.
+// Only conflicting unsaved positions compete by progress. Pending progress
+// can replace a reset after the reader adopts its revision.
 export function keepLocalReaderPosition(
     local: { progress: number } | null,
     revision: number | null,
-    saved: Pick<ReaderState, 'revision' | 'progress'>,
+    saved: Pick<SavedReaderPosition, 'revision' | 'progress'>,
 ): boolean {
     if (!local) return false;
     if (revision === saved.revision) return true;

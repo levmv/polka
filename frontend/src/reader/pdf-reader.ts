@@ -9,9 +9,9 @@ import {
     TextLayer,
 } from 'pdfjs-dist/legacy/build/pdf.mjs';
 
-import { fetchReaderState, touchReaderState } from '../api';
+import { fetchReaderPosition, touchReader } from '../api';
 import { clamp } from '../dom';
-import type { Locator, ReaderState } from '../types';
+import type { Locator, ReaderPosition, ReaderPositionSaveResult } from '../types';
 import { createReadingActivity } from './activity';
 import { type AnnotationController, wireAnnotations } from './annotations';
 import {
@@ -25,8 +25,8 @@ import { type ReaderLifecycle, wireReaderLifecycle } from './lifecycle';
 import { pdfAnnotationSurface } from './pdf-annotations';
 import { wirePDFOutline } from './pdf-outline';
 import { type PDFSearchController, wirePDFSearch } from './pdf-search';
+import { createPositionSaver, type PositionSaver } from './position-saver';
 import { type ReaderSelectionController, wireReaderSelection } from './selection';
-import { createReaderStateSaver, type ReaderPosition, type ReaderStateSaver } from './state-saver';
 
 const PDF_RESOURCE_ROOT = '/static/pdfjs';
 const MAX_CANVAS_PIXELS = 16_000_000;
@@ -40,7 +40,7 @@ const RESIZE_DELAY_MS = 120;
 const MAX_CLICK_MOVEMENT = 6;
 
 interface PDFReaderOptions {
-    onStateSaved?: (state: ReaderState) => void;
+    onPositionSaved?: (result: ReaderPositionSaveResult) => void;
 }
 
 interface PDFReaderElements {
@@ -92,7 +92,7 @@ class PDFReader {
     private renderGeneration = 0;
     private saveTimer: number | undefined;
     private resizeTimer: number | undefined;
-    private readonly stateSaver: ReaderStateSaver;
+    private readonly positionSaver: PositionSaver;
     private searchController: PDFSearchController | null = null;
     private pointerGesture: PDFPointerGesture | null = null;
     private annotations: AnnotationController | null = null;
@@ -104,9 +104,9 @@ class PDFReader {
         private readonly assetId: number,
         private readonly readURL: string,
         private readonly elements: PDFReaderElements,
-        private readonly options: PDFReaderOptions,
+        options: PDFReaderOptions,
     ) {
-        this.stateSaver = createReaderStateSaver(assetId, {
+        this.positionSaver = createPositionSaver(assetId, {
             ...options,
             restorePosition: async (state) => {
                 window.clearTimeout(this.saveTimer);
@@ -133,15 +133,15 @@ class PDFReader {
         this.lifecycle = wireReaderLifecycle(
             root,
             elements.stage,
-            this.stateSaver,
+            this.positionSaver,
             createReadingActivity(assetId),
             { onResume: () => void this.annotations?.load() },
         );
     }
 
     async open(): Promise<void> {
-        const statePromise = fetchReaderState(this.assetId).catch((error) => {
-            console.error('Failed to fetch PDF reader state:', error);
+        const statePromise = fetchReaderPosition(this.assetId).catch((error) => {
+            console.error('Failed to fetch PDF reading position:', error);
             return null;
         });
 
@@ -172,7 +172,7 @@ class PDFReader {
         });
 
         const state = await statePromise;
-        this.stateSaver.initialize(state);
+        this.positionSaver.initialize(state);
         this.document = await this.loadingTask.promise;
         this.pageCount = this.document.numPages;
         this.pageNumber = storedPDFPage(state, this.pageCount);
@@ -221,13 +221,11 @@ class PDFReader {
         this.elements.stage.focus({ preventScroll: true });
         revealChrome(this.root);
         this.lifecycle.start();
-        void this.stateSaver.flush();
+        void this.positionSaver.flush();
 
-        touchReaderState(this.assetId)
-            .then((saved) => this.options.onStateSaved?.(saved))
-            .catch((error) => {
-                console.error('Failed to update PDF reader state:', error);
-            });
+        touchReader(this.assetId).catch((error) => {
+            console.error('Failed to record book opening:', error);
+        });
     }
 
     private wireControls(): void {
@@ -554,17 +552,12 @@ class PDFReader {
             page: this.pageNumber,
         };
         const progress = this.pageCount > 0 ? this.pageNumber / this.pageCount : 0;
-        this.stateSaver.queue({ progress, locator });
+        this.positionSaver.queue({ progress, locator });
         window.clearTimeout(this.saveTimer);
         this.saveTimer = window.setTimeout(() => {
-            void this.flushPending();
+            this.saveTimer = undefined;
+            void this.positionSaver.flush();
         }, SAVE_DELAY_MS);
-    }
-
-    private flushPending(saveOptions: { keepalive?: boolean } = {}): Promise<void> {
-        window.clearTimeout(this.saveTimer);
-        this.saveTimer = undefined;
-        return this.stateSaver.flush(saveOptions);
     }
 }
 

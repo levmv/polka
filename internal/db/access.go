@@ -20,7 +20,7 @@ import (
 // direct access to an out-of-scope book or asset is a 404, exactly like
 // content that doesn't exist. Access is book-centric (asset resolves to its
 // book). Enforcement covers every authenticated entry point: browser
-// sessions, basic auth, app tokens, kosync tokens. An empty scope is valid
+// sessions, basic auth, app passwords and device protocols. An empty scope is valid
 // and fail-closed: the account sees an empty library, not an error.
 type VisibilityScope struct {
 	UserID       int64

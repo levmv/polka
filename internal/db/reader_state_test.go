@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -17,17 +18,17 @@ func TestResetReaderStatePreservesAnnotationsAndOtherUsers(t *testing.T) {
 	mustExec(t, database, "INSERT INTO assets (id, book_id, storage_path, filename, extension, is_primary, original_sha256, current_sha256) VALUES (1, 1, 'books/a.epub', 'a.epub', '.epub', 1, randomblob(32), randomblob(32))")
 
 	locator := Locator{CFI: "epubcfi(/6/2)"}
-	if _, _, err := database.SaveReaderStateAndAdvanceStatus(t.Context(), user.ID, 1, testReaderWrite(0.42, locator, 0), ReadingStatusSourceWebReader); err != nil {
-		t.Fatalf("SaveReaderStateAndAdvanceStatus: %v", err)
+	if _, _, err := database.SaveReaderState(t.Context(), user.ID, 1, testReaderWrite(0.42, locator, 0), ReadingStatusSourceWebReader); err != nil {
+		t.Fatalf("SaveReaderState: %v", err)
 	}
-	if _, _, err := database.SaveReaderStateAndAdvanceStatus(t.Context(), other.ID, 1, testReaderWrite(0.75, locator, 0), ReadingStatusSourceWebReader); err != nil {
-		t.Fatalf("SaveReaderStateAndAdvanceStatus other: %v", err)
+	if _, _, err := database.SaveReaderState(t.Context(), other.ID, 1, testReaderWrite(0.75, locator, 0), ReadingStatusSourceWebReader); err != nil {
+		t.Fatalf("SaveReaderState other: %v", err)
 	}
 	annotation, err := database.CreateAnnotation(t.Context(), user.ID, 1, testAnnotation("epubcfi(/6/2!/4/2)", "keep this highlight"))
 	if err != nil {
 		t.Fatalf("CreateAnnotation before reset: %v", err)
 	}
-	if err := database.ResetReaderState(t.Context(), user.ID, 1, 1); err != nil {
+	if err := database.ResetReaderState(t.Context(), user.ID, 1); err != nil {
 		t.Fatalf("ResetReaderState: %v", err)
 	}
 	state, err := GetReaderState(database.Read(t.Context()), user.ID, 1)
@@ -53,7 +54,7 @@ func TestResetReaderStatePreservesAnnotationsAndOtherUsers(t *testing.T) {
 	}
 }
 
-func TestTouchReaderStateAndAdvanceStatusRollsBackTogether(t *testing.T) {
+func TestTouchReaderRollsBackTogether(t *testing.T) {
 	database := newTestDB(t)
 
 	user := mustUser(t, database, "reader", RoleMember)
@@ -68,7 +69,7 @@ func TestTouchReaderStateAndAdvanceStatusRollsBackTogether(t *testing.T) {
 		END;
 	`)
 
-	if _, _, err := database.TouchReaderStateAndAdvanceStatus(
+	if err := database.TouchReader(
 		context.Background(), user.ID, 1, ReadingStatusSourceWebReader,
 	); err == nil {
 		t.Fatal("touch succeeded despite status failure")
@@ -99,7 +100,7 @@ func TestSaveReaderStateAndStatusCommitTogether(t *testing.T) {
 
 	locator := Locator{CFI: "epubcfi(/6/2)"}
 
-	if _, _, err := database.SaveReaderStateAndAdvanceStatus(
+	if _, _, err := database.SaveReaderState(
 		context.Background(), user.ID, 1, testReaderWrite(0.4, locator, 0), ReadingStatusSourceWebReader,
 	); err == nil {
 		t.Fatal("atomic save succeeded with rejecting status trigger")
@@ -117,7 +118,7 @@ func TestSaveReaderStateAndStatusCommitTogether(t *testing.T) {
 	}
 	mustExec(t, database, "DROP TRIGGER reject_atomic_status")
 
-	saved, change, err := database.SaveReaderStateAndAdvanceStatus(
+	saved, change, err := database.SaveReaderState(
 		context.Background(), user.ID, 1, testReaderWrite(0.4, locator, 0), ReadingStatusSourceWebReader,
 	)
 	if err != nil {
@@ -136,6 +137,61 @@ func testReaderWrite(progress float64, locator Locator, revision int64) ReaderPo
 
 func testAnnotation(cfi, quote string) AnnotationCreate {
 	return AnnotationCreate{Locator: Locator{CFI: cfi, Path: "OPS/chapter.xhtml"}, Quote: quote}
+}
+
+func TestCachePositionConversion(t *testing.T) {
+	for _, change := range []string{"unchanged", "reading advanced", "position reset"} {
+		t.Run(change, func(t *testing.T) {
+			database := newTestDB(t)
+			user := mustUser(t, database, "reader", RoleMember)
+			other := mustUser(t, database, "other", RoleMember)
+			mustExec(t, database, `INSERT INTO books (id, title, sort_title) VALUES (1, 'Book', 'Book');
+                INSERT INTO assets (id, book_id, storage_path, filename, extension, original_sha256, current_sha256)
+                VALUES (1, 1, 'book.epub', 'book.epub', '.epub', randomblob(32), randomblob(32)),
+                       (2, 1, 'other.epub', 'other.epub', '.epub', randomblob(32), randomblob(32));`)
+			mustExec(t, database, `INSERT INTO reading_positions (user_id, asset_id, revision, updated_at)
+                VALUES (?, 1, 1, 0), (?, 2, 1, 0)`, other.ID, user.ID)
+			input := testReaderWrite(.2, Locator{CFI: "epubcfi(/6/2!/4/2/1:4)"}, 0)
+			state, _, err := database.SaveReaderState(t.Context(), user.ID, 1, input, ReadingStatusSourceWebReader)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mustExec(t, database, "UPDATE reading_positions SET updated_at=100 WHERE user_id=? AND asset_id=?", user.ID, 1)
+			switch change {
+			case "reading advanced":
+				input = testReaderWrite(.8, Locator{CFI: "epubcfi(/6/4!/4/2/1:4)"}, state.Revision)
+				_, _, err = database.SaveReaderState(t.Context(), user.ID, 1, input, ReadingStatusSourceWebReader)
+			case "position reset":
+				err = database.ResetReaderState(t.Context(), user.ID, 1)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			before, err := GetReaderState(database.Read(t.Context()), user.ID, 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			const converted = "/body/DocFragment[1]/body/p/text().4"
+			cached, err := database.CachePositionConversion(t.Context(), user.ID, 1, state.Revision, state.Locator, converted)
+			if err != nil || cached != (change == "unchanged") {
+				t.Fatalf("cache conversion = %v, %v", cached, err)
+			}
+			want := *before
+			if cached {
+				want.KOReaderPosition = converted
+			}
+			after, err := GetReaderState(database.Read(t.Context()), user.ID, 1)
+			if err != nil || !reflect.DeepEqual(after, &want) {
+				t.Fatalf("position after conversion = %+v, %v; want %+v", after, err, want)
+			}
+			for _, pair := range [][2]int64{{other.ID, 1}, {user.ID, 2}} {
+				state, err := GetReaderState(database.Read(t.Context()), pair[0], pair[1])
+				if err != nil || state.Revision != 1 || !state.positionIsReset() {
+					t.Fatalf("conversion changed another user's or asset's position: %+v, %v", state, err)
+				}
+			}
+		})
+	}
 }
 
 func TestAnnotationSelectionRetriesConflictsAndDeletion(t *testing.T) {
@@ -249,13 +305,13 @@ func TestListContinueReading(t *testing.T) {
 	mustExec("INSERT INTO assets (id, book_id, storage_path, filename, extension, original_sha256, current_sha256) VALUES (5, 125, 'done.epub', 'done.epub', '.epub', randomblob(32), randomblob(32))")
 	mustExec("INSERT INTO assets (id, book_id, storage_path, filename, extension, original_sha256, current_sha256) VALUES (6, 122, 'deleted.epub', 'deleted.epub', '.epub', randomblob(32), randomblob(32))")
 
-	mustExec("INSERT INTO user_asset_state (user_id, asset_id, progress, updated_at) VALUES (?, 1, 0.2, 10)", alice.ID)
-	mustExec("INSERT INTO user_asset_state (user_id, asset_id, progress, updated_at) VALUES (?, 2, 0.4, 20)", alice.ID)
-	mustExec("INSERT INTO user_asset_state (user_id, asset_id, progress, updated_at) VALUES (?, 3, 0, 30)", alice.ID)
-	mustExec("INSERT INTO user_asset_state (user_id, asset_id, progress, updated_at) VALUES (?, 4, 0.8, 35)", alice.ID)
-	mustExec("INSERT INTO user_asset_state (user_id, asset_id, progress, updated_at) VALUES (?, 5, 1, 40)", alice.ID)
-	mustExec("INSERT INTO user_asset_state (user_id, asset_id, progress, updated_at) VALUES (?, 6, 0.5, 50)", alice.ID)
-	mustExec("INSERT INTO user_asset_state (user_id, asset_id, progress, updated_at) VALUES (?, 2, 0.8, 60)", bob.ID)
+	mustExec("INSERT INTO reading_positions (user_id, asset_id, progress, updated_at) VALUES (?, 1, 0.2, 10)", alice.ID)
+	mustExec("INSERT INTO reading_positions (user_id, asset_id, progress, updated_at) VALUES (?, 2, 0.4, 20)", alice.ID)
+	mustExec("INSERT INTO reading_positions (user_id, asset_id, progress, updated_at) VALUES (?, 3, 0, 30)", alice.ID)
+	mustExec("INSERT INTO reading_positions (user_id, asset_id, progress, updated_at) VALUES (?, 4, 0.8, 35)", alice.ID)
+	mustExec("INSERT INTO reading_positions (user_id, asset_id, progress, updated_at) VALUES (?, 5, 1, 40)", alice.ID)
+	mustExec("INSERT INTO reading_positions (user_id, asset_id, progress, updated_at) VALUES (?, 6, 0.5, 50)", alice.ID)
+	mustExec("INSERT INTO reading_positions (user_id, asset_id, progress, updated_at) VALUES (?, 2, 0.8, 60)", bob.ID)
 	mustExec("INSERT INTO user_book_reading_state (user_id, book_id, status) VALUES (?, 1, 'reading')", alice.ID)
 	mustExec("INSERT INTO user_book_reading_state (user_id, book_id, status) VALUES (?, 2, 'reading')", alice.ID)
 	mustExec("INSERT INTO user_book_reading_state (user_id, book_id, status) VALUES (?, 125, 'finished')", alice.ID)
@@ -296,7 +352,7 @@ func TestReaderPositionRevisionRetryAndReset(t *testing.T) {
         INSERT INTO assets(id,book_id,storage_path,filename,extension,original_sha256,current_sha256)
         VALUES(1,1,'book.epub','book.epub','.epub',randomblob(32),randomblob(32));`)
 	input := testReaderWrite(.3, Locator{CFI: "epubcfi(/6/2)"}, 0)
-	first, _, err := database.SaveReaderStateAndAdvanceStatus(t.Context(), user.ID, 1, input, ReadingStatusSourceWebReader)
+	first, _, err := database.SaveReaderState(t.Context(), user.ID, 1, input, ReadingStatusSourceWebReader)
 	if err != nil || first.Revision != 1 {
 		t.Fatalf("first save: %+v %v", first, err)
 	}
@@ -315,15 +371,15 @@ func TestReaderPositionRevisionRetryAndReset(t *testing.T) {
 		{"renamed device", 0, input.DeviceID, "Another name"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			mustExec(t, database, "UPDATE user_asset_state SET updated_at=100 WHERE user_id=? AND asset_id=1", user.ID)
+			mustExec(t, database, "UPDATE reading_positions SET updated_at=100 WHERE user_id=? AND asset_id=1", user.ID)
 			equivalent := input
 			equivalent.Revision = tc.revision
 			equivalent.DeviceID = tc.deviceID
 			equivalent.DeviceName = tc.deviceName
 			equivalent.Locator = Locator{CFI: "epubcfi(/6/2)"}
-			retry, change, err := database.SaveReaderStateAndAdvanceStatus(t.Context(), user.ID, 1, equivalent, ReadingStatusSourceWebReader)
-			if err != nil || retry.Revision != 1 || retry.UpdatedAt <= 100 || retry.Progress != first.Progress || !retry.Locator.Equal(first.Locator) || change.Changed || change.State.Status != ReadingStatusUnread {
-				t.Fatalf("equivalent save must only refresh recency: %+v %+v %v", retry, change, err)
+			retry, change, err := database.SaveReaderState(t.Context(), user.ID, 1, equivalent, ReadingStatusSourceWebReader)
+			if err != nil || retry.Revision != 1 || retry.UpdatedAt != 100 || retry.Progress != first.Progress || !retry.Locator.Equal(first.Locator) || change.Changed || change.State.Status != ReadingStatusUnread {
+				t.Fatalf("equivalent save changed the observation: %+v %+v %v", retry, change, err)
 			}
 			if retry.DeviceID != first.DeviceID || retry.DeviceName != first.DeviceName {
 				t.Fatalf("equivalent save replaced the position source: %+v", retry)
@@ -342,16 +398,19 @@ func TestReaderPositionRevisionRetryAndReset(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			stale := input
 			tc.change(&stale)
-			if _, _, err := database.SaveReaderStateAndAdvanceStatus(t.Context(), user.ID, 1, stale, ReadingStatusSourceWebReader); !errors.Is(err, ErrReadingConflict) {
+			if _, _, err := database.SaveReaderState(t.Context(), user.ID, 1, stale, ReadingStatusSourceWebReader); !errors.Is(err, ErrReadingConflict) {
 				t.Fatalf("stale save: %v", err)
 			}
 		})
 	}
-	// Opening refreshes recency without invalidating the revision already read
-	// by a client, including one about to save an intentional backward move.
-	mustExec(t, database, "UPDATE user_asset_state SET updated_at=100 WHERE user_id=? AND asset_id=1", user.ID)
-	opened, _, err := database.TouchReaderStateAndAdvanceStatus(t.Context(), user.ID, 1, ReadingStatusSourceWebReader)
-	if err != nil || opened.Revision != first.Revision || opened.Progress != first.Progress || !opened.Locator.Equal(first.Locator) || opened.UpdatedAt <= 100 {
+	// Opening must not make an old position look like a new reading event.
+	// A client can still use its revision for an intentional backward move.
+	mustExec(t, database, "UPDATE reading_positions SET updated_at=100 WHERE user_id=? AND asset_id=1", user.ID)
+	if err := database.TouchReader(t.Context(), user.ID, 1, ReadingStatusSourceWebReader); err != nil {
+		t.Fatal(err)
+	}
+	opened, err := GetReaderState(database.Read(t.Context()), user.ID, 1)
+	if err != nil || opened.Revision != first.Revision || opened.Progress != first.Progress || !opened.Locator.Equal(first.Locator) || opened.UpdatedAt != 100 {
 		t.Fatalf("reopen: %+v %v", opened, err)
 	}
 	next := input
@@ -359,7 +418,7 @@ func TestReaderPositionRevisionRetryAndReset(t *testing.T) {
 	next.Progress = .2
 	next.DeviceID = "urn:reader:another"
 	next.DeviceName = "Another reader"
-	beforeReset, _, err := database.SaveReaderStateAndAdvanceStatus(t.Context(), user.ID, 1, next, ReadingStatusSourceWebReader)
+	beforeReset, _, err := database.SaveReaderState(t.Context(), user.ID, 1, next, ReadingStatusSourceWebReader)
 	if err != nil || beforeReset.Revision != first.Revision+1 || beforeReset.Progress != next.Progress || !beforeReset.Locator.Equal(first.Locator) {
 		t.Fatalf("overwrite: %+v %v", beforeReset, err)
 	}
@@ -368,7 +427,7 @@ func TestReaderPositionRevisionRetryAndReset(t *testing.T) {
 	}
 	var resetState *ReaderState
 	for range 2 {
-		if err := database.ResetReaderState(t.Context(), user.ID, 1, beforeReset.Revision); err != nil {
+		if err := database.ResetReaderState(t.Context(), user.ID, 1); err != nil {
 			t.Fatal(err)
 		}
 		state, err := GetReaderState(database.Read(t.Context()), user.ID, 1)
@@ -377,20 +436,24 @@ func TestReaderPositionRevisionRetryAndReset(t *testing.T) {
 		}
 		resetState = state
 	}
-	if _, _, err := database.SaveReaderStateAndAdvanceStatus(t.Context(), user.ID, 1, input, ReadingStatusSourceWebReader); !errors.Is(err, ErrReadingConflict) {
+	if _, _, err := database.SaveReaderState(t.Context(), user.ID, 1, input, ReadingStatusSourceWebReader); !errors.Is(err, ErrReadingConflict) {
 		t.Fatalf("late save undid reset: %v", err)
 	}
 	next.Revision = resetState.Revision
 	next.Progress = .1
-	continued, _, err := database.SaveReaderStateAndAdvanceStatus(t.Context(), user.ID, 1, next, ReadingStatusSourceWebReader)
+	continued, _, err := database.SaveReaderState(t.Context(), user.ID, 1, next, ReadingStatusSourceWebReader)
 	if err != nil || continued.Revision != resetState.Revision+1 || continued.Progress != .1 {
 		t.Fatalf("reading after reset: %+v %v", continued, err)
 	}
-	if _, _, err := database.SaveReaderStateAndAdvanceStatus(t.Context(), user.ID, 1, input, ReadingStatusSourceWebReader); !errors.Is(err, ErrReadingConflict) {
+	if _, _, err := database.SaveReaderState(t.Context(), user.ID, 1, input, ReadingStatusSourceWebReader); !errors.Is(err, ErrReadingConflict) {
 		t.Fatalf("late save overwrote reading after reset: %v", err)
 	}
-	if err := database.ResetReaderState(t.Context(), user.ID, 1, beforeReset.Revision); !errors.Is(err, ErrReadingConflict) {
-		t.Fatalf("late reset erased new position: %v", err)
+	if err := database.ResetReaderState(t.Context(), user.ID, 1); err != nil {
+		t.Fatalf("reset current position: %v", err)
+	}
+	state, err := GetReaderState(database.Read(t.Context()), user.ID, 1)
+	if err != nil || state.Revision != continued.Revision+1 || state.Progress != 0 || !state.Locator.IsZero() || state.UpdatedAt != 0 {
+		t.Fatalf("reset after continued reading: %+v %v", state, err)
 	}
 }
 
@@ -403,11 +466,11 @@ func TestResetEmptyReaderStateAdvancesRevision(t *testing.T) {
                 INSERT INTO assets(id,book_id,storage_path,filename,extension,original_sha256,current_sha256)
                 VALUES(1,1,'book.epub','book.epub','.epub',randomblob(32),randomblob(32));`)
 			if name == "opened" {
-				if _, _, err := database.TouchReaderStateAndAdvanceStatus(t.Context(), user.ID, 1, ReadingStatusSourceWebReader); err != nil {
+				if err := database.TouchReader(t.Context(), user.ID, 1, ReadingStatusSourceWebReader); err != nil {
 					t.Fatal(err)
 				}
 			}
-			if err := database.ResetReaderState(t.Context(), user.ID, 1, 0); err != nil {
+			if err := database.ResetReaderState(t.Context(), user.ID, 1); err != nil {
 				t.Fatal(err)
 			}
 			state, err := GetReaderState(database.Read(t.Context()), user.ID, 1)
@@ -415,7 +478,7 @@ func TestResetEmptyReaderStateAdvancesRevision(t *testing.T) {
 				t.Fatalf("empty reset: %+v %v", state, err)
 			}
 			pending := testReaderWrite(.3, Locator{CFI: "epubcfi(/6/2)"}, 0)
-			if _, _, err := database.SaveReaderStateAndAdvanceStatus(t.Context(), user.ID, 1, pending, ReadingStatusSourceWebReader); !errors.Is(err, ErrReadingConflict) {
+			if _, _, err := database.SaveReaderState(t.Context(), user.ID, 1, pending, ReadingStatusSourceWebReader); !errors.Is(err, ErrReadingConflict) {
 				t.Fatalf("pending save undid reset: %v", err)
 			}
 		})
@@ -465,7 +528,7 @@ func TestPDFAnnotationLocatorValidationAndRetry(t *testing.T) {
 			}
 		})
 	}
-	if _, _, err := database.SaveReaderStateAndAdvanceStatus(t.Context(), user.ID, 1, testReaderWrite(.5, Locator{Page: 2}, 0), ReadingStatusSourceWebReader); err != nil {
+	if _, _, err := database.SaveReaderState(t.Context(), user.ID, 1, testReaderWrite(.5, Locator{Page: 2}, 0), ReadingStatusSourceWebReader); err != nil {
 		t.Fatalf("page-only reading position: %v", err)
 	}
 }

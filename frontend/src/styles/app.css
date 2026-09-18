@@ -3650,22 +3650,6 @@ body.has-library-jump-rail #content {
     margin-top: 0.55rem;
 }
 
-.settings-app-methods {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0.75rem;
-    margin-top: 0.65rem;
-}
-
-.settings-app-method {
-    min-width: 0;
-    padding: 0.8rem;
-    background: var(--card-bg);
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius-control);
-}
-
-.settings-app-method-title,
 .settings-connect-title {
     margin: 0;
     font-size: 0.9rem;
@@ -3887,10 +3871,6 @@ body.has-library-jump-rail #content {
 
     .settings-connection-field .settings-opds-row {
         grid-template-columns: minmax(0, 1fr) auto;
-    }
-
-    .settings-app-methods {
-        grid-template-columns: 1fr;
     }
 
     .settings-path-control {

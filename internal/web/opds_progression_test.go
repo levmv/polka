@@ -120,9 +120,9 @@ func TestOPDSProgressionProtocolAndDiscovery(t *testing.T) {
 	if _, err := database.SetReadingStatus(t.Context(), user.ID, 1, db.ReadingStatusUnread, db.ReadingStatusSourceManual); err != nil {
 		t.Fatal(err)
 	}
-	// An equivalent position can have a different client date or device. Only
-	// server recency changes, preserving the revision, source and manual status.
-	mustExec(t, database, `UPDATE user_asset_state SET updated_at = 100 WHERE user_id = ? AND asset_id = 1`, user.ID)
+	// An equivalent position can have a different client date or device.
+	// Preserve the observation, including its timestamp and manual status.
+	mustExec(t, database, `UPDATE reading_positions SET updated_at = 100 WHERE user_id = ? AND asset_id = 1`, user.ID)
 	retryDocument := document
 	retryDocument.References = []string{"#epubcfi(/6/2!/4/2)", "chapter.xhtml"}
 	retryDocument.Modified = "2025-01-01T00:00:00Z"
@@ -139,16 +139,16 @@ func TestOPDSProgressionProtocolAndDiscovery(t *testing.T) {
 		t.Fatal("progression leaked to another account")
 	}
 	state, err = db.GetReaderState(database.Read(t.Context()), user.ID, 1)
-	if err != nil || state.Revision != 1 || state.Progress != .25 || state.UpdatedAt <= 100 {
-		t.Fatalf("retry must only refresh recency: %+v %v", state, err)
+	if err != nil || state.Revision != 1 || state.Progress != .25 || state.UpdatedAt != 100 {
+		t.Fatalf("retry changed the observation: %+v %v", state, err)
 	}
 	if state.DeviceID != document.Device.ID || state.DeviceName != document.Device.Name {
 		t.Fatalf("equivalent save replaced the position source: %+v", state)
 	}
-	// Opening in the web reader refreshes OPDS modified without invalidating a
-	// client's position token. The next real change can use the pre-open ETag.
-	mustExec(t, database, `UPDATE user_asset_state SET updated_at = 100 WHERE user_id = ? AND asset_id = 1`, user.ID)
-	if _, _, err := database.TouchReaderStateAndAdvanceStatus(t.Context(), user.ID, 1, db.ReadingStatusSourceWebReader); err != nil {
+	// Opening in the web reader preserves the position timestamp and token.
+	// The next real change can use the pre-open ETag.
+	mustExec(t, database, `UPDATE reading_positions SET updated_at = 100 WHERE user_id = ? AND asset_id = 1`, user.ID)
+	if err := database.TouchReader(t.Context(), user.ID, 1, db.ReadingStatusSourceWebReader); err != nil {
 		t.Fatal(err)
 	}
 	opened := request(user.ID, "GET", nil, "")
@@ -159,8 +159,8 @@ func TestOPDSProgressionProtocolAndDiscovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	modified, err := time.Parse(time.RFC3339, got.Modified)
-	if err != nil || modified.Unix() <= 100 || got.Progression == nil || *got.Progression != .25 {
-		t.Fatalf("opening did not refresh progression recency: %+v %v", got, err)
+	if err != nil || modified.Unix() != 100 || got.Progression == nil || *got.Progression != .25 {
+		t.Fatalf("opening changed the progression timestamp: %+v %v", got, err)
 	}
 	backward := document
 	backward.Progression = new(.1)
@@ -181,7 +181,7 @@ func TestOPDSProgressionProtocolAndDiscovery(t *testing.T) {
 		{"future date cannot override stale revision", .5, 24 * time.Hour, `"0"`, 409},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			mustExec(t, database, `UPDATE user_asset_state SET progress = 0.25, revision = 1, updated_at = ? WHERE user_id = ? AND asset_id = 1`, serverTime.Unix(), user.ID)
+			mustExec(t, database, `UPDATE reading_positions SET progress = 0.25, revision = 1, updated_at = ? WHERE user_id = ? AND asset_id = 1`, serverTime.Unix(), user.ID)
 			input := document
 			input.Progression = new(tc.progress)
 			input.Modified = serverTime.Add(tc.dateOffset).In(time.FixedZone("reader", 2*60*60)).Format(time.RFC3339)

@@ -174,7 +174,7 @@ func (s *Server) handleDownloadAs(w http.ResponseWriter, r *http.Request) {
 		// Converted downloads get their own hashes, without replacing the cache
 		// for the original. Sampling must not move the cursor used by io.Copy.
 		if hash, err := koreader.PartialMD5(io.NewSectionReader(ready, 0, convertedSize)); err == nil {
-			_ = s.db.RememberKOReaderHash(r.Context(), assetID, hash)
+			_ = s.db.RememberKOReaderHash(r.Context(), assetID, hash, string(target))
 		}
 	}
 	if err := r.Context().Err(); err != nil {

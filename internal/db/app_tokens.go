@@ -2,7 +2,9 @@ package db
 
 import (
 	"context"
+	"crypto/md5"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
@@ -34,10 +36,11 @@ func (db *DB) CreateAppToken(ctx context.Context, userID int64, name string) (*A
 	}
 
 	token := &AppToken{Name: name, Token: newDeviceToken()}
+	kosyncKey := md5.Sum([]byte(token.Token))
 	err := db.Transact(ctx, func(tx *Tx) error {
 		return tx.QueryRow(
-			"INSERT INTO app_tokens (user_id, name, token) VALUES (?, ?, ?) RETURNING id, created_at",
-			userID, token.Name, token.Token,
+			"INSERT INTO app_tokens (user_id, name, token, kosync_key) VALUES (?, ?, ?, ?) RETURNING id, created_at",
+			userID, token.Name, token.Token, kosyncKey[:],
 		).Scan(&token.ID, &token.CreatedAt)
 	})
 	if err != nil {
@@ -102,8 +105,7 @@ func (db *DB) RevokeAppTokenByID(ctx context.Context, userID int64, tokenID int6
 // most once per hour, like session bumps) so ordinary OPDS browsing does not turn
 // every request into a write.
 func (db *DB) AppTokenUserID(ctx context.Context, token string) (int64, bool, error) {
-	token = normalizeDeviceToken(token)
-	if token == "" {
+	if len(token) != deviceTokenLength {
 		return 0, false, nil
 	}
 	var userID int64
@@ -118,11 +120,46 @@ func (db *DB) AppTokenUserID(ctx context.Context, token string) (int64, bool, er
 		return 0, false, fmt.Errorf("lookup app token: %w", err)
 	}
 
+	if err := db.touchAppToken(ctx, token, lastUsed); err != nil {
+		return 0, false, err
+	}
+	return userID, true, nil
+}
+
+// KOReaderUserID resolves KOSync's MD5(password) through its stored lookup key.
+// App passwords identify their owner without the client's username.
+func (db *DB) KOReaderUserID(ctx context.Context, key string) (int64, bool, error) {
+	if len(key) != md5.Size*2 {
+		return 0, false, nil
+	}
+	digest, err := hex.DecodeString(key)
+	if err != nil {
+		return 0, false, nil
+	}
+	var userID int64
+	var token string
+	var lastUsed sql.NullInt64
+	err = db.Read(ctx).QueryRow(
+		"SELECT user_id, token, last_used_at FROM app_tokens WHERE kosync_key = ?", digest,
+	).Scan(&userID, &token, &lastUsed)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("lookup KOReader credentials: %w", err)
+	}
+	if err := db.touchAppToken(ctx, token, lastUsed); err != nil {
+		return 0, false, err
+	}
+	return userID, true, nil
+}
+
+func (db *DB) touchAppToken(ctx context.Context, token string, lastUsed sql.NullInt64) error {
 	now := time.Now().Unix()
 	if !lastUsed.Valid || now-lastUsed.Int64 >= 3600 {
 		if _, err := db.ExecBestEffort(ctx, "UPDATE app_tokens SET last_used_at = ? WHERE token = ?", now, token); err != nil {
-			return 0, false, fmt.Errorf("bump app token: %w", err)
+			return fmt.Errorf("bump app token: %w", err)
 		}
 	}
-	return userID, true, nil
+	return nil
 }

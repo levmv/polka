@@ -5,9 +5,9 @@ import {
     fetchBook,
     fetchCurrentUser,
     fetchDeliveryJob,
-    fetchReaderState,
+    fetchReaderProgress,
     fetchSendOptions,
-    resetReaderState,
+    resetReaderPosition,
     setReadingStatus,
     writebackBook,
 } from '../api';
@@ -52,7 +52,7 @@ import type {
     DeliveryJob,
     DeliveryPlan,
     DeliveryPreset,
-    ReaderState,
+    ReaderProgress,
     ReadingStatus,
     SendOptions,
 } from '../types';
@@ -942,12 +942,12 @@ function renderBookReaderProgress(container: HTMLElement, book: Book, assetID: n
     const progressEl = container.querySelector<HTMLElement>('[data-reader-progress-asset]');
     if (!progressEl || Number(progressEl.dataset.readerProgressAsset) !== assetID) return;
 
-    fetchReaderState(assetID)
-        .then((options) => {
+    fetchReaderProgress(assetID)
+        .then((progress) => {
             const current = container.querySelector<HTMLElement>('[data-reader-progress-asset]');
             if (current !== progressEl) return;
-            if (options.reading_status) book.reading_status = options.reading_status;
-            updateBookReaderProgress(current, options);
+            book.reading_status = progress.reading_status;
+            updateBookReaderProgress(current, progress);
         })
         .catch(() => {
             const track = progressEl.querySelector<HTMLElement>('[data-reader-progress-track]');
@@ -955,12 +955,11 @@ function renderBookReaderProgress(container: HTMLElement, book: Book, assetID: n
         });
 }
 
-function updateBookReaderProgress(progressEl: HTMLElement, state: ReaderState): void {
-    const progress = clampProgress(state.progress);
-    const hasState = progress > 0 || !!state.updated_at;
+function updateBookReaderProgress(progressEl: HTMLElement, state: ReaderProgress): void {
+    const progress = clampProgress(state.progress ?? 0);
     const label = progressEl.querySelector<HTMLElement>('[data-reading-status-label]');
-    const status = state.reading_status?.status;
-    if (label && status) {
+    const status = state.reading_status.status;
+    if (label) {
         label.textContent = readingStatusLabel(status);
         progressEl.setAttribute(
             'aria-label',
@@ -970,7 +969,7 @@ function updateBookReaderProgress(progressEl: HTMLElement, state: ReaderState): 
     const text = progressEl.querySelector<HTMLElement>('[data-reader-progress-text]');
     const track = progressEl.querySelector<HTMLElement>('[data-reader-progress-track]');
     const showsProgress = status === 'reading' || status === 'dropped';
-    if (!hasState || !showsProgress) {
+    if (state.progress === null || !showsProgress) {
         if (text) text.hidden = true;
         if (track) track.hidden = true;
         return;
@@ -1041,7 +1040,7 @@ async function resetBookReaderPosition(container: HTMLElement, asset: Asset): Pr
     if (!confirmed) return;
 
     try {
-        await resetReaderState(asset.id, (await fetchReaderState(asset.id)).revision);
+        await resetReaderPosition(asset.id);
         notifyCatalogChanged({ kind: 'reading-state' });
         const progressEl = container.querySelector<HTMLElement>(
             `[data-reader-progress-asset="${asset.id}"]`,

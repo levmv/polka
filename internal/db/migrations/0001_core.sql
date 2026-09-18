@@ -191,6 +191,8 @@ CREATE TABLE app_tokens (
     user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     name         TEXT NOT NULL,
     token        TEXT NOT NULL UNIQUE,
+    -- MD5 of the app password, sent by KOReader in its x-auth-key header.
+    kosync_key   BLOB NOT NULL UNIQUE CHECK (typeof(kosync_key) = 'blob' AND length(kosync_key) = 16),
     created_at   INTEGER NOT NULL DEFAULT (unixepoch()),
     last_used_at INTEGER,
     UNIQUE (user_id, name)
@@ -262,24 +264,37 @@ CREATE TABLE user_settings (
     updated_at            INTEGER NOT NULL DEFAULT (unixepoch())
 );
 
--- Per-user reader state. Position is stored per concrete asset because EPUB/PDF
--- variants of the same book have independent locators. `locator` is a JSON
--- object using the shared Locator model; progress is a coarse normalized 0..1
--- value for browse/UI summaries and fallback navigation.
-CREATE TABLE user_asset_state (
-    user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    asset_id     INTEGER NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
-    progress     REAL NOT NULL DEFAULT 0 CHECK (progress >= 0 AND progress <= 1),
-    locator      TEXT NOT NULL DEFAULT '{}',
-    revision     INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0),
-    device_id    TEXT NOT NULL DEFAULT '',
-    device_name  TEXT NOT NULL DEFAULT '',
-    -- Server time of the latest opening or accepted save. Reset clears it to 0.
-    updated_at   INTEGER NOT NULL DEFAULT (unixepoch()),
+-- One current position per user and library asset.
+-- Known downloads share their asset's position, including older file hashes.
+-- All populated coordinates describe the same reading revision.
+CREATE TABLE reading_positions (
+    user_id           INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    asset_id          INTEGER NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+    koreader_position TEXT NOT NULL DEFAULT '',
+    progress          REAL NOT NULL DEFAULT 0 CHECK (progress >= 0 AND progress <= 1),
+    locator           TEXT NOT NULL DEFAULT '{}',
+    revision          INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0),
+    device_id         TEXT NOT NULL DEFAULT '',
+    device_name       TEXT NOT NULL DEFAULT '',
+    -- Time of the saved position, or opening before any position is saved.
+    -- Reset clears it to 0.
+    updated_at        INTEGER NOT NULL DEFAULT (unixepoch()),
     PRIMARY KEY (user_id, asset_id)
-);
+) WITHOUT ROWID;
 
-CREATE INDEX idx_user_asset_state_updated ON user_asset_state(user_id, updated_at DESC);
+CREATE INDEX idx_reading_positions_updated ON reading_positions(user_id, updated_at DESC);
+
+-- Native KOSync fallback when a document cannot be matched to a library asset.
+CREATE TABLE koreader_external_positions (
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    document    TEXT NOT NULL,
+    position    TEXT NOT NULL,
+    progress    REAL NOT NULL CHECK (progress >= 0 AND progress <= 1),
+    device_id   TEXT NOT NULL,
+    device_name TEXT NOT NULL,
+    updated_at  INTEGER NOT NULL,
+    PRIMARY KEY (user_id, document)
+) WITHOUT ROWID;
 
 -- Reading-time accounting, separate from login sessions and reader position.
 -- All timestamps in these two activity tables are Unix milliseconds.
@@ -416,29 +431,14 @@ CREATE TABLE kobo_items (
     UNIQUE (connection_id, revision)
 );
 
--- KOReader locators use document hashes, independently of web-reader locators.
--- An unambiguous live-catalog match may advance book-level reading status.
--- Write-back clears assets.koreader_hash but leaves these records under their
--- original hashes: devices may still hold the old file bytes.
-CREATE TABLE koreader_progress (
-    user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    document_hash TEXT NOT NULL,
-    progress      TEXT NOT NULL, -- Opaque KOReader locator.
-    percentage    REAL NOT NULL DEFAULT 0,
-    device        TEXT NOT NULL DEFAULT '',
-    device_id     TEXT NOT NULL DEFAULT '',
-    updated_at    INTEGER NOT NULL DEFAULT (unixepoch()),
-    PRIMARY KEY (user_id, document_hash)
-);
-
-CREATE INDEX idx_koreader_progress_updated ON koreader_progress(user_id, updated_at DESC);
-
 -- Register hashes when issuing original or converted downloads, not on every
 -- metadata edit. Known hashes outlive rewrites of the current file.
 -- A sampled hash can match multiple assets; only the pair is unique.
 CREATE TABLE koreader_hashes (
     asset_id INTEGER NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
     hash BLOB NOT NULL CHECK (typeof(hash) = 'blob' AND length(hash) = 16),
+    -- Conversion target; empty for downloads of the original asset.
+    conversion TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (asset_id, hash)
 ) WITHOUT ROWID;
 CREATE INDEX idx_koreader_hashes_hash ON koreader_hashes(hash);

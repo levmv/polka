@@ -34,7 +34,7 @@ test('a newer observation survives a rejected or unconfirmed write', async () =>
                 }
                 if (payload.progress !== saved.progress)
                     saved = { ...payload, revision: saved.revision + 1 };
-                return { kind: 'saved', state: saved };
+                return { kind: 'saved', saved: { revision: saved.revision } };
             },
             restore: async (state) => restored.push(state),
             onSaved: () => {},
@@ -79,7 +79,7 @@ test('a late refresh defers navigation and a later merge reads the current remot
         write: async (payload) => {
             writes.push(payload);
             saved = { ...saved, ...payload, revision: saved.revision + 1 };
-            return { kind: 'saved', state: saved };
+            return { kind: 'saved', saved: { revision: saved.revision } };
         },
         restore: async (state) => {
             restored.push(state);
@@ -120,7 +120,7 @@ test('only divergent unsaved positions compete by progress', async () => {
             read: async () => saved,
             write: async (payload) => {
                 writes.push(payload);
-                return { kind: 'saved', state: { ...payload, revision: 4 } };
+                return { kind: 'saved', saved: { revision: 4 } };
             },
             restore: async (state) => restored.push(state),
             onSaved: () => {},

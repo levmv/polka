@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { expect, type Locator, type Page, test } from './fixtures';
 
 async function createQueryShelf(page: Page, name: string, query: string): Promise<void> {
@@ -121,10 +122,6 @@ test.describe('Account settings', () => {
     await context.grantPermissions(['clipboard-read', 'clipboard-write']);
     let modal = await openSettings(page, 'Reading apps');
 
-    const opdsSetup = modal.locator('.settings-opds-setup');
-    await expect(opdsSetup.locator('.settings-opds-url')).toHaveValue(/\/opds$/);
-    await expect(opdsSetup.getByRole('textbox', { name: 'Username' })).toHaveValue('polka');
-
     const tokenName = 'koreader';
     await modal.getByRole('button', { name: 'New app password' }).click();
     const submodal = page.locator('.modal-compact');
@@ -147,7 +144,6 @@ test.describe('Account settings', () => {
       secretValue,
     );
     await expect(submodal.getByRole('textbox', { name: 'Catalog URL' })).toHaveValue(/\/opds$/);
-    await expect(submodal.getByRole('textbox', { name: 'Username' })).toHaveValue('polka');
     const completeURL = new URL(
       await submodal
         .getByRole('textbox', { name: 'Complete URL (includes password)' })
@@ -156,9 +152,17 @@ test.describe('Account settings', () => {
     expect(completeURL.username).toBe('polka');
     expect(completeURL.password).toBe(secretValue);
     expect(completeURL.pathname).toBe('/opds');
-    await expect(submodal.getByRole('textbox', { name: 'Sync server URL' })).toHaveValue(
-      new URL(`/kosync/${secretValue}`, page.url()).toString(),
-    );
+    const koURL = await submodal.getByRole('textbox', { name: 'Sync server URL' }).inputValue();
+    const koUsername = await submodal.getByRole('textbox', { name: 'Username' }).inputValue();
+    expect(koURL).toBe(new URL('/kosync', page.url()).toString());
+    expect(koUsername).toBe('polka');
+    const koHeaders = {
+      'x-auth-user': koUsername,
+      'x-auth-key': createHash('md5').update(secretValue).digest('hex'),
+    };
+    const login = await page.request.get(`${koURL}/users/auth`, { headers: koHeaders });
+    expect(login.status()).toBe(200);
+    expect(await login.json()).toEqual({ username: 'admin' });
     const copyPassword = submodal.getByRole('button', { name: 'Copy app password', exact: true });
     // Exercise the real legacy copy path when the Clipboard API is blocked.
     await page.evaluate(() => {
@@ -179,6 +183,8 @@ test.describe('Account settings', () => {
     await expect(submodal).toHaveCount(0);
     await page.locator('.modal-confirm').getByRole('button', { name: 'Revoke' }).click();
     await expect(tokenRow).toHaveCount(0);
+    const revoked = await page.request.get(`${koURL}/users/auth`, { headers: koHeaders });
+    expect(revoked.status()).toBe(401);
   });
 
   test('sets up Kobo, changes its shelf, and recovers from shelf deletion', async ({ page }) => {

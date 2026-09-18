@@ -1,5 +1,5 @@
 import type { ReadingActivity } from './activity';
-import type { ReaderStateSaver } from './state-saver';
+import type { PositionSaver } from './position-saver';
 
 export interface ReaderLifecycle {
     start(): void;
@@ -11,7 +11,7 @@ export interface ReaderLifecycle {
 export function wireReaderLifecycle(
     page: HTMLElement,
     stage: HTMLElement,
-    position: ReaderStateSaver,
+    position: PositionSaver,
     activity: ReadingActivity,
     options: {
         onNavigate?: () => void;
@@ -22,8 +22,15 @@ export function wireReaderLifecycle(
     const { onNavigate, onResume, onSuspend } = options;
     const documents = new WeakSet<Document>();
     let started = false;
+    let resuming: Promise<void> | undefined;
     const resume = (): void => {
-        void position.resume();
+        // Focus and visibility can both announce the same return to the reader.
+        if (resuming) return;
+        const pending = position.resume();
+        resuming = pending;
+        void pending.finally(() => {
+            if (resuming === pending) resuming = undefined;
+        });
         onResume?.();
     };
     const markNavigation = (): void => {
@@ -94,12 +101,14 @@ export function wireReaderLifecycle(
                     resume();
                     activity.resume();
                 } else {
+                    resuming = undefined;
                     position.suspend();
                     activity.suspend(false);
                     onSuspend?.(false);
                 }
             });
             window.addEventListener('pagehide', (event) => {
+                resuming = undefined;
                 position.suspend();
                 activity.suspend(!event.persisted);
                 onSuspend?.(!event.persisted);

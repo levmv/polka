@@ -56,8 +56,8 @@ export async function login(page: Page, username = 'admin', password = 'devpass'
 }
 
 export async function readerMutationFields(page: Page, assetId: number) {
-  const response = await page.request.get(`/api/reader/assets/${assetId}/state`);
-  if (!response.ok()) throw new Error(`reader state: ${response.status()}`);
+  const response = await page.request.get(`/api/reader/assets/${assetId}/position`);
+  if (!response.ok()) throw new Error(`reader position: ${response.status()}`);
   const state = await response.json();
   return {
     revision: state.revision,

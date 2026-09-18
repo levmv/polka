@@ -35,9 +35,8 @@ type KoboState = AsyncLoadState & {
     koboConnection: KoboConnection | null;
 };
 
-// App passwords identify their account without the Basic-auth username. Keep
-// this value fixed because Basic authentication cannot encode ':' in a user ID.
-const appPasswordBasicUsername = 'polka';
+// App passwords identify their owner; clients still require a username.
+const appPasswordUsername = 'polka';
 
 // Load connection sections independently so one failed request does not hide
 // the other connection settings.
@@ -78,7 +77,6 @@ function renderAppsPanel(root: HTMLElement, state: AppsState, koboState: KoboSta
     passwords.className = 'settings-app-passwords settings-block';
     root.append(passwords);
     renderAppPasswords(passwords, state);
-    root.append(createReadingAppConnections());
 }
 
 function renderAppPasswords(root: HTMLElement, state: AppsState): void {
@@ -94,7 +92,7 @@ function renderAppPasswords(root: HTMLElement, state: AppsState): void {
         textEl(
             'div',
             'settings-block-hint',
-            'Create one per app or device. Revoke it later without changing your account password.',
+            'For OPDS apps and KOReader progress sync. Create one per app or device.',
         ),
     );
     const create = buttonEl('dialog-btn', 'New app password', () =>
@@ -345,25 +343,20 @@ function openAppConnectionDetails(name: string, token: string): void {
     const password = createReadonlyCopyField('App password', token, {
         copyLabel: 'Copy app password',
     });
+    const credentials = document.createElement('div');
+    credentials.append(createReadonlyCopyField('Username', appPasswordUsername), password);
 
     const catalog = document.createElement('section');
     catalog.className = 'settings-connect-method';
     catalog.append(
-        textEl('h4', 'settings-connect-title', 'Browse and download'),
+        textEl('h4', 'settings-connect-title', 'Browse and download (OPDS)'),
         createReadonlyCopyField('Catalog URL', opdsCatalogURL(), {
-            inputClass: 'settings-opds-url',
             copyLabel: 'Copy OPDS catalog URL',
-        }),
-    );
-    catalog.append(
-        createReadonlyCopyField('Username', appPasswordBasicUsername, {
-            copyLabel: 'Copy username',
         }),
         createReadonlyCopyField(
             'Complete URL (includes password)',
             opdsCatalogURLWithAppPassword(token),
             {
-                inputClass: 'settings-opds-url',
                 copyLabel: 'Copy complete OPDS URL',
             },
         ),
@@ -376,14 +369,14 @@ function openAppConnectionDetails(name: string, token: string): void {
         textEl(
             'p',
             'settings-block-hint',
-            "Set this as KOReader's custom progress sync server. The URL already includes the app password.",
+            'In KOReader, enter this URL under Custom sync server, then select Login.',
         ),
-        createReadonlyCopyField('Sync server URL', koSyncServerURL(token), {
+        createReadonlyCopyField('Sync server URL', koSyncServerURL(), {
             copyLabel: 'Copy KOReader sync server URL',
         }),
     );
 
-    body.append(password, catalog, progress);
+    body.append(credentials, catalog, progress);
 
     openInfoModal(
         `Connect ${name}`,
@@ -422,62 +415,19 @@ function createTokenRow(token: AppToken, state: AppsState, rerender: () => void)
     });
 }
 
-function createReadingAppConnections(): HTMLElement {
-    const wrap = document.createElement('section');
-    wrap.className = 'settings-app-connections settings-block';
-
-    const methods = document.createElement('div');
-    methods.className = 'settings-app-methods';
-
-    const catalog = document.createElement('section');
-    catalog.className = 'settings-app-method settings-opds-setup';
-    catalog.append(
-        textEl('h5', 'settings-app-method-title', 'Browse and download'),
-        textEl(
-            'p',
-            'settings-block-hint',
-            'Use OPDS in KOReader, Moon+ Reader, PocketBook, or another compatible app.',
-        ),
-        createReadonlyCopyField('Catalog URL', opdsCatalogURL(), {
-            inputClass: 'settings-opds-url',
-            copyLabel: 'Copy OPDS catalog URL',
-        }),
-    );
-    catalog.append(
-        createReadonlyCopyField('Username', appPasswordBasicUsername, {
-            copyLabel: 'Copy username',
-        }),
-    );
-
-    const progress = document.createElement('section');
-    progress.className = 'settings-app-method settings-kosync-setup';
-    progress.append(
-        textEl('h5', 'settings-app-method-title', 'Sync KOReader position'),
-        textEl(
-            'p',
-            'settings-block-hint',
-            'Open an app password’s connection details for a complete custom sync server URL, ready to copy.',
-        ),
-    );
-
-    methods.append(catalog, progress);
-    wrap.append(textEl('h4', 'settings-subsection-title', 'Connection details'), methods);
-    return wrap;
-}
-
 function opdsCatalogURL(): string {
     return new URL('/opds', window.location.origin).toString();
 }
 
 function opdsCatalogURLWithAppPassword(password: string): string {
     const url = new URL('/opds', window.location.origin);
-    url.username = appPasswordBasicUsername;
+    url.username = appPasswordUsername;
     url.password = password;
     return url.toString();
 }
 
-function koSyncServerURL(token: string): string {
-    return new URL(`/kosync/${encodeURIComponent(token)}`, window.location.origin).toString();
+function koSyncServerURL(): string {
+    return new URL('/kosync', window.location.origin).toString();
 }
 
 function formatTokenDate(timestamp?: number): string {

@@ -8,7 +8,7 @@ bootReader(() => {
     const assetId = Number(page?.dataset.readerAssetId);
     if (!page || !assetId) return;
 
-    initPDFReader(page, assetId, { onStateSaved: handleReadingStatusChange }).catch((error) => {
+    initPDFReader(page, assetId, { onPositionSaved: handleReadingStatusChange }).catch((error) => {
         console.error('Failed to initialize PDF reader:', error);
         showReaderError(page, 'Could not open this PDF.');
     });

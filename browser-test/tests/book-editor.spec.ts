@@ -208,11 +208,11 @@ test.describe('Book editor', () => {
     const form = page.locator('.edit-form');
     const formID = await form.getAttribute('id');
     expect(formID).not.toBeNull();
-    const readerStateRequests: string[] = [];
+    const readerProgressRequests: string[] = [];
     page.on('request', (request) => {
       const path = new URL(request.url()).pathname;
-      if (path.startsWith('/api/reader/assets/') && path.endsWith('/state')) {
-        readerStateRequests.push(path);
+      if (path.startsWith('/api/reader/assets/') && path.endsWith('/progress')) {
+        readerProgressRequests.push(path);
       }
     });
     await page.evaluate(() => {
@@ -246,7 +246,7 @@ test.describe('Book editor', () => {
     }
     await expect(page.locator('.edit-modal input[name="title"]')).toHaveValue(nextBook.title);
     await expect(page.locator('.detail-title')).toContainText(nextBook.title);
-    expect(readerStateRequests).toEqual([]);
+    expect(readerProgressRequests).toEqual([]);
     await expect(form).toHaveAttribute('id', formID || '');
     await expect(page.locator('.modal-backdrop')).toHaveAttribute('data-stable-test', 'same');
     await expect.poll(() => new URL(page.url()).pathname).toBe(`/book/${nextBook.id}`);

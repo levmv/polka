@@ -9,15 +9,20 @@ import (
 	"github.com/levmv/polka/internal/db"
 )
 
-type ReaderStateDTO struct {
+type ReaderProgressDTO struct {
+	Progress      *float64         `json:"progress"`
+	ReadingStatus ReadingStatusDTO `json:"reading_status"`
+}
+
+type ReaderPositionDTO struct {
+	Revision int64      `json:"revision"`
+	Progress float64    `json:"progress"`
+	Locator  db.Locator `json:"locator"`
+}
+
+type ReaderPositionSaveDTO struct {
 	Revision           int64            `json:"revision"`
-	DeviceID           string           `json:"device_id"`
-	DeviceName         string           `json:"device_name"`
-	AssetID            int64            `json:"asset_id"`
 	BookID             int64            `json:"book_id"`
-	Progress           float64          `json:"progress"`
-	Locator            db.Locator       `json:"locator"`
-	UpdatedAt          int64            `json:"updated_at,omitzero"`
 	ReadingStatus      ReadingStatusDTO `json:"reading_status"`
 	StatusChanged      bool             `json:"status_changed,omitzero"`
 	StatusTransitionID int64            `json:"status_transition_id,omitzero"`
@@ -44,7 +49,7 @@ type AnnotationDTO struct {
 	UpdatedAt     int64      `json:"updated_at"`
 }
 
-type readerStateRequest struct {
+type readerPositionRequest struct {
 	Revision   *int64      `json:"revision"`
 	DeviceID   string      `json:"device_id"`
 	DeviceName string      `json:"device_name"`
@@ -65,22 +70,6 @@ type annotationUpdateRequest struct {
 	Revision int64   `json:"revision"`
 	Note     *string `json:"note,omitzero"`
 	Color    *string `json:"color,omitzero"`
-}
-
-func readerStateDTO(state *db.ReaderState, change db.ReadingStatusChange) ReaderStateDTO {
-	return ReaderStateDTO{
-		Revision:           state.Revision,
-		DeviceID:           state.DeviceID,
-		DeviceName:         state.DeviceName,
-		AssetID:            state.AssetID,
-		BookID:             state.BookID,
-		Progress:           state.Progress,
-		Locator:            state.Locator,
-		UpdatedAt:          state.UpdatedAt,
-		ReadingStatus:      readingStatusDTO(change.State),
-		StatusChanged:      change.Changed,
-		StatusTransitionID: change.EventID,
-	}
 }
 
 func annotationDTO(ann db.Annotation) AnnotationDTO {
@@ -165,7 +154,7 @@ func (s *Server) continueReadingDTOs(ctx context.Context, rows []db.ContinueRead
 	return out, nil
 }
 
-func (s *Server) handleAPIReaderState(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleAPIReaderProgress(w http.ResponseWriter, r *http.Request) {
 	assetID, validID := pathID(w, r, "id")
 	if !validID {
 		return
@@ -173,18 +162,16 @@ func (s *Server) handleAPIReaderState(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireAssetAccess(w, r, assetID); !ok {
 		return
 	}
-	state, err := db.GetReaderState(s.db.Read(r.Context()), UserID(r.Context()), assetID)
+	progress, err := db.GetReaderProgress(s.db.Read(r.Context()), UserID(r.Context()), assetID)
 	if writeReaderStateError(w, r, err) {
 		return
 	}
-	status, err := db.GetReadingStatus(s.db.Read(r.Context()), UserID(r.Context()), state.BookID)
-	if writeReaderStateError(w, r, err) {
-		return
-	}
-	writeJSON(w, http.StatusOK, readerStateDTO(state, db.ReadingStatusChange{State: status}))
+	writeJSON(w, http.StatusOK, ReaderProgressDTO{
+		Progress: progress.Progress, ReadingStatus: readingStatusDTO(progress.ReadingStatus),
+	})
 }
 
-func (s *Server) handleAPIReaderStateSave(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleAPIReaderPosition(w http.ResponseWriter, r *http.Request) {
 	assetID, validID := pathID(w, r, "id")
 	if !validID {
 		return
@@ -192,7 +179,24 @@ func (s *Server) handleAPIReaderStateSave(w http.ResponseWriter, r *http.Request
 	if _, ok := s.requireAssetAccess(w, r, assetID); !ok {
 		return
 	}
-	var req readerStateRequest
+	state, err := s.readerPosition(r.Context(), UserID(r.Context()), assetID)
+	if writeReaderStateError(w, r, err) {
+		return
+	}
+	writeJSON(w, http.StatusOK, ReaderPositionDTO{
+		Revision: state.Revision, Progress: state.Progress, Locator: state.Locator,
+	})
+}
+
+func (s *Server) handleAPIReaderPositionSave(w http.ResponseWriter, r *http.Request) {
+	assetID, validID := pathID(w, r, "id")
+	if !validID {
+		return
+	}
+	if _, ok := s.requireAssetAccess(w, r, assetID); !ok {
+		return
+	}
+	var req readerPositionRequest
 	if !readJSON(w, r, &req) {
 		return
 	}
@@ -209,7 +213,7 @@ func (s *Server) handleAPIReaderStateSave(w http.ResponseWriter, r *http.Request
 		writeReaderStateError(w, r, db.ErrInvalidReaderInput)
 		return
 	}
-	state, change, err := s.db.SaveReaderStateAndAdvanceStatus(
+	state, change, err := s.db.SaveReaderState(
 		r.Context(),
 		UserID(r.Context()),
 		assetID,
@@ -220,10 +224,16 @@ func (s *Server) handleAPIReaderStateSave(w http.ResponseWriter, r *http.Request
 	if writeReaderStateError(w, r, err) {
 		return
 	}
-	writeJSON(w, http.StatusOK, readerStateDTO(state, change))
+	writeJSON(w, http.StatusOK, ReaderPositionSaveDTO{
+		Revision:           state.Revision,
+		BookID:             state.BookID,
+		ReadingStatus:      readingStatusDTO(change.State),
+		StatusChanged:      change.Changed,
+		StatusTransitionID: change.EventID,
+	})
 }
 
-func (s *Server) handleAPIReaderStateReset(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleAPIReaderPositionReset(w http.ResponseWriter, r *http.Request) {
 	assetID, validID := pathID(w, r, "id")
 	if !validID {
 		return
@@ -231,23 +241,13 @@ func (s *Server) handleAPIReaderStateReset(w http.ResponseWriter, r *http.Reques
 	if _, ok := s.requireAssetAccess(w, r, assetID); !ok {
 		return
 	}
-	var req struct {
-		Revision *int64 `json:"revision"`
-	}
-	if !readJSON(w, r, &req) {
-		return
-	}
-	if req.Revision == nil {
-		writeReaderStateError(w, r, db.ErrInvalidReaderInput)
-		return
-	}
-	if writeReaderStateError(w, r, s.db.ResetReaderState(r.Context(), UserID(r.Context()), assetID, *req.Revision)) {
+	if writeReaderStateError(w, r, s.db.ResetReaderState(r.Context(), UserID(r.Context()), assetID)) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) handleAPIReaderStateTouch(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleAPIReaderTouch(w http.ResponseWriter, r *http.Request) {
 	assetID, validID := pathID(w, r, "id")
 	if !validID {
 		return
@@ -255,7 +255,7 @@ func (s *Server) handleAPIReaderStateTouch(w http.ResponseWriter, r *http.Reques
 	if _, ok := s.requireAssetAccess(w, r, assetID); !ok {
 		return
 	}
-	state, change, err := s.db.TouchReaderStateAndAdvanceStatus(
+	err := s.db.TouchReader(
 		r.Context(),
 		UserID(r.Context()),
 		assetID,
@@ -264,7 +264,7 @@ func (s *Server) handleAPIReaderStateTouch(w http.ResponseWriter, r *http.Reques
 	if writeReaderStateError(w, r, err) {
 		return
 	}
-	writeJSON(w, http.StatusOK, readerStateDTO(state, change))
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleAPIBookAnnotations(w http.ResponseWriter, r *http.Request) {

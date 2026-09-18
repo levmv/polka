@@ -12,7 +12,7 @@ import (
 	"github.com/levmv/polka/internal/db"
 )
 
-func TestAPIReaderStateLifecycle(t *testing.T) {
+func TestAPIReaderPositionLifecycle(t *testing.T) {
 	database, dir := setupTestDB(t)
 	defer database.Close()
 
@@ -22,96 +22,78 @@ func TestAPIReaderStateLifecycle(t *testing.T) {
 	s := newTestServer(database, dir)
 	handler := testRoutes(t, s)
 
+	position := func(userID int64) ReaderPositionDTO {
+		t.Helper()
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, jsonRequest(t, s, userID, http.MethodGet, "/api/reader/assets/1/position", nil))
+		var got ReaderPositionDTO
+		decodeJSON(t, w, &got)
+		return got
+	}
+	progress := func(userID int64) ReaderProgressDTO {
+		t.Helper()
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, jsonRequest(t, s, userID, http.MethodGet, "/api/reader/assets/1/progress", nil))
+		var got ReaderProgressDTO
+		decodeJSON(t, w, &got)
+		return got
+	}
+	if got := position(alice.ID); got.Revision != 0 || got.Progress != 0 || !got.Locator.IsZero() {
+		t.Fatalf("default position = %+v", got)
+	}
+	if got := progress(alice.ID); got.Progress != nil || got.ReadingStatus.Status != db.ReadingStatusUnread {
+		t.Fatalf("unopened book = %+v", got)
+	}
+
 	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodGet, "/api/reader/assets/1/state", nil))
-	if w.Code != http.StatusOK {
-		t.Fatalf("default state status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
-	}
-	var state ReaderStateDTO
-	if err := json.UnmarshalRead(w.Body, &state); err != nil {
-		t.Fatalf("decode default state: %v", err)
-	}
-	if state.AssetID != 1 || state.BookID != 1 || state.Progress != 0 || !state.Locator.IsZero() || state.UpdatedAt != 0 {
-		t.Fatalf("default state = %+v", state)
-	}
-	if state.ReadingStatus.Status != db.ReadingStatusUnread {
-		t.Fatalf("default reading status = %+v", state.ReadingStatus)
-	}
-
-	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodPost, "/api/reader/assets/1/touch", nil))
-	if w.Code != http.StatusOK {
-		t.Fatalf("touch status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("touch = %d: %s", w.Code, w.Body.String())
 	}
-	state = ReaderStateDTO{}
-	if err := json.UnmarshalRead(w.Body, &state); err != nil {
-		t.Fatalf("decode touched state: %v", err)
+	if got := position(alice.ID); got.Revision != 0 || got.Progress != 0 || !got.Locator.IsZero() {
+		t.Fatalf("opening created a position: %+v", got)
 	}
-	if state.UpdatedAt == 0 || state.Revision != 0 || state.Progress != 0 || !state.Locator.IsZero() {
-		t.Fatalf("touched state = %+v", state)
-	}
-	if !state.StatusChanged || state.ReadingStatus.Status != db.ReadingStatusReading {
-		t.Fatalf("touch reading status = %+v", state)
+	if got := progress(alice.ID); got.Progress == nil || *got.Progress != 0 || got.ReadingStatus.Status != db.ReadingStatusReading {
+		t.Fatalf("opened book should show zero progress: %+v", got)
 	}
 
-	progress := 0.5
+	percentage := 0.5
 	locator := &db.Locator{CFI: "epubcfi(/6/4)"}
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodPut, "/api/reader/assets/1/state", readerStateRequest{
+	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodPut, "/api/reader/assets/1/position", readerPositionRequest{
 		Revision: new(int64(0)),
 		DeviceID: "urn:test:reader", DeviceName: "Test reader",
-		Progress: &progress,
+		Progress: &percentage,
 		Locator:  locator,
 	}))
-	if w.Code != http.StatusOK {
-		t.Fatalf("save status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	var saved ReaderPositionSaveDTO
+	decodeJSON(t, w, &saved)
+	if saved.Revision != 1 || saved.BookID != 1 || saved.StatusChanged || saved.ReadingStatus.Status != db.ReadingStatusReading {
+		t.Fatalf("save result = %+v", saved)
 	}
-	state = ReaderStateDTO{}
-	if err := json.UnmarshalRead(w.Body, &state); err != nil {
-		t.Fatalf("decode saved state: %v", err)
+	if got := position(alice.ID); got.Revision != saved.Revision || got.Progress != percentage || !got.Locator.Equal(*locator) {
+		t.Fatalf("saved position = %+v", got)
 	}
-	if state.Progress != progress || !state.Locator.Equal(*locator) || state.UpdatedAt == 0 {
-		t.Fatalf("saved state = %+v", state)
+	if got := progress(alice.ID); got.Progress == nil || *got.Progress != percentage || got.ReadingStatus.Status != db.ReadingStatusReading {
+		t.Fatalf("saved progress = %+v", got)
 	}
-	if state.StatusChanged || state.ReadingStatus.Status != db.ReadingStatusReading {
-		t.Fatalf("saved reading status = %+v", state)
+	if got := position(bob.ID); got.Revision != 0 || got.Progress != 0 || !got.Locator.IsZero() {
+		t.Fatalf("position leaked across users: %+v", got)
 	}
-
-	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, bob.ID, http.MethodGet, "/api/reader/assets/1/state", nil))
-	if w.Code != http.StatusOK {
-		t.Fatalf("other-user state status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
-	}
-	state = ReaderStateDTO{}
-	if err := json.UnmarshalRead(w.Body, &state); err != nil {
-		t.Fatalf("decode other-user state: %v", err)
-	}
-	if state.Progress != 0 || !state.Locator.IsZero() || state.UpdatedAt != 0 {
-		t.Fatalf("reader state leaked across users: %+v", state)
-	}
-	if state.ReadingStatus.Status != db.ReadingStatusUnread {
-		t.Fatalf("reading status leaked across users: %+v", state)
+	if got := progress(bob.ID); got.Progress != nil || got.ReadingStatus.Status != db.ReadingStatusUnread {
+		t.Fatalf("progress leaked across users: %+v", got)
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodDelete, "/api/reader/assets/1/state", map[string]int64{"revision": 1}))
+	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodDelete, "/api/reader/assets/1/position", nil))
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("reset status = %d, want %d; body: %s", w.Code, http.StatusNoContent, w.Body.String())
 	}
-	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, alice.ID, http.MethodGet, "/api/reader/assets/1/state", nil))
-	if w.Code != http.StatusOK {
-		t.Fatalf("state after reset status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	if got := position(alice.ID); got.Progress != 0 || !got.Locator.IsZero() || got.Revision != 2 {
+		t.Fatalf("reset position = %+v", got)
 	}
-	state = ReaderStateDTO{}
-	if err := json.UnmarshalRead(w.Body, &state); err != nil {
-		t.Fatalf("decode state after reset: %v", err)
-	}
-	if state.Progress != 0 || !state.Locator.IsZero() || state.Revision != 2 || state.UpdatedAt != 0 {
-		t.Fatalf("state after reset = %+v", state)
-	}
-	if state.ReadingStatus.Status != db.ReadingStatusReading {
-		t.Fatalf("reset position changed status: %+v", state.ReadingStatus)
+	if got := progress(alice.ID); got.Progress != nil || got.ReadingStatus.Status != db.ReadingStatusReading {
+		t.Fatalf("reset progress = %+v", got)
 	}
 }
 
@@ -124,37 +106,27 @@ func TestAPIReaderAutoFinishCanBeUndone(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, jsonRequest(t, s, user.ID, http.MethodPost, "/api/reader/assets/1/touch", nil))
-	if w.Code != http.StatusOK {
+	if w.Code != http.StatusNoContent {
 		t.Fatalf("touch status = %d: %s", w.Code, w.Body.String())
 	}
 	progress := 0.995
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, user.ID, http.MethodPut, "/api/reader/assets/1/state", readerStateRequest{
+	handler.ServeHTTP(w, jsonRequest(t, s, user.ID, http.MethodPut, "/api/reader/assets/1/position", readerPositionRequest{
 		Revision: new(int64(0)),
 		DeviceID: "urn:test:reader", DeviceName: "Test reader",
 		Progress: &progress,
 		Locator:  &db.Locator{},
 	}))
-	if w.Code != http.StatusOK {
-		t.Fatalf("finish status = %d: %s", w.Code, w.Body.String())
-	}
-	var state ReaderStateDTO
-	if err := json.UnmarshalRead(w.Body, &state); err != nil {
-		t.Fatalf("decode finish: %v", err)
-	}
+	var state ReaderPositionSaveDTO
+	decodeJSON(t, w, &state)
 	if !state.StatusChanged || state.StatusTransitionID == 0 || state.ReadingStatus.Status != db.ReadingStatusFinished {
 		t.Fatalf("finish response = %+v", state)
 	}
 
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, jsonRequest(t, s, user.ID, http.MethodPost, "/api/books/1/reading-status/undo", readingStatusUndoRequest{EventID: state.StatusTransitionID}))
-	if w.Code != http.StatusOK {
-		t.Fatalf("undo status = %d: %s", w.Code, w.Body.String())
-	}
 	var restored ReadingStatusDTO
-	if err := json.UnmarshalRead(w.Body, &restored); err != nil {
-		t.Fatalf("decode undo: %v", err)
-	}
+	decodeJSON(t, w, &restored)
 	if restored.Status != db.ReadingStatusReading {
 		t.Fatalf("restored status = %+v", restored)
 	}
@@ -165,7 +137,7 @@ func TestAPIReaderAutoFinishCanBeUndone(t *testing.T) {
 	}
 }
 
-func TestAPIReaderStateErrors(t *testing.T) {
+func TestAPIReaderPositionErrors(t *testing.T) {
 	database, dir := setupTestDB(t)
 	defer database.Close()
 
@@ -176,7 +148,7 @@ func TestAPIReaderStateErrors(t *testing.T) {
 	progress := 1.5
 	locator := &db.Locator{}
 	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, user.ID, http.MethodPut, "/api/reader/assets/1/state", readerStateRequest{
+	handler.ServeHTTP(w, jsonRequest(t, s, user.ID, http.MethodPut, "/api/reader/assets/1/position", readerPositionRequest{
 		Revision: new(int64(0)),
 		DeviceID: "urn:test:reader", DeviceName: "Test reader",
 		Progress: &progress,
@@ -188,7 +160,7 @@ func TestAPIReaderStateErrors(t *testing.T) {
 
 	progress = 0.5
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, user.ID, http.MethodPut, "/api/reader/assets/1/state", readerStateRequest{
+	handler.ServeHTTP(w, jsonRequest(t, s, user.ID, http.MethodPut, "/api/reader/assets/1/position", readerPositionRequest{
 		Revision: new(int64(0)),
 		DeviceID: "urn:test:reader", DeviceName: "Test reader",
 		Progress: &progress,
@@ -205,15 +177,22 @@ func TestAPIReaderStateErrors(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, jsonRequest(t, s, user.ID, http.MethodDelete, "/api/reader/assets/999/state", nil))
+	handler.ServeHTTP(w, jsonRequest(t, s, user.ID, http.MethodDelete, "/api/reader/assets/999/position", nil))
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("reset missing asset status = %d, want %d", w.Code, http.StatusNotFound)
 	}
 
-	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/reader/assets/1/state", nil))
-	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("unauth state status = %d, want %d", w.Code, http.StatusUnauthorized)
+	for _, resource := range []string{"position", "progress"} {
+		w = httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/reader/assets/1/"+resource, nil))
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("unauth %s status = %d", resource, w.Code)
+		}
+		w = httptest.NewRecorder()
+		handler.ServeHTTP(w, jsonRequest(t, s, user.ID, http.MethodGet, "/api/reader/assets/999/"+resource, nil))
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("missing asset %s status = %d", resource, w.Code)
+		}
 	}
 }
 
@@ -413,7 +392,7 @@ func TestAPIContinueReading(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustExec(t, database, `
-			INSERT INTO user_asset_state (user_id, asset_id, progress, locator, updated_at)
+			INSERT INTO reading_positions (user_id, asset_id, progress, locator, updated_at)
 			VALUES (?, 1, 0.42, '{"cfi":"epubcfi(/6/2)"}', 100);
 			INSERT INTO user_book_reading_state (user_id, book_id, status, updated_at)
 			VALUES (?, 1, 'reading', 100)

@@ -19,6 +19,7 @@ import (
 	"golang.org/x/net/html"
 
 	"github.com/levmv/polka/internal/format"
+	"github.com/levmv/polka/internal/xmlutil"
 )
 
 const (
@@ -492,8 +493,22 @@ func kepubXMLAttrsWithLocations(tag string) []kepubXMLAttr {
 }
 
 func transformKEPUBContent(raw []byte) ([]byte, error) {
-	raw = stripXMLDeclaration(raw)
-	raw, err := prepareXHTMLForHTML(raw)
+	out, err := RenderKEPUBContent(raw)
+	if err != nil {
+		return nil, err
+	}
+	if err := xmlutil.WalkXHTML(out, nil); err != nil {
+		return nil, fmt.Errorf("rendered KEPUB content document is not XML-compatible: %w", err)
+	}
+	return out, nil
+}
+
+// RenderKEPUBContent applies the same chapter transformation used by full KEPUB
+// conversion. The caller must validate the result as XHTML; position mapping
+// does this while collecting spans, avoiding a second XML pass.
+func RenderKEPUBContent(raw []byte) ([]byte, error) {
+	raw = xmlutil.StripXMLDeclaration(raw)
+	raw, err := xmlutil.PrepareXHTMLForHTML(raw)
 	if err != nil {
 		return nil, err
 	}
@@ -505,7 +520,7 @@ func transformKEPUBContent(raw []byte) ([]byte, error) {
 	// can still contain invalid UTF-8/XML characters or a junk attribute name
 	// synthesized from a truncated start tag. Repair those local facts before
 	// rendering. Structural problems that cannot produce coherent XHTML still
-	// fail the strict validation below.
+	// fail XHTML validation by the caller.
 	sanitizeKEPUBXMLCompatibility(doc)
 	// One generated anchor does not prove the rest of the document was marked.
 	// Refuse both partial and repeated conversion instead of creating mixed
@@ -533,9 +548,6 @@ func transformKEPUBContent(raw []byte) ([]byte, error) {
 	out.WriteString(`<?xml version="1.0" encoding="utf-8"?>` + "\n")
 	if err := html.Render(&out, doc); err != nil {
 		return nil, fmt.Errorf("render KEPUB content document: %w", err)
-	}
-	if err := validateKEPUBXHTML(out.Bytes()); err != nil {
-		return nil, fmt.Errorf("rendered KEPUB content document is not XML-compatible: %w", err)
 	}
 	return out.Bytes(), nil
 }
@@ -571,7 +583,7 @@ func sanitizeKEPUBXMLCompatibility(n *html.Node) {
 func sanitizeKEPUBXMLString(value string) string {
 	value = strings.ToValidUTF8(value, "\uFFFD")
 	return strings.Map(func(r rune) rune {
-		if validXML10Char(r) {
+		if xmlutil.ValidXML10Char(r) {
 			return r
 		}
 		return '\uFFFD'
@@ -594,53 +606,6 @@ func validKEPUBXMLName(name string) bool {
 		}
 	}
 	return true
-}
-
-// validateKEPUBXHTML prevents the tolerant HTML serializer from packaging an
-// XHTML entry that a stricter EPUB/Kobo reader cannot parse. In particular,
-// malformed raw-text elements and comments must fail conversion rather than
-// silently producing a broken KEPUB.
-func validateKEPUBXHTML(raw []byte) error {
-	decoder := xml.NewDecoder(bytes.NewReader(raw))
-	depth := 0
-	roots := 0
-	for {
-		token, err := decoder.Token()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return err
-		}
-		switch value := token.(type) {
-		case xml.StartElement:
-			if depth == 0 {
-				roots++
-				if value.Name.Space != kepubXHTMLNamespace || value.Name.Local != "html" {
-					return fmt.Errorf("root element is {%s}%s, want XHTML html", value.Name.Space, value.Name.Local)
-				}
-			}
-			depth++
-		case xml.EndElement:
-			depth--
-		}
-	}
-	if roots != 1 {
-		return fmt.Errorf("document has %d root elements, want 1", roots)
-	}
-	return nil
-}
-
-func stripXMLDeclaration(raw []byte) []byte {
-	raw = bytes.TrimPrefix(raw, []byte{0xef, 0xbb, 0xbf})
-	trimmed := bytes.TrimLeftFunc(raw, unicode.IsSpace)
-	if !bytes.HasPrefix(bytes.ToLower(trimmed), []byte("<?xml")) {
-		return raw
-	}
-	if _, after, ok := bytes.Cut(trimmed, []byte("?>")); ok {
-		return after
-	}
-	return raw
 }
 
 func ensureKEPUBStyle(head *html.Node, id, css string) {

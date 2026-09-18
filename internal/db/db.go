@@ -68,6 +68,7 @@ type DB struct {
 	reader            *sql.DB
 	writer            *sql.DB // nil when the library was opened read-only
 	writerWaitTimeout time.Duration
+	koReaderInputs    koReaderInputCache
 }
 
 var ErrReadOnly = errors.New("library database is read-only")

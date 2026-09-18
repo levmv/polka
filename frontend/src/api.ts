@@ -41,10 +41,12 @@ import type {
     KoboConnection,
     Locator,
     MetadataCandidate,
-    ReaderState,
-    ReaderStateWrite,
+    ReaderPositionSaveResult,
+    ReaderPositionWrite,
+    ReaderProgress,
     ReadingStatus,
     ReadingStatusState,
+    SavedReaderPosition,
     SearchQueryValidation,
     SendOptions,
     SeriesSummary,
@@ -839,10 +841,17 @@ export async function emptyTrash(): Promise<{ purged: number }> {
     });
 }
 
-export async function fetchReaderState(assetId: number): Promise<ReaderState> {
-    return await fetchJSON<ReaderState>(
-        `/api/reader/assets/${assetId}/state`,
-        'Failed to fetch reader state',
+export async function fetchReaderProgress(assetId: number): Promise<ReaderProgress> {
+    return await fetchJSON<ReaderProgress>(
+        `/api/reader/assets/${assetId}/progress`,
+        'Failed to fetch reading progress',
+    );
+}
+
+export async function fetchReaderPosition(assetId: number): Promise<SavedReaderPosition> {
+    return await fetchJSON<SavedReaderPosition>(
+        `/api/reader/assets/${assetId}/position`,
+        'Failed to fetch reading position',
     );
 }
 
@@ -894,36 +903,35 @@ export async function undoReadingStatus(
     );
 }
 
-export async function saveReaderState(
+export async function saveReaderPosition(
     assetId: number,
-    payload: ReaderStateWrite,
+    payload: ReaderPositionWrite,
     options: { keepalive?: boolean } = {},
-): Promise<ReaderState> {
+): Promise<ReaderPositionSaveResult> {
     return await requestAttempt(
-        `/api/reader/assets/${assetId}/state`,
+        `/api/reader/assets/${assetId}/position`,
         // An autosave can still be in flight when the reader closes.
         { ...jsonBody('PUT', payload), keepalive: true },
         async (response) => {
-            if (!response.ok) throw await responseError(response, 'Failed to save reader state');
-            return (await response.json()) as ReaderState;
+            if (!response.ok)
+                throw await responseError(response, 'Failed to save reading position');
+            return (await response.json()) as ReaderPositionSaveResult;
         },
         !options.keepalive,
     );
 }
 
-export async function resetReaderState(assetId: number, revision: number): Promise<void> {
-    await apiFetch(`/api/reader/assets/${assetId}/state`, 'Could not save reading data', {
-        ...jsonBody('DELETE', { revision }),
+export async function resetReaderPosition(assetId: number): Promise<void> {
+    await apiFetch(`/api/reader/assets/${assetId}/position`, 'Could not reset reading position', {
+        method: 'DELETE',
         retryable: true,
     });
 }
 
-export async function touchReaderState(assetId: number): Promise<ReaderState> {
-    return await fetchJSON<ReaderState>(
-        `/api/reader/assets/${assetId}/touch`,
-        'Failed to touch reader state',
-        { method: 'POST' },
-    );
+export async function touchReader(assetId: number): Promise<void> {
+    await apiFetch(`/api/reader/assets/${assetId}/touch`, 'Failed to record book opening', {
+        method: 'POST',
+    });
 }
 
 export async function fetchBookAnnotations(

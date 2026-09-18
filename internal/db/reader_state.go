@@ -14,15 +14,16 @@ var (
 )
 
 type ReaderState struct {
-	UserID     int64
-	AssetID    int64
-	BookID     int64
-	Progress   float64
-	Locator    Locator
-	Revision   int64
-	DeviceID   string
-	DeviceName string
-	UpdatedAt  int64
+	UserID           int64
+	AssetID          int64
+	BookID           int64
+	Progress         float64
+	Locator          Locator
+	KOReaderPosition string
+	Revision         int64
+	DeviceID         string
+	DeviceName       string
+	UpdatedAt        int64
 }
 
 type ContinueReadingRow struct {
@@ -32,17 +33,49 @@ type ContinueReadingRow struct {
 	UpdatedAt int64
 }
 
+type ReaderProgress struct {
+	// Nil means no reading yet or an explicitly reset position; zero is the beginning.
+	Progress      *float64
+	ReadingStatus ReadingStatusState
+}
+
+func GetReaderProgress(queryer Queryer, userID, assetID int64) (*ReaderProgress, error) {
+	if userID <= 0 {
+		return nil, ErrUserIDRequired
+	}
+	progress := &ReaderProgress{ReadingStatus: ReadingStatusState{UserID: userID}}
+	status := &progress.ReadingStatus
+	err := queryer.QueryRow(`
+        SELECT CASE WHEN p.updated_at > 0 OR p.progress > 0 THEN p.progress END,
+               a.book_id, COALESCE(rs.status, 'unread'),
+               COALESCE(rs.last_event_id, 0), COALESCE(rs.updated_at, 0)
+        FROM assets a
+        LEFT JOIN reading_positions p ON p.asset_id = a.id AND p.user_id = ?
+        LEFT JOIN user_book_reading_state rs ON rs.book_id = a.book_id AND rs.user_id = ?
+        WHERE a.id = ?`, userID, userID, assetID).
+		Scan(&progress.Progress, &status.BookID, &status.Status, &status.LastEventID, &status.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrAssetNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get reader progress: %w", err)
+	}
+	return progress, nil
+}
+
 func GetReaderState(queryer Queryer, userID, assetID int64) (*ReaderState, error) {
 	if userID <= 0 {
 		return nil, ErrUserIDRequired
 	}
 	state := &ReaderState{UserID: userID, AssetID: assetID}
 	err := queryer.QueryRow(`
-        SELECT a.book_id, COALESCE(s.progress, 0), COALESCE(s.locator, '{}'),
+        SELECT COALESCE(s.koreader_position, ''),
+               a.book_id, COALESCE(s.progress, 0), COALESCE(s.locator, '{}'),
                COALESCE(s.revision, 0), COALESCE(s.device_id, ''), COALESCE(s.device_name, ''),
                COALESCE(s.updated_at, 0)
-        FROM assets a LEFT JOIN user_asset_state s ON s.asset_id = a.id AND s.user_id = ?
-        WHERE a.id = ?`, userID, assetID).Scan(&state.BookID, &state.Progress, &state.Locator,
+        FROM assets a LEFT JOIN reading_positions s ON s.asset_id = a.id AND s.user_id = ?
+        WHERE a.id = ?`, userID, assetID).Scan(&state.KOReaderPosition,
+		&state.BookID, &state.Progress, &state.Locator,
 		&state.Revision, &state.DeviceID, &state.DeviceName, &state.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrAssetNotFound
@@ -53,40 +86,36 @@ func GetReaderState(queryer Queryer, userID, assetID int64) (*ReaderState, error
 	return state, err
 }
 
-func (db *DB) TouchReaderStateAndAdvanceStatus(ctx context.Context, userID, assetID int64, source ReadingStatusSource) (*ReaderState, ReadingStatusChange, error) {
-	var state *ReaderState
-	var change ReadingStatusChange
-	err := db.Transact(ctx, func(tx *Tx) error {
-		var err error
-		state, err = GetReaderState(tx, userID, assetID)
-		if err != nil {
-			return err
+// TouchReader records opening a book and advances unread books to reading.
+func (db *DB) TouchReader(ctx context.Context, userID, assetID int64, source ReadingStatusSource) error {
+	if userID <= 0 {
+		return ErrUserIDRequired
+	}
+	return db.Transact(ctx, func(tx *Tx) error {
+		var bookID int64
+		err := tx.QueryRow(`SELECT book_id FROM assets WHERE id = ?`, assetID).Scan(&bookID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrAssetNotFound
 		}
-		if err := touchReaderState(tx, state); err != nil {
-			return err
+		if err != nil {
+			return fmt.Errorf("get reader book: %w", err)
+		}
+		// Opening adds an unpositioned book to Continue reading. Once a position
+		// is saved, its timestamp represents reading, not reopening or a retry.
+		_, err = tx.Exec(`INSERT INTO reading_positions (user_id, asset_id, updated_at)
+            VALUES (?, ?, unixepoch()) ON CONFLICT(user_id, asset_id) DO UPDATE
+            SET updated_at = excluded.updated_at WHERE reading_positions.device_id = ''`, userID, assetID)
+		if err != nil {
+			return fmt.Errorf("touch reader state: %w", err)
 		}
 		// Opening is an unread -> reading signal, even at an old finished position.
-		change, err = advanceReadingStatus(tx, userID, state.BookID, 0, source)
+		_, err = advanceReadingStatus(tx, userID, bookID, 0, source)
 		return err
 	})
-	if err != nil {
-		return nil, ReadingStatusChange{}, err
-	}
-	return state, change, nil
 }
 
-// The caller loads state in this transaction. Opening and equivalent saves
-// refresh recency without changing the position or its revision.
-func touchReaderState(tx *Tx, state *ReaderState) error {
-	if err := tx.QueryRow(`INSERT INTO user_asset_state (user_id, asset_id, updated_at)
-        VALUES (?, ?, unixepoch()) ON CONFLICT(user_id, asset_id) DO UPDATE SET updated_at = unixepoch()
-        RETURNING updated_at`, state.UserID, state.AssetID).Scan(&state.UpdatedAt); err != nil {
-		return fmt.Errorf("touch reader state: %w", err)
-	}
-	return nil
-}
-
-func (db *DB) SaveReaderStateAndAdvanceStatus(ctx context.Context, userID, assetID int64, input ReaderPositionWrite, source ReadingStatusSource) (*ReaderState, ReadingStatusChange, error) {
+// SaveReaderState saves a position and advances its book's reading status atomically.
+func (db *DB) SaveReaderState(ctx context.Context, userID, assetID int64, input ReaderPositionWrite, source ReadingStatusSource) (*ReaderState, ReadingStatusChange, error) {
 	input, err := validateReaderPosition(input)
 	if err != nil {
 		return nil, ReadingStatusChange{}, err
@@ -94,15 +123,22 @@ func (db *DB) SaveReaderStateAndAdvanceStatus(ctx context.Context, userID, asset
 	var state *ReaderState
 	var change ReadingStatusChange
 	err = db.Transact(ctx, func(tx *Tx) error {
-		var changed bool
 		var err error
-		state, changed, err = saveReaderState(tx, userID, assetID, input)
+		state, err = GetReaderState(tx, userID, assetID)
+		if err != nil {
+			return err
+		}
+		changed, err := checkReaderPositionWrite(state, input)
 		if err != nil {
 			return err
 		}
 		if !changed {
 			// Replaying a save must not undo a subsequent manual status change.
 			change.State, err = GetReadingStatus(tx, userID, state.BookID)
+			return err
+		}
+		state, err = writeReaderPosition(tx, state, input)
+		if err != nil {
 			return err
 		}
 		change, err = advanceReadingStatus(tx, userID, state.BookID, input.Progress, source)
@@ -114,32 +150,18 @@ func (db *DB) SaveReaderStateAndAdvanceStatus(ctx context.Context, userID, asset
 	return state, change, nil
 }
 
-func saveReaderState(tx *Tx, userID, assetID int64, input ReaderPositionWrite) (*ReaderState, bool, error) {
-	current, err := GetReaderState(tx, userID, assetID)
-	if err != nil {
-		return nil, false, err
-	}
-	changed, err := checkReaderPositionWrite(current, input)
-	if err != nil {
-		return current, false, err
-	}
-	if !changed {
-		return current, false, touchReaderState(tx, current)
-	}
-	saved, err := writeReaderPosition(tx, userID, assetID, input)
-	return saved, true, err
-}
-
 // Call only after validating and checking the observation against the state
-// read in this transaction. Web and OPDS use different ordering policies.
-func writeReaderPosition(tx *Tx, userID, assetID int64, input ReaderPositionWrite) (*ReaderState, error) {
+// read in this transaction. Each transport applies its own ordering policy.
+func writeReaderPosition(tx *Tx, current *ReaderState, input ReaderPositionWrite) (*ReaderState, error) {
+	userID, assetID := current.UserID, current.AssetID
 	_, err := tx.Exec(`
-        INSERT INTO user_asset_state (user_id, asset_id, progress, locator,
+        INSERT INTO reading_positions (user_id, asset_id, progress, locator,
             revision, device_id, device_name, updated_at)
         VALUES (?, ?, ?, ?, 1, ?, ?, unixepoch())
         ON CONFLICT(user_id, asset_id) DO UPDATE SET
             progress = excluded.progress, locator = excluded.locator,
-            revision = user_asset_state.revision + 1,
+            koreader_position = '',
+            revision = reading_positions.revision + 1,
             device_id = excluded.device_id, device_name = excluded.device_name,
             updated_at = unixepoch()`,
 		userID, assetID, input.Progress, input.Locator,
@@ -150,26 +172,34 @@ func writeReaderPosition(tx *Tx, userID, assetID int64, input ReaderPositionWrit
 	return GetReaderState(tx, userID, assetID)
 }
 
-func (db *DB) ResetReaderState(ctx context.Context, userID, assetID int64, revision int64) error {
-	if revision < 0 {
-		return ErrInvalidReaderInput
+// CachePositionConversion fills coordinates only while the reading revision
+// remains current, without changing the observation's source or timestamp.
+func (db *DB) CachePositionConversion(ctx context.Context, userID, assetID, revision int64, locator Locator, koreaderPosition string) (bool, error) {
+	result, err := db.Write(ctx).Exec(`UPDATE reading_positions
+        SET locator = ?, koreader_position = ? WHERE user_id = ? AND asset_id = ? AND revision = ?`,
+		locator, koreaderPosition, userID, assetID, revision)
+	if err != nil {
+		return false, err
 	}
+	count, err := result.RowsAffected()
+	return count != 0, err
+}
+
+// ResetReaderState clears the position and advances its revision.
+// Repeating a reset of an already cleared position is a no-op.
+func (db *DB) ResetReaderState(ctx context.Context, userID, assetID int64) error {
 	return db.Transact(ctx, func(tx *Tx) error {
 		current, err := GetReaderState(tx, userID, assetID)
 		if err != nil {
 			return err
 		}
-		// A reset is a versioned write even for an empty position. Retrying
-		// the same cleared state is a no-op.
 		if current.positionIsReset() {
 			return nil
 		}
-		if current.Revision != revision {
-			return ErrReadingConflict
-		}
-		_, err = tx.Exec(`INSERT INTO user_asset_state (user_id, asset_id, revision, updated_at)
+		_, err = tx.Exec(`INSERT INTO reading_positions (user_id, asset_id, revision, updated_at)
             VALUES (?, ?, 1, 0) ON CONFLICT(user_id, asset_id) DO UPDATE SET
-            progress = 0, locator = '{}', revision = user_asset_state.revision + 1,
+            progress = 0, locator = '{}', koreader_position = '',
+            revision = reading_positions.revision + 1,
             device_id = '', device_name = '',
             updated_at = 0`, userID, assetID)
 		return err
@@ -202,7 +232,7 @@ func ListContinueReading(queryer Queryer, scope VisibilityScope, userID int64, l
 					PARTITION BY a.book_id
 					ORDER BY s.updated_at DESC, s.asset_id ASC
 				) AS rn
-			FROM user_asset_state s
+			FROM reading_positions s
 			JOIN assets a ON a.id = s.asset_id
 			JOIN books b ON b.id = a.book_id
 			JOIN user_book_reading_state rs

@@ -88,8 +88,7 @@ func withUser(ctx context.Context, user *db.User) context.Context {
 	return context.WithValue(ctx, userKey, user)
 }
 
-// UserID returns the authenticated user's id for a request, or 0 before the
-// auth middleware has accepted a session.
+// UserID returns the authenticated user's id, or 0 for an unauthenticated request.
 func UserID(ctx context.Context) int64 {
 	uid, _ := ctx.Value(userIDKey).(int64)
 	return uid
@@ -209,10 +208,8 @@ func Serve(ctx context.Context, cfg Config) error {
 	s.requestBaseContext = requests.Context()
 	handler := requests.Wrap(opdsProgressionMiddleware(s.authMiddleware(mux)))
 
-	// A bare `go build` embeds only static/placeholder.txt (esbuild never ran),
-	// so a missing or empty app.js is the real "not built" signal. Don't sniff the
-	// bundle contents — the built bundle legitimately contains the word
-	// "placeholder" (a search-input attribute), which made this warning fire falsely.
+	// Without a frontend build, only static/placeholder.txt is embedded.
+	// A missing or empty app.js means the frontend assets are unavailable.
 	bundle, err := staticFS.ReadFile("static/app.js")
 	if err != nil || len(bundle) == 0 {
 		log.Println("WARNING: frontend bundle not built — run `make build`")
@@ -426,11 +423,10 @@ func (s *Server) routes() (*http.ServeMux, error) {
 	s.route(mux, "GET /opds/series", db.RoleReader, s.handleOPDSSeries)
 	s.route(mux, "GET /opds/tags", db.RoleReader, s.handleOPDSTags)
 
-	// KOReader sync routes. The app-password token is part of the base URL:
-	// /kosync/{token}/users/auth, then KOReader appends syncs/progress paths.
-	s.route(mux, "GET /kosync/{token}/users/auth", db.RoleReader, s.handleKOReaderAuth)
-	s.route(mux, "PUT /kosync/{token}/syncs/progress", db.RoleReader, s.handleKOReaderProgressSave)
-	s.route(mux, "GET /kosync/{token}/syncs/progress/{document}", db.RoleReader, s.handleKOReaderProgress)
+	// KOReader authenticates each request through its KOSync headers.
+	s.route(mux, "GET /kosync/users/auth", db.RoleReader, s.handleKOReaderAuth)
+	s.route(mux, "PUT /kosync/syncs/progress", db.RoleReader, s.handleKOReaderProgressSave)
+	s.route(mux, "GET /kosync/syncs/progress/{document}", db.RoleReader, s.handleKOReaderProgress)
 
 	// Native Kobo sync uses a dedicated credential for one shelf. Metadata and
 	// downloads enforce its projection and the owner's current content scope.
@@ -515,10 +511,11 @@ func (s *Server) routes() (*http.ServeMux, error) {
 	s.route(mux, "POST /api/books/{id}/cover", db.RoleMember, s.handleAPICoverUpload)
 	s.route(mux, "POST /api/books/{id}/cover-url", db.RoleMember, s.handleAPICoverURL)
 	s.route(mux, "GET /api/reader/continue", db.RoleReader, s.handleAPIContinueReading)
-	s.route(mux, "GET /api/reader/assets/{id}/state", db.RoleReader, s.handleAPIReaderState)
-	s.route(mux, "PUT /api/reader/assets/{id}/state", db.RoleReader, s.handleAPIReaderStateSave)
-	s.route(mux, "DELETE /api/reader/assets/{id}/state", db.RoleReader, s.handleAPIReaderStateReset)
-	s.route(mux, "POST /api/reader/assets/{id}/touch", db.RoleReader, s.handleAPIReaderStateTouch)
+	s.route(mux, "GET /api/reader/assets/{id}/progress", db.RoleReader, s.handleAPIReaderProgress)
+	s.route(mux, "GET /api/reader/assets/{id}/position", db.RoleReader, s.handleAPIReaderPosition)
+	s.route(mux, "PUT /api/reader/assets/{id}/position", db.RoleReader, s.handleAPIReaderPositionSave)
+	s.route(mux, "DELETE /api/reader/assets/{id}/position", db.RoleReader, s.handleAPIReaderPositionReset)
+	s.route(mux, "POST /api/reader/assets/{id}/touch", db.RoleReader, s.handleAPIReaderTouch)
 	s.route(mux, "POST /api/reader/assets/{id}/activity", db.RoleReader, s.handleAPIReadingActivity)
 	s.route(mux, "PUT /api/reader/assets/{id}/activity", db.RoleReader, s.handleAPIReadingActivity)
 	s.route(mux, "GET /api/books/{id}/annotations", db.RoleReader, s.handleAPIBookAnnotations)
@@ -598,9 +595,8 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// Credential-bearing device paths authenticate through their own URL token,
-		// even when a browser happens to send a Polka session cookie. Kobo handlers
-		// also need the exact connection id to enforce its selected-shelf boundary.
+		// Device protocols authenticate independently of browser session cookies.
+		// Kobo also needs its connection id to enforce the selected-shelf boundary.
 		if koboPath(path) {
 			connection, ok, err := s.db.KoboConnectionByToken(r.Context(), koboTokenFromPath(path))
 			if err != nil {
@@ -617,7 +613,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		if kosyncPath(path) {
-			uid, ok, err := s.kosyncTokenUserID(r)
+			uid, ok, err := s.db.KOReaderUserID(r.Context(), r.Header.Get("x-auth-key"))
 			if err != nil {
 				serverError(w, r, err)
 				return
@@ -626,7 +622,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 				next.ServeHTTP(w, r.WithContext(withUserID(r.Context(), uid)))
 				return
 			}
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"message": "Invalid app password."})
 			return
 		}
 
@@ -725,10 +721,6 @@ func writePasswordAuthBusy(w http.ResponseWriter) {
 	http.Error(w, "Too many authentication attempts", http.StatusTooManyRequests)
 }
 
-func (s *Server) kosyncTokenUserID(r *http.Request) (int64, bool, error) {
-	return s.db.AppTokenUserID(r.Context(), kosyncTokenFromPath(r.URL.Path))
-}
-
 func basicAuthPath(path string) bool {
 	return opdsPath(path) || strings.HasPrefix(path, "/download/") || strings.HasPrefix(path, "/covers/")
 }
@@ -764,17 +756,6 @@ func koboTokenFromPath(path string) string {
 		return before
 	}
 	return rest
-}
-
-func kosyncTokenFromPath(path string) string {
-	rest := strings.TrimPrefix(path, "/kosync/")
-	if rest == path {
-		return ""
-	}
-	if before, _, ok := strings.Cut(rest, "/"); ok {
-		return before
-	}
-	return ""
 }
 
 func challengeBasicAuth(w http.ResponseWriter) {

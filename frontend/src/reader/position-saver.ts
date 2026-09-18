@@ -1,6 +1,11 @@
-import { APIError, fetchReaderState, saveReaderState } from '../api';
+import { APIError, fetchReaderPosition, saveReaderPosition } from '../api';
 import { showToast } from '../toast';
-import type { Locator, ReaderState, ReaderStateWrite } from '../types';
+import type {
+    ReaderPosition,
+    ReaderPositionSaveResult,
+    ReaderPositionWrite,
+    SavedReaderPosition,
+} from '../types';
 import { READING_IDLE_MS } from './activity-clock';
 import { type PositionWriteResult, ReaderPositionSync } from './position-sync';
 
@@ -8,13 +13,8 @@ const RETRY_DELAYS_MS = [250, 750];
 const BACKGROUND_RETRY_MS = 5_000;
 const MAX_BACKGROUND_RETRY_MS = 60_000;
 
-export interface ReaderPosition {
-    progress: number;
-    locator: Locator;
-}
-
-export interface ReaderStateSaver {
-    initialize(state: ReaderState | null): void;
+export interface PositionSaver {
+    initialize(state: SavedReaderPosition | null): void;
     start(): void;
     resume(): Promise<void>;
     suspend(): void;
@@ -22,18 +22,18 @@ export interface ReaderStateSaver {
     recordActivity(): void;
     markUserNavigation(): void;
     queue(position: ReaderPosition): void;
-    flush(options?: { keepalive?: boolean }): Promise<void>;
+    flush(): Promise<void>;
 }
 
 // Retries and feedback are shared by both reader engines.
 // Pending position and merge rules live in ReaderPositionSync, without DOM or HTTP.
-export function createReaderStateSaver(
+export function createPositionSaver(
     assetId: number,
     options: {
-        onStateSaved?: (state: ReaderState) => void;
-        restorePosition: (state: ReaderState) => Promise<void>;
+        onPositionSaved?: (result: ReaderPositionSaveResult) => void;
+        restorePosition: (state: SavedReaderPosition) => Promise<void>;
     },
-): ReaderStateSaver {
+): PositionSaver {
     let initialized = false;
     let ready = false;
     let suspended = false;
@@ -44,7 +44,7 @@ export function createReaderStateSaver(
     let dismissLoadError: (() => void) | undefined;
     const sync = new ReaderPositionSync({
         read: async () => {
-            const state = await fetchReaderState(assetId);
+            const state = await fetchReaderPosition(assetId);
             initialized = true;
             dismissLoadError?.();
             dismissLoadError = undefined;
@@ -57,7 +57,7 @@ export function createReaderStateSaver(
             return result;
         },
         restore: options.restorePosition,
-        onSaved: (state) => options.onStateSaved?.(state),
+        onSaved: (result) => options.onPositionSaved?.(result),
         retryLater: () => {
             if (retryTimer !== undefined || !ready || suspended) return;
             retryTimer = window.setTimeout(() => {
@@ -141,19 +141,22 @@ export function createReaderStateSaver(
                 ...readingDevice(),
             });
         },
-        flush: (saveOptions = {}) => sync.flush(saveOptions.keepalive),
+        flush: () => sync.flush(),
     };
 }
 
 async function writePosition(
     assetId: number,
-    payload: ReaderStateWrite,
+    payload: ReaderPositionWrite,
     keepalive: boolean,
 ): Promise<PositionWriteResult> {
     const delays = keepalive ? [] : RETRY_DELAYS_MS;
     for (let attempt = 0; attempt <= delays.length; attempt++) {
         try {
-            return { kind: 'saved', state: await saveReaderState(assetId, payload, { keepalive }) };
+            return {
+                kind: 'saved',
+                saved: await saveReaderPosition(assetId, payload, { keepalive }),
+            };
         } catch (error) {
             if (error instanceof APIError && error.status === 409) return { kind: 'conflict' };
             if (error instanceof APIError && error.status < 500 && error.status !== 429) {

@@ -96,7 +96,7 @@ func TestReadingActivityRetriesAndTakeover(t *testing.T) {
 		t.Fatalf("overlapping readers = %v", days)
 	}
 	var positions, statuses int
-	if err := database.Read(t.Context()).QueryRow(`SELECT (SELECT COUNT(*) FROM user_asset_state), (SELECT COUNT(*) FROM user_book_reading_events)`).Scan(&positions, &statuses); err != nil {
+	if err := database.Read(t.Context()).QueryRow(`SELECT (SELECT COUNT(*) FROM reading_positions), (SELECT COUNT(*) FROM user_book_reading_events)`).Scan(&positions, &statuses); err != nil {
 		t.Fatal(err)
 	}
 	if positions != 0 || statuses != 0 {

@@ -102,6 +102,15 @@ func mustUser(t *testing.T, database *db.DB, username, role string) *db.User {
 	return user
 }
 
+func mustAppToken(t *testing.T, database *db.DB, userID int64) string {
+	t.Helper()
+	credential, err := database.CreateAppToken(t.Context(), userID, "Test device")
+	if err != nil {
+		t.Fatalf("create app token: %v", err)
+	}
+	return credential.Token
+}
+
 func ensureTestStorageLayout(t *testing.T, dir string) {
 	t.Helper()
 	if err := storage.EnsureLayout(storage.NewRoot(dir)); err != nil {
@@ -292,8 +301,12 @@ func TestDownloadHandler(t *testing.T) {
 	if gotHash != wantHash {
 		t.Fatalf("koreader hash = %q; want %q", gotHash, wantHash)
 	}
-	if target, err := db.ResolveKOReaderHash(database.Read(t.Context()), wantHash); err != nil || target.AssetID != 1 || target.Ambiguous {
+	if target, err := db.ResolveKOReaderHash(database.Read(t.Context()), wantHash); err != nil || target.AssetID != 1 || target.BookID != 1 {
 		t.Fatalf("downloaded file cannot be matched for KOReader: %+v, %v", target, err)
+	}
+	var conversion string
+	if err := database.Read(t.Context()).QueryRow("SELECT conversion FROM koreader_hashes WHERE asset_id = 1 AND hash = unhex(?)", wantHash).Scan(&conversion); err != nil || conversion != "" {
+		t.Fatalf("original download conversion = %q, %v; want empty", conversion, err)
 	}
 
 	// Once present, the DB-owned identity is reused. Supported file replacement
@@ -641,8 +654,12 @@ func TestDownloadAsEPUBToKEPUB(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if target, err := db.ResolveKOReaderHash(database.Read(t.Context()), convertedHash); err != nil || target.AssetID != 2 || target.BookID != 128 || target.Ambiguous {
+	if target, err := db.ResolveKOReaderHash(database.Read(t.Context()), convertedHash); err != nil || target.AssetID != 2 || target.BookID != 128 {
 		t.Fatalf("converted download cannot be matched for KOReader: %+v, %v", target, err)
+	}
+	var conversion string
+	if err := database.Read(t.Context()).QueryRow("SELECT conversion FROM koreader_hashes WHERE asset_id = 2 AND hash = unhex(?)", convertedHash).Scan(&conversion); err != nil || conversion != "kepub" {
+		t.Fatalf("converted download conversion = %q, %v; want kepub", conversion, err)
 	}
 	var cachedOriginal string
 	if err := database.Read(t.Context()).QueryRow("SELECT COALESCE(koreader_hash, '') FROM assets WHERE id = 2").Scan(&cachedOriginal); err != nil || cachedOriginal != "" {
@@ -699,6 +716,14 @@ func TestDownloadAsEPUBToRepairedEPUB(t *testing.T) {
 	}
 	if xhtml := testZipEntry(t, w.Body.Bytes(), "OEBPS/text.xhtml"); !strings.Contains(xhtml, "Preserved body.") {
 		t.Fatalf("repaired EPUB lost body:\n%s", xhtml)
+	}
+	convertedHash, err := koreader.PartialMD5(bytes.NewReader(w.Body.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var conversion string
+	if err := database.Read(t.Context()).QueryRow("SELECT conversion FROM koreader_hashes WHERE asset_id = 2 AND hash = unhex(?)", convertedHash).Scan(&conversion); err != nil || conversion != "epub" {
+		t.Fatalf("repaired EPUB conversion = %q, %v; want epub", conversion, err)
 	}
 	entries, err := os.ReadDir(filepath.Join(dir, "tmp", "conversion"))
 	if err != nil {
@@ -1374,7 +1399,7 @@ func testZip(t *testing.T, files map[string]string) []byte {
 	return buf.Bytes()
 }
 
-func testReadableEPUB(t *testing.T, title, body string) []byte {
+func testReadableEPUB(t *testing.T, title string, paragraphs ...string) []byte {
 	t.Helper()
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
@@ -1394,10 +1419,10 @@ func testReadableEPUB(t *testing.T, title, body string) []byte {
 <package version="3.0" xmlns="http://www.idpf.org/2007/opf">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>` + title + `</dc:title><dc:language>en</dc:language></metadata>
   <manifest><item id="text" href="text.xhtml" media-type="application/xhtml+xml"/></manifest>
-  <spine><itemref idref="text"/></spine>
+  <spine><itemref id="main" idref="text"/></spine>
 </package>`,
 		"OEBPS/text.xhtml": `<?xml version="1.0" encoding="UTF-8"?>
-<html xmlns="http://www.w3.org/1999/xhtml"><head><title>` + title + `</title></head><body><p>` + body + `</p></body></html>`,
+<html xmlns="http://www.w3.org/1999/xhtml"><head><title>` + title + `</title></head><body><p>` + strings.Join(paragraphs, "</p><p>") + `</p></body></html>`,
 	} {
 		w, err := zw.Create(name)
 		if err != nil {

@@ -359,25 +359,25 @@ test.describe('Reader', () => {
         .toBe(false);
     });
 
-    await test.step('records the last-read state', async () => {
+    await test.step('records opening the book', async () => {
       assetId = (await reader.getAttribute('data-reader-asset-id')) || '';
       if (!assetId) throw new Error('missing reader asset id');
 
       await expect
         .poll(async () => {
           return await page.evaluate(async (id) => {
-            const res = await fetch(`/api/reader/assets/${id}/state`);
-            if (!res.ok) return 0;
-            const state = await res.json();
-            return state.updated_at || 0;
+            const res = await fetch(`/api/reader/assets/${id}/progress`);
+            if (!res.ok) return false;
+            const progress = await res.json();
+            return progress.progress !== null;
           }, assetId);
         })
-        .toBeGreaterThan(0);
+        .toBe(true);
     });
 
     await test.step('projects saved progress onto book detail', async () => {
       await page.goto(`/book/${bookId}`);
-      const saveResponse = await page.request.put(`/api/reader/assets/${assetId}/state`, {
+      const saveResponse = await page.request.put(`/api/reader/assets/${assetId}/position`, {
         data: {
           ...(await readerMutationFields(page, Number(assetId))),
           progress: 0.42,

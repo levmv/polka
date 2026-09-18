@@ -23,25 +23,28 @@ func TestReadingStatusLifecycleHistoryAndIsolation(t *testing.T) {
 		t.Fatalf("default status = %+v, err %v", state, err)
 	}
 
-	_, opened, err := database.TouchReaderStateAndAdvanceStatus(context.Background(), alice.ID, 1, ReadingStatusSourceWebReader)
-	if err != nil || !opened.Changed || opened.State.Status != ReadingStatusReading {
+	if err := database.TouchReader(context.Background(), alice.ID, 1, ReadingStatusSourceWebReader); err != nil {
+		t.Fatal(err)
+	}
+	opened, err := GetReadingStatus(database.Read(t.Context()), alice.ID, 1)
+	if err != nil || opened.Status != ReadingStatusReading || opened.LastEventID == 0 {
 		t.Fatalf("opened status = %+v, err %v", opened, err)
 	}
-	_, again, err := database.SaveReaderStateAndAdvanceStatus(
+	_, again, err := database.SaveReaderState(
 		context.Background(), alice.ID, 1, testReaderWrite(0.5, Locator{}, 0), ReadingStatusSourceWebReader,
 	)
 	if err != nil || again.Changed || again.State.Status != ReadingStatusReading {
 		t.Fatalf("repeated reading update = %+v, err %v", again, err)
 	}
 
-	_, finished, err := database.SaveReaderStateAndAdvanceStatus(
+	_, finished, err := database.SaveReaderState(
 		context.Background(), alice.ID, 1, testReaderWrite(ReaderFinishedProgress, Locator{}, 1), ReadingStatusSourceWebReader,
 	)
 	if err != nil || !finished.Changed || finished.State.Status != ReadingStatusFinished || finished.EventID == 0 {
 		t.Fatalf("finished status = %+v, err %v", finished, err)
 	}
 	restored, err := database.UndoAutomaticReadingStatus(context.Background(), alice.ID, 1, finished.EventID)
-	if err != nil || restored.State.Status != ReadingStatusReading || restored.State.LastEventID != opened.EventID {
+	if err != nil || restored.State.Status != ReadingStatusReading || restored.State.LastEventID != opened.LastEventID {
 		t.Fatalf("undo finish = %+v, err %v", restored, err)
 	}
 
@@ -109,18 +112,22 @@ func TestAutomaticReadingStatusKeepsExplicitTerminalStates(t *testing.T) {
 		INSERT INTO books (id, title, sort_title) VALUES (1, 'Book', 'Book');
 		INSERT INTO assets (id, book_id, storage_path, filename, extension, koreader_hash, original_sha256, current_sha256)
 		VALUES (1, 1, 'book.epub', 'book.epub', '.epub', '55555555555555555555555555555555', randomblob(32), randomblob(32));
-		INSERT INTO koreader_hashes SELECT id, unhex(koreader_hash) FROM assets;
+		INSERT INTO koreader_hashes(asset_id, hash) SELECT id, unhex(koreader_hash) FROM assets;
 	`)
 
-	if _, err := database.SetReadingStatus(context.Background(), user.ID, 1, ReadingStatusDropped, ReadingStatusSourceManual); err != nil {
+	dropped, err := database.SetReadingStatus(t.Context(), user.ID, 1, ReadingStatusDropped, ReadingStatusSourceManual)
+	if err != nil {
 		t.Fatalf("drop: %v", err)
 	}
-	change, err := database.AdvanceReadingStatusForDocumentHash(context.Background(), user.ID, "55555555555555555555555555555555", 1)
-	if err != nil || change.Changed || change.State.Status != ReadingStatusDropped {
-		t.Fatalf("KOSync changed dropped status: %+v, err %v", change, err)
-	}
-	unknown, err := database.AdvanceReadingStatusForDocumentHash(context.Background(), user.ID, "unknown", 0.5)
-	if err != nil || unknown.Changed || unknown.State.Status != "" {
-		t.Fatalf("unknown KOSync hash = %+v, err %v", unknown, err)
+	for _, document := range []string{"55555555555555555555555555555555", "unknown"} {
+		if _, err := database.SaveKOReaderProgress(t.Context(), user.ID, KOReaderProgress{
+			DocumentHash: document, Position: "last-page", Progress: 1, DeviceName: "KOReader", DeviceID: "reader-a",
+		}); err != nil {
+			t.Fatalf("KOSync save: %v", err)
+		}
+		state, err := GetReadingStatus(database.Read(t.Context()), user.ID, 1)
+		if err != nil || state != dropped.State {
+			t.Fatalf("KOSync changed dropped status: %+v, err %v", state, err)
+		}
 	}
 }

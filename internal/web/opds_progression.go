@@ -64,7 +64,7 @@ func (s *Server) handleOPDSProgression(w http.ResponseWriter, r *http.Request) {
 			DeviceID: document.Device.ID, DeviceName: document.Device.Name,
 		}, modified, expected)
 	} else {
-		state, err = db.GetReaderState(s.db.Read(r.Context()), UserID(r.Context()), assetID)
+		state, err = s.readerPosition(r.Context(), UserID(r.Context()), assetID)
 	}
 	if err != nil {
 		if errors.Is(err, db.ErrReadingConflict) {
@@ -74,9 +74,8 @@ func (s *Server) handleOPDSProgression(w http.ResponseWriter, r *http.Request) {
 		writeReaderStateError(w, r, err)
 		return
 	}
-	// Deliberately use ETag/If-Match as position revision tokens. Opening or
-	// repeating a save can refresh modified without changing this token; it
-	// therefore does not guarantee byte-identical progression documents.
+	// ETag/If-Match identify the reading revision. Lazy conversion can add
+	// references without changing the observation or its revision.
 	w.Header().Set("ETag", strconv.Quote(strconv.FormatInt(state.Revision, 10)))
 	w.Header().Set("Content-Type", opds.ProgressionType)
 	if state.DeviceID == "" {

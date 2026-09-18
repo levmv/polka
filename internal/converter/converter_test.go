@@ -22,6 +22,7 @@ import (
 	"github.com/levmv/polka/internal/bookmeta"
 	"github.com/levmv/polka/internal/epubtest"
 	"github.com/levmv/polka/internal/format"
+	"github.com/levmv/polka/internal/xmlutil"
 )
 
 func TestTargetSpecsForFormat(t *testing.T) {
@@ -2342,7 +2343,7 @@ func TestTransformKEPUBContentProducesXMLCompatibleXHTML(t *testing.T) {
 	if err != nil {
 		t.Fatalf("transform KEPUB content: %v", err)
 	}
-	if err := validateKEPUBXHTML(out); err != nil {
+	if err := xmlutil.WalkXHTML(out, nil); err != nil {
 		t.Fatalf("validate transformed XHTML: %v\n%s", err, out)
 	}
 	xhtml := string(out)
@@ -2389,7 +2390,7 @@ func TestTransformKEPUBContentRepairsRecoverableXMLDefects(t *testing.T) {
 			if err != nil {
 				t.Fatalf("transformKEPUBContent: %v", err)
 			}
-			if err := validateKEPUBXHTML(out); err != nil {
+			if err := xmlutil.WalkXHTML(out, nil); err != nil {
 				t.Fatalf("validate transformed XHTML: %v\n%s", err, out)
 			}
 			doc, err := nethtml.Parse(bytes.NewReader(out))

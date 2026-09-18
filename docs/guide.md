@@ -169,8 +169,7 @@ device in Settings → Reading apps. An app password can read the catalog and
 update that account's reading progress, but cannot sign into the web app or
 edit and administer the shared library.
 
-Letter case does not matter when entering an app password. Use plain HTTP only
-on a trusted network, and use HTTPS or a VPN elsewhere.
+Use plain HTTP only on a trusted network, and use HTTPS or a VPN elsewhere.
 
 ### OPDS
 
@@ -182,11 +181,12 @@ web reader.
 
 ### KOReader progress sync
 
-Set the copy-ready URL from the app-password setup screen as KOReader's custom
-progress sync server. Positions then sync between KOReader devices. For books
-downloaded from polka, progress also advances the corresponding library status
-from unread to reading and then finished. Other books still sync between
-KOReader devices without affecting the polka catalog.
+Set **Custom sync server** to `http://your-host/kosync`. Choose **Login** with
+username `polka` and an app password from Settings → Reading apps. Then
+enable **Automatically keep documents in sync**.
+
+Read EPUB books in KOReader or polka's web reader and continue where you left
+off. The position may be approximate: you might resume at the start of a paragraph.
 
 ### Kobo native sync
 

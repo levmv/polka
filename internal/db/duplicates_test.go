@@ -138,7 +138,7 @@ func TestMergeDuplicateBooksMovesAssetsShelvesAndSafeFillIns(t *testing.T) {
 		VALUES (1, ?, 'Device', 'reader@example.test', 'generic', 2, 'Foundation', 'asset_pdf.pdf')
 	`, user.ID)
 	mustExec(t, database, `
-		INSERT INTO user_asset_state (user_id, asset_id, progress, locator, updated_at)
+		INSERT INTO reading_positions (user_id, asset_id, progress, locator, updated_at)
 		VALUES (?, 2, 0.4, '{}', 20)
 	`, user.ID)
 	mustExec(t, database, `

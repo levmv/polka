@@ -153,7 +153,7 @@ test.describe('Reader selection toolbar', () => {
 
     // A different saved position makes the passage link exercise navigation.
     await page.setViewportSize({ width: 390, height: 600 });
-    const saved = await page.request.put(`/api/reader/assets/${assetId}/state`, {
+    const saved = await page.request.put(`/api/reader/assets/${assetId}/position`, {
       data: { ...(await readerMutationFields(page, assetId)), progress: 0.8, locator: {} },
     });
     expect(saved.ok()).toBe(true);

@@ -27,9 +27,9 @@ func (db *DB) SaveOPDSProgression(ctx context.Context, userID, assetID int64, in
 			return err
 		}
 		if !changed {
-			return touchReaderState(tx, current)
+			return nil
 		}
-		saved, err = writeReaderPosition(tx, userID, assetID, input)
+		saved, err = writeReaderPosition(tx, current, input)
 		if err != nil {
 			return err
 		}

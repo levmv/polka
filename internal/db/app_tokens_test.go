@@ -1,7 +1,9 @@
 package db
 
 import (
+	"crypto/md5"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -15,12 +17,19 @@ func TestAppTokenLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create token: %v", err)
 	}
-	uid, ok, err := database.AppTokenUserID(t.Context(), token.Token)
+	key := fmt.Sprintf("%x", md5.Sum([]byte(token.Token)))
+	uid, ok, err := database.KOReaderUserID(t.Context(), key)
+	if err != nil || !ok || uid != u.ID {
+		t.Fatalf("lookup KOReader key: uid=%d ok=%v err=%v, want %d/true", uid, ok, err, u.ID)
+	}
+	uid, ok, err = database.AppTokenUserID(t.Context(), token.Token)
 	if err != nil || !ok || uid != u.ID {
 		t.Fatalf("lookup token: uid=%d ok=%v err=%v, want %d/true", uid, ok, err, u.ID)
 	}
-	if uid, ok, err := database.AppTokenUserID(t.Context(), strings.ToUpper(token.Token)); err != nil || !ok || uid != u.ID {
-		t.Fatalf("uppercase token: uid=%d ok=%v err=%v", uid, ok, err)
+	if uppercase := strings.ToUpper(token.Token); uppercase != token.Token {
+		if uid, ok, err := database.AppTokenUserID(t.Context(), uppercase); err != nil || ok || uid != 0 {
+			t.Fatalf("uppercase token: uid=%d ok=%v err=%v, want zero/false/nil", uid, ok, err)
+		}
 	}
 
 	if uid, ok, err := database.AppTokenUserID(t.Context(), "deadbeef"); ok || uid != 0 || err != nil {
@@ -47,6 +56,9 @@ func TestAppTokenLifecycle(t *testing.T) {
 	}
 	if _, ok, _ := database.AppTokenUserID(t.Context(), token.Token); ok {
 		t.Errorf("revoked token still resolves")
+	}
+	if _, ok, err := database.KOReaderUserID(t.Context(), key); err != nil || ok {
+		t.Errorf("revoked KOReader key: ok=%v err=%v", ok, err)
 	}
 	if err := database.RevokeAppToken(t.Context(), u.ID, "kobo"); err == nil {
 		t.Errorf("revoking a missing token should error")

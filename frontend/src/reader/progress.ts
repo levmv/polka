@@ -1,16 +1,17 @@
 import { clamp } from '../dom';
+import type { ReaderPosition } from '../types';
 import { showReaderError } from './chrome';
 import type { FoliateRelocateDetail, FoliateTarget, FoliateViewElement } from './foliate-engine';
 import { foliateLocation } from './location';
-import type { ReaderPosition, ReaderStateSaver } from './state-saver';
+import type { PositionSaver } from './position-saver';
 
-export interface ReaderPositionSaver {
+export interface FoliatePositionController {
     enableSaving(): void;
     markUserNavigation(): void;
     restorePosition(state: ReaderPosition): Promise<void>;
 }
 
-export async function restoreReaderPosition(
+export async function restoreFoliatePosition(
     view: FoliateViewElement,
     state: ReaderPosition | null,
     target?: string,
@@ -48,37 +49,32 @@ function fractionLocation(state: ReaderPosition | null): FoliateTarget | null {
     return null;
 }
 
-export function wirePositionSaving(
+export function wireFoliatePosition(
     page: HTMLElement,
     view: FoliateViewElement,
-    stateSaver: ReaderStateSaver,
+    positionSaver: PositionSaver,
     options: { savingEnabled?: boolean } = {},
-): ReaderPositionSaver {
+): FoliatePositionController {
     let savingEnabled = options.savingEnabled ?? true;
     let userNavigationSeen = false;
     let saveTimer: number | undefined;
     let currentPosition: ReaderPosition | null = null;
     let navigation = 0;
 
-    const flushPending = (options: { keepalive?: boolean } = {}): Promise<void> => {
-        window.clearTimeout(saveTimer);
-        saveTimer = undefined;
-        userNavigationSeen = false;
-        return stateSaver.flush(options);
-    };
-
     const scheduleSave = (detail: FoliateRelocateDetail, progress: number): void => {
         if (!savingEnabled) return;
         // Rendering, restoration and layout changes are not new observations.
         if (!userNavigationSeen) return;
 
-        stateSaver.queue({
+        positionSaver.queue({
             progress,
             locator: foliateLocation(page, view, detail.cfi, detail.range),
         });
         window.clearTimeout(saveTimer);
         saveTimer = window.setTimeout(() => {
-            void flushPending();
+            saveTimer = undefined;
+            userNavigationSeen = false;
+            void positionSaver.flush();
         }, 700);
     };
 
@@ -106,13 +102,13 @@ export function wirePositionSaving(
             const previous = currentPosition;
             const beforeRestore = navigation;
             try {
-                await restoreReaderPosition(view, state);
+                await restoreFoliatePosition(view, state);
             } catch (error) {
                 // A bad remote anchor must not leave a working reader blank.
                 // Do not undo a page turn made while restoration was loading.
                 if (navigation === beforeRestore) {
                     try {
-                        await restoreReaderPosition(view, previous);
+                        await restoreFoliatePosition(view, previous);
                     } catch {
                         showReaderError(page, 'Could not open this book.');
                     }

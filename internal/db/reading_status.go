@@ -128,27 +128,6 @@ func setReadingStatus(tx *Tx, current ReadingStatusState, status string, source 
 	return ReadingStatusChange{State: next, Changed: true, EventID: eventID}, nil
 }
 
-func (db *DB) AdvanceReadingStatusForDocumentHash(ctx context.Context, userID int64, documentHash string, progress float64) (ReadingStatusChange, error) {
-	var change ReadingStatusChange
-	err := db.Transact(ctx, func(tx *Tx) error {
-		var err error
-		change, err = advanceReadingStatusForDocumentHash(tx, userID, documentHash, progress)
-		return err
-	})
-	return change, err
-}
-
-func advanceReadingStatusForDocumentHash(tx *Tx, userID int64, documentHash string, progress float64) (ReadingStatusChange, error) {
-	target, err := ResolveKOReaderHash(tx, documentHash)
-	if err != nil {
-		return ReadingStatusChange{}, fmt.Errorf("resolve koreader reading status: %w", err)
-	}
-	if target.BookID == 0 || target.Ambiguous {
-		return ReadingStatusChange{}, nil
-	}
-	return advanceReadingStatus(tx, userID, target.BookID, progress, ReadingStatusSourceKOSync)
-}
-
 func advanceReadingStatus(tx *Tx, userID int64, bookID int64, progress float64, source ReadingStatusSource) (ReadingStatusChange, error) {
 	current, err := GetReadingStatus(tx, userID, bookID)
 	if err != nil {

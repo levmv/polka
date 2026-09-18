@@ -28,7 +28,7 @@ test('PDF reader behavior', async ({ page, browserName, browserErrors }) => {
     (message) =>
       browserName === 'webkit' &&
       message.includes('/api/reader/assets/') &&
-      message.includes('/state due to access control checks'),
+      message.includes('/position due to access control checks'),
   );
   let activityCheckpoints = 0;
   page.on('request', (request) => {
@@ -82,7 +82,7 @@ test('PDF reader behavior', async ({ page, browserName, browserErrors }) => {
     await expect
       .poll(async () =>
         page.evaluate(async (id) => {
-          const response = await fetch(`/api/reader/assets/${id}/state`);
+          const response = await fetch(`/api/reader/assets/${id}/position`);
           if (!response.ok) return 0;
           const state = await response.json();
           return state.locator;
@@ -115,7 +115,7 @@ test('PDF reader behavior', async ({ page, browserName, browserErrors }) => {
 
   await test.step('resumes a remote move backwards while keeping the local zoom', async () => {
     const assetId = Number(await reader.getAttribute('data-reader-asset-id'));
-    const response = await page.request.put(`/api/reader/assets/${assetId}/state`, {
+    const response = await page.request.put(`/api/reader/assets/${assetId}/position`, {
       data: {
         ...(await readerMutationFields(page, assetId)),
         progress: 1 / 3,
