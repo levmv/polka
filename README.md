@@ -27,7 +27,7 @@ lower-maintenance home for your books.
   suggestions fetched from Open Library and Google Books (only when you ask).
 - **Read in the browser** with your place remembered. Search within books and
   save highlights and notes you can export. Connect reading apps and devices
-  through OPDS, KOReader progress sync, or Kobo library sync.
+  through OPDS, KOReader or Kobo sync.
 - **Send books to a device** by email — Kindle and PocketBook presets, or any
   address — converting on the way when the device needs a different format.
 

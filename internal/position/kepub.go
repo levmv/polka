@@ -6,22 +6,27 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"net/url"
+	"path"
+	"slices"
 	"strings"
 
 	"github.com/levmv/polka/internal/converter"
 	"github.com/levmv/polka/internal/xmlutil"
 )
 
-// KEPUB identifies a Kobo span in an archive member. Path is the decoded
-// ZIP member name; Fragment is the span ID, without a leading '#'.
+// KEPUB identifies a Kobo span in an archive member. Path may be a ZIP member
+// name or a package-relative URI; output uses the decoded ZIP member name.
+// Fragment is the span ID, without a leading '#'.
 type KEPUB struct {
-	Path     string
-	Fragment string
+	Path            string
+	Fragment        string
+	ChapterProgress float64 // Fraction of the chapter text before the position.
 }
 
-// CFIToKEPUB maps a source EPUB CFI to a text span produced by Polka's KEPUB
-// converter. Ranges use their start; the result identifies a span without a
-// character offset. Only the addressed chapter is converted.
+// CFIToKEPUB maps a CFI to an existing Kobo span or one produced by Polka's
+// KEPUB converter. Ranges use their start; the result identifies a span without
+// a character offset. Only the addressed chapter is read or converted.
 func CFIToKEPUB(ctx context.Context, src io.ReaderAt, size int64, cfi string) (KEPUB, error) {
 	point, err := parseCFI(cfi)
 	if err != nil {
@@ -57,21 +62,21 @@ func CFIToKEPUB(ctx context.Context, src io.ReaderAt, size int64, cfi string) (K
 	offset := n.start + point.offset
 	for id, span := range spans {
 		if span.start <= offset && offset < span.end && offset < chapter.body.end {
-			return KEPUB{Path: file.Name, Fragment: id}, nil
+			return KEPUB{Path: file.Name, Fragment: id, ChapterProgress: float64(offset) / float64(chapter.body.end)}, nil
 		}
 	}
 	return KEPUB{}, fmt.Errorf("CFI has no text-bearing Kobo span")
 }
 
-// KEPUBToCFI maps a Kobo span to its start in the source EPUB. The span must
-// come from Polka's conversion of src. Image-only spans and chapters whose
-// text changes during conversion cannot be mapped.
+// KEPUBToCFI maps a Kobo span to its start in src, either a KEPUB or the EPUB
+// used by Polka's converter. Image-only spans and chapters whose text changes
+// during conversion cannot be mapped.
 func KEPUBToCFI(ctx context.Context, src io.ReaderAt, size int64, pos KEPUB) (string, error) {
 	book, err := readEPUB(ctx, src, size)
 	if err != nil {
 		return "", err
 	}
-	ref := book.spineByPath[pos.Path]
+	ref := book.kepubSpineRef(pos.Path)
 	if ref == nil {
 		return "", fmt.Errorf("position does not identify a unique EPUB spine resource")
 	}
@@ -91,6 +96,30 @@ func KEPUBToCFI(ctx context.Context, src io.ReaderAt, size int64, pos KEPUB) (st
 	return "", fmt.Errorf("Kobo span has no source text location")
 }
 
+func (book *epubBook) kepubSpineRef(source string) *cfiNode {
+	if ref, exists := book.spineByPath[source]; exists {
+		return ref
+	}
+	decoded, err := url.PathUnescape(source)
+	if err != nil {
+		decoded = source
+	}
+	// Accept archive-relative and package-relative spellings only when all
+	// matches identify the same spine entry. A literal member name wins above.
+	var match *cfiNode
+	for _, name := range []string{source, decoded} {
+		for _, candidate := range []string{path.Clean(name), path.Join(path.Dir(book.opfPath), name)} {
+			if ref, exists := book.spineByPath[candidate]; exists {
+				if ref == nil || (match != nil && match != ref) {
+					return nil
+				}
+				match = ref
+			}
+		}
+	}
+	return match
+}
+
 type kepubTextSpan struct {
 	start, end int
 }
@@ -100,6 +129,22 @@ func readKEPUBChapter(ctx context.Context, file *zip.File) (*epubChapter, map[st
 	if err != nil {
 		return nil, nil, err
 	}
+	// A stored KEPUB already has its own span IDs. Use those verbatim instead
+	// of running the source-EPUB conversion over an existing rendition.
+	spans := make(map[string]kepubTextSpan)
+	var visit func(*cfiNode)
+	visit = func(n *cfiNode) {
+		if n.name == "span" && slices.Contains(strings.Fields(n.attr("class")), "koboSpan") {
+			spans[n.attr("id")] = kepubTextSpan{start: n.start, end: n.end}
+		}
+		for _, child := range n.children {
+			visit(child)
+		}
+	}
+	visit(chapter.body)
+	if len(spans) > 0 {
+		return chapter, spans, nil
+	}
 	converted, err := converter.RenderKEPUBContent(raw)
 	if err != nil {
 		return nil, nil, err
@@ -108,7 +153,7 @@ func readKEPUBChapter(ctx context.Context, file *zip.File) (*epubChapter, map[st
 	for _, run := range chapter.runs {
 		text.WriteString(run.text)
 	}
-	spans, err := readKEPUBTextSpans(ctx, converted, text.String())
+	spans, err = readKEPUBTextSpans(ctx, converted, text.String())
 	if err != nil {
 		return nil, nil, err
 	}

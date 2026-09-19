@@ -29,7 +29,11 @@ func (db *DB) SaveOPDSProgression(ctx context.Context, userID, assetID int64, in
 		if !changed {
 			return nil
 		}
-		saved, err = writeReaderPosition(tx, current, input)
+		saved, err = writeReaderPosition(tx, &ReaderState{
+			UserID: userID, AssetID: assetID, BookID: current.BookID,
+			Progress: input.Progress, Locator: input.Locator,
+			DeviceID: input.DeviceID, DeviceName: input.DeviceName, UpdatedAt: time.Now().Unix(),
+		})
 		if err != nil {
 			return err
 		}

@@ -33,13 +33,16 @@ type KoboConnection struct {
 	LastUsedAt sql.NullInt64
 }
 
-// KoboPublication is the complete server-side read model needed by the native
-// Kobo DTO mapper. Fingerprint is deliberately omitted from API output; it only
-// decides when the durable projection needs a new revision.
+type KoboAsset struct {
+	AssetID int64
+	BookID  int64
+	Format  string
+	AddedAt int64
+}
+
+// KoboPublication is the metadata needed by the native Kobo adapter.
 type KoboPublication struct {
-	AssetID       int64
-	BookID        int64
-	Format        string
+	KoboAsset
 	Size          int64
 	Title         string
 	Description   string
@@ -49,20 +52,21 @@ type KoboPublication struct {
 	Series        string
 	SeriesIndex   sql.NullFloat64
 	Authors       []string
-	AddedAt       int64
 	ModifiedAt    int64
+	CoverVersion  int
 }
 
 type KoboChange struct {
 	KoboPublication
 	Revision      int64
-	FirstRevision int64
+	FirstRevision int64 // Start of the current appearance; re-adding a book starts a new one.
 	Present       bool
 	ChangedAt     int64
 }
 
 type koboCandidate struct {
-	KoboPublication
+	AssetID     int64
+	BookID      int64
 	Fingerprint []byte
 }
 
@@ -269,13 +273,12 @@ func reconcileKoboItems(tx *Tx, connection *KoboConnection, shelf *Shelf, scope 
 	}
 	for rows.Next() {
 		var assetID int64
-		var fingerprint []byte
-		var present bool
-		if err := rows.Scan(&assetID, &fingerprint, &present); err != nil {
+		var item existingItem
+		if err := rows.Scan(&assetID, &item.Fingerprint, &item.Present); err != nil {
 			rows.Close()
 			return 0, fmt.Errorf("scan current kobo item: %w", err)
 		}
-		existing[assetID] = existingItem{Fingerprint: fingerprint, Present: present}
+		existing[assetID] = item
 	}
 	if err := rows.Close(); err != nil {
 		return 0, fmt.Errorf("close current kobo items: %w", err)
@@ -310,9 +313,11 @@ func reconcileKoboItems(tx *Tx, connection *KoboConnection, shelf *Shelf, scope 
 		}
 		if _, err := tx.Exec(`
 			UPDATE kobo_items
-			SET book_id = ?, fingerprint = ?, present = 1, revision = ?, updated_at = unixepoch()
+			SET book_id = ?, fingerprint = ?, present = 1, revision = ?,
+			    first_revision = CASE WHEN present = 0 THEN ? ELSE first_revision END,
+			    updated_at = unixepoch()
 			WHERE connection_id = ? AND asset_id = ?
-		`, candidate.BookID, candidate.Fingerprint, revision, connection.ID, candidate.AssetID); err != nil {
+		`, candidate.BookID, candidate.Fingerprint, revision, revision, connection.ID, candidate.AssetID); err != nil {
 			return 0, fmt.Errorf("update kobo item: %w", err)
 		}
 	}
@@ -377,7 +382,7 @@ func listKoboCandidates(tx *Tx, userID int64, shelf *Shelf, scope VisibilityScop
 			       COALESCE(b.language, '') AS language,
 			       COALESCE(b.series, '') AS series, b.series_index AS series_index,
 			       b.added_at AS added_at,
-			       MAX(b.updated_at, a.updated_at) AS modified_at,
+			       MAX(b.updated_at, a.updated_at) AS modified_at, b.cover_version,
 			       COALESCE((
 				   SELECT group_concat(author_name, char(31))
 				   FROM (
@@ -403,13 +408,16 @@ func listKoboCandidates(tx *Tx, userID int64, shelf *Shelf, scope VisibilityScop
 
 	rows, err := tx.Query(fmt.Sprintf(`
 		%s
-		SELECT id, book_id, format, current_size, title, description,
+		SELECT ranked.id, ranked.book_id, format, current_size, title, description,
 		       publisher, published_date, language, series, series_index,
-		       added_at, modified_at, authors
+		       added_at, ranked.modified_at, cover_version, authors,
+		       COALESCE(p.revision, 0), COALESCE(rs.last_event_id, 0)
 		FROM ranked
+		LEFT JOIN reading_positions p ON p.asset_id = ranked.id AND p.user_id = ?
+		LEFT JOIN user_book_reading_state rs ON rs.book_id = ranked.book_id AND rs.user_id = ?
 		WHERE choice = 1
 		ORDER BY id
-	`, withClause(withSQL)), args...)
+	`, withClause(withSQL)), append(args, userID, userID)...)
 	if err != nil {
 		return nil, fmt.Errorf("list kobo candidates: %w", err)
 	}
@@ -417,11 +425,25 @@ func listKoboCandidates(tx *Tx, userID int64, shelf *Shelf, scope VisibilityScop
 
 	candidates := make([]koboCandidate, 0, capacityHint)
 	for rows.Next() {
-		candidate, err := scanKoboCandidate(rows)
+		// Coordinate conversion leaves these source versions unchanged.
+		var snapshot struct {
+			KoboPublication
+			PositionRevision int64
+			StatusEventID    int64
+		}
+		snapshot.KoboPublication, err = scanKoboPublication(rows, &snapshot.PositionRevision, &snapshot.StatusEventID)
 		if err != nil {
 			return nil, err
 		}
-		candidates = append(candidates, candidate)
+		encoded, err := json.Marshal(snapshot)
+		if err != nil {
+			return nil, fmt.Errorf("encode kobo fingerprint: %w", err)
+		}
+		fingerprint := sha256.Sum256(encoded)
+		// Keep 128 bits for equality checks in the Kobo change feed.
+		candidates = append(candidates, koboCandidate{
+			AssetID: snapshot.AssetID, BookID: snapshot.BookID, Fingerprint: fingerprint[:16],
+		})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("kobo candidate rows: %w", err)
@@ -429,29 +451,21 @@ func listKoboCandidates(tx *Tx, userID int64, shelf *Shelf, scope VisibilityScop
 	return candidates, nil
 }
 
-func scanKoboCandidate(row rowScanner) (koboCandidate, error) {
-	var candidate koboCandidate
+func scanKoboPublication(row rowScanner, extra ...any) (KoboPublication, error) {
+	var publication KoboPublication
 	var authors string
-	err := row.Scan(
-		&candidate.AssetID, &candidate.BookID, &candidate.Format, &candidate.Size,
-		&candidate.Title, &candidate.Description, &candidate.Publisher,
-		&candidate.PublishedDate, &candidate.Language, &candidate.Series, &candidate.SeriesIndex,
-		&candidate.AddedAt, &candidate.ModifiedAt, &authors,
-	)
+	dest := []any{&publication.AssetID, &publication.BookID, &publication.Format, &publication.Size,
+		&publication.Title, &publication.Description, &publication.Publisher,
+		&publication.PublishedDate, &publication.Language, &publication.Series, &publication.SeriesIndex,
+		&publication.AddedAt, &publication.ModifiedAt, &publication.CoverVersion, &authors}
+	err := row.Scan(append(dest, extra...)...)
 	if err != nil {
-		return candidate, fmt.Errorf("scan kobo candidate: %w", err)
+		return publication, fmt.Errorf("scan kobo publication: %w", err)
 	}
 	if authors != "" {
-		candidate.Authors = strings.Split(authors, string(rune(31)))
+		publication.Authors = strings.Split(authors, string(rune(31)))
 	}
-	fingerprintInput, err := json.Marshal(candidate.KoboPublication)
-	if err != nil {
-		return candidate, fmt.Errorf("encode kobo fingerprint: %w", err)
-	}
-	fingerprint := sha256.Sum256(fingerprintInput)
-	// Keep 128 bits for equality checks in the Kobo change feed.
-	candidate.Fingerprint = fingerprint[:16]
-	return candidate, nil
+	return publication, nil
 }
 
 func listKoboChanges(tx *Tx, connectionID, after int64, limit int) ([]KoboChange, bool, error) {
@@ -462,6 +476,7 @@ func listKoboChanges(tx *Tx, connectionID, after int64, limit int) ([]KoboChange
 		       COALESCE(b.publisher, ''), COALESCE(b.published_date, ''),
 		       COALESCE(b.language, ''), COALESCE(b.series, ''), b.series_index,
 		       COALESCE(b.added_at, ki.updated_at), COALESCE(MAX(b.updated_at, a.updated_at), ki.updated_at),
+		       COALESCE(b.cover_version, 0),
 		       COALESCE((
 			   SELECT group_concat(author_name, char(31))
 			   FROM (
@@ -488,18 +503,11 @@ func listKoboChanges(tx *Tx, connectionID, after int64, limit int) ([]KoboChange
 	var changes []KoboChange
 	for rows.Next() {
 		var change KoboChange
-		var authors string
-		if err := rows.Scan(
-			&change.AssetID, &change.BookID, &change.Format, &change.Size,
-			&change.Title, &change.Description, &change.Publisher,
-			&change.PublishedDate, &change.Language, &change.Series, &change.SeriesIndex,
-			&change.AddedAt, &change.ModifiedAt, &authors,
+		change.KoboPublication, err = scanKoboPublication(rows,
 			&change.Revision, &change.FirstRevision, &change.Present, &change.ChangedAt,
-		); err != nil {
-			return nil, false, fmt.Errorf("scan kobo change: %w", err)
-		}
-		if authors != "" {
-			change.Authors = strings.Split(authors, string(rune(31)))
+		)
+		if err != nil {
+			return nil, false, err
 		}
 		changes = append(changes, change)
 	}
@@ -513,17 +521,38 @@ func listKoboChanges(tx *Tx, connectionID, after int64, limit int) ([]KoboChange
 	return changes, more, nil
 }
 
-// KoboPublicationForAsset verifies the last reconciled projection and live
-// bytes. HTTP handlers separately enforce the owner's current visibility scope;
-// shelf additions/removals become projection changes at the next library sync.
-func KoboPublicationForAsset(queryer Queryer, connectionID, assetID int64) (*KoboPublication, error) {
+// KoboAssetForConnection checks the last reconciled projection and current
+// visibility. Shelf additions/removals enter the projection at library sync.
+func KoboAssetForConnection(queryer Queryer, scope VisibilityScope, connectionID, assetID int64) (*KoboAsset, error) {
+	where, args := scope.AppendBookWhere(
+		"ki.connection_id = ? AND ki.asset_id = ? AND ki.present = 1 AND b.deleted_at IS NULL",
+		"b.id", connectionID, assetID,
+	)
+	var asset KoboAsset
+	err := queryer.QueryRow(`
+		SELECT a.id, a.book_id, a.format, b.added_at
+		FROM kobo_items ki
+		JOIN assets a ON a.id = ki.asset_id
+		JOIN books b ON b.id = a.book_id
+		WHERE `+where, args...).Scan(&asset.AssetID, &asset.BookID, &asset.Format, &asset.AddedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrAssetNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get kobo asset: %w", err)
+	}
+	return &asset, nil
+}
+
+// KoboPublicationForAsset loads metadata after the caller checks access.
+func KoboPublicationForAsset(queryer Queryer, assetID int64) (*KoboPublication, error) {
 	row := queryer.QueryRow(`
-		SELECT ki.asset_id, ki.book_id, a.format,
+		SELECT a.id, a.book_id, a.format,
 		       COALESCE(a.current_size, a.original_size, 0),
 		       b.title, COALESCE(b.description, ''), COALESCE(b.publisher, ''),
 		       COALESCE(b.published_date, ''),
 		       COALESCE(b.language, ''), COALESCE(b.series, ''), b.series_index,
-		       b.added_at, MAX(b.updated_at, a.updated_at),
+		       b.added_at, MAX(b.updated_at, a.updated_at), b.cover_version,
 		       COALESCE((
 			   SELECT group_concat(author_name, char(31))
 			   FROM (
@@ -534,17 +563,16 @@ func KoboPublicationForAsset(queryer Queryer, connectionID, assetID int64) (*Kob
 			       ORDER BY ba.author_order, au.name COLLATE NOCASE, au.id
 			   )
 		       ), '')
-		FROM kobo_items ki
-		JOIN assets a ON a.id = ki.asset_id
-		JOIN books b ON b.id = ki.book_id AND b.deleted_at IS NULL
-		WHERE ki.connection_id = ? AND ki.asset_id = ? AND ki.present = 1
-	`, connectionID, assetID)
-	candidate, err := scanKoboCandidate(row)
+		FROM assets a
+		JOIN books b ON b.id = a.book_id AND b.deleted_at IS NULL
+		WHERE a.id = ?
+	`, assetID)
+	publication, err := scanKoboPublication(row)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrKoboConnectionNotFound
+		return nil, ErrAssetNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
-	return &candidate.KoboPublication, nil
+	return &publication, nil
 }

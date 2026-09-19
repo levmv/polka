@@ -5,6 +5,7 @@ package kobo
 
 import (
 	"crypto/sha1"
+	"encoding/hex"
 	"slices"
 	"strconv"
 	"strings"
@@ -22,7 +23,6 @@ var seriesUUIDNamespace = uuid.MustParse("e528a6d9-824d-4d47-a7e4-cbf4c58b2159")
 
 type Publication struct {
 	AssetID       int64
-	BookID        int64
 	Size          int64
 	Title         string
 	Description   string
@@ -34,14 +34,15 @@ type Publication struct {
 	Authors       []string
 	AddedAt       int64
 	ModifiedAt    int64
+	CoverVersion  int
 }
 
 type Change struct {
 	Publication
-	Revision      int64
 	FirstRevision int64
 	Present       bool
 	ChangedAt     int64
+	ReadingState  *ReadingState
 }
 
 type ActivePeriod struct {
@@ -119,32 +120,99 @@ type Metadata struct {
 }
 
 type EntitlementPayload struct {
-	BookEntitlement Entitlement `json:"BookEntitlement"`
-	BookMetadata    *Metadata   `json:"BookMetadata,omitzero"`
+	BookEntitlement Entitlement   `json:"BookEntitlement"`
+	BookMetadata    *Metadata     `json:"BookMetadata,omitzero"`
+	ReadingState    *ReadingState `json:"ReadingState,omitzero"`
+}
+
+type Location struct {
+	Source string `json:"Source"`
+	Type   string `json:"Type"`
+	Value  string `json:"Value"`
+}
+
+type Bookmark struct {
+	LastModified                 time.Time `json:"LastModified"`
+	ProgressPercent              *float64  `json:"ProgressPercent,omitzero"`
+	ContentSourceProgressPercent *float64  `json:"ContentSourceProgressPercent,omitzero"`
+	Location                     *Location `json:"Location,omitzero"`
+}
+
+type StatusInfo struct {
+	LastModified time.Time `json:"LastModified"`
+	Status       string    `json:"Status"`
+}
+
+type ReadingState struct {
+	EntitlementID     string      `json:"EntitlementId"`
+	Created           time.Time   `json:"Created,omitzero"`
+	LastModified      time.Time   `json:"LastModified"`
+	PriorityTimestamp time.Time   `json:"PriorityTimestamp,omitzero"`
+	CurrentBookmark   *Bookmark   `json:"CurrentBookmark,omitzero"`
+	StatusInfo        *StatusInfo `json:"StatusInfo,omitzero"`
+}
+
+type ReadingStatePayload struct {
+	ReadingState *ReadingState `json:"ReadingState"`
+}
+
+type ReadingStateUpdate struct {
+	ReadingStates []ReadingState `json:"ReadingStates"`
+}
+
+type Result struct {
+	Result string `json:"Result"`
+}
+
+type ReadingUpdateResult struct {
+	EntitlementID         string `json:"EntitlementId"`
+	CurrentBookmarkResult Result `json:"CurrentBookmarkResult"`
+	StatusInfoResult      Result `json:"StatusInfoResult"`
+	StatisticsResult      Result `json:"StatisticsResult"`
+}
+
+type ReadingUpdateResponse struct {
+	RequestResult string                `json:"RequestResult"`
+	UpdateResults []ReadingUpdateResult `json:"UpdateResults"`
 }
 
 type SyncItem struct {
-	NewEntitlement     *EntitlementPayload `json:"NewEntitlement,omitzero"`
-	ChangedEntitlement *EntitlementPayload `json:"ChangedEntitlement,omitzero"`
+	NewEntitlement         *EntitlementPayload  `json:"NewEntitlement,omitzero"`
+	ChangedEntitlement     *EntitlementPayload  `json:"ChangedEntitlement,omitzero"`
+	ChangedProductMetadata *EntitlementPayload  `json:"ChangedProductMetadata,omitzero"`
+	ChangedReadingState    *ReadingStatePayload `json:"ChangedReadingState,omitzero"`
 }
 
-func BuildSyncItem(change Change, afterRevision int64, baseURL string) SyncItem {
-	payload := &EntitlementPayload{BookEntitlement: BuildEntitlement(change)}
-	if change.Present {
-		metadata := BuildMetadata(change.Publication, baseURL)
-		payload.BookMetadata = &metadata
-	}
+func BuildSyncItems(change Change, afterRevision int64, baseURL string) []SyncItem {
 	// New/changed is a property of what this client has acknowledged, not of
 	// the compacted row's latest revision. A fresh or reset device must receive
 	// NewEntitlement even when metadata changed before its first sync.
-	if change.Present && afterRevision < change.FirstRevision {
-		return SyncItem{NewEntitlement: payload}
+	payload := &EntitlementPayload{BookEntitlement: BuildEntitlement(change)}
+	if !change.Present {
+		return []SyncItem{{ChangedEntitlement: payload}}
 	}
-	return SyncItem{ChangedEntitlement: payload}
+	metadata := BuildMetadata(change.Publication, baseURL)
+	payload.BookMetadata = &metadata
+	if afterRevision < change.FirstRevision {
+		payload.ReadingState = change.ReadingState
+		return []SyncItem{{NewEntitlement: payload}}
+	}
+	// ChangedEntitlement can make Kobo discard a downloaded copy. Updating
+	// metadata or reading progress must not announce a replacement book.
+	items := []SyncItem{{ChangedProductMetadata: payload}}
+	// Kobo consumes reading changes as separate events, including when the
+	// same publication also has a metadata change in this page.
+	if change.ReadingState != nil {
+		items = append(items, SyncItem{ChangedReadingState: &ReadingStatePayload{change.ReadingState}})
+	}
+	return items
 }
 
 func BuildEntitlement(change Change) Entitlement {
-	modifiedAt := max(change.ChangedAt, change.ModifiedAt)
+	modifiedAt := change.ModifiedAt
+	if !change.Present {
+		modifiedAt = change.ChangedAt
+	}
 	assetID := strconv.FormatInt(change.AssetID, 10)
 	return Entitlement{
 		Accessibility:       "Full",
@@ -164,6 +232,12 @@ func BuildEntitlement(change Change) Entitlement {
 
 func BuildMetadata(publication Publication, baseURL string) Metadata {
 	assetID := strconv.FormatInt(publication.AssetID, 10)
+	coverID := assetID + "-" + strconv.Itoa(publication.CoverVersion)
+	if publication.CoverVersion == 0 {
+		// Fallback covers change with the book's title and author.
+		sum := sha1.Sum([]byte(publication.Title + "\x00" + strings.Join(publication.Authors, "\x00")))
+		coverID += "-" + hex.EncodeToString(sum[:])
+	}
 	language := strings.TrimSpace(publication.Language)
 	if language == "" {
 		language = "en"
@@ -175,7 +249,7 @@ func BuildMetadata(publication Publication, baseURL string) Metadata {
 	}
 	metadata := Metadata{
 		Categories:              []string{importedCategoryID},
-		CoverImageID:            assetID,
+		CoverImageID:            coverID,
 		CrossRevisionID:         assetID,
 		CurrentDisplayPrice:     Money{CurrencyCode: "USD", TotalAmount: 0},
 		CurrentLoveDisplayPrice: Money{TotalAmount: 0},

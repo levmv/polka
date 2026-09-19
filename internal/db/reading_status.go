@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 var (
@@ -33,6 +34,7 @@ const (
 	ReadingStatusSourceWebReader ReadingStatusSource = "web_reader"
 	ReadingStatusSourceKOSync    ReadingStatusSource = "kosync"
 	ReadingStatusSourceOPDS      ReadingStatusSource = "opds"
+	ReadingStatusSourceKobo      ReadingStatusSource = "kobo"
 )
 
 type ReadingStatusState struct {
@@ -97,6 +99,10 @@ func (db *DB) SetReadingStatus(ctx context.Context, userID int64, bookID int64, 
 }
 
 func setReadingStatus(tx *Tx, current ReadingStatusState, status string, source ReadingStatusSource) (ReadingStatusChange, error) {
+	return setReadingStatusAt(tx, current, status, source, time.Now().Unix())
+}
+
+func setReadingStatusAt(tx *Tx, current ReadingStatusState, status string, source ReadingStatusSource, modifiedAt int64) (ReadingStatusChange, error) {
 	if current.Status == status {
 		return ReadingStatusChange{State: current}, nil
 	}
@@ -105,23 +111,23 @@ func setReadingStatus(tx *Tx, current ReadingStatusState, status string, source 
 	var eventID int64
 	err := tx.QueryRow(`
 		INSERT INTO user_book_reading_events
-			(user_id, book_id, previous_event_id, from_status, to_status, source)
-		VALUES (?, ?, ?, ?, ?, ?)
+			(user_id, book_id, previous_event_id, from_status, to_status, source, occurred_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 		RETURNING id
-	`, current.UserID, current.BookID, previousEventID, current.Status, status, source).Scan(&eventID)
+	`, current.UserID, current.BookID, previousEventID, current.Status, status, source, modifiedAt).Scan(&eventID)
 	if err != nil {
 		return ReadingStatusChange{}, fmt.Errorf("record reading status change: %w", err)
 	}
 	next := ReadingStatusState{UserID: current.UserID, BookID: current.BookID}
 	err = tx.QueryRow(`
 		INSERT INTO user_book_reading_state (user_id, book_id, status, last_event_id, updated_at)
-		VALUES (?, ?, ?, ?, unixepoch())
+		VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT(user_id, book_id) DO UPDATE SET
 			status = excluded.status,
 			last_event_id = excluded.last_event_id,
-			updated_at = unixepoch()
+			updated_at = excluded.updated_at
 		RETURNING status, last_event_id, updated_at
-	`, current.UserID, current.BookID, status, eventID).Scan(&next.Status, &next.LastEventID, &next.UpdatedAt)
+	`, current.UserID, current.BookID, status, eventID, modifiedAt).Scan(&next.Status, &next.LastEventID, &next.UpdatedAt)
 	if err != nil {
 		return ReadingStatusChange{}, fmt.Errorf("set reading status: %w", err)
 	}
@@ -133,19 +139,17 @@ func advanceReadingStatus(tx *Tx, userID int64, bookID int64, progress float64, 
 	if err != nil {
 		return ReadingStatusChange{}, err
 	}
-	target := current.Status
-	switch current.Status {
-	case ReadingStatusUnread:
-		target = ReadingStatusReading
-		if progress >= ReaderFinishedProgress {
-			target = ReadingStatusFinished
-		}
-	case ReadingStatusReading:
-		if progress >= ReaderFinishedProgress {
-			target = ReadingStatusFinished
-		}
+	return setReadingStatus(tx, current, readingStatusAfterProgress(current.Status, progress), source)
+}
+
+func readingStatusAfterProgress(status string, progress float64) string {
+	if status != ReadingStatusUnread && status != ReadingStatusReading {
+		return status
 	}
-	return setReadingStatus(tx, current, target, source)
+	if progress >= ReaderFinishedProgress {
+		return ReadingStatusFinished
+	}
+	return ReadingStatusReading
 }
 
 func (db *DB) UndoAutomaticReadingStatus(ctx context.Context, userID int64, bookID int64, eventID int64) (ReadingStatusChange, error) {

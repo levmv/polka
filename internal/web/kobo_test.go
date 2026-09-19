@@ -13,14 +13,17 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/levmv/polka/internal/db"
+	kobowire "github.com/levmv/polka/internal/kobo"
 )
 
-func seedKoboWebBook(t *testing.T, database *db.DB, dir string, bookID, assetID int64, title string) {
+func seedKoboWebBook(t *testing.T, database *db.DB, dir string, bookID, assetID int64, title string, paragraphs ...string) {
 	t.Helper()
 	storagePath := filepath.ToSlash(filepath.Join("Kobo", strconv.FormatInt(bookID, 10), strconv.FormatInt(assetID, 10)+".epub"))
 	mustExec(t, database, `
@@ -37,8 +40,175 @@ func seedKoboWebBook(t *testing.T, database *db.DB, dir string, bookID, assetID 
 	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(fullPath, testReadableEPUB(t, title, "Kobo body."), 0o644); err != nil {
+	if len(paragraphs) == 0 {
+		paragraphs = []string{"Kobo body."}
+	}
+	if err := os.WriteFile(fullPath, testReadableEPUB(t, title, paragraphs...), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestKoboSharedReadingPosition(t *testing.T) {
+	database, dir := setupTestDB(t)
+	defer database.Close()
+	user := mustUser(t, database, "kobo-position", db.RoleMember)
+	shelf, err := database.CreateShelf(t.Context(), user.ID, db.ShelfPersonal, "Reading", db.ShelfManual, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	title := "Kobo Book"
+	seedKoboWebBook(t, database, dir, 143, 2, title, "Alpha beta gamma.", "Second paragraph.")
+	if err := database.AddBookToShelf(t.Context(), shelf.ID, user.ID, 143); err != nil {
+		t.Fatal(err)
+	}
+	seedKoboWebBook(t, database, dir, 144, 3, "Unchanged Book")
+	if err := database.AddBookToShelf(t.Context(), shelf.ID, user.ID, 144); err != nil {
+		t.Fatal(err)
+	}
+	connection, err := database.CreateKoboConnection(t.Context(), user.ID, shelf.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := newTestServer(database, dir)
+	handler := testRoutes(t, s)
+	base := "/kobo/" + connection.Token
+	serve := func(method, path, body, cursor string) *httptest.ResponseRecorder {
+		t.Helper()
+		request := httptest.NewRequest(method, base+path, strings.NewReader(body))
+		request.Header.Set("X-Kobo-Synctoken", cursor)
+		request.Header.Set("X-Kobo-DeviceId", "reader")
+		request.Header.Set("X-Kobo-DeviceModel", "Kobo")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, request)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s %s = %d: %s", method, path, w.Code, w.Body.String())
+		}
+		return w
+	}
+	pull := func() *kobowire.ReadingState {
+		t.Helper()
+		var states []*kobowire.ReadingState
+		decodeJSON(t, serve(http.MethodGet, "/v1/library/2/state", "", ""), &states)
+		if len(states) != 1 {
+			t.Fatalf("reading states = %+v", states)
+		}
+		return states[0]
+	}
+	syncReading := func(cursor string) (*kobowire.ReadingState, string) {
+		t.Helper()
+		w := serve(http.MethodGet, "/v1/library/sync", "", cursor)
+		var changes []kobowire.SyncItem
+		decodeJSON(t, w, &changes)
+		if len(changes) != 2 || changes[0].ChangedProductMetadata == nil || changes[1].ChangedReadingState == nil {
+			t.Fatalf("book change = %+v", changes)
+		}
+		metadata := changes[0].ChangedProductMetadata.BookMetadata
+		if metadata == nil || metadata.EntitlementID != "2" || metadata.Title != title {
+			t.Fatalf("changed metadata = %+v", metadata)
+		}
+		return changes[1].ChangedReadingState.ReadingState, w.Header().Get("X-Kobo-Synctoken")
+	}
+	initial := serve(http.MethodGet, "/v1/library/sync", "", "")
+	cursor := initial.Header().Get("X-Kobo-Synctoken")
+	const upload = `{"ReadingStates":[{
+	    "EntitlementId":"2", "LastModified":"2024-01-01T12:00:00Z",
+	    "CurrentBookmark":{"LastModified":"2024-01-01T12:00:00Z","ProgressPercent":57,
+	        "ContentSourceProgressPercent":0,"Location":{"Source":"OEBPS/text.xhtml","Type":"KoboSpan","Value":"kobo.1.1"}},
+	    "StatusInfo":{"LastModified":"2024-01-01T12:00:00Z","Status":"Reading","TimesStartedReading":1},
+	    "Statistics":{"SpentReadingMinutes":12,"RemainingTimeMinutes":45}
+	}]}`
+	var saved kobowire.ReadingUpdateResponse
+	decodeJSON(t, serve(http.MethodPut, "/v1/library/2/state", upload, ""), &saved)
+	if saved.RequestResult != "Success" || len(saved.UpdateResults) != 1 || saved.UpdateResults[0].StatisticsResult.Result != "Ignored" {
+		t.Fatalf("save result = %+v", saved)
+	}
+	stored, err := db.GetReaderState(database.Read(t.Context()), user.ID, 2)
+	if err != nil || stored.Revision != 1 || !stored.Locator.IsZero() || stored.Progress != .57 {
+		t.Fatalf("native upload = %+v, %v", stored, err)
+	}
+	native := pull()
+	if native.CurrentBookmark.Location.Value != "kobo.1.1" || *native.CurrentBookmark.ProgressPercent != 57 {
+		t.Fatalf("native round trip = %+v; progress = %v", native, *native.CurrentBookmark.ProgressPercent)
+	}
+	progress, err := db.GetReaderProgress(database.Read(t.Context()), user.ID, 2)
+	if err != nil || progress.Progress == nil || *progress.Progress != .57 {
+		t.Fatalf("progress card = %+v, %v", progress, err)
+	}
+	first, cursor := syncReading(cursor)
+	if !reflect.DeepEqual(first, native) {
+		t.Fatalf("feed and native pull disagree: %+v, %+v", first, native)
+	}
+	web, err := s.readerPosition(t.Context(), user.ID, 2)
+	if err != nil || web.Locator.CFI != "epubcfi(/6/2[main]!/4/2/1:0)" || web.Revision != stored.Revision {
+		t.Fatalf("Kobo to web = %+v, %v", web, err)
+	}
+	ko, err := s.koReaderState(t.Context(), user.ID, 2, "")
+	if err != nil || ko.Position != "/body[1]/DocFragment[1]/body[1]/p[1]/text()[1].0" {
+		t.Fatalf("Kobo to KOReader = %+v, %v", ko, err)
+	}
+	const preciseCFI = "epubcfi(/6/2[main]!/4/4,/1:7,/1:12)"
+	web, _, err = database.SaveReaderState(t.Context(), user.ID, 2, db.ReaderPositionWrite{
+		Revision: web.Revision, Progress: .60125, Locator: db.Locator{CFI: preciseCFI}, DeviceID: "urn:test:web", DeviceName: "Browser",
+	}, db.ReadingStatusSourceWebReader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	converted, cursor := syncReading(cursor)
+	if converted.CurrentBookmark.Location.Value != "kobo.2.1" || *converted.CurrentBookmark.ProgressPercent != 60.125 {
+		t.Fatalf("web to Kobo = %+v", converted.CurrentBookmark)
+	}
+	converted.CurrentBookmark.ProgressPercent = new(64.0) // Device pagination differs.
+	encoded, err := json.Marshal(kobowire.ReadingStateUpdate{ReadingStates: []kobowire.ReadingState{*converted}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	serve(http.MethodPut, "/v1/library/2/state", string(encoded), "")
+	state, err := db.GetReaderState(database.Read(t.Context()), user.ID, 2)
+	if err != nil || state.Revision != web.Revision || state.Locator.CFI != preciseCFI || state.Progress != .60125 {
+		t.Fatalf("Kobo echo replaced precise position: %+v, %v", state, err)
+	}
+	if w := serve(http.MethodGet, "/v1/library/sync", "", cursor); strings.TrimSpace(w.Body.String()) != "[]" {
+		t.Fatalf("echo or conversion created another change: %s", w.Body.String())
+	}
+	beforeEdit := pull()
+	title = "Revised Kobo Book"
+	mustExec(t, database, "UPDATE books SET title = ? WHERE id = 143", title)
+	afterEdit, cursor := syncReading(cursor)
+	if !reflect.DeepEqual(afterEdit, beforeEdit) {
+		t.Fatalf("metadata edit changed reading state: %+v; want %+v", afterEdit, beforeEdit)
+	}
+	if _, err := database.SetReadingStatus(t.Context(), user.ID, 143, db.ReadingStatusFinished, db.ReadingStatusSourceManual); err != nil {
+		t.Fatal(err)
+	}
+	finished, cursor := syncReading(cursor)
+	if finished.StatusInfo.Status != "Finished" {
+		t.Fatalf("status-only change = %+v", finished.StatusInfo)
+	}
+	if err := database.ResetReaderState(t.Context(), user.ID, 2); err != nil {
+		t.Fatal(err)
+	}
+	reset, _ := syncReading(cursor)
+	if *reset.CurrentBookmark.ProgressPercent != 0 || reset.CurrentBookmark.Location != nil || reset.LastModified.Before(time.Now().Add(-time.Minute)) {
+		t.Fatalf("reset = %+v", reset)
+	}
+	// Preserve an unfamiliar native address even when other readers can only
+	// use its percentage. An omitted chapter percentage must stay omitted.
+	unknown := kobowire.ReadingState{EntitlementID: "2", CurrentBookmark: &kobowire.Bookmark{
+		LastModified: time.Now().UTC(), ProgressPercent: new(31.0),
+		Location: &kobowire.Location{Source: "OEBPS/text.xhtml", Type: "OtherLocation", Value: "native-address"},
+	}}
+	encoded, err = json.Marshal(kobowire.ReadingStateUpdate{ReadingStates: []kobowire.ReadingState{unknown}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	serve(http.MethodPut, "/v1/library/2/state", string(encoded), "")
+	got := pull().CurrentBookmark
+	if !reflect.DeepEqual(got.Location, unknown.CurrentBookmark.Location) || got.ContentSourceProgressPercent != nil {
+		t.Fatalf("unknown bookmark changed: %+v", got)
+	}
+	web, err = s.readerPosition(t.Context(), user.ID, 2)
+	if err != nil || web.Progress != .31 || !web.Locator.IsZero() {
+		t.Fatalf("unknown location fallback = %+v, %v", web, err)
 	}
 }
 
@@ -109,8 +279,9 @@ func TestKoboNativeLibraryRoutesAndRevocation(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("sync status = %d; body: %s", w.Code, w.Body.String())
 	}
-	if got := w.Header().Get("X-Kobo-Synctoken"); got != "1" {
-		t.Fatalf("sync token = %q", got)
+	cursor := w.Header().Get("X-Kobo-Synctoken")
+	if cursor == "" {
+		t.Fatal("missing sync token")
 	}
 	var items []map[string]jsontext.Value
 	if err := json.UnmarshalRead(w.Body, &items); err != nil {
@@ -122,10 +293,23 @@ func TestKoboNativeLibraryRoutesAndRevocation(t *testing.T) {
 
 	w = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodGet, basePath+"/v1/library/sync", nil)
-	req.Header.Set("X-Kobo-Synctoken", "1")
+	req.Header.Set("X-Kobo-Synctoken", cursor)
 	handler.ServeHTTP(w, req)
 	if w.Code != http.StatusOK || strings.TrimSpace(w.Body.String()) != "[]" {
 		t.Fatalf("acknowledged sync = %d %s", w.Code, w.Body.String())
+	}
+	for _, token := range []string{"e30=.e30=", cursor + "000"} {
+		w = httptest.NewRecorder()
+		req = httptest.NewRequest(http.MethodGet, basePath+"/v1/library/sync", nil)
+		req.Header.Set("X-Kobo-Synctoken", token)
+		handler.ServeHTTP(w, req)
+		if w.Code != http.StatusOK || w.Header().Get("X-Kobo-Synctoken") != cursor {
+			t.Fatalf("recover token %q = %d %s", token, w.Code, w.Body.String())
+		}
+		decodeJSON(t, w, &items)
+		if len(items) != 1 || items[0]["NewEntitlement"] == nil {
+			t.Fatalf("recover token %q: want new entitlement, got %+v", token, items)
+		}
 	}
 
 	w = httptest.NewRecorder()
@@ -133,6 +317,9 @@ func TestKoboNativeLibraryRoutesAndRevocation(t *testing.T) {
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"Title":"Kobo Book"`) {
 		t.Fatalf("metadata = %d %s", w.Code, w.Body.String())
 	}
+	var metadata []kobowire.Metadata
+	decodeJSON(t, w, &metadata)
+	coverID := metadata[0].CoverImageID
 
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, basePath+"/v1/library/3/metadata", nil))
@@ -141,7 +328,7 @@ func TestKoboNativeLibraryRoutesAndRevocation(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, basePath+"/2/300/450/false/image.jpg", nil))
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, basePath+"/"+coverID+"/300/450/false/image.jpg", nil))
 	if w.Code != http.StatusOK || !strings.HasPrefix(w.Header().Get("Content-Type"), "image/") {
 		t.Fatalf("cover = %d %q; body: %s", w.Code, w.Header().Get("Content-Type"), w.Body.String())
 	}
@@ -185,6 +372,21 @@ func TestKoboNativeLibraryRoutesAndRevocation(t *testing.T) {
 	if _, err := db.KoboConnectionForUser(database.Read(req.Context()), connection.UserID); !errors.Is(err, db.ErrKoboConnectionNotFound) {
 		t.Fatalf("connection remains after revoke: %v", err)
 	}
+	replacement, err := database.CreateKoboConnection(t.Context(), user.ID, shelf.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/kobo/"+replacement.Token+"/v1/library/sync", nil)
+	req.Header.Set("X-Kobo-Synctoken", cursor)
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("replacement connection sync = %d %s", w.Code, w.Body.String())
+	}
+	decodeJSON(t, w, &items)
+	if len(items) != 1 || items[0]["NewEntitlement"] == nil || w.Header().Get("X-Kobo-Synctoken") == cursor {
+		t.Fatalf("old cursor acknowledged replacement connection: %+v", items)
+	}
 }
 
 func TestKoboPathDoesNotFallBackToBrowserSession(t *testing.T) {
@@ -209,65 +411,51 @@ func TestKoboSyncPageHonorsByteBoundaryWithoutSkippingCursor(t *testing.T) {
 			AssetID:       int64(i + 1),
 			Title:         "Book",
 			Description:   strings.Repeat("large description ", 5000),
-			Revision:      int64(i + 1),
-			FirstRevision: int64(i + 1),
+			Revision:      int64(10 * (i + 1)),
+			FirstRevision: 1,
 			Present:       true,
 		}
 	}
-	body, cursor, more, err := marshalKoboSyncPage(changes, 0, "https://books.test/kobo/token", 30, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(body) > maxKoboSyncResponseBytes {
-		t.Fatalf("page is %d bytes", len(body))
-	}
-	if !more || cursor <= 0 || cursor >= 30 {
-		t.Fatalf("cursor=%d more=%v", cursor, more)
-	}
-	var items []map[string]jsontext.Value
-	if err := json.Unmarshal(body, &items); err != nil {
-		t.Fatal(err)
-	}
-	if int64(len(items)) != cursor {
-		t.Fatalf("items=%d cursor=%d", len(items), cursor)
-	}
-}
-
-func TestKoboSyncPageDoesNotContinueAfterReturningEverything(t *testing.T) {
-	changes := []db.KoboChange{
-		{AssetID: 1, Revision: 1, FirstRevision: 1, Present: true},
-		{AssetID: 2, Revision: 2, FirstRevision: 2, Present: true},
-	}
-	body, cursor, more, err := marshalKoboSyncPage(changes, 0, "https://books.test/kobo/token", 2, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if more || cursor != 2 {
-		t.Fatalf("cursor=%d more=%v body=%s", cursor, more, body)
-	}
-}
-
-func TestKoboSyncPageTreatsUnseenChangedItemAsNew(t *testing.T) {
-	changes := []db.KoboChange{{
-		AssetID:       1,
-		Revision:      4,
-		FirstRevision: 2,
-		Present:       true,
-	}}
-	body, _, _, err := marshalKoboSyncPage(changes, 1, "https://books.test/kobo/token", 4, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var items []map[string]jsontext.Value
-	if err := json.Unmarshal(body, &items); err != nil {
-		t.Fatal(err)
-	}
-	if len(items) != 1 || items[0]["NewEntitlement"] == nil {
-		t.Fatalf("unseen changed item = %s; want NewEntitlement", body)
+	currentRevision := changes[len(changes)-1].Revision
+	for after, seen := int64(1), 0; seen < len(changes); {
+		remaining := changes[seen:]
+		body, cursor, more, err := marshalKoboSyncPage(remaining, after, "https://books.test/kobo/token", currentRevision, false,
+			func(change db.KoboChange) (*kobowire.ReadingState, error) {
+				return &kobowire.ReadingState{EntitlementID: strconv.FormatInt(change.AssetID, 10)}, nil
+			})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(body) > maxKoboSyncResponseBytes {
+			t.Fatalf("page is %d bytes", len(body))
+		}
+		var items []kobowire.SyncItem
+		if err := json.Unmarshal(body, &items); err != nil {
+			t.Fatal(err)
+		}
+		count := len(items) / 2
+		if count == 0 || count > len(remaining) || len(items)%2 != 0 {
+			t.Fatalf("page after %d has %d events for %d remaining books", after, len(items), len(remaining))
+		}
+		if seen == 0 && count == len(changes) {
+			t.Fatal("fixture must require multiple pages")
+		}
+		for i := 0; i < len(items); i += 2 {
+			publication, reading := items[i].ChangedProductMetadata, items[i+1].ChangedReadingState
+			id := strconv.FormatInt(remaining[i/2].AssetID, 10)
+			if publication == nil || reading == nil || reading.ReadingState == nil ||
+				publication.BookEntitlement.ID != id || reading.ReadingState.EntitlementID != id {
+				t.Fatalf("expected paired events for book %s: %+v", id, items[i:i+2])
+			}
+		}
+		if cursor != remaining[count-1].Revision || more != (count < len(remaining)) {
+			t.Fatalf("page after %d: cursor=%d more=%v, sent=%d remaining=%d", after, cursor, more, count, len(remaining))
+		}
+		after, seen = cursor, seen+count
 	}
 }
 
-func TestKoboMetadataRequiresCurrentUserScope(t *testing.T) {
+func TestKoboContentRequiresCurrentUserScope(t *testing.T) {
 	database, dir := setupTestDB(t)
 	defer database.Close()
 	curator := mustUser(t, database, "kobo-scope-curator", db.RoleMember)
@@ -307,9 +495,18 @@ func TestKoboMetadataRequiresCurrentUserScope(t *testing.T) {
 	if _, err := database.UpdateUserAccess(t.Context(), reader.ID, db.UserAccess{Role: db.RoleReader, ContentScope: db.ContentScopeShelves}); err != nil {
 		t.Fatal(err)
 	}
-	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
-	if w.Code != http.StatusNotFound {
-		t.Fatalf("metadata after scope removal = %d %s; want 404", w.Code, w.Body.String())
+	for _, route := range []struct{ method, path string }{
+		{http.MethodGet, "/v1/library/2/metadata"},
+		{http.MethodGet, "/v1/library/2/state"},
+		{http.MethodPut, "/v1/library/2/state"},
+		{http.MethodGet, "/2-1/300/450/false/image.jpg"},
+		{http.MethodGet, "/download/2/kepub"},
+	} {
+		w = httptest.NewRecorder()
+		path := "/kobo/" + connection.Token + route.path
+		handler.ServeHTTP(w, httptest.NewRequest(route.method, path, nil))
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("%s %s after scope removal = %d %s; want 404", route.method, route.path, w.Code, w.Body.String())
+		}
 	}
 }

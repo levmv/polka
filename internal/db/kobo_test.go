@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func seedKoboBook(t *testing.T, database *DB, bookID, assetID int64, title string, formatKey string, tags string) {
@@ -21,6 +22,135 @@ func seedKoboBook(t *testing.T, database *DB, bookID, assetID int64, title strin
 	`, assetID, bookID, strconv.FormatInt(bookID, 10)+"/"+strconv.FormatInt(assetID, 10)+"."+formatKey, strconv.FormatInt(assetID, 10)+"."+formatKey, formatKey, formatKey)
 	mustExec(t, database, `INSERT INTO search (rowid, title, tags) VALUES (?1, ?2, ?3)`, bookID, title, tags)
 
+}
+
+func TestKoboReadingOrderAndAtomicity(t *testing.T) {
+	database := newTestDB(t)
+	user := mustUser(t, database, "kobo-reading", RoleMember)
+	seedKoboBook(t, database, 1, 1, "Reading", "epub", "")
+	input := KoboReadingUpdate{DeviceID: "device", DeviceName: "Kobo",
+		Position: &KoboPosition{Source: "chapter.xhtml", Type: "KoboSpan", Fragment: "kobo.8.1"},
+		Progress: new(.8), PositionUpdatedAt: 100, Status: ReadingStatusReading, StatusUpdatedAt: 100}
+	for _, step := range []struct {
+		name         string
+		stamp        int64
+		fragment     string
+		progress     float64
+		wantRevision int64
+		wantProgress float64
+	}{
+		{"first upload", 100, "kobo.8.1", .8, 1, .8},
+		{"rewind", 200, "kobo.2.1", .2, 2, .2},
+		{"late upload", 150, "kobo.9.1", .9, 2, .2},
+		{"retry", 200, "kobo.2.1", .2, 2, .2},
+	} {
+		t.Run(step.name, func(t *testing.T) {
+			input.Position.Fragment, input.Progress, input.PositionUpdatedAt = step.fragment, new(step.progress), step.stamp
+			if _, err := database.SaveKoboReading(t.Context(), user.ID, 1, input); err != nil {
+				t.Fatal(err)
+			}
+			state, err := GetReaderState(database.Read(t.Context()), user.ID, 1)
+			if err != nil || state.Revision != step.wantRevision || state.Progress != step.wantProgress {
+				t.Fatalf("state = %+v, %v", state, err)
+			}
+		})
+	}
+	web, _, err := database.SaveReaderState(t.Context(), user.ID, 1,
+		testReaderWrite(.6, Locator{CFI: "epubcfi(/6/2!/4/2/1:6)"}, 2), ReadingStatusSourceWebReader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.SetReadingStatus(t.Context(), user.ID, 1, ReadingStatusFinished, ReadingStatusSourceManual); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := database.SaveKoboReading(t.Context(), user.ID, 1, input); err != nil || result != (KoboReadingResult{}) {
+		t.Fatalf("replay after web reading = %+v, %v", result, err)
+	}
+	state, err := GetReaderState(database.Read(t.Context()), user.ID, 1)
+	if err != nil || state.Revision != web.Revision || !state.Locator.Equal(web.Locator) || !state.KoboPosition.IsZero() {
+		t.Fatalf("web position overwritten: %+v, %v", state, err)
+	}
+	if err := database.ResetReaderState(t.Context(), user.ID, 1); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := database.SaveKoboReading(t.Context(), user.ID, 1, input); err != nil || result != (KoboReadingResult{}) {
+		t.Fatalf("replay after reset = %+v, %v", result, err)
+	}
+	progress, err := GetReaderProgress(database.Read(t.Context()), user.ID, 1)
+	if err != nil || progress.Progress != nil || progress.ReadingStatus.Status != ReadingStatusFinished {
+		t.Fatalf("reset/manual status lost: %+v, %v", progress, err)
+	}
+	// Bookmark and status share a commit: a failed status write must not leave
+	// the device's new position behind with a successful-looking partial save.
+	mustExec(t, database, `CREATE TRIGGER reject_kobo_status BEFORE INSERT ON user_book_reading_events
+	    BEGIN SELECT RAISE(ABORT, 'status write failed'); END`)
+	input.PositionUpdatedAt, input.StatusUpdatedAt = time.Now().Unix(), time.Now().Unix()
+	if _, err := database.SaveKoboReading(t.Context(), user.ID, 1, input); err == nil {
+		t.Fatal("save succeeded despite status failure")
+	}
+	state, err = GetReaderState(database.Read(t.Context()), user.ID, 1)
+	if err != nil || !state.positionIsReset() {
+		t.Fatalf("partial save survived: %+v, %v", state, err)
+	}
+	mustExec(t, database, "DROP TRIGGER reject_kobo_status")
+	if result, err := database.SaveKoboReading(t.Context(), user.ID, 1, input); err != nil || !result.PositionChanged || !result.StatusChanged {
+		t.Fatalf("fresh reading after reset = %+v, %v", result, err)
+	}
+}
+
+func TestKoboBookmarkAdvancesStatusAtBookmarkTime(t *testing.T) {
+	database := newTestDB(t)
+	user := mustUser(t, database, "kobo-bookmark-status", RoleMember)
+	seedKoboBook(t, database, 1, 1, "Reading", "epub", "")
+	for _, step := range []struct {
+		name               string
+		stamp              int64
+		progress           float64
+		status, wantStatus string
+		wantStamp          int64
+	}{
+		{"bookmark starts reading", 100, .2, "", ReadingStatusReading, 100},
+		{"newer explicit status", 200, 0, ReadingStatusUnread, ReadingStatusUnread, 200},
+		{"delayed bookmark", 150, .5, "", ReadingStatusUnread, 200},
+	} {
+		t.Run(step.name, func(t *testing.T) {
+			input := KoboReadingUpdate{Status: step.status, StatusUpdatedAt: step.stamp}
+			if step.status == "" {
+				input.Position = &KoboPosition{Source: "chapter.xhtml", Type: "KoboSpan", Fragment: "kobo." + strconv.FormatInt(step.stamp, 10) + ".1"}
+				input.Progress, input.PositionUpdatedAt = new(step.progress), step.stamp
+				input.DeviceID, input.DeviceName = "device", "Kobo"
+			}
+			if result, err := database.SaveKoboReading(t.Context(), user.ID, 1, input); err != nil || result.PositionChanged != (step.status == "") {
+				t.Fatalf("save = %+v, %v", result, err)
+			}
+			status, err := GetReadingStatus(database.Read(t.Context()), user.ID, 1)
+			if err != nil || status.Status != step.wantStatus || status.UpdatedAt != step.wantStamp {
+				t.Fatalf("status = %+v, %v; want %s at %d", status, err, step.wantStatus, step.wantStamp)
+			}
+		})
+	}
+}
+
+func TestKoboBookmarkWithoutLocationUpdatesProgress(t *testing.T) {
+	database := newTestDB(t)
+	user := mustUser(t, database, "kobo-percent", RoleMember)
+	seedKoboBook(t, database, 1, 1, "Reading", "epub", "")
+	input := KoboReadingUpdate{
+		Position: &KoboPosition{ChapterProgressPercent: new(50.0)},
+		Progress: new(.2), PositionUpdatedAt: 100,
+		Status: ReadingStatusReading, StatusUpdatedAt: 100,
+	}
+	if _, err := database.SaveKoboReading(t.Context(), user.ID, 1, input); err != nil {
+		t.Fatal(err)
+	}
+	input.Progress, input.PositionUpdatedAt = new(.6), 200
+	if _, err := database.SaveKoboReading(t.Context(), user.ID, 1, input); err != nil {
+		t.Fatal(err)
+	}
+	state, err := GetReaderState(database.Read(t.Context()), user.ID, 1)
+	if err != nil || state.Progress != .6 {
+		t.Fatalf("position = %+v, %v; want progress=0.6", state, err)
+	}
 }
 
 func TestKoboConnectionIncrementalLifecycle(t *testing.T) {
@@ -94,10 +224,10 @@ func TestKoboConnectionIncrementalLifecycle(t *testing.T) {
 	if len(removed) != 1 || removed[0].Present || removed[0].Revision != 3 {
 		t.Fatalf("removal = %+v", removed)
 	}
-	if _, err := KoboPublicationForAsset(database.Read(t.Context()), connection.ID, 3); !errors.Is(err, ErrKoboConnectionNotFound) {
+	if _, err := KoboAssetForConnection(database.Read(t.Context()), FullVisibilityScope(), connection.ID, 3); !errors.Is(err, ErrAssetNotFound) {
 		t.Fatalf("removed asset lookup: %v", err)
 	}
-	if _, err := KoboPublicationForAsset(database.Read(t.Context()), connection.ID, 2); !errors.Is(err, ErrKoboConnectionNotFound) {
+	if _, err := KoboAssetForConnection(database.Read(t.Context()), FullVisibilityScope(), connection.ID, 2); !errors.Is(err, ErrAssetNotFound) {
 		t.Fatalf("outside asset lookup: %v", err)
 	}
 
@@ -108,7 +238,7 @@ func TestKoboConnectionIncrementalLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(readded) != 1 || !readded[0].Present || readded[0].Revision != 4 || readded[0].FirstRevision != 1 {
+	if len(readded) != 1 || !readded[0].Present || readded[0].Revision != 4 || readded[0].FirstRevision != 4 {
 		t.Fatalf("re-add = %+v", readded)
 	}
 
@@ -281,7 +411,7 @@ func TestKoboSyncAfterShelfDeletion(t *testing.T) {
 				t.Fatalf("reattached connection = %+v, err %v", reattached, err)
 			}
 			changes, _, _, err = database.SyncKoboConnection(t.Context(), connection.ID, cursor, KoboSyncPageLimit)
-			if err != nil || len(changes) != 1 || changes[0].AssetID != 1 || !changes[0].Present || changes[0].FirstRevision != initial[0].FirstRevision {
+			if err != nil || len(changes) != 1 || changes[0].AssetID != 1 || !changes[0].Present || changes[0].FirstRevision <= cursor {
 				t.Fatalf("new shelf sync = %+v, err %v", changes, err)
 			}
 			if err := database.DeleteUser(t.Context(), reader.ID); err != nil {

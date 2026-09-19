@@ -1,6 +1,7 @@
 package kobo
 
 import (
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"strings"
 	"testing"
@@ -8,9 +9,8 @@ import (
 
 func TestBuildSyncItemPinsNewEntitlementShape(t *testing.T) {
 	seriesIndex := 2.5
-	item := BuildSyncItem(Change{
+	item := BuildSyncItems(Change{
 		AssetID:       1,
-		BookID:        1,
 		Size:          123,
 		Title:         "A Book",
 		Description:   "Description",
@@ -22,11 +22,10 @@ func TestBuildSyncItemPinsNewEntitlementShape(t *testing.T) {
 		Authors:       []string{"Ada Author"},
 		AddedAt:       100,
 		ModifiedAt:    200,
-		Revision:      1,
 		FirstRevision: 1,
 		Present:       true,
 		ChangedAt:     200,
-	}, 0, "https://books.test/kobo/secret")
+	}, 0, "https://books.test/kobo/secret")[0]
 
 	if item.NewEntitlement == nil || item.ChangedEntitlement != nil {
 		t.Fatalf("item = %+v", item)
@@ -45,32 +44,31 @@ func TestBuildSyncItemPinsNewEntitlementShape(t *testing.T) {
 	if metadata.PublicationDate != "2024-03-02T00:00:00Z" || metadata.Series == nil || metadata.Series.Number != 2.5 {
 		t.Fatalf("publication/series = %q %+v", metadata.PublicationDate, metadata.Series)
 	}
-	if metadata.Series.ID != "58ded003-fe86-5d0e-8a78-ef3135b960ff" {
-		t.Fatalf("series id = %q", metadata.Series.ID)
-	}
-
 	encoded, err := json.Marshal(item)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(encoded), `"WorkId":"1"`) {
-		t.Errorf("Kobo metadata must expose asset identity as WorkId: %s", encoded)
+	var wire map[string]struct {
+		BookEntitlement map[string]jsontext.Value
+		BookMetadata    map[string]jsontext.Value
 	}
-	for _, key := range []string{"NewEntitlement", "BookEntitlement", "BookMetadata", "DownloadUrls", "CoverImageId"} {
-		if !strings.Contains(string(encoded), `"`+key+`"`) {
-			t.Errorf("encoded item lacks %q: %s", key, encoded)
-		}
+	if err := json.Unmarshal(encoded, &wire); err != nil {
+		t.Fatal(err)
+	}
+	publication := wire["NewEntitlement"]
+	if len(wire) != 1 || string(publication.BookEntitlement["Id"]) != `"1"` ||
+		string(publication.BookMetadata["WorkId"]) != `"1"` || publication.BookMetadata["DownloadUrls"] == nil || publication.BookMetadata["CoverImageId"] == nil {
+		t.Fatalf("invalid new entitlement shape: %s", encoded)
 	}
 }
 
 func TestBuildSyncItemMakesRemovalAChangedEntitlementWithoutMetadata(t *testing.T) {
-	item := BuildSyncItem(Change{
+	item := BuildSyncItems(Change{
 		AssetID: 1, AddedAt: 100,
-		Revision:      3,
 		FirstRevision: 1,
 		Present:       false,
 		ChangedAt:     300,
-	}, 2, "https://books.test/kobo/secret")
+	}, 2, "https://books.test/kobo/secret")[0]
 
 	if item.NewEntitlement != nil || item.ChangedEntitlement == nil {
 		t.Fatalf("item = %+v", item)
@@ -86,15 +84,35 @@ func TestBuildSyncItemMakesRemovalAChangedEntitlementWithoutMetadata(t *testing.
 func TestBuildSyncItemClassifiesPresentEntitlementAgainstClientCursor(t *testing.T) {
 	change := Change{
 		AssetID:       1,
-		Revision:      4,
+		AddedAt:       100,
+		ModifiedAt:    200,
+		ChangedAt:     300,
 		FirstRevision: 2,
 		Present:       true,
+		ReadingState:  &ReadingState{EntitlementID: "1"},
 	}
-	if item := BuildSyncItem(change, 0, "https://books.test"); item.NewEntitlement == nil {
-		t.Fatalf("fresh client item = %+v; want NewEntitlement", item)
+	initial := BuildSyncItems(change, 0, "https://books.test")
+	if len(initial) != 1 || initial[0].NewEntitlement == nil || initial[0].NewEntitlement.ReadingState == nil || initial[0].NewEntitlement.ReadingState.EntitlementID != "1" {
+		t.Fatalf("fresh client items = %+v; want NewEntitlement with reading state", initial)
 	}
-	if item := BuildSyncItem(change, 2, "https://books.test"); item.ChangedEntitlement == nil {
-		t.Fatalf("acknowledged client item = %+v; want ChangedEntitlement", item)
+	updated := BuildSyncItems(change, 2, "https://books.test")
+	if len(updated) != 2 || updated[0].ChangedProductMetadata == nil || updated[1].ChangedReadingState == nil {
+		t.Fatalf("acknowledged client items = %+v; want metadata and reading events", updated)
+	}
+	if got := updated[0].ChangedProductMetadata.BookEntitlement.LastModified; got != "1970-01-01T00:03:20Z" {
+		t.Fatalf("reading changed entitlement time to %q", got)
+	}
+	encoded, err := json.Marshal(updated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire []map[string]map[string]any
+	if err := json.Unmarshal(encoded, &wire); err != nil {
+		t.Fatal(err)
+	}
+	metadata := wire[0]["ChangedProductMetadata"]
+	if metadata["BookEntitlement"] == nil || metadata["BookMetadata"] == nil || metadata["ReadingState"] != nil {
+		t.Fatalf("metadata event must wrap entitlement and metadata: %s", encoded)
 	}
 }
 

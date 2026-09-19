@@ -122,17 +122,13 @@ func loadKOReaderPosition(queryer Queryer, userID, assetID int64, document strin
 }
 
 func saveKOReaderAssetPosition(tx *Tx, userID, assetID int64, document string, state *KOReaderState) error {
-	_, err := tx.Exec(`INSERT INTO reading_positions
-        (user_id, asset_id, koreader_position, progress, revision, device_id, device_name, updated_at)
-        VALUES (?, ?, ?, ?, 1, ?, ?, ?)
-        ON CONFLICT(user_id, asset_id) DO UPDATE SET
-            koreader_position = excluded.koreader_position, progress = excluded.progress,
-            locator = '{}', revision = reading_positions.revision + 1,
-            device_id = excluded.device_id, device_name = excluded.device_name, updated_at = excluded.updated_at`,
-		userID, assetID, state.Position, state.Progress,
-		"urn:koreader:"+url.QueryEscape(state.DeviceID), state.DeviceName, state.UpdatedAt)
-	if err != nil {
-		return fmt.Errorf("save KOReader asset position: %w", err)
+	if _, err := writeReaderPosition(tx, &ReaderState{
+		UserID: userID, AssetID: assetID,
+		Progress: state.Progress, KOReaderPosition: state.Position,
+		DeviceID:   "urn:koreader:" + url.QueryEscape(state.DeviceID),
+		DeviceName: state.DeviceName, UpdatedAt: state.UpdatedAt,
+	}); err != nil {
+		return err
 	}
 	return deleteExternalKOReaderState(tx, userID, document)
 }

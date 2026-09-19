@@ -35,7 +35,7 @@ func TestResetReaderStatePreservesAnnotationsAndOtherUsers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetReaderState after reset: %v", err)
 	}
-	if state.Progress != 0 || !state.Locator.IsZero() || state.Revision != 2 || state.UpdatedAt != 0 {
+	if state.Progress != 0 || !state.Locator.IsZero() || state.Revision != 2 || !state.positionIsReset() {
 		t.Fatalf("reader state after reset = %+v", state)
 	}
 	annotations, err := ListAnnotations(database.Read(t.Context()), user.ID, 1)
@@ -149,8 +149,8 @@ func TestCachePositionConversion(t *testing.T) {
                 INSERT INTO assets (id, book_id, storage_path, filename, extension, original_sha256, current_sha256)
                 VALUES (1, 1, 'book.epub', 'book.epub', '.epub', randomblob(32), randomblob(32)),
                        (2, 1, 'other.epub', 'other.epub', '.epub', randomblob(32), randomblob(32));`)
-			mustExec(t, database, `INSERT INTO reading_positions (user_id, asset_id, revision, updated_at)
-                VALUES (?, 1, 1, 0), (?, 2, 1, 0)`, other.ID, user.ID)
+			mustExec(t, database, `INSERT INTO reading_positions (user_id, asset_id, revision, progress, updated_at)
+                VALUES (?, 1, 1, NULL, 100), (?, 2, 1, NULL, 100)`, other.ID, user.ID)
 			input := testReaderWrite(.2, Locator{CFI: "epubcfi(/6/2!/4/2/1:4)"}, 0)
 			state, _, err := database.SaveReaderState(t.Context(), user.ID, 1, input, ReadingStatusSourceWebReader)
 			if err != nil {
@@ -167,12 +167,20 @@ func TestCachePositionConversion(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			if change == "unchanged" {
+				otherConversion := *state
+				otherConversion.KoboPosition = KoboPosition{Source: "chapter.xhtml", Type: "KoboSpan", Fragment: "kobo.1.1"}
+				if _, err := database.CachePositionConversion(t.Context(), &otherConversion); err != nil {
+					t.Fatal(err)
+				}
+			}
 			before, err := GetReaderState(database.Read(t.Context()), user.ID, 1)
 			if err != nil {
 				t.Fatal(err)
 			}
 			const converted = "/body/DocFragment[1]/body/p/text().4"
-			cached, err := database.CachePositionConversion(t.Context(), user.ID, 1, state.Revision, state.Locator, converted)
+			state.KOReaderPosition = converted
+			cached, err := database.CachePositionConversion(t.Context(), state)
 			if err != nil || cached != (change == "unchanged") {
 				t.Fatalf("cache conversion = %v, %v", cached, err)
 			}
@@ -431,7 +439,7 @@ func TestReaderPositionRevisionRetryAndReset(t *testing.T) {
 			t.Fatal(err)
 		}
 		state, err := GetReaderState(database.Read(t.Context()), user.ID, 1)
-		if err != nil || state.Revision != beforeReset.Revision+1 || state.Progress != 0 || !state.Locator.IsZero() || state.UpdatedAt != 0 {
+		if err != nil || state.Revision != beforeReset.Revision+1 || state.Progress != 0 || !state.Locator.IsZero() || !state.positionIsReset() {
 			t.Fatalf("reset: %+v %v", state, err)
 		}
 		resetState = state
@@ -452,7 +460,7 @@ func TestReaderPositionRevisionRetryAndReset(t *testing.T) {
 		t.Fatalf("reset current position: %v", err)
 	}
 	state, err := GetReaderState(database.Read(t.Context()), user.ID, 1)
-	if err != nil || state.Revision != continued.Revision+1 || state.Progress != 0 || !state.Locator.IsZero() || state.UpdatedAt != 0 {
+	if err != nil || state.Revision != continued.Revision+1 || state.Progress != 0 || !state.Locator.IsZero() || !state.positionIsReset() {
 		t.Fatalf("reset after continued reading: %+v %v", state, err)
 	}
 }
@@ -474,7 +482,7 @@ func TestResetEmptyReaderStateAdvancesRevision(t *testing.T) {
 				t.Fatal(err)
 			}
 			state, err := GetReaderState(database.Read(t.Context()), user.ID, 1)
-			if err != nil || state.Revision != 1 || state.UpdatedAt != 0 {
+			if err != nil || state.Revision != 1 || !state.positionIsReset() {
 				t.Fatalf("empty reset: %+v %v", state, err)
 			}
 			pending := testReaderWrite(.3, Locator{CFI: "epubcfi(/6/2)"}, 0)

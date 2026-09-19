@@ -437,6 +437,8 @@ func (s *Server) routes() (*http.ServeMux, error) {
 	s.route(mux, "POST /kobo/{token}/v1/auth/refresh", db.RoleReader, s.handleKoboAuth)
 	s.route(mux, "GET /kobo/{token}/v1/library/sync", db.RoleReader, s.handleKoboLibrarySync)
 	s.route(mux, "GET /kobo/{token}/v1/library/{id}/metadata", db.RoleReader, s.handleKoboMetadata)
+	s.route(mux, "GET /kobo/{token}/v1/library/{id}/state", db.RoleReader, s.handleKoboReadingState)
+	s.route(mux, "PUT /kobo/{token}/v1/library/{id}/state", db.RoleReader, s.handleKoboReadingStateSave)
 	s.route(mux, "GET /kobo/{token}/{id}/{width}/{height}/{greyscale}/image.jpg", db.RoleReader, s.handleKoboCover)
 	s.route(mux, "GET /kobo/{token}/{id}/{width}/{height}/{quality}/{greyscale}/image.jpg", db.RoleReader, s.handleKoboCover)
 	s.route(mux, "GET /kobo/{token}/download/{id}/{format}", db.RoleReader, s.handleKoboDownload)

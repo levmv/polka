@@ -201,9 +201,14 @@ Use Change shelf to choose another shelf without changing the setup URL. Books
 outside the new shelf are removed on the next sync. Deleting the selected shelf
 also removes its books from Kobo on the next sync; you can select a new shelf in
 Settings. Revoking the connection invalidates its URL and stops syncing, leaving
-books already downloaded to the device in place. Kobo sync does not yet sync
-reading position. Treat its setup URL as a password: use HTTPS or a trusted
-private network.
+books already downloaded to the device in place.
+
+Reading position and read status sync with your polka account. Sync the Kobo
+before switching readers, and again before continuing on the device. Passage
+matching is approximate when moving between readers. Keep the device's clock
+correct so an older offline update does not replace more recent reading.
+
+Treat the setup URL as a password: use HTTPS or a trusted private network.
 
 ### Email delivery
 

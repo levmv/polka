@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"os"
+	"strings"
 
 	"github.com/levmv/polka/internal/db"
 	"github.com/levmv/polka/internal/format"
@@ -10,15 +11,30 @@ import (
 )
 
 func (s *Server) readerPosition(ctx context.Context, userID, assetID int64) (*db.ReaderState, error) {
+	return s.readingPosition(ctx, userID, assetID, coordinateWeb)
+}
+
+type readerCoordinate uint8
+
+const (
+	coordinateWeb readerCoordinate = iota
+	coordinateKOReader
+	coordinateKobo
+)
+
+func (s *Server) readingPosition(ctx context.Context, userID, assetID int64, target readerCoordinate) (*db.ReaderState, error) {
 	for range 2 {
 		state, err := db.GetReaderState(s.db.Read(ctx), userID, assetID)
 		if err != nil {
 			return nil, err
 		}
-		if !state.Locator.IsZero() || state.KOReaderPosition == "" {
+		available := target == coordinateWeb && !state.Locator.IsZero() ||
+			target == coordinateKOReader && state.KOReaderPosition != "" ||
+			target == coordinateKobo && !state.KoboPosition.IsZero()
+		if available || state.Locator.CFI == "" && state.KOReaderPosition == "" && !strings.EqualFold(state.KoboPosition.Type, "KoboSpan") {
 			return state, nil
 		}
-		state, err = s.convertReaderPosition(ctx, state)
+		state, err = s.convertReaderPosition(ctx, state, target)
 		if err != nil || state != nil {
 			return state, err
 		}
@@ -33,56 +49,62 @@ func (s *Server) koReaderState(ctx context.Context, userID, assetID int64, docum
 	if assetID == 0 {
 		return db.GetExternalKOReaderState(s.db.Read(ctx), userID, document)
 	}
-	for range 2 {
-		state, err := db.GetReaderState(s.db.Read(ctx), userID, assetID)
-		if err != nil {
-			return nil, err
-		}
-		if state.Revision == 0 {
-			// Until the first upload adopts it, a newly matched book can still
-			// have its only saved position in the external KOSync fallback.
-			return db.GetExternalKOReaderState(s.db.Read(ctx), userID, document)
-		}
-		if state.KOReaderPosition != "" || state.Locator.CFI == "" {
-			return state.KOReaderState(), nil
-		}
-		state, err = s.convertReaderPosition(ctx, state)
-		if err != nil {
-			return nil, err
-		}
-		if state != nil {
-			return state.KOReaderState(), nil
-		}
+	state, err := s.readingPosition(ctx, userID, assetID, coordinateKOReader)
+	if err != nil {
+		return nil, err
 	}
-	return nil, nil
+	if state.Revision == 0 {
+		// Until the first upload adopts it, a newly matched book can still
+		// have its only saved position in the external KOSync fallback.
+		return db.GetExternalKOReaderState(s.db.Read(ctx), userID, document)
+	}
+	return state.KOReaderState(), nil
 }
 
-// Fill the missing coordinate against the asset's current EPUB, including for
-// older downloads. Leave positions the converter cannot resolve unchanged.
+// Fill the missing coordinate against the asset's current EPUB or KEPUB,
+// including older downloads. Leave unresolved positions unchanged.
 // Callers have already checked access to the asset.
 // A nil result means the reading revision changed; callers may retry.
-func (s *Server) convertReaderPosition(ctx context.Context, state *db.ReaderState) (*db.ReaderState, error) {
+func (s *Server) convertReaderPosition(ctx context.Context, state *db.ReaderState, target readerCoordinate) (*db.ReaderState, error) {
 	file, size, err := s.openPositionSource(ctx, state.AssetID)
 	if err != nil || file == nil {
 		return state, err
 	}
 	defer file.Close()
 	converted := *state
-	if state.Locator.IsZero() {
-		cfi, err := position.KOReaderToCFI(ctx, file, size, state.KOReaderPosition)
-		if err != nil {
-			return state, ctx.Err()
+	if converted.Locator.CFI == "" {
+		var cfi string
+		switch {
+		case state.KOReaderPosition != "":
+			cfi, err = position.KOReaderToCFI(ctx, file, size, state.KOReaderPosition)
+		case strings.EqualFold(state.KoboPosition.Type, "KoboSpan"):
+			cfi, err = position.KEPUBToCFI(ctx, file, size, position.KEPUB{
+				Path: state.KoboPosition.Source, Fragment: state.KoboPosition.Fragment,
+			})
 		}
-		converted.Locator = db.Locator{CFI: cfi}
-	} else {
-		address, err := position.CFIToKOReader(ctx, file, size, state.Locator.CFI)
-		if err != nil {
-			return state, ctx.Err()
+		if err == nil && cfi != "" {
+			converted.Locator = db.Locator{CFI: cfi}
 		}
-		converted.KOReaderPosition = address
+	}
+	if converted.Locator.CFI != "" {
+		switch target {
+		case coordinateKOReader:
+			converted.KOReaderPosition, _ = position.CFIToKOReader(ctx, file, size, converted.Locator.CFI)
+		case coordinateKobo:
+			if pos, err := position.CFIToKEPUB(ctx, file, size, converted.Locator.CFI); err == nil {
+				converted.KoboPosition = db.KoboPosition{Source: pos.Path, Fragment: pos.Fragment,
+					Type: "KoboSpan", ChapterProgressPercent: new(pos.ChapterProgress * 100)}
+			}
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if converted.Locator.Equal(state.Locator) && converted.KOReaderPosition == state.KOReaderPosition && converted.KoboPosition.Equal(state.KoboPosition) {
+		return state, nil
 	}
 	// Retain successful conversions; failures must remain retryable.
-	saved, err := s.db.CachePositionConversion(ctx, state.UserID, state.AssetID, state.Revision, converted.Locator, converted.KOReaderPosition)
+	saved, err := s.db.CachePositionConversion(ctx, &converted)
 	if err != nil || !saved {
 		return nil, err
 	}
@@ -96,7 +118,7 @@ func (s *Server) openPositionSource(ctx context.Context, assetID int64) (*os.Fil
 	if err != nil {
 		return nil, 0, err
 	}
-	if format.FormatFromKey(formatKey) != format.FormatEPUB {
+	if f := format.FormatFromKey(formatKey); f != format.FormatEPUB && f != format.FormatKEPUB {
 		return nil, 0, nil
 	}
 	path, err := s.managedRoot().Resolve(storagePath)

@@ -271,13 +271,14 @@ CREATE TABLE reading_positions (
     user_id           INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     asset_id          INTEGER NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
     koreader_position TEXT NOT NULL DEFAULT '',
-    progress          REAL NOT NULL DEFAULT 0 CHECK (progress >= 0 AND progress <= 1),
+    kobo_position     TEXT NOT NULL DEFAULT '{}',
+    -- NULL is an explicitly cleared position; 0 is the beginning.
+    progress          REAL DEFAULT 0 CHECK (progress >= 0 AND progress <= 1),
     locator           TEXT NOT NULL DEFAULT '{}',
     revision          INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0),
     device_id         TEXT NOT NULL DEFAULT '',
     device_name       TEXT NOT NULL DEFAULT '',
-    -- Time of the saved position, or opening before any position is saved.
-    -- Reset clears it to 0.
+    -- Time of the position change, including reset, or the initial opening.
     updated_at        INTEGER NOT NULL DEFAULT (unixepoch()),
     PRIMARY KEY (user_id, asset_id)
 ) WITHOUT ROWID;
@@ -364,7 +365,7 @@ CREATE TABLE user_book_reading_events (
     previous_event_id INTEGER REFERENCES user_book_reading_events(id) ON DELETE SET NULL,
     from_status  TEXT NOT NULL CHECK (from_status IN ('unread', 'reading', 'finished', 'dropped')),
     to_status    TEXT NOT NULL CHECK (to_status IN ('unread', 'reading', 'finished', 'dropped')),
-    source       TEXT NOT NULL CHECK (source IN ('manual', 'web_reader', 'kosync', 'opds')),
+    source       TEXT NOT NULL CHECK (source IN ('manual', 'web_reader', 'kosync', 'opds', 'kobo')),
     occurred_at  INTEGER NOT NULL DEFAULT (unixepoch()),
     reverted_at  INTEGER,
     CHECK (from_status <> to_status)

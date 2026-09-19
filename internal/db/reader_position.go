@@ -50,5 +50,5 @@ func checkReaderPositionWrite(current *ReaderState, input ReaderPositionWrite) (
 }
 
 func (state *ReaderState) positionIsReset() bool {
-	return state.Revision > 0 && state.Progress == 0 && state.Locator.IsZero() && state.UpdatedAt == 0
+	return state.Revision > 0 && !state.hasProgress
 }

@@ -21,20 +21,22 @@ func TestKEPUBPositions(t *testing.T) {
 	}
 	spans := kepubSpans(t, out.Bytes())
 	const prefix = "epubcfi(/6/4[main]!/4"
+	// The chapter has 31 UTF-16 units, including two for the emoji.
 	for _, tt := range []struct {
 		name, point, start, text string
 		occurrence               int
+		progress                 float64
 	}{
-		{"UTF-16 and CDATA", "/2[a^[1^]]/1:9)", "/2[a^[1^]]/1:7)", "Next ", 0},
-		{"inline", "/2/2/1:2)", "/2[a^[1^]]/2/1:0)", "word", 0},
-		{"table", "/4/2/2/1:4)", "/4/2/2/1:0)", "Repeat.", 0},
-		{"repeated passage", "/6/1:4)", "/6/1:0)", "Repeat.", 1},
-		{"range start", "/2,/1:3,/1:5)", "/2[a^[1^]]/1:0)", "A😀BC. ", 0},
+		{"UTF-16 and CDATA", "/2[a^[1^]]/1:9)", "/2[a^[1^]]/1:7)", "Next ", 0, 9.0 / 31},
+		{"inline", "/2/2/1:2)", "/2[a^[1^]]/2/1:0)", "word", 0, 14.0 / 31},
+		{"table", "/4/2/2/1:4)", "/4/2/2/1:0)", "Repeat.", 0, 21.0 / 31},
+		{"repeated passage", "/6/1:4)", "/6/1:0)", "Repeat.", 1, 28.0 / 31},
+		{"range start", "/2,/1:3,/1:5)", "/2[a^[1^]]/1:0)", "A😀BC. ", 0, 3.0 / 31},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			// Compare to the spans in a complete delivered KEPUB, not a second
 			// copy of the chapter-only mapping algorithm.
-			want := KEPUB{Path: "OPS/chapter.xhtml"}
+			want := KEPUB{Path: "OPS/chapter.xhtml", ChapterProgress: tt.progress}
 			occurrence := 0
 			for _, span := range spans {
 				if span.Text == tt.text {
@@ -80,6 +82,47 @@ func TestKEPUBPositionsDeclineInexactMapping(t *testing.T) {
 				t.Fatal("accepted a position without a matching source text location")
 			}
 		})
+	}
+}
+
+func TestStoredKEPUBPosition(t *testing.T) {
+	src := positionEPUB(t, `<p><span id="publisher.7" class="extra koboSpan">A😀BC.</span></p><p>Next.</p>`)
+	const cfi = "epubcfi(/6/4[main]!/4/2/2[publisher.7]/1:0)"
+	pos := KEPUB{Path: "OPS/chapter.xhtml", Fragment: "publisher.7"}
+	for _, source := range []string{"OPS/chapter.xhtml", "chapter.xhtml", "OPS/%63hapter.xhtml", "OPS/./chapter.xhtml", "./%63hapter.xhtml"} {
+		input := pos
+		input.Path = source
+		got, err := KEPUBToCFI(t.Context(), bytes.NewReader(src), int64(len(src)), input)
+		if err != nil || got != cfi {
+			t.Fatalf("native KEPUB %q to CFI = %q, %v", source, got, err)
+		}
+	}
+	span, err := CFIToKEPUB(t.Context(), bytes.NewReader(src), int64(len(src)), cfi)
+	if err != nil || span != pos {
+		t.Fatalf("CFI to native KEPUB = %+v, %v", span, err)
+	}
+}
+
+func TestKEPUBChapterPathAmbiguity(t *testing.T) {
+	root, chapter := new(cfiNode), new(cfiNode)
+	book := &epubBook{
+		opfPath: "OPS/book.opf",
+		spineByPath: map[string]*cfiNode{
+			"chapter.xhtml":     root,
+			"OPS/chapter.xhtml": chapter,
+		},
+	}
+	for _, tt := range []struct {
+		source string
+		want   *cfiNode
+	}{
+		{"chapter.xhtml", root}, // A literal member name takes precedence.
+		{"./chapter.xhtml", nil},
+		{"%63hapter.xhtml", nil},
+	} {
+		if got := book.kepubSpineRef(tt.source); got != tt.want {
+			t.Errorf("resolve %q = %p; want %p", tt.source, got, tt.want)
+		}
 	}
 }
 
