@@ -7,6 +7,17 @@ import { confirmModal } from '../modal';
 import { showToast } from '../toast';
 import type { Asset, BookSummary, Cleanup, DuplicateGroup } from '../types';
 
+export function renderCleanupPage(): string {
+    return `
+        <div class="page-container cleanup-container">
+            <div class="page-heading-row">
+                <h1>Cleanup</h1>
+            </div>
+            <div id="cleanup-content"></div>
+        </div>
+    `;
+}
+
 export async function initCleanup(root: HTMLElement, signal: AbortSignal) {
     const container = root.querySelector<HTMLElement>('#cleanup-content');
     if (!container) return;

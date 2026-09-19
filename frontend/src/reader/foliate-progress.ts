@@ -1,4 +1,4 @@
-import { clamp } from '../dom';
+import { clampNumber } from '../dom';
 import type { ReaderPosition } from '../types';
 import { showReaderError } from './chrome';
 import type { FoliateRelocateDetail, FoliateTarget, FoliateViewElement } from './foliate-engine';
@@ -44,7 +44,7 @@ function storedLocation(state: ReaderPosition): FoliateTarget | null {
 
 function fractionLocation(state: ReaderPosition | null): FoliateTarget | null {
     if (state && state.progress > 0 && state.progress <= 1) {
-        return { fraction: clampFraction(state.progress) };
+        return { fraction: state.progress };
     }
     return null;
 }
@@ -80,7 +80,7 @@ export function wireFoliatePosition(
 
     const relocateHandler = (event: Event) => {
         const detail = (event as CustomEvent<FoliateRelocateDetail>).detail;
-        const progress = clampFraction(detail.fraction ?? 0);
+        const progress = clampNumber(detail.fraction, 0, 1, 0);
         currentPosition = { progress, locator: { cfi: detail.cfi } };
         scheduleSave(detail, progress);
     };
@@ -117,9 +117,4 @@ export function wireFoliatePosition(
             }
         },
     };
-}
-
-function clampFraction(value: number): number {
-    if (!Number.isFinite(value)) return 0;
-    return clamp(value, 0, 1);
 }

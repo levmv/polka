@@ -68,6 +68,24 @@ func (s *Server) requireAssetAccess(w http.ResponseWriter, r *http.Request, asse
 	return s.requireAccess(w, r, assetID, db.CanAccessAsset)
 }
 
+func (s *Server) requireBookPathAccess(w http.ResponseWriter, r *http.Request, name string) (int64, db.VisibilityScope, bool) {
+	id, ok := pathID(w, r, name)
+	if !ok {
+		return 0, db.VisibilityScope{}, false
+	}
+	scope, ok := s.requireBookAccess(w, r, id)
+	return id, scope, ok
+}
+
+func (s *Server) requireAssetPathAccess(w http.ResponseWriter, r *http.Request, name string) (int64, db.VisibilityScope, bool) {
+	id, ok := pathID(w, r, name)
+	if !ok {
+		return 0, db.VisibilityScope{}, false
+	}
+	scope, ok := s.requireAssetAccess(w, r, id)
+	return id, scope, ok
+}
+
 func pathID(w http.ResponseWriter, r *http.Request, name string) (int64, bool) {
 	id, err := strconv.ParseInt(r.PathValue(name), 10, 64)
 	if err != nil || id <= 0 {

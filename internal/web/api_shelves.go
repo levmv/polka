@@ -2,7 +2,6 @@ package web
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
 
 	"github.com/levmv/polka/internal/db"
@@ -151,11 +150,8 @@ func (s *Server) handleAPIShelfAddBook(w http.ResponseWriter, r *http.Request) {
 	if !validID {
 		return
 	}
-	bookID, validID := pathID(w, r, "bookID")
-	if !validID {
-		return
-	}
-	if _, ok := s.requireBookAccess(w, r, bookID); !ok {
+	bookID, _, ok := s.requireBookPathAccess(w, r, "bookID")
+	if !ok {
 		return
 	}
 	if _, ok := s.requireMutableShelf(w, r, shelfID); !ok {
@@ -173,11 +169,8 @@ func (s *Server) handleAPIShelfRemoveBook(w http.ResponseWriter, r *http.Request
 	if !validID {
 		return
 	}
-	bookID, validID := pathID(w, r, "bookID")
-	if !validID {
-		return
-	}
-	if _, ok := s.requireBookAccess(w, r, bookID); !ok {
+	bookID, _, ok := s.requireBookPathAccess(w, r, "bookID")
+	if !ok {
 		return
 	}
 	if _, ok := s.requireMutableShelf(w, r, shelfID); !ok {
@@ -220,13 +213,8 @@ func (s *Server) handleAPIShelfBulkBooks(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "op must be add or remove", http.StatusBadRequest)
 		return
 	}
-	ids := db.DedupBookIDs(req.IDs)
-	if len(ids) == 0 {
-		http.Error(w, "no book ids provided", http.StatusBadRequest)
-		return
-	}
-	if len(ids) > bulkEditMaxIDs {
-		http.Error(w, fmt.Sprintf("too many books selected (max %d)", bulkEditMaxIDs), http.StatusBadRequest)
+	ids, ok := bulkBookIDs(w, req.IDs)
+	if !ok {
 		return
 	}
 

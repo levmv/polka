@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"log"
 	"net/http"
 
@@ -104,13 +103,8 @@ func (s *Server) handleAPIBulkWriteback(w http.ResponseWriter, r *http.Request) 
 	if !readJSON(w, r, &req) {
 		return
 	}
-	ids := db.DedupBookIDs(req.IDs)
-	if len(ids) == 0 {
-		http.Error(w, "no book ids provided", http.StatusBadRequest)
-		return
-	}
-	if len(ids) > bulkEditMaxIDs {
-		http.Error(w, fmt.Sprintf("too many books selected (max %d)", bulkEditMaxIDs), http.StatusBadRequest)
+	ids, ok := bulkBookIDs(w, req.IDs)
+	if !ok {
 		return
 	}
 

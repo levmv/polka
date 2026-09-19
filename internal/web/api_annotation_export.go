@@ -215,11 +215,7 @@ func (s *Server) handleAPIAnnotationExport(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	bookID, validID := pathID(w, r, "id")
-	if !validID {
-		return
-	}
-	scope, ok := s.requireBookAccess(w, r, bookID)
+	bookID, scope, ok := s.requireBookPathAccess(w, r, "id")
 	if !ok {
 		return
 	}

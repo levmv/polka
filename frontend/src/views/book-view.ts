@@ -19,7 +19,7 @@ import {
 } from '../book-list-context';
 import { notifyCatalogChanged } from '../catalog-events';
 import { coverImgHtml } from '../cover';
-import { escapeHtml, formField, textEl } from '../dom';
+import { clampNumber, escapeHtml, formField, textEl } from '../dom';
 import { errorMessage } from '../errors';
 import { isLibraryPath, readPredecessorURL } from '../history-state';
 import { icon } from '../icons';
@@ -200,6 +200,20 @@ function openDownload(url: string): void {
 // The controller is handed back before the book has arrived: content readiness
 // is view state, not route ownership. Whoever navigates away next can therefore
 // cancel this page's request instead of racing its render.
+export function renderBookPage(): string {
+    return `
+        <div class="back-link">
+            <a href="/" class="page-close" title="Back to Library" aria-label="Back to Library" data-back>${icon('close', 24)}</a>
+        </div>
+        <div id="book-detail-container" class="detail-layout book-loading" aria-busy="true">
+            <div class="book-loading-state loading-state" role="status" aria-live="polite">
+                <span class="spinner" aria-hidden="true"></span>
+                <div class="book-loading-title">Loading book...</div>
+            </div>
+        </div>
+    `;
+}
+
 export function initBookDetail(
     bookId: number,
     root: HTMLElement,
@@ -470,7 +484,7 @@ function renderBookDetail(
     let assetsHtml = '';
     const primaryReadableAsset =
         primaryAsset && isReadableAsset(primaryAsset) ? primaryAsset : null;
-    if (b.assets && b.assets.length > 0) {
+    if (b.assets.length > 0) {
         if (primaryReadableAsset) {
             assetsHtml += `<a href="/read/${escapeHtml(b.id)}" class="action-btn action-btn-primary">${icon('menu_book', 16)}Read</a>`;
         }
@@ -820,8 +834,7 @@ function renderSendBookOptions(
     }
 
     const defaultOption =
-        options.devices.find((option) => option.device.is_default) || options.devices[0] || null;
-    if (!defaultOption) return;
+        options.devices.find((option) => option.device.is_default) || options.devices[0];
 
     const deviceSelect = document.createElement('select');
     deviceSelect.className = 'dialog-input';
@@ -956,7 +969,7 @@ function renderBookReaderProgress(container: HTMLElement, book: Book, assetID: n
 }
 
 function updateBookReaderProgress(progressEl: HTMLElement, state: ReaderProgress): void {
-    const progress = clampProgress(state.progress ?? 0);
+    const progress = clampNumber(state.progress, 0, 1, 0);
     const label = progressEl.querySelector<HTMLElement>('[data-reading-status-label]');
     const status = state.reading_status.status;
     if (label) {
@@ -1057,11 +1070,6 @@ async function resetBookReaderPosition(container: HTMLElement, asset: Asset): Pr
     } catch (err) {
         showToast(errorMessage(err, 'Failed to reset reading position'), { type: 'error' });
     }
-}
-
-function clampProgress(progress: number): number {
-    if (!Number.isFinite(progress)) return 0;
-    return Math.max(0, Math.min(1, progress));
 }
 
 async function writeBookMetadata(

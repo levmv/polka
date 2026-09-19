@@ -25,11 +25,8 @@ type TrashedBookDTO struct {
 // so readers cannot do it; the physical files stay untouched until admin purge.
 func (s *Server) handleAPIBookDelete(w http.ResponseWriter, r *http.Request) {
 	u := contextUser(r.Context())
-	bookID, validID := pathID(w, r, "id")
-	if !validID {
-		return
-	}
-	if _, ok := s.requireBookAccess(w, r, bookID); !ok {
+	bookID, _, ok := s.requireBookPathAccess(w, r, "id")
+	if !ok {
 		return
 	}
 	if err := db.SoftDeleteBook(s.db.Write(r.Context()), bookID, u.ID); err != nil {

@@ -48,7 +48,7 @@ export type Retention =
     // Default: the relationship is over and anything retained is destroyed.
     | { mode: 'release' };
 
-export type RouteMountResult = undefined | RouteCleanup | RouteController;
+export type RouteMountResult = void | RouteCleanup | RouteController;
 
 export interface RouteMountContext {
     // False for the mount that happens as the document loads. The browser

@@ -30,11 +30,7 @@ type pageCountRetry struct {
 // The storage slot excludes file replacement; reading the asset after acquiring
 // it also lets concurrent requests reuse a count that has just been stored.
 func (s *Server) handleAPIBookPageCount(w http.ResponseWriter, r *http.Request) {
-	bookID, ok := pathID(w, r, "id")
-	if !ok {
-		return
-	}
-	scope, ok := s.requireBookAccess(w, r, bookID)
+	bookID, scope, ok := s.requireBookPathAccess(w, r, "id")
 	if !ok {
 		return
 	}

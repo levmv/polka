@@ -17,6 +17,7 @@ import (
 
 	"github.com/levmv/polka/internal/db"
 	"github.com/levmv/polka/internal/storage"
+	"github.com/levmv/polka/internal/testfixture"
 )
 
 func TestAPIImportUploadImportsAndDuplicates(t *testing.T) {
@@ -421,24 +422,14 @@ func testFB2ZipUpload(t *testing.T) []byte {
 
 func testEPUB(t *testing.T, title, creator, fileAs string) []byte {
 	t.Helper()
-	buf := new(bytes.Buffer)
-	w := zip.NewWriter(buf)
-	f0, _ := w.CreateHeader(&zip.FileHeader{Name: "mimetype", Method: zip.Store})
-	f0.Write([]byte("application/epub+zip"))
-	f1, _ := w.Create("META-INF/container.xml")
-	f1.Write([]byte(`<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`))
 	esc := func(s string) string {
 		var b bytes.Buffer
 		xml.EscapeText(&b, []byte(s))
 		return b.String()
 	}
-	f2, _ := w.Create("OEBPS/content.opf")
-	f2.Write([]byte(`<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="2.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
+	opf := []byte(`<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="2.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
 		<dc:title>` + esc(title) + `</dc:title>
 		<dc:creator opf:file-as="` + esc(fileAs) + `">` + esc(creator) + `</dc:creator>
-	</metadata></package>`))
-	if err := w.Close(); err != nil {
-		t.Fatalf("close epub: %v", err)
-	}
-	return buf.Bytes()
+	</metadata></package>`)
+	return testfixture.EPUB(t, opf, nil)
 }

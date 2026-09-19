@@ -50,7 +50,7 @@ type rebuildOPFDoc struct {
 		} `xml:"meta"`
 	} `xml:"metadata"`
 	Manifest struct {
-		Items []kepubManifestItem `xml:"item"`
+		Items []epubManifestItem `xml:"item"`
 	} `xml:"manifest"`
 	Spine struct {
 		TOC     string `xml:"toc,attr"`
@@ -141,7 +141,7 @@ func rebuildEPUB(ctx context.Context, w io.Writer, src io.ReaderAt, size int64) 
 	}
 	manifestEntries := make(map[*zip.File]bool, len(manifestPaths))
 	for manifestPath := range manifestPaths {
-		file, err := kepubZipFile(zr, manifestPath)
+		file, err := epubZipFile(zr, manifestPath)
 		if err != nil {
 			return fmt.Errorf("resolve EPUB manifest resource %s: %w", manifestPath, err)
 		}
@@ -251,12 +251,12 @@ func readRebuildPackage(ctx context.Context, zr *zip.Reader) (rebuildPackage, er
 					if requireStandardMediaType && !standard {
 						continue
 					}
-					requested := cleanKEPUBHref("", rootfile.FullPath)
+					requested := cleanEPUBHref("", rootfile.FullPath)
 					if requested == "" || seen[requested] {
 						continue
 					}
 					seen[requested] = true
-					file, err := kepubZipFile(zr, requested)
+					file, err := epubZipFile(zr, requested)
 					if err != nil {
 						if declaredErr == nil {
 							declaredErr = fmt.Errorf("resolve EPUB OPF %s: %w", requested, err)
@@ -354,7 +354,7 @@ func readRebuildCandidate(ctx context.Context, zr *zip.Reader, file *zip.File) (
 	manifestPaths := make(map[string]string, len(doc.Manifest.Items))
 	for _, item := range doc.Manifest.Items {
 		if id := strings.TrimSpace(item.ID); id != "" {
-			if itemPath := cleanKEPUBHref(file.Name, item.Href); itemPath != "" {
+			if itemPath := cleanEPUBHref(file.Name, item.Href); itemPath != "" {
 				manifestPaths[id] = itemPath
 			}
 		}
@@ -365,7 +365,7 @@ func readRebuildCandidate(ctx context.Context, zr *zip.Reader, file *zip.File) (
 		if itemPath == "" {
 			continue
 		}
-		entry, err := kepubZipFile(zr, itemPath)
+		entry, err := epubZipFile(zr, itemPath)
 		if err != nil {
 			return rebuildCandidate{}, fmt.Errorf("resolve EPUB spine item %s: %w", itemPath, err)
 		}
@@ -498,7 +498,6 @@ func writeRebuildEntry(zw *zip.Writer, name string, data []byte, method uint16) 
 
 func writeRebuildSourceEntry(ctx context.Context, zw *zip.Writer, file *zip.File, packageEntry bool) error {
 	header := file.FileHeader
-	header.Name = file.Name
 	if packageEntry && utf8.ValidString(header.Name) && utf8.ValidString(header.Comment) {
 		header.NonUTF8 = false
 	}

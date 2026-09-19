@@ -14,6 +14,19 @@ interface AuthorsViewState {
     destroyed: boolean;
 }
 
+export function renderAuthorsPage(): string {
+    return `
+        <div class="page-container authors-container">
+            <div class="page-heading-row">
+                <h1>Authors</h1>
+            </div>
+            <p class="authors-intro">Rename or merge authors, or override how a name sorts. Changes relocate the affected books' files automatically.</p>
+            <div id="authors-status" class="authors-status" hidden></div>
+            <div id="authors-content"></div>
+        </div>
+    `;
+}
+
 export async function initAuthors(root: HTMLElement, signal: AbortSignal) {
     const container = root.querySelector<HTMLElement>('#authors-content');
     if (!container) return;

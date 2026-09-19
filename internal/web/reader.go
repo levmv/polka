@@ -81,11 +81,8 @@ func (s *Server) handleRead(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleReadAssetPage(w http.ResponseWriter, r *http.Request) {
-	assetID, validID := pathID(w, r, "id")
-	if !validID {
-		return
-	}
-	if _, ok := s.requireAssetAccess(w, r, assetID); !ok {
+	assetID, _, ok := s.requireAssetPathAccess(w, r, "id")
+	if !ok {
 		return
 	}
 	asset, err := s.assetFile(r.Context(), assetID)
@@ -211,11 +208,8 @@ const readerContentSecurityPolicy = "default-src 'self'; script-src 'self'; " +
 	"base-uri 'self'; form-action 'self'"
 
 func (s *Server) handleReadAsset(w http.ResponseWriter, r *http.Request) {
-	assetID, validID := pathID(w, r, "id")
-	if !validID {
-		return
-	}
-	if _, ok := s.requireAssetAccess(w, r, assetID); !ok {
+	assetID, _, ok := s.requireAssetPathAccess(w, r, "id")
+	if !ok {
 		return
 	}
 
@@ -244,16 +238,11 @@ func (s *Server) handleReadAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fullPath, err := s.managedRoot().Resolve(asset.StoragePath)
-	if err != nil {
-		serverError(w, r, err)
-		return
-	}
 	if asset.Format == format.FormatFB2 {
-		s.serveFB2ReadAsset(w, r, asset, fullPath)
+		s.serveFB2ReadAsset(w, r, asset)
 		return
 	}
-	f, err := os.Open(fullPath)
+	f, err := s.openAssetSource(asset)
 	if err != nil {
 		if os.IsNotExist(err) {
 			http.NotFound(w, r)
@@ -277,8 +266,8 @@ func (s *Server) handleReadAsset(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, asset.Filename, info.ModTime(), f)
 }
 
-func (s *Server) serveFB2ReadAsset(w http.ResponseWriter, r *http.Request, asset assetFileRow, fullPath string) {
-	f, err := os.Open(fullPath)
+func (s *Server) serveFB2ReadAsset(w http.ResponseWriter, r *http.Request, asset assetFileRow) {
+	f, err := s.openAssetSource(asset)
 	if os.IsNotExist(err) {
 		http.Error(w, "File not found on disk", http.StatusNotFound)
 		return

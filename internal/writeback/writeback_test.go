@@ -1,7 +1,6 @@
 package writeback
 
 import (
-	"archive/zip"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -21,6 +20,7 @@ import (
 	"github.com/levmv/polka/internal/db"
 	"github.com/levmv/polka/internal/format"
 	"github.com/levmv/polka/internal/storage"
+	"github.com/levmv/polka/internal/testfixture"
 )
 
 func TestRunWritesDirtyEPUBAndUpdatesAssetIdentity(t *testing.T) {
@@ -610,47 +610,15 @@ func TestRunDryRunDoesNotTouchFiles(t *testing.T) {
 
 func setupWritebackEPUB(t *testing.T, title, author string) (*db.DB, storage.Root, int64, string) {
 	t.Helper()
-	dataDir := t.TempDir()
-	database, err := db.InitPath(filepath.Join(dataDir, "library.db"))
-	if err != nil {
-		t.Fatalf("InitPath: %v", err)
-	}
-	root := storage.NewRoot(filepath.Join(dataDir, "books"))
-	if err := storage.EnsureLayout(root); err != nil {
-		t.Fatalf("EnsureLayout: %v", err)
-	}
-
-	assetID := int64(1)
-	relPath := "A/Author/Book [a1].epub"
-	src := testWritebackEPUBBytes(t, title, author)
-	if err := os.MkdirAll(filepath.Dir(root.Abs(relPath)), 0o755); err != nil {
-		t.Fatalf("mkdir book dir: %v", err)
-	}
-	if err := os.WriteFile(root.Abs(relPath), src, 0o644); err != nil {
-		t.Fatalf("write source epub: %v", err)
-	}
-
-	if _, err := database.Write(t.Context()).Exec("INSERT INTO books (id, title, sort_title) VALUES (1, ?, ?)", title, title); err != nil {
-		t.Fatalf("insert book: %v", err)
-	}
-	if _, err := database.Write(t.Context()).Exec("INSERT INTO authors (id, name, sort_name) VALUES (1, ?, ?)", author, author); err != nil {
-		t.Fatalf("insert author: %v", err)
-	}
-	if _, err := database.Write(t.Context()).Exec("INSERT INTO book_authors (book_id, author_id, role, author_order) VALUES (1, 1, 'aut', 0)"); err != nil {
-		t.Fatalf("insert book author: %v", err)
-	}
-	if _, err := database.Write(t.Context()).Exec(`
-		INSERT INTO assets
-			(id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_sha256, current_sha256, original_size, current_size)
-		VALUES
-			(?, 1, ?, 'Book.epub', '.epub', 'epub', 1, 1, ?, ?, ?, ?)
-	`, assetID, relPath, sha256ForTest(src), sha256ForTest(src), len(src), len(src)); err != nil {
-		t.Fatalf("insert asset: %v", err)
-	}
-	return database, root, assetID, relPath
+	return setupWritebackBook(t, title, author, "epub", testWritebackEPUBBytes(t, title, author))
 }
 
 func setupWritebackFB2(t *testing.T, title, author string) (*db.DB, storage.Root, int64, string) {
+	t.Helper()
+	return setupWritebackBook(t, title, author, "fb2", testWritebackFB2Bytes(t, title, author))
+}
+
+func setupWritebackBook(t *testing.T, title, author, formatKey string, src []byte) (*db.DB, storage.Root, int64, string) {
 	t.Helper()
 	dataDir := t.TempDir()
 	database, err := db.InitPath(filepath.Join(dataDir, "library.db"))
@@ -663,13 +631,13 @@ func setupWritebackFB2(t *testing.T, title, author string) (*db.DB, storage.Root
 	}
 
 	assetID := int64(1)
-	relPath := "A/Author/Book [a1].fb2"
-	src := testWritebackFB2Bytes(t, title, author)
+	filename := "Book." + formatKey
+	relPath := "A/Author/Book [a1]." + formatKey
 	if err := os.MkdirAll(filepath.Dir(root.Abs(relPath)), 0o755); err != nil {
 		t.Fatalf("mkdir book dir: %v", err)
 	}
 	if err := os.WriteFile(root.Abs(relPath), src, 0o644); err != nil {
-		t.Fatalf("write source fb2: %v", err)
+		t.Fatalf("write source book: %v", err)
 	}
 
 	if _, err := database.Write(t.Context()).Exec("INSERT INTO books (id, title, sort_title) VALUES (1, ?, ?)", title, title); err != nil {
@@ -685,8 +653,8 @@ func setupWritebackFB2(t *testing.T, title, author string) (*db.DB, storage.Root
 		INSERT INTO assets
 			(id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_sha256, current_sha256, original_size, current_size)
 		VALUES
-			(?, 1, ?, 'Book.fb2', '.fb2', 'fb2', 1, 1, ?, ?, ?, ?)
-	`, assetID, relPath, sha256ForTest(src), sha256ForTest(src), len(src), len(src)); err != nil {
+			(?, 1, ?, ?, ?, ?, 1, 1, ?, ?, ?, ?)
+	`, assetID, relPath, filename, "."+formatKey, formatKey, sha256ForTest(src), sha256ForTest(src), len(src), len(src)); err != nil {
 		t.Fatalf("insert asset: %v", err)
 	}
 	return database, root, assetID, relPath
@@ -694,101 +662,35 @@ func setupWritebackFB2(t *testing.T, title, author string) (*db.DB, storage.Root
 
 func testWritebackEPUBBytes(t *testing.T, title, creator string) []byte {
 	t.Helper()
-	buf := new(bytes.Buffer)
-	zw := zip.NewWriter(buf)
-	mimetype, err := zw.CreateHeader(&zip.FileHeader{Name: "mimetype", Method: zip.Store})
-	if err != nil {
-		t.Fatalf("create mimetype: %v", err)
-	}
-	if _, err := mimetype.Write([]byte("application/epub+zip")); err != nil {
-		t.Fatalf("write mimetype: %v", err)
-	}
-	container, err := zw.Create("META-INF/container.xml")
-	if err != nil {
-		t.Fatalf("create container: %v", err)
-	}
-	if _, err := container.Write([]byte(`<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`)); err != nil {
-		t.Fatalf("write container: %v", err)
-	}
-	opf, err := zw.Create("OEBPS/content.opf")
-	if err != nil {
-		t.Fatalf("create opf: %v", err)
-	}
-	esc := func(s string) string {
-		var b bytes.Buffer
-		if err := xml.EscapeText(&b, []byte(s)); err != nil {
-			t.Fatalf("escape: %v", err)
-		}
-		return b.String()
-	}
-	if _, err := opf.Write([]byte(`<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf"><dc:title>` + esc(title) + `</dc:title><dc:creator opf:role="aut">` + esc(creator) + `</dc:creator></metadata></package>`)); err != nil {
-		t.Fatalf("write opf: %v", err)
-	}
-	if err := zw.Close(); err != nil {
-		t.Fatalf("close epub: %v", err)
-	}
-	return buf.Bytes()
+	title, creator = writebackXMLText(t, title), writebackXMLText(t, creator)
+	opf := []byte(`<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf"><dc:title>` + title + `</dc:title><dc:creator opf:role="aut">` + creator + `</dc:creator></metadata></package>`)
+	return testfixture.EPUB(t, opf, nil)
 }
 
 func testWritebackFB2Bytes(t *testing.T, title, creator string) []byte {
 	t.Helper()
-	esc := func(s string) string {
-		var b bytes.Buffer
-		if err := xml.EscapeText(&b, []byte(s)); err != nil {
-			t.Fatalf("escape: %v", err)
-		}
-		return b.String()
-	}
+	title, creator = writebackXMLText(t, title), writebackXMLText(t, creator)
 	return []byte(`<?xml version="1.0" encoding="utf-8"?>
 <FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0">
-<description><title-info><author><first-name>` + esc(creator) + `</first-name></author><book-title>` + esc(title) + `</book-title><lang>en</lang></title-info></description>
+<description><title-info><author><first-name>` + creator + `</first-name></author><book-title>` + title + `</book-title><lang>en</lang></title-info></description>
 <body><section><p>Hello.</p></section></body>
 </FictionBook>`)
 }
 
 func testWritebackEPUBBytesWithCover(t *testing.T, title, creator string, cover []byte) []byte {
 	t.Helper()
-	buf := new(bytes.Buffer)
-	zw := zip.NewWriter(buf)
-	mimetype, err := zw.CreateHeader(&zip.FileHeader{Name: "mimetype", Method: zip.Store})
-	if err != nil {
-		t.Fatalf("create mimetype: %v", err)
+	title, creator = writebackXMLText(t, title), writebackXMLText(t, creator)
+	opf := []byte(`<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf"><dc:title>` + title + `</dc:title><dc:creator opf:role="aut">` + creator + `</dc:creator><meta name="cover" content="cover-image"/></metadata><manifest><item id="cover-image" href="images/cover.png" media-type="image/png" properties="cover-image"/></manifest></package>`)
+	return testfixture.EPUB(t, opf, map[string][]byte{"OEBPS/images/cover.png": cover})
+}
+
+func writebackXMLText(t *testing.T, value string) string {
+	t.Helper()
+	var escaped bytes.Buffer
+	if err := xml.EscapeText(&escaped, []byte(value)); err != nil {
+		t.Fatalf("escape XML: %v", err)
 	}
-	if _, err := mimetype.Write([]byte("application/epub+zip")); err != nil {
-		t.Fatalf("write mimetype: %v", err)
-	}
-	container, err := zw.Create("META-INF/container.xml")
-	if err != nil {
-		t.Fatalf("create container: %v", err)
-	}
-	if _, err := container.Write([]byte(`<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`)); err != nil {
-		t.Fatalf("write container: %v", err)
-	}
-	opf, err := zw.Create("OEBPS/content.opf")
-	if err != nil {
-		t.Fatalf("create opf: %v", err)
-	}
-	esc := func(s string) string {
-		var b bytes.Buffer
-		if err := xml.EscapeText(&b, []byte(s)); err != nil {
-			t.Fatalf("escape: %v", err)
-		}
-		return b.String()
-	}
-	if _, err := opf.Write([]byte(`<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf"><dc:title>` + esc(title) + `</dc:title><dc:creator opf:role="aut">` + esc(creator) + `</dc:creator><meta name="cover" content="cover-image"/></metadata><manifest><item id="cover-image" href="images/cover.png" media-type="image/png" properties="cover-image"/></manifest></package>`)); err != nil {
-		t.Fatalf("write opf: %v", err)
-	}
-	coverEntry, err := zw.Create("OEBPS/images/cover.png")
-	if err != nil {
-		t.Fatalf("create cover: %v", err)
-	}
-	if _, err := coverEntry.Write(cover); err != nil {
-		t.Fatalf("write cover: %v", err)
-	}
-	if err := zw.Close(); err != nil {
-		t.Fatalf("close epub: %v", err)
-	}
-	return buf.Bytes()
+	return escaped.String()
 }
 
 func testWritebackPNG(t *testing.T, c color.Color) []byte {

@@ -1,5 +1,6 @@
 import { fetchContinueReading } from '../api';
 import { coverUrl } from '../cover';
+import { clampNumber } from '../dom';
 import { loadPersonalSettings } from '../settings/state';
 import type { ContinueReadingItem } from '../types';
 
@@ -111,7 +112,7 @@ function createCard(item: ContinueReadingItem): HTMLElement {
     link.className = 'continue-reading-card';
     // ?from= so the reader closes back to this rail, not to the book's page.
     link.href = `/read/asset/${encodeURIComponent(item.asset_id)}?from=library`;
-    const progressPercent = Math.round(clampProgress(item.progress) * 100);
+    const progressPercent = Math.round(clampNumber(item.progress, 0, 1, 0) * 100);
     link.setAttribute(
         'aria-label',
         `Continue reading ${item.title}, ${progressLabel(progressPercent)}`,
@@ -148,11 +149,6 @@ function createCard(item: ContinueReadingItem): HTMLElement {
     info.append(title, authors, bar);
     link.append(coverSlot, info);
     return link;
-}
-
-function clampProgress(progress: number): number {
-    if (!Number.isFinite(progress)) return 0;
-    return Math.max(0, Math.min(1, progress));
 }
 
 function progressLabel(progressPercent: number): string {

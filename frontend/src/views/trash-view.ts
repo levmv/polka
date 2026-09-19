@@ -6,6 +6,18 @@ import { confirmModal } from '../modal';
 import { showToast } from '../toast';
 import type { TrashedBook } from '../types';
 
+export function renderTrashPage(): string {
+    return `
+        <div class="page-container trash-container">
+            <div class="page-heading-row">
+                <h1>Trash</h1>
+            </div>
+            <p class="trash-intro">Removed books are kept here and stay out of the library and search. Restore one to bring it back. Permanent deletion is admin-only.</p>
+            <div id="trash-content"></div>
+        </div>
+    `;
+}
+
 export async function initTrash(root: HTMLElement, signal: AbortSignal): Promise<void> {
     const container = root.querySelector<HTMLElement>('#trash-content');
     if (!container) return;
@@ -86,9 +98,9 @@ function createTrashCard(container: HTMLElement, b: TrashedBook, isAdmin: boolea
         <div class="trash-card-cover">
             <img src="${coverUrl(b.id, b.cover_version, 'thumb')}" loading="lazy" draggable="false" class="book-cover-image" alt="">
         </div>
-        <div class="book-info">
-            <h3 class="book-title">${escapeHtml(b.title)}</h3>
-            <p class="book-authors">${escapeHtml(b.authors_display)}</p>
+        <div class="trash-card-info">
+            <h3 class="trash-card-title">${escapeHtml(b.title)}</h3>
+            <p class="trash-card-authors">${escapeHtml(b.authors_display)}</p>
             <p class="trash-card-meta">${escapeHtml(meta)}</p>
             <div class="trash-card-actions">
                 <button class="btn-restore" type="button">Restore</button>

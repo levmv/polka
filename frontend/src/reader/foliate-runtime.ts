@@ -20,19 +20,19 @@ import {
     wireCurrentFoliateDocuments,
     wireFoliateDocumentStyling,
 } from './foliate-engine';
+import { createReaderPagination } from './foliate-pagination';
+import { restoreFoliatePosition, wireFoliatePosition } from './foliate-progress';
+import { wireReaderSearch } from './foliate-search';
 import { wireFoliateSelection } from './foliate-selection';
+import { wireReaderTOC } from './foliate-toc';
 import { wireReaderLifecycle } from './lifecycle';
-import { createReaderPagination } from './pagination';
 import { createPositionSaver } from './position-saver';
 import {
     DEFAULT_READER_PREFERENCES,
     normalizeReaderPreferences,
     wireReaderPreferences,
 } from './preferences';
-import { restoreFoliatePosition, wireFoliatePosition } from './progress';
 import { handleReadingStatusChange } from './reading-status';
-import { wireReaderSearch } from './search';
-import { wireReaderTOC } from './toc';
 
 export function initReader(): void {
     const page = document.querySelector<HTMLElement>('.reader-page');

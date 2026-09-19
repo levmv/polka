@@ -26,7 +26,8 @@ func ExtractAZW4PDFContext(ctx context.Context, w io.Writer, r io.ReaderAt, size
 	if err != nil {
 		return err
 	}
-	return copyContext(ctx, w, io.NewSectionReader(r, start, end-start))
+	_, err = io.Copy(w, contextReader{ctx: ctx, r: io.NewSectionReader(r, start, end-start)})
+	return err
 }
 
 // HasAZW4PDF reports whether an AZW4-like container has a bounded embedded PDF

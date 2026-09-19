@@ -117,12 +117,7 @@ func CountUsers(queryer Queryer) (int, error) {
 }
 
 func ValidRole(role string) bool {
-	switch role {
-	case RoleAdmin, RoleMember, RoleReader:
-		return true
-	default:
-		return false
-	}
+	return RoleRank(role) > 0
 }
 
 func RoleRank(role string) int {
@@ -139,10 +134,8 @@ func RoleRank(role string) int {
 }
 
 func RoleAtLeast(role, minRole string) bool {
-	if !ValidRole(role) || !ValidRole(minRole) {
-		return false
-	}
-	return RoleRank(role) >= RoleRank(minRole)
+	minRank := RoleRank(minRole)
+	return minRank > 0 && RoleRank(role) >= minRank
 }
 
 func validContentScope(scope string) bool {

@@ -1,4 +1,4 @@
-package web
+package opds
 
 import (
 	"net"

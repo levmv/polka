@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/levmv/polka/internal/testfixture"
 )
 
 func TestRunContextCancelsConvertAndCleansOutput(t *testing.T) {
@@ -35,9 +37,7 @@ func TestRunConvertEPUBToKEPUB(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "book.epub")
 	dst := filepath.Join(dir, "book.kepub.epub")
-	if err := writeCLIEPUB(src, "Kobo CLI Book", "CLI body."); err != nil {
-		t.Fatalf("write source: %v", err)
-	}
+	writeCLIEPUB(t, src, "Kobo CLI Book", "CLI body.")
 
 	if err := RunContext(t.Context(), []string{"convert", "--to", ".kepub", src, dst}); err != nil {
 		t.Fatalf("RunContext: %v", err)
@@ -80,40 +80,18 @@ func cliZipEntry(t *testing.T, data []byte, name string) string {
 	return ""
 }
 
-func writeCLIEPUB(path, title, body string) error {
-	var buf bytes.Buffer
-	zw := zip.NewWriter(&buf)
-	w, err := zw.CreateHeader(&zip.FileHeader{Name: "mimetype", Method: zip.Store})
-	if err != nil {
-		return err
-	}
-	if _, err := w.Write([]byte("application/epub+zip")); err != nil {
-		return err
-	}
-	for name, content := range map[string]string{
-		"META-INF/container.xml": `<?xml version="1.0" encoding="UTF-8"?>
-<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
-  <rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles>
-</container>`,
-		"OEBPS/content.opf": `<?xml version="1.0" encoding="UTF-8"?>
+func writeCLIEPUB(t *testing.T, path, title, body string) {
+	t.Helper()
+	opf := []byte(`<?xml version="1.0" encoding="UTF-8"?>
 <package version="3.0" xmlns="http://www.idpf.org/2007/opf">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>` + title + `</dc:title><dc:language>en</dc:language></metadata>
   <manifest><item id="text" href="text.xhtml" media-type="application/xhtml+xml"/></manifest>
   <spine><itemref idref="text"/></spine>
-</package>`,
-		"OEBPS/text.xhtml": `<?xml version="1.0" encoding="UTF-8"?>
-<html xmlns="http://www.w3.org/1999/xhtml"><head><title>` + title + `</title></head><body><p>` + body + `</p></body></html>`,
-	} {
-		w, err := zw.Create(name)
-		if err != nil {
-			return err
-		}
-		if _, err := w.Write([]byte(content)); err != nil {
-			return err
-		}
+</package>`)
+	content := []byte(`<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml"><head><title>` + title + `</title></head><body><p>` + body + `</p></body></html>`)
+	data := testfixture.EPUB(t, opf, map[string][]byte{"OEBPS/text.xhtml": content})
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("write epub: %v", err)
 	}
-	if err := zw.Close(); err != nil {
-		return err
-	}
-	return os.WriteFile(path, buf.Bytes(), 0o644)
 }

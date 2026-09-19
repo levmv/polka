@@ -17,6 +17,7 @@ import (
 	"github.com/levmv/polka/internal/fsprofile"
 	"github.com/levmv/polka/internal/ingest"
 	"github.com/levmv/polka/internal/metalookup"
+	"github.com/levmv/polka/internal/opds"
 	"github.com/levmv/polka/internal/pdfcover"
 	"github.com/levmv/polka/internal/storage"
 	"github.com/levmv/polka/internal/workslot"
@@ -230,7 +231,7 @@ func Serve(ctx context.Context, cfg Config) error {
 		return fmt.Errorf("listen on %s: %w", server.Addr, err)
 	}
 	log.Printf("Server listening on http://%s (data: %s)", listener.Addr(), cfg.DataDir)
-	discovery, err := startOPDSDiscovery(listener)
+	discovery, err := opds.StartDiscovery(listener)
 	if err != nil {
 		log.Printf("WARNING: OPDS local discovery unavailable: %v", err)
 	} else if discovery != nil {
@@ -320,6 +321,17 @@ func (s *Server) managedRoot() storage.Root {
 // possibly-absent managed root.
 func (s *Server) dataRoot() storage.Root {
 	return storage.NewRoot(s.dataDir)
+}
+
+// acquireStorageWorkSlot serializes a DB-first storage mutation as one unit,
+// including its transaction and post-commit filesystem maintenance. Holding the
+// process-wide slot across both phases prevents imports, relayout, cover writes,
+// and write-back from racing through an intermediate DB/disk state.
+func (s *Server) acquireStorageWorkSlot(ctx context.Context) (func(), error) {
+	if s.storageQueue == nil {
+		return func() {}, nil
+	}
+	return s.storageQueue.Acquire(ctx)
 }
 
 func (s *Server) configureIngest(cfg ingest.Config) error {

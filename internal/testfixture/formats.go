@@ -1,6 +1,39 @@
 package testfixture
 
-import "encoding/binary"
+import (
+	"archive/zip"
+	"bytes"
+	"encoding/binary"
+	"testing"
+)
+
+// EPUB packages a literal OPF at OEBPS/content.opf and optional archive entries.
+// It supplies only ZIP/container boilerplate; callers own the book contents.
+func EPUB(t testing.TB, opf []byte, entries map[string][]byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	w := zip.NewWriter(&buf)
+	write := func(name string, data []byte, method uint16) {
+		t.Helper()
+		entry, err := w.CreateHeader(&zip.FileHeader{Name: name, Method: method})
+		if err != nil {
+			t.Fatalf("create EPUB entry %q: %v", name, err)
+		}
+		if _, err := entry.Write(data); err != nil {
+			t.Fatalf("write EPUB entry %q: %v", name, err)
+		}
+	}
+	write("mimetype", []byte("application/epub+zip"), zip.Store)
+	write("META-INF/container.xml", []byte(`<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`), zip.Deflate)
+	write("OEBPS/content.opf", opf, zip.Deflate)
+	for name, data := range entries {
+		write(name, data, zip.Deflate)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("close EPUB: %v", err)
+	}
+	return buf.Bytes()
+}
 
 // MinimalMOBI returns the smallest PalmDB/MOBI structure used by format
 // detection tests. It contains no book content or metadata.

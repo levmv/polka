@@ -222,11 +222,11 @@ func removeMissingPresentationReferences(zr *zip.Reader, opfPath string, raw []b
 		if id == "" || idCounts[id] != 1 || spineIDs[id] || !rebuildPresentationResourceMediaType(item.MediaType) {
 			continue
 		}
-		itemPath := cleanKEPUBHref(opfPath, item.Href)
+		itemPath := cleanEPUBHref(opfPath, item.Href)
 		if itemPath == "" {
 			continue
 		}
-		file, err := kepubZipFile(zr, itemPath)
+		file, err := epubZipFile(zr, itemPath)
 		if err != nil {
 			return nil, nil, fmt.Errorf("resolve EPUB presentation resource %s: %w", itemPath, err)
 		}
@@ -299,22 +299,22 @@ func removeLegacyPageMapPointer(ctx context.Context, zr *zip.Reader, opfPath str
 		if strings.TrimSpace(item.ID) == pageMapID {
 			pageMapMatches++
 			if strings.EqualFold(strings.TrimSpace(item.MediaType), rebuildLegacyPageMapMediaType) {
-				pageMapPath = cleanKEPUBHref(opfPath, item.Href)
+				pageMapPath = cleanEPUBHref(opfPath, item.Href)
 			}
 		}
 		if containsKEPUBToken(item.Properties, "nav") && strings.EqualFold(strings.TrimSpace(item.MediaType), "application/xhtml+xml") {
 			navMatches++
-			navPath = cleanKEPUBHref(opfPath, item.Href)
+			navPath = cleanEPUBHref(opfPath, item.Href)
 		}
 	}
 	if pageMapMatches != 1 || pageMapPath == "" || navMatches != 1 || navPath == "" {
 		return raw, nil
 	}
-	pageMapFile, err := kepubZipFile(zr, pageMapPath)
+	pageMapFile, err := epubZipFile(zr, pageMapPath)
 	if err != nil {
 		return nil, fmt.Errorf("resolve EPUB legacy page-map %s: %w", pageMapPath, err)
 	}
-	navFile, err := kepubZipFile(zr, navPath)
+	navFile, err := epubZipFile(zr, navPath)
 	if err != nil {
 		return nil, fmt.Errorf("resolve EPUB page-list navigation %s: %w", navPath, err)
 	}
@@ -369,7 +369,7 @@ func classifyRebuildContent(opfPath string, raw []byte) (map[string]bool, string
 		if !strings.EqualFold(strings.TrimSpace(item.MediaType), "application/xhtml+xml") {
 			continue
 		}
-		candidate := cleanKEPUBHref(opfPath, item.Href)
+		candidate := cleanEPUBHref(opfPath, item.Href)
 		if candidate == "" {
 			continue
 		}
@@ -406,7 +406,7 @@ func addMissingSVGProperties(opfPath string, raw []byte, inlineSVGDocuments map[
 		if !strings.EqualFold(strings.TrimSpace(rebuildXMLAttr(node.Attrs, "media-type")), "application/xhtml+xml") {
 			return
 		}
-		itemPath := cleanKEPUBHref(opfPath, rebuildXMLAttr(node.Attrs, "href"))
+		itemPath := cleanEPUBHref(opfPath, rebuildXMLAttr(node.Attrs, "href"))
 		if itemPath == "" || !inlineSVGDocuments[itemPath] {
 			return
 		}
@@ -471,7 +471,7 @@ func normalizeVendorImageGuide(opfPath string, raw []byte) []byte {
 		if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(item.MediaType)), "image/") {
 			continue
 		}
-		itemPath := cleanKEPUBHref(opfPath, item.Href)
+		itemPath := cleanEPUBHref(opfPath, item.Href)
 		id := strings.TrimSpace(item.ID)
 		if itemPath == "" || id == "" {
 			continue
@@ -489,7 +489,7 @@ func normalizeVendorImageGuide(opfPath string, raw []byte) []byte {
 	coverTargets := make(map[string]bool)
 	for _, ref := range doc.Guide.References {
 		if rebuildVendorGuideKind(ref.Type) == "cover" {
-			coverTargets[imageIDs[cleanKEPUBHref(opfPath, ref.Href)]] = true
+			coverTargets[imageIDs[cleanEPUBHref(opfPath, ref.Href)]] = true
 		}
 	}
 	delete(coverTargets, "")
@@ -531,7 +531,7 @@ func normalizeVendorImageGuide(opfPath string, raw []byte) []byte {
 			return
 		}
 		kind := rebuildVendorGuideKind(rebuildXMLAttr(node.Attrs, "type"))
-		targetID := imageIDs[cleanKEPUBHref(opfPath, rebuildXMLAttr(node.Attrs, "href"))]
+		targetID := imageIDs[cleanEPUBHref(opfPath, rebuildXMLAttr(node.Attrs, "href"))]
 		if kind != "" && targetID != "" {
 			refs = append(refs, guideRef{kind: kind, targetID: targetID, start: node.Start, end: node.End})
 		}
@@ -631,7 +631,7 @@ func rebuildXHTMLRepairs(ctx context.Context, zr *zip.Reader, pkg rebuildPackage
 	inlineSVGDocuments := make(map[string]bool)
 	pageTemplatePresent := make(map[string]bool)
 	for _, contentPath := range paths {
-		file, err := kepubZipFile(zr, contentPath)
+		file, err := epubZipFile(zr, contentPath)
 		if err != nil {
 			return nil, nil, fmt.Errorf("resolve EPUB content document %s: %w", contentPath, err)
 		}
@@ -646,7 +646,7 @@ func rebuildXHTMLRepairs(ctx context.Context, zr *zip.Reader, pkg rebuildPackage
 		for target := range rebuildAdobePageTemplateLinkTargets(raw, contentPath) {
 			present, checked := pageTemplatePresent[target]
 			if !checked {
-				targetFile, err := kepubZipFile(zr, target)
+				targetFile, err := epubZipFile(zr, target)
 				if err != nil {
 					return nil, nil, fmt.Errorf("resolve EPUB Adobe page template %s: %w", target, err)
 				}
@@ -824,7 +824,7 @@ func rebuildRedundantEPUB3BodyRole(node rebuildXMLNode) bool {
 }
 
 func rebuildStylesheetLinkTargets(attrs []xml.Attr, contentPath string, missingStylesheets map[string]bool) bool {
-	return rebuildLinkIsStylesheet(attrs) && missingStylesheets[cleanKEPUBHref(contentPath, rebuildXMLAttr(attrs, "href"))]
+	return rebuildLinkIsStylesheet(attrs) && missingStylesheets[cleanEPUBHref(contentPath, rebuildXMLAttr(attrs, "href"))]
 }
 
 func rebuildAdobePageTemplateLinkTargets(raw []byte, contentPath string) map[string]bool {
@@ -853,7 +853,7 @@ func rebuildAdobePageTemplateLinkTarget(node rebuildXMLNode, contentPath string)
 	if !rebuildLinkIsStylesheet(node.Attrs) || !strings.EqualFold(strings.TrimSpace(rebuildXMLAttr(node.Attrs, "type")), rebuildAdobePageTemplateMediaType) {
 		return ""
 	}
-	return cleanKEPUBHref(contentPath, rebuildXMLAttr(node.Attrs, "href"))
+	return cleanEPUBHref(contentPath, rebuildXMLAttr(node.Attrs, "href"))
 }
 
 func rebuildLinkIsStylesheet(attrs []xml.Attr) bool {
@@ -890,7 +890,7 @@ func rebuildNCXRepairs(ctx context.Context, zr *zip.Reader, pkg rebuildPackage) 
 	ncxMatches := 0
 	for _, item := range doc.Manifest.Items {
 		if strings.TrimSpace(item.ID) == tocID && strings.EqualFold(strings.TrimSpace(item.MediaType), "application/x-dtbncx+xml") {
-			ncxPath = cleanKEPUBHref(pkg.opfPath, item.Href)
+			ncxPath = cleanEPUBHref(pkg.opfPath, item.Href)
 			if ncxPath != "" {
 				ncxMatches++
 			}
@@ -899,7 +899,7 @@ func rebuildNCXRepairs(ctx context.Context, zr *zip.Reader, pkg rebuildPackage) 
 	if tocID == "" || ncxMatches != 1 {
 		return nil, nil, nil
 	}
-	ncxFile, err := kepubZipFile(zr, ncxPath)
+	ncxFile, err := epubZipFile(zr, ncxPath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("resolve EPUB NCX %s: %w", ncxPath, err)
 	}

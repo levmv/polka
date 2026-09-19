@@ -16,6 +16,19 @@ import (
 // the cap just bounds a single transaction and guards against a pathological body.
 const bulkEditMaxIDs = 1000
 
+func bulkBookIDs(w http.ResponseWriter, ids []int64) ([]int64, bool) {
+	ids = db.DedupBookIDs(ids)
+	if len(ids) == 0 {
+		http.Error(w, "no book ids provided", http.StatusBadRequest)
+		return nil, false
+	}
+	if len(ids) > bulkEditMaxIDs {
+		http.Error(w, fmt.Sprintf("too many books selected (max %d)", bulkEditMaxIDs), http.StatusBadRequest)
+		return nil, false
+	}
+	return ids, true
+}
+
 // bulkEditRequest is the body of PATCH /api/books/bulk: a set of books plus an
 // ordered list of operations applied to each. Operations are deliberately typed,
 // not a generic BookUpdate, so a bulk edit can never accidentally overwrite a
@@ -73,13 +86,8 @@ func (s *Server) handleAPIBulkEdit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ids := db.DedupBookIDs(req.IDs)
-	if len(ids) == 0 {
-		http.Error(w, "no book ids provided", http.StatusBadRequest)
-		return
-	}
-	if len(ids) > bulkEditMaxIDs {
-		http.Error(w, fmt.Sprintf("too many books selected (max %d)", bulkEditMaxIDs), http.StatusBadRequest)
+	ids, ok := bulkBookIDs(w, req.IDs)
+	if !ok {
 		return
 	}
 	if len(req.Operations) == 0 {
@@ -213,13 +221,8 @@ func (s *Server) handleAPIBulkTrash(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &req) {
 		return
 	}
-	ids := db.DedupBookIDs(req.IDs)
-	if len(ids) == 0 {
-		http.Error(w, "no book ids provided", http.StatusBadRequest)
-		return
-	}
-	if len(ids) > bulkEditMaxIDs {
-		http.Error(w, fmt.Sprintf("too many books selected (max %d)", bulkEditMaxIDs), http.StatusBadRequest)
+	ids, ok := bulkBookIDs(w, req.IDs)
+	if !ok {
 		return
 	}
 

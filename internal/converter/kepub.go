@@ -7,7 +7,6 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
-	"net/url"
 	"path"
 	"regexp"
 	"slices"
@@ -56,15 +55,8 @@ type kepubPackage struct {
 
 type kepubOPFDoc struct {
 	Manifest struct {
-		Items []kepubManifestItem `xml:"item"`
+		Items []epubManifestItem `xml:"item"`
 	} `xml:"manifest"`
-}
-
-type kepubManifestItem struct {
-	ID         string `xml:"id,attr"`
-	Href       string `xml:"href,attr"`
-	MediaType  string `xml:"media-type,attr"`
-	Properties string `xml:"properties,attr"`
 }
 
 type kepubXMLAttr struct {
@@ -117,7 +109,7 @@ func convertEPUBToKEPUB(ctx context.Context, w io.Writer, src io.ReaderAt, size 
 		packageEntrySet[pkg.containerFile] = true
 	}
 	for _, name := range contentDocs {
-		file, err := kepubZipFile(zr, name)
+		file, err := epubZipFile(zr, name)
 		if err != nil {
 			return fmt.Errorf("resolve EPUB content document %s: %w", name, err)
 		}
@@ -220,7 +212,7 @@ func kepubReadPackage(ctx context.Context, zr *zip.Reader) (kepubPackage, error)
 }
 
 func kepubReadDeclaredPackage(ctx context.Context, zr *zip.Reader) (kepubPackage, error) {
-	container, err := kepubZipFile(zr, "META-INF/container.xml")
+	container, err := epubZipFile(zr, "META-INF/container.xml")
 	if err != nil {
 		return kepubPackage{}, fmt.Errorf("resolve EPUB container.xml: %w", err)
 	}
@@ -247,12 +239,12 @@ func kepubReadDeclaredPackage(ctx context.Context, zr *zip.Reader) (kepubPackage
 			if requireStandardMediaType && !standardMediaType {
 				continue
 			}
-			opfPath := cleanKEPUBHref("", rootfile.FullPath)
+			opfPath := cleanEPUBHref("", rootfile.FullPath)
 			if opfPath == "" || seen[opfPath] {
 				continue
 			}
 			seen[opfPath] = true
-			opf, resolveErr := kepubZipFile(zr, opfPath)
+			opf, resolveErr := epubZipFile(zr, opfPath)
 			if resolveErr != nil {
 				if firstResolveErr == nil {
 					firstResolveErr = fmt.Errorf("resolve EPUB OPF %s: %w", opfPath, resolveErr)
@@ -349,10 +341,10 @@ func kepubContentDocuments(opfPath string, opfBytes []byte) ([]string, error) {
 	var out []string
 	seen := make(map[string]bool)
 	for _, item := range doc.Manifest.Items {
-		if !isKEPUBContentDocument(item) {
+		if !isEPUBContentDocument(item) {
 			continue
 		}
-		name := cleanKEPUBHref(opfPath, item.Href)
+		name := cleanEPUBHref(opfPath, item.Href)
 		if name == "" || seen[name] {
 			continue
 		}
@@ -369,7 +361,7 @@ func kepubManifestPaths(opfPath string, opfBytes []byte) (map[string]bool, error
 	}
 	out := make(map[string]bool, len(doc.Manifest.Items))
 	for _, item := range doc.Manifest.Items {
-		if name := cleanKEPUBHref(opfPath, item.Href); name != "" {
+		if name := cleanEPUBHref(opfPath, item.Href); name != "" {
 			out[name] = true
 		}
 	}
@@ -382,19 +374,6 @@ func parseKEPUBOPF(opfPath string, opfBytes []byte) (kepubOPFDoc, error) {
 		return kepubOPFDoc{}, fmt.Errorf("parse EPUB OPF %s: %w", opfPath, err)
 	}
 	return doc, nil
-}
-
-func isKEPUBContentDocument(item kepubManifestItem) bool {
-	mediaType := strings.ToLower(strings.TrimSpace(item.MediaType))
-	if mediaType == "application/xhtml+xml" || mediaType == "text/html" {
-		return true
-	}
-	switch strings.ToLower(path.Ext(item.Href)) {
-	case ".xhtml", ".xhtm", ".html", ".htm":
-		return true
-	default:
-		return false
-	}
 }
 
 func transformKEPUBOPF(raw []byte) ([]byte, error) {
@@ -947,41 +926,6 @@ func kepubFilterFile(name string) bool {
 	return clean == "__macosx" || strings.HasPrefix(clean, "__macosx/")
 }
 
-func cleanKEPUBHref(basePath, href string) string {
-	href = strings.TrimSpace(href)
-	if href == "" {
-		return ""
-	}
-	if before, _, ok := strings.Cut(href, "#"); ok {
-		href = before
-	}
-	if parsed, err := url.Parse(href); err == nil {
-		if parsed.Scheme != "" || parsed.Host != "" {
-			return ""
-		}
-		href = parsed.Path
-	}
-	if unescaped, err := url.PathUnescape(href); err == nil {
-		href = unescaped
-	}
-	if basePath != "" && !strings.HasPrefix(href, "/") {
-		href = path.Join(path.Dir(basePath), href)
-	}
-	href = path.Clean(strings.TrimPrefix(href, "/"))
-	if href == "." || strings.HasPrefix(href, "../") {
-		return ""
-	}
-	return href
-}
-
-func kepubZipFile(zr *zip.Reader, name string) (*zip.File, error) {
-	file, ambiguous := format.ResolveZIPEntry(zr, name)
-	if ambiguous {
-		return nil, fmt.Errorf("entry %q has multiple matching archive members", name)
-	}
-	return file, nil
-}
-
 func kepubMimetypeSource(zr *zip.Reader) *zip.File {
 	for _, file := range zr.File {
 		if file.Name == "mimetype" {
@@ -1013,7 +957,6 @@ func kepubWriteZipFile(ctx context.Context, zw *zip.Writer, f *zip.File, data []
 		return err
 	}
 	header := f.FileHeader
-	header.Name = f.Name
 	header.Method = method
 	if packageEntry && utf8.ValidString(header.Name) && utf8.ValidString(header.Comment) {
 		// Some producers write UTF-8 package paths without ZIP's language flag.

@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"archive/zip"
 	"bytes"
 	"context"
 	"encoding/json/v2"
@@ -16,30 +15,23 @@ import (
 	"github.com/levmv/polka/internal/db"
 	"github.com/levmv/polka/internal/importer"
 	"github.com/levmv/polka/internal/storage"
+	"github.com/levmv/polka/internal/testfixture"
 )
 
 // writeEPUB writes a minimal valid EPUB with the given title, creator and
 // creator file-as (sort hint) to path.
 func writeEPUB(t *testing.T, path, title, creator, fileAs string) {
 	t.Helper()
-	buf := new(bytes.Buffer)
-	w := zip.NewWriter(buf)
-	f0, _ := w.CreateHeader(&zip.FileHeader{Name: "mimetype", Method: zip.Store})
-	f0.Write([]byte("application/epub+zip"))
-	f1, _ := w.Create("META-INF/container.xml")
-	f1.Write([]byte(`<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`))
 	esc := func(s string) string {
 		var b bytes.Buffer
 		xml.EscapeText(&b, []byte(s))
 		return b.String()
 	}
-	f2, _ := w.Create("OEBPS/content.opf")
-	f2.Write([]byte(`<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="2.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
+	opf := []byte(`<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="2.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
 		<dc:title>` + esc(title) + `</dc:title>
 		<dc:creator opf:file-as="` + esc(fileAs) + `">` + esc(creator) + `</dc:creator>
-	</metadata></package>`))
-	w.Close()
-	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+	</metadata></package>`)
+	if err := os.WriteFile(path, testfixture.EPUB(t, opf, nil), 0o644); err != nil {
 		t.Fatalf("write epub: %v", err)
 	}
 }

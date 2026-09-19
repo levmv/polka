@@ -5,6 +5,20 @@ import type { RouteCleanup } from '../router';
 import { seriesLibraryURL } from '../search-query';
 import type { SeriesSummary } from '../types';
 
+export function renderSeriesPage(): string {
+    return `
+        <div class="page-container series-container">
+            <div class="page-heading-row">
+                <h1>Series</h1>
+            </div>
+            <div id="series-grid" class="series-grid"></div>
+            <div id="series-load-more" class="load-more-container" hidden>
+                <button id="series-load-more-btn" type="button" class="load-more-btn" aria-label="Show more series">Show more</button>
+            </div>
+        </div>
+    `;
+}
+
 export async function initSeries(
     root: HTMLElement,
     signal: AbortSignal,

@@ -25,11 +25,8 @@ func readingStatusDTO(state db.ReadingStatusState) ReadingStatusDTO {
 }
 
 func (s *Server) handleAPIReadingStatusSave(w http.ResponseWriter, r *http.Request) {
-	bookID, validID := pathID(w, r, "id")
-	if !validID {
-		return
-	}
-	if _, ok := s.requireBookAccess(w, r, bookID); !ok {
+	bookID, _, ok := s.requireBookPathAccess(w, r, "id")
+	if !ok {
 		return
 	}
 	var req readingStatusRequest
@@ -44,11 +41,8 @@ func (s *Server) handleAPIReadingStatusSave(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *Server) handleAPIReadingStatusUndo(w http.ResponseWriter, r *http.Request) {
-	bookID, validID := pathID(w, r, "id")
-	if !validID {
-		return
-	}
-	if _, ok := s.requireBookAccess(w, r, bookID); !ok {
+	bookID, _, ok := s.requireBookPathAccess(w, r, "id")
+	if !ok {
 		return
 	}
 	var req readingStatusUndoRequest

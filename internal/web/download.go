@@ -20,11 +20,8 @@ import (
 )
 
 func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
-	assetID, validID := pathID(w, r, "id")
-	if !validID {
-		return
-	}
-	if _, ok := s.requireAssetAccess(w, r, assetID); !ok {
+	assetID, _, ok := s.requireAssetPathAccess(w, r, "id")
+	if !ok {
 		return
 	}
 
@@ -40,13 +37,7 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fullPath, err := s.managedRoot().Resolve(asset.StoragePath)
-	if err != nil {
-		serverError(w, r, err)
-		return
-	}
-
-	f, err := os.Open(fullPath)
+	f, err := s.openAssetSource(asset)
 	if os.IsNotExist(err) {
 		http.Error(w, "File not found on disk", http.StatusNotFound)
 		return
@@ -99,13 +90,7 @@ func (s *Server) handleDownloadAs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fullPath, err := s.managedRoot().Resolve(asset.StoragePath)
-	if err != nil {
-		serverError(w, r, err)
-		return
-	}
-
-	f, err := os.Open(fullPath)
+	f, err := s.openAssetSource(asset)
 	if os.IsNotExist(err) {
 		http.Error(w, "File not found on disk", http.StatusNotFound)
 		return
@@ -242,6 +227,16 @@ func (s *Server) assetFile(ctx context.Context, assetID int64) (assetFileRow, er
 	a.Format = format.FormatFromKey(formatKey)
 	a.CanRead = canRead == 1
 	return a, err
+}
+
+// openAssetSource opens a freshly loaded asset row in the current books root.
+// The caller owns the file and keeps any format/version checks at its boundary.
+func (s *Server) openAssetSource(asset assetFileRow) (*os.File, error) {
+	fullPath, err := s.managedRoot().Resolve(asset.StoragePath)
+	if err != nil {
+		return nil, err
+	}
+	return os.Open(fullPath)
 }
 
 func (s *Server) assetConversionOptions(ctx context.Context, asset assetFileRow) (converter.ConversionOptions, error) {

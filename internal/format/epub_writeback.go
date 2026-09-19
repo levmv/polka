@@ -806,7 +806,6 @@ func writeZipEntryData(zw *zip.Writer, f *zip.File, data []byte) error {
 		return fmt.Errorf("zip entry %s is encrypted", f.Name)
 	}
 	header := f.FileHeader
-	header.Name = f.Name
 	header.CRC32 = 0
 	header.CompressedSize = 0
 	header.CompressedSize64 = 0
@@ -851,7 +850,6 @@ func copyZipEntryRaw(zw *zip.Writer, f *zip.File) error {
 
 func copyZipDirectoryEntry(zw *zip.Writer, f *zip.File) error {
 	header := f.FileHeader
-	header.Name = f.Name
 	if !strings.HasSuffix(header.Name, "/") {
 		header.Name += "/"
 	}

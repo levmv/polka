@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"testing"
 	"time"
@@ -192,5 +194,23 @@ func assertSessionLive(t *testing.T, store *sessionStore, sid string, want bool)
 	}
 	if got != want {
 		t.Fatalf("session live = %v, want %v", got, want)
+	}
+}
+
+func TestSessionCookieSecure(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	if sessionCookieSecure(req) {
+		t.Fatal("plain HTTP request should not set Secure")
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("X-Forwarded-Proto", "https")
+	if !sessionCookieSecure(req) {
+		t.Fatal("https forwarded request should set Secure")
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "https://example.test/", nil)
+	if !sessionCookieSecure(req) {
+		t.Fatal("TLS request should set Secure")
 	}
 }

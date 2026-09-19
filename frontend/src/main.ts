@@ -15,14 +15,6 @@ import {
 import { beginGlobalLoading } from './loading-indicator';
 import { closeAllModals, dismissOverlayOnPopstate, reopenOverlay } from './modal';
 import {
-    renderAuthorsPage,
-    renderBookPage,
-    renderCleanupPage,
-    renderLibraryPage,
-    renderSeriesPage,
-    renderTrashPage,
-} from './pages';
-import {
     initRouter,
     type Retention,
     type Route,
@@ -36,12 +28,12 @@ import { initSidebarCuration } from './sidebar-curation';
 import { initSidebarShelves, syncSidebarShelfActive } from './sidebar-shelves';
 import { initSidebarUpload } from './sidebar-upload';
 import { applyCachedTheme } from './theme';
-import { initAuthors } from './views/authors-view';
-import { initBookDetail } from './views/book-view';
-import { initCleanup } from './views/cleanup-view';
-import { initLibrary } from './views/library-view';
-import { initSeries } from './views/series-view';
-import { initTrash } from './views/trash-view';
+import { initAuthors, renderAuthorsPage } from './views/authors-view';
+import { initBookDetail, renderBookPage } from './views/book-view';
+import { initCleanup, renderCleanupPage } from './views/cleanup-view';
+import { initLibrary, renderLibraryPage } from './views/library-view';
+import { initSeries, renderSeriesPage } from './views/series-view';
+import { initTrash, renderTrashPage } from './views/trash-view';
 
 applyCachedTheme();
 
@@ -51,7 +43,7 @@ const routes: Route<unknown>[] = [
         mainClass: 'main--strip',
         title: 'polka',
         match: (path) => (path === '/' || path === '/index.html' ? true : null),
-        render: () => renderLibraryPage(),
+        render: renderLibraryPage,
         mount: (_match, root) => initLibrary(root),
     },
     {
@@ -61,7 +53,7 @@ const routes: Route<unknown>[] = [
             const pathParts = path.split('/');
             return pathParts[pathParts.length - 1] || null;
         },
-        render: () => renderBookPage(),
+        render: renderBookPage,
         mount: (bookId, root, context) => initBookDetail(Number(bookId), root, context),
     },
     {
@@ -69,18 +61,15 @@ const routes: Route<unknown>[] = [
         mainClass: 'main--strip',
         title: 'Cleanup - polka',
         match: (path) => (path === '/cleanup' ? true : null),
-        render: () => renderCleanupPage(),
-        mount: async (_match, root, context) => {
-            await initCleanup(root, context.signal);
-            return undefined;
-        },
+        render: renderCleanupPage,
+        mount: (_match, root, context) => initCleanup(root, context.signal),
     },
     {
         navId: 'nav-series',
         mainClass: 'main--strip',
         title: 'Series - polka',
         match: (path) => (path === '/series' ? true : null),
-        render: () => renderSeriesPage(),
+        render: renderSeriesPage,
         mount: (_match, root, context) => initSeries(root, context.signal),
     },
     {
@@ -88,21 +77,16 @@ const routes: Route<unknown>[] = [
         mainClass: 'main--strip',
         title: 'Authors - polka',
         match: (path) => (path === '/authors' ? true : null),
-        render: () => renderAuthorsPage(),
-        mount: async (_match, root, context) => {
-            return await initAuthors(root, context.signal);
-        },
+        render: renderAuthorsPage,
+        mount: (_match, root, context) => initAuthors(root, context.signal),
     },
     {
         navId: 'nav-library',
         mainClass: 'main--strip',
         title: 'Trash - polka',
         match: (path) => (path === '/trash' ? true : null),
-        render: () => renderTrashPage(),
-        mount: async (_match, root, context) => {
-            await initTrash(root, context.signal);
-            return undefined;
-        },
+        render: renderTrashPage,
+        mount: (_match, root, context) => initTrash(root, context.signal),
     },
 ];
 

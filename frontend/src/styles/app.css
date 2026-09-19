@@ -4550,6 +4550,23 @@ body.has-library-jump-rail #content {
     display: block;
 }
 
+.trash-card-info {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.trash-card-title {
+    margin: 0 0 0.25rem;
+    font-size: 1rem;
+    line-height: 1.25;
+}
+
+.trash-card-authors {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+
 .trash-card-meta {
     margin: 4px 0 8px;
     color: var(--text-muted);

@@ -15,10 +15,6 @@ func TestCoverImageHelpersSupportWebP(t *testing.T) {
 	if !ok || ext != ".webp" {
 		t.Fatalf("coverImageExtensionFromBytes(WebP) = %q/%v; want .webp/true", ext, ok)
 	}
-	ext, ok = coverImageExtensionFromContentType("image/webp; charset=binary")
-	if !ok || ext != ".webp" {
-		t.Fatalf("coverImageExtensionFromContentType(WebP) = %q/%v; want .webp/true", ext, ok)
-	}
 	ext, ok = coverImageExtensionFromFormatName("webp")
 	if !ok || ext != ".webp" {
 		t.Fatalf("coverImageExtensionFromFormatName(webp) = %q/%v; want .webp/true", ext, ok)

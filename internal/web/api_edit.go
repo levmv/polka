@@ -2,7 +2,6 @@ package web
 
 import (
 	"bytes"
-	"context"
 	"database/sql"
 	"encoding/json/v2"
 	"errors"
@@ -14,7 +13,6 @@ import (
 	"github.com/levmv/polka/internal/bookmeta"
 	"github.com/levmv/polka/internal/db"
 	"github.com/levmv/polka/internal/relayout"
-	"github.com/levmv/polka/internal/writeback"
 )
 
 // patchValue distinguishes an omitted JSON field from an explicit null. That
@@ -258,6 +256,15 @@ func replaceBookAuthors(tx *db.Tx, bookID int64, authorsStr string) error {
 	return err
 }
 
+// handleAPIBookEdit serves PATCH /api/books/{id}.
+func (s *Server) handleAPIBookEdit(w http.ResponseWriter, r *http.Request) {
+	bookID, _, ok := s.requireBookPathAccess(w, r, "id")
+	if !ok {
+		return
+	}
+	s.handleAPIEditBook(w, r, bookID)
+}
+
 func (s *Server) handleAPIEditBook(w http.ResponseWriter, r *http.Request, bookID int64) {
 	var req BookPatch
 	if !readJSON(w, r, &req) {
@@ -333,94 +340,5 @@ func (s *Server) handleAPIEditBook(w http.ResponseWriter, r *http.Request, bookI
 		log.Printf("relayout after edit of %d: %v", bookID, warning)
 	}
 
-	s.handleAPIBookDetailReturn(w, r, bookID)
-}
-
-func (s *Server) handleAPIBookDetailReturn(w http.ResponseWriter, r *http.Request, bookID int64) {
-	scope, err := s.visibilityScope(r)
-	if err != nil {
-		serverError(w, r, err)
-		return
-	}
-	// Apply visibility in the root book query so missing and out-of-scope books
-	// share the same 404 without fetching a forbidden row first.
-	b, err := s.bookDetailDTO(r.Context(), scope, UserID(r.Context()), bookID, s.viewerIsAdmin(r))
-	if errors.Is(err, sql.ErrNoRows) {
-		http.Error(w, "Book not found", http.StatusNotFound)
-		return
-	} else if err != nil {
-		serverError(w, r, err)
-		return
-	}
-
-	writeJSON(w, http.StatusOK, b)
-}
-
-func (s *Server) bookDetailDTO(ctx context.Context, scope db.VisibilityScope, viewerID int64, bookID int64, viewerIsAdmin bool) (BookDetailDTO, error) {
-	queryer := s.db.Read(ctx)
-	bRow, err := db.GetBook(queryer, scope, bookID)
-	if err != nil {
-		return BookDetailDTO{}, err
-	}
-
-	b := detailRowDTO(bRow)
-
-	assetRows, err := db.AssetsByBookIDs(queryer, []int64{b.ID})
-	if err != nil {
-		return BookDetailDTO{}, err
-	}
-	for _, aRow := range assetRows {
-		b.Assets = append(b.Assets, assetDTO(aRow))
-	}
-
-	authorsByBook, err := db.AuthorsByBookIDs(queryer, []int64{b.ID})
-	if err != nil {
-		return BookDetailDTO{}, err
-	}
-	b.AuthorsList, b.AuthorsDisplay = authorsToDTO(authorsByBook[b.ID])
-
-	readingStatus := db.ReadingStatusState{BookID: b.ID, Status: db.ReadingStatusUnread}
-	if viewerID > 0 {
-		readingStatus, err = db.GetReadingStatus(queryer, viewerID, b.ID)
-		if err != nil {
-			return BookDetailDTO{}, err
-		}
-	}
-	b.ReadingStatus = readingStatusDTO(readingStatus)
-
-	wb, err := s.bookWritebackDTO(ctx, b.ID, viewerIsAdmin)
-	if err != nil {
-		return BookDetailDTO{}, err
-	}
-	b.Writeback = wb
-
-	return b, nil
-}
-
-// bookWritebackDTO computes the write-back affordance for one book. It is an
-// admin-only surface, so non-admins get no object at all (the field is omitted);
-// gating on the viewer's role server-side keeps every render path (detail, edit
-// save, cover, import) honest without the frontend re-deriving the role. For an
-// admin the action is available in manual mode with at least one writable asset,
-// and dirty when some writable asset is behind the catalog.
-func (s *Server) bookWritebackDTO(ctx context.Context, bookID int64, viewerIsAdmin bool) (*BookWritebackDTO, error) {
-	if !viewerIsAdmin {
-		return nil, nil
-	}
-	state, err := db.GetBookWritebackState(s.db.Read(ctx), bookID)
-	if err != nil {
-		return nil, err
-	}
-	available := false
-	if state.Writable > 0 {
-		mode, err := writeback.OpenMode(s.db.Read(ctx))
-		if err != nil {
-			return nil, err
-		}
-		available = mode == writeback.ModeManual
-	}
-	return &BookWritebackDTO{
-		Available: available,
-		Dirty:     state.Dirty > 0,
-	}, nil
+	s.writeBookDetail(w, r, bookID)
 }

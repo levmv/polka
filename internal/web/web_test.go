@@ -27,6 +27,13 @@ import (
 
 var testReaderCurrentSHA256 = bytes.Repeat([]byte{0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef}, 4)
 
+func mustExec(t *testing.T, database *db.DB, query string, args ...any) {
+	t.Helper()
+	if _, err := database.Write(t.Context()).Exec(query, args...); err != nil {
+		t.Fatalf("exec %q: %v", query, err)
+	}
+}
+
 func setupTestDB(t *testing.T) (*db.DB, string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -1401,41 +1408,15 @@ func testZip(t *testing.T, files map[string]string) []byte {
 
 func testReadableEPUB(t *testing.T, title string, paragraphs ...string) []byte {
 	t.Helper()
-	var buf bytes.Buffer
-	zw := zip.NewWriter(&buf)
-	w, err := zw.CreateHeader(&zip.FileHeader{Name: "mimetype", Method: zip.Store})
-	if err != nil {
-		t.Fatalf("create mimetype: %v", err)
-	}
-	if _, err := w.Write([]byte("application/epub+zip")); err != nil {
-		t.Fatalf("write mimetype: %v", err)
-	}
-	for name, content := range map[string]string{
-		"META-INF/container.xml": `<?xml version="1.0" encoding="UTF-8"?>
-<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
-  <rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles>
-</container>`,
-		"OEBPS/content.opf": `<?xml version="1.0" encoding="UTF-8"?>
+	opf := []byte(`<?xml version="1.0" encoding="UTF-8"?>
 <package version="3.0" xmlns="http://www.idpf.org/2007/opf">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>` + title + `</dc:title><dc:language>en</dc:language></metadata>
   <manifest><item id="text" href="text.xhtml" media-type="application/xhtml+xml"/></manifest>
   <spine><itemref id="main" idref="text"/></spine>
-</package>`,
-		"OEBPS/text.xhtml": `<?xml version="1.0" encoding="UTF-8"?>
-<html xmlns="http://www.w3.org/1999/xhtml"><head><title>` + title + `</title></head><body><p>` + strings.Join(paragraphs, "</p><p>") + `</p></body></html>`,
-	} {
-		w, err := zw.Create(name)
-		if err != nil {
-			t.Fatalf("create zip entry %s: %v", name, err)
-		}
-		if _, err := w.Write([]byte(content)); err != nil {
-			t.Fatalf("write zip entry %s: %v", name, err)
-		}
-	}
-	if err := zw.Close(); err != nil {
-		t.Fatalf("close epub: %v", err)
-	}
-	return buf.Bytes()
+</package>`)
+	content := []byte(`<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml"><head><title>` + title + `</title></head><body><p>` + strings.Join(paragraphs, "</p><p>") + `</p></body></html>`)
+	return testfixture.EPUB(t, opf, map[string][]byte{"OEBPS/text.xhtml": content})
 }
 
 func testEPUBWithCorruptLateEntry(t *testing.T) []byte {

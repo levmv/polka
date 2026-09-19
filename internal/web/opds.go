@@ -639,11 +639,7 @@ func opdsProgressionLink(r *http.Request, assetID int64) opds.Link {
 }
 
 func (s *Server) handleOPDSAssetPublication(w http.ResponseWriter, r *http.Request) {
-	assetID, ok := pathID(w, r, "id")
-	if !ok {
-		return
-	}
-	scope, ok := s.requireAssetAccess(w, r, assetID)
+	assetID, scope, ok := s.requireAssetPathAccess(w, r, "id")
 	if !ok {
 		return
 	}

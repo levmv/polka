@@ -675,27 +675,7 @@ func TestRunMetaContinuesAfterFileError(t *testing.T) {
 
 func writeMetaEPUBWithCover(t *testing.T, path string, cover []byte) {
 	t.Helper()
-	buf := new(bytes.Buffer)
-	w := zip.NewWriter(buf)
-	f0, err := w.CreateHeader(&zip.FileHeader{Name: "mimetype", Method: zip.Store})
-	if err != nil {
-		t.Fatalf("create mimetype: %v", err)
-	}
-	if _, err := f0.Write([]byte("application/epub+zip")); err != nil {
-		t.Fatalf("write mimetype: %v", err)
-	}
-	f1, err := w.Create("META-INF/container.xml")
-	if err != nil {
-		t.Fatalf("create container: %v", err)
-	}
-	if _, err := f1.Write([]byte(`<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`)); err != nil {
-		t.Fatalf("write container: %v", err)
-	}
-	f2, err := w.Create("OEBPS/content.opf")
-	if err != nil {
-		t.Fatalf("create opf: %v", err)
-	}
-	if _, err := f2.Write([]byte(`<?xml version="1.0"?>
+	opf := []byte(`<?xml version="1.0"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="2.0">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
     <dc:title>Cover Book</dc:title>
@@ -705,20 +685,9 @@ func writeMetaEPUBWithCover(t *testing.T, path string, cover []byte) {
   <manifest>
     <item id="cover-image" href="images/cover.png" media-type="image/png"/>
   </manifest>
-</package>`)); err != nil {
-		t.Fatalf("write opf: %v", err)
-	}
-	f3, err := w.Create("OEBPS/images/cover.png")
-	if err != nil {
-		t.Fatalf("create cover: %v", err)
-	}
-	if _, err := f3.Write(cover); err != nil {
-		t.Fatalf("write cover: %v", err)
-	}
-	if err := w.Close(); err != nil {
-		t.Fatalf("close epub: %v", err)
-	}
-	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+</package>`)
+	data := testfixture.EPUB(t, opf, map[string][]byte{"OEBPS/images/cover.png": cover})
+	if err := os.WriteFile(path, data, 0o644); err != nil {
 		t.Fatalf("write epub: %v", err)
 	}
 }

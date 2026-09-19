@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"net/http"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 	"github.com/levmv/polka/internal/converter"
 	"github.com/levmv/polka/internal/db"
 	"github.com/levmv/polka/internal/format"
+	"github.com/levmv/polka/internal/writeback"
 )
 
 // BookSummaryDTO is the list/cleanup shape; BookDetailDTO embeds it and adds
@@ -338,11 +340,7 @@ func (s *Server) handleAPIBookJumps(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAPIBookSequence(w http.ResponseWriter, r *http.Request) {
-	bookID, validID := pathID(w, r, "id")
-	if !validID {
-		return
-	}
-	scope, ok := s.requireBookAccess(w, r, bookID)
+	bookID, scope, ok := s.requireBookPathAccess(w, r, "id")
 	if !ok {
 		return
 	}
@@ -417,18 +415,16 @@ func bookSequenceDTO(sequence db.BookSequenceWindow) BookSequenceDTO {
 	}
 }
 
+// bookSummaryDTOs enriches every input row without changing its position.
 func (s *Server) bookSummaryDTOs(ctx context.Context, bookRows []db.BookSummaryRow) ([]BookSummaryDTO, error) {
-	var books []BookSummaryDTO
-	var bookIDs []int64
+	books := make([]BookSummaryDTO, len(bookRows))
+	bookIDs := make([]int64, len(bookRows))
 	bookMap := make(map[int64]*BookSummaryDTO)
 
-	for _, bRow := range bookRows {
-		books = append(books, summaryRowDTO(bRow))
-		bookIDs = append(bookIDs, bRow.ID)
-	}
-
-	for i := range books {
-		bookMap[books[i].ID] = &books[i]
+	for i, row := range bookRows {
+		books[i] = summaryRowDTO(row)
+		bookIDs[i] = row.ID
+		bookMap[row.ID] = &books[i]
 	}
 
 	assetRows, err := db.AssetsByBookIDs(s.db.Read(ctx), bookIDs)
@@ -449,9 +445,6 @@ func (s *Server) bookSummaryDTOs(ctx context.Context, bookRows []db.BookSummaryR
 		b.AuthorsList, b.AuthorsDisplay = authorsToDTO(authorsByBook[id])
 	}
 
-	if books == nil {
-		books = []BookSummaryDTO{}
-	}
 	return books, nil
 }
 
@@ -462,17 +455,94 @@ func (s *Server) handleAPIBookDetail(w http.ResponseWriter, r *http.Request) {
 	if !validID {
 		return
 	}
-	s.handleAPIBookDetailReturn(w, r, bookID)
+	s.writeBookDetail(w, r, bookID)
 }
 
-// handleAPIBookEdit serves PATCH /api/books/{id}.
-func (s *Server) handleAPIBookEdit(w http.ResponseWriter, r *http.Request) {
-	bookID, validID := pathID(w, r, "id")
-	if !validID {
+func (s *Server) writeBookDetail(w http.ResponseWriter, r *http.Request, bookID int64) {
+	scope, err := s.visibilityScope(r)
+	if err != nil {
+		serverError(w, r, err)
 		return
 	}
-	if _, ok := s.requireBookAccess(w, r, bookID); !ok {
+	// Apply visibility in the root book query so missing and out-of-scope books
+	// share the same 404 without fetching a forbidden row first.
+	b, err := s.bookDetailDTO(r.Context(), scope, UserID(r.Context()), bookID, s.viewerIsAdmin(r))
+	if errors.Is(err, sql.ErrNoRows) {
+		http.Error(w, "Book not found", http.StatusNotFound)
+		return
+	} else if err != nil {
+		serverError(w, r, err)
 		return
 	}
-	s.handleAPIEditBook(w, r, bookID)
+
+	writeJSON(w, http.StatusOK, b)
+}
+
+func (s *Server) bookDetailDTO(ctx context.Context, scope db.VisibilityScope, viewerID int64, bookID int64, viewerIsAdmin bool) (BookDetailDTO, error) {
+	queryer := s.db.Read(ctx)
+	bRow, err := db.GetBook(queryer, scope, bookID)
+	if err != nil {
+		return BookDetailDTO{}, err
+	}
+
+	b := detailRowDTO(bRow)
+
+	assetRows, err := db.AssetsByBookIDs(queryer, []int64{b.ID})
+	if err != nil {
+		return BookDetailDTO{}, err
+	}
+	for _, aRow := range assetRows {
+		b.Assets = append(b.Assets, assetDTO(aRow))
+	}
+
+	authorsByBook, err := db.AuthorsByBookIDs(queryer, []int64{b.ID})
+	if err != nil {
+		return BookDetailDTO{}, err
+	}
+	b.AuthorsList, b.AuthorsDisplay = authorsToDTO(authorsByBook[b.ID])
+
+	readingStatus := db.ReadingStatusState{BookID: b.ID, Status: db.ReadingStatusUnread}
+	if viewerID > 0 {
+		readingStatus, err = db.GetReadingStatus(queryer, viewerID, b.ID)
+		if err != nil {
+			return BookDetailDTO{}, err
+		}
+	}
+	b.ReadingStatus = readingStatusDTO(readingStatus)
+
+	wb, err := s.bookWritebackDTO(ctx, b.ID, viewerIsAdmin)
+	if err != nil {
+		return BookDetailDTO{}, err
+	}
+	b.Writeback = wb
+
+	return b, nil
+}
+
+// bookWritebackDTO computes the write-back affordance for one book. It is an
+// admin-only surface, so non-admins get no object at all (the field is omitted);
+// gating on the viewer's role server-side keeps every render path (detail, edit
+// save, cover, import) honest without the frontend re-deriving the role. For an
+// admin the action is available in manual mode with at least one writable asset,
+// and dirty when some writable asset is behind the catalog.
+func (s *Server) bookWritebackDTO(ctx context.Context, bookID int64, viewerIsAdmin bool) (*BookWritebackDTO, error) {
+	if !viewerIsAdmin {
+		return nil, nil
+	}
+	state, err := db.GetBookWritebackState(s.db.Read(ctx), bookID)
+	if err != nil {
+		return nil, err
+	}
+	available := false
+	if state.Writable > 0 {
+		mode, err := writeback.OpenMode(s.db.Read(ctx))
+		if err != nil {
+			return nil, err
+		}
+		available = mode == writeback.ModeManual
+	}
+	return &BookWritebackDTO{
+		Available: available,
+		Dirty:     state.Dirty > 0,
+	}, nil
 }

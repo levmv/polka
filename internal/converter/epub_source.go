@@ -5,6 +5,11 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/url"
+	"path"
+	"strings"
+
+	"github.com/levmv/polka/internal/format"
 )
 
 // EPUBSource exposes the source package as interpreted by EPUB conversion.
@@ -36,8 +41,63 @@ func OpenEPUBSource(ctx context.Context, src io.ReaderAt, size int64) (*EPUBSour
 // ContentDocument resolves a manifest item using the converter's content-type
 // and archive-path rules. Non-content and missing items return nil.
 func (s *EPUBSource) ContentDocument(href, mediaType string) (*zip.File, error) {
-	if !isKEPUBContentDocument(kepubManifestItem{Href: href, MediaType: mediaType}) {
+	if !isEPUBContentDocument(epubManifestItem{Href: href, MediaType: mediaType}) {
 		return nil, nil
 	}
-	return kepubZipFile(s.archive, cleanKEPUBHref(s.OPFPath, href))
+	return epubZipFile(s.archive, cleanEPUBHref(s.OPFPath, href))
+}
+
+type epubManifestItem struct {
+	ID         string `xml:"id,attr"`
+	Href       string `xml:"href,attr"`
+	MediaType  string `xml:"media-type,attr"`
+	Properties string `xml:"properties,attr"`
+}
+
+func isEPUBContentDocument(item epubManifestItem) bool {
+	mediaType := strings.ToLower(strings.TrimSpace(item.MediaType))
+	if mediaType == "application/xhtml+xml" || mediaType == "text/html" {
+		return true
+	}
+	switch strings.ToLower(path.Ext(item.Href)) {
+	case ".xhtml", ".xhtm", ".html", ".htm":
+		return true
+	default:
+		return false
+	}
+}
+
+func cleanEPUBHref(basePath, href string) string {
+	href = strings.TrimSpace(href)
+	if href == "" {
+		return ""
+	}
+	if before, _, ok := strings.Cut(href, "#"); ok {
+		href = before
+	}
+	if parsed, err := url.Parse(href); err == nil {
+		if parsed.Scheme != "" || parsed.Host != "" {
+			return ""
+		}
+		href = parsed.Path
+	}
+	if unescaped, err := url.PathUnescape(href); err == nil {
+		href = unescaped
+	}
+	if basePath != "" && !strings.HasPrefix(href, "/") {
+		href = path.Join(path.Dir(basePath), href)
+	}
+	href = path.Clean(strings.TrimPrefix(href, "/"))
+	if href == "." || strings.HasPrefix(href, "../") {
+		return ""
+	}
+	return href
+}
+
+func epubZipFile(zr *zip.Reader, name string) (*zip.File, error) {
+	file, ambiguous := format.ResolveZIPEntry(zr, name)
+	if ambiguous {
+		return nil, fmt.Errorf("entry %q has multiple matching archive members", name)
+	}
+	return file, nil
 }

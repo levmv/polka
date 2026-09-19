@@ -35,7 +35,7 @@ practical constraint.
 | --- | --- |
 | App shell and route registration | [src/main.ts](src/main.ts) |
 | Route lifecycle and history policy | [src/router.ts](src/router.ts), [src/history-state.ts](src/history-state.ts) |
-| Page markup and behavior | [src/pages.ts](src/pages.ts), [src/views/](src/views/) |
+| Page markup and behavior | [src/views/](src/views/) |
 | Settings modal and panels | [src/settings.ts](src/settings.ts), [src/settings/](src/settings/) |
 | API client, response types and catalog notifications | [src/api.ts](src/api.ts), [src/types.ts](src/types.ts), [src/catalog-events.ts](src/catalog-events.ts) |
 | Form and list widgets | [src/components/](src/components/) |
@@ -43,12 +43,12 @@ practical constraint.
 | Reader entry points | [src/reader/index.ts](src/reader/index.ts) (Foliate), [src/reader/pdf-index.ts](src/reader/pdf-index.ts) (PDF.js) |
 | PDF fallback fonts | [fonts/](fonts/README.md) |
 | Reader lifecycle and position | [src/reader/lifecycle.ts](src/reader/lifecycle.ts), [src/reader/position-sync.ts](src/reader/position-sync.ts), [src/reader/position-saver.ts](src/reader/position-saver.ts) |
-| Screen pagination | [src/reader/pagination.ts](src/reader/pagination.ts), [src/reader/pagination-cache.ts](src/reader/pagination-cache.ts), [src/reader/foliate-resources.ts](src/reader/foliate-resources.ts) |
+| Screen pagination | [src/reader/foliate-pagination.ts](src/reader/foliate-pagination.ts), [src/reader/pagination-cache.ts](src/reader/pagination-cache.ts), [src/reader/foliate-resources.ts](src/reader/foliate-resources.ts) |
 | Highlights and notes | [src/components/annotation-editor.ts](src/components/annotation-editor.ts) (shared editor), [src/reader/annotations.ts](src/reader/annotations.ts) (reader UI), [src/reader/annotation-surface.ts](src/reader/annotation-surface.ts) (engine interface) |
 | Styles and icons | [src/styles/](src/styles/), [src/icons.ts](src/icons.ts) |
 
-A new app page needs a skeleton in `pages.ts`, behavior under `views/`, and a
-route in `main.ts`. The router covers authenticated app pages; login, setup,
+A new app page keeps its skeleton and mount function together under `views/`,
+with a route in `main.ts`. The router covers authenticated app pages; login, setup,
 readers, downloads and API endpoints stay outside it.
 
 ## State and lifetimes

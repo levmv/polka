@@ -1,8 +1,9 @@
-package web
+package opds
 
 import (
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/netip"
@@ -66,7 +67,9 @@ type opdsDiscoveryResponder struct {
 	closeErr  error
 }
 
-func startOPDSDiscovery(listener net.Listener) (*opdsDiscoveryResponder, error) {
+// StartDiscovery advertises the catalog on the listener's local networks.
+// It returns nil when discovery is disabled for the listener (for example, loopback).
+func StartDiscovery(listener net.Listener) (io.Closer, error) {
 	hostname, err := os.Hostname()
 	if err != nil {
 		return nil, fmt.Errorf("get hostname: %w", err)

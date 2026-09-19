@@ -498,6 +498,7 @@ test.describe('Library workflows', () => {
     await expect(page).toHaveURL(/\/trash$/);
     const trashCard = page.locator('.trash-card', { hasText: title });
     await expect(trashCard).toBeVisible();
+    await expect(trashCard.locator('.trash-card-info')).toHaveCSS('opacity', '1');
     await expect(trashCard.locator('.trash-card-meta')).toContainText('Trashed');
     await expect(trashCard.locator('.btn-purge')).toBeVisible(); // admin only
 

@@ -56,9 +56,6 @@ func NormalizeLanguage(raw string) string {
 	s = strings.ReplaceAll(s, "_", "-")
 
 	parts := strings.Split(s, "-")
-	if len(parts) == 0 {
-		return ""
-	}
 	primary := strings.ToLower(parts[0])
 	if primary == "und" {
 		return ""
@@ -72,7 +69,7 @@ func NormalizeLanguage(raw string) string {
 
 	normalized := []string{primary}
 	for _, part := range parts[1:] {
-		if part == "" || !isLanguageSubtag(part) {
+		if !isLanguageSubtag(part) {
 			return ""
 		}
 		normalized = append(normalized, normalizeLanguageSubtag(part))

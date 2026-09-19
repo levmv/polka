@@ -25,24 +25,3 @@ func checkContext(ctx context.Context) error {
 		return nil
 	}
 }
-
-func copyContext(ctx context.Context, w io.Writer, r io.Reader) error {
-	buf := make([]byte, 32*1024)
-	for {
-		if err := checkContext(ctx); err != nil {
-			return err
-		}
-		n, readErr := r.Read(buf)
-		if n > 0 {
-			if _, writeErr := w.Write(buf[:n]); writeErr != nil {
-				return writeErr
-			}
-		}
-		if readErr == io.EOF {
-			return nil
-		}
-		if readErr != nil {
-			return readErr
-		}
-	}
-}

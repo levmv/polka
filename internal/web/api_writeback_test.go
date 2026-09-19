@@ -118,10 +118,3 @@ func TestBookWritebackDTOGating(t *testing.T) {
 		t.Fatalf("pdf-only admin = %+v; want neither available nor dirty", wb)
 	}
 }
-
-func mustExec(t *testing.T, database *db.DB, query string, args ...any) {
-	t.Helper()
-	if _, err := database.Write(t.Context()).Exec(query, args...); err != nil {
-		t.Fatalf("exec %q: %v", query, err)
-	}
-}

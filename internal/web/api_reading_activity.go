@@ -17,11 +17,8 @@ type readingActivityRequest struct {
 }
 
 func (s *Server) handleAPIReadingActivity(w http.ResponseWriter, r *http.Request) {
-	assetID, validID := pathID(w, r, "id")
-	if !validID {
-		return
-	}
-	if _, ok := s.requireAssetAccess(w, r, assetID); !ok {
+	assetID, _, ok := s.requireAssetPathAccess(w, r, "id")
+	if !ok {
 		return
 	}
 	var req readingActivityRequest

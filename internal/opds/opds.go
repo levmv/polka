@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/levmv/polka/internal/xmlutil"
 )
 
 const (
@@ -350,7 +352,7 @@ func sanitizeXMLString(s string) string {
 	changed := false
 	for i := 0; i < len(s); {
 		r, size := utf8.DecodeRuneInString(s[i:])
-		valid := !(r == utf8.RuneError && size == 1) && validXMLChar(r)
+		valid := !(r == utf8.RuneError && size == 1) && xmlutil.ValidXML10Char(r)
 		if !valid {
 			if !changed {
 				b.Grow(len(s))
@@ -369,15 +371,6 @@ func sanitizeXMLString(s string) string {
 		return s
 	}
 	return b.String()
-}
-
-func validXMLChar(r rune) bool {
-	return r == 0x9 ||
-		r == 0xA ||
-		r == 0xD ||
-		(r >= 0x20 && r <= 0xD7FF) ||
-		(r >= 0xE000 && r <= 0xFFFD) ||
-		(r >= 0x10000 && r <= 0x10FFFF)
 }
 
 func atomTime(t time.Time) string {

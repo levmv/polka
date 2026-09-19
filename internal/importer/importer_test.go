@@ -53,45 +53,7 @@ func writeEPUB(t *testing.T, path string, opf []byte) {
 
 func writeEPUBWithBinaryFiles(t *testing.T, path string, opf []byte, binaryFiles map[string][]byte) {
 	t.Helper()
-	buf := new(bytes.Buffer)
-	w := zip.NewWriter(buf)
-	f0, err := w.CreateHeader(&zip.FileHeader{Name: "mimetype", Method: zip.Store})
-	if err != nil {
-		t.Fatalf("create mimetype: %v", err)
-	}
-	if _, err := f0.Write([]byte("application/epub+zip")); err != nil {
-		t.Fatalf("write mimetype: %v", err)
-	}
-	f1, err := w.Create("META-INF/container.xml")
-	if err != nil {
-		t.Fatalf("create container: %v", err)
-	}
-	if _, err := f1.Write([]byte(`<?xml version="1.0"?>
-<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
-  <rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles>
-</container>`)); err != nil {
-		t.Fatalf("write container: %v", err)
-	}
-	f2, err := w.Create("OEBPS/content.opf")
-	if err != nil {
-		t.Fatalf("create opf: %v", err)
-	}
-	if _, err := f2.Write(opf); err != nil {
-		t.Fatalf("write opf: %v", err)
-	}
-	for name, contents := range binaryFiles {
-		f, err := w.Create(name)
-		if err != nil {
-			t.Fatalf("create binary epub file: %v", err)
-		}
-		if _, err := f.Write(contents); err != nil {
-			t.Fatalf("write binary epub file: %v", err)
-		}
-	}
-	if err := w.Close(); err != nil {
-		t.Fatalf("close epub: %v", err)
-	}
-	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+	if err := os.WriteFile(path, testfixture.EPUB(t, opf, binaryFiles), 0o644); err != nil {
 		t.Fatalf("write epub: %v", err)
 	}
 }

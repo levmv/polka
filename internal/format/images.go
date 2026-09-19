@@ -102,21 +102,6 @@ func EPUBImageMediaTypeForExtension(ext string) (string, bool) {
 	}
 }
 
-func coverImageExtensionFromContentType(contentType string) (string, bool) {
-	switch strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0])) {
-	case "image/jpeg":
-		return ".jpg", true
-	case "image/png":
-		return ".png", true
-	case "image/gif":
-		return ".gif", true
-	case "image/webp":
-		return ".webp", true
-	default:
-		return "", false
-	}
-}
-
 func coverImageExtensionFromFormatName(formatName string) (string, bool) {
 	switch strings.ToLower(strings.TrimSpace(formatName)) {
 	case "jpeg":

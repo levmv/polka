@@ -16,11 +16,8 @@ import (
 
 func (s *Server) handleOPDSProgression(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "private, no-store")
-	assetID, ok := pathID(w, r, "id")
+	assetID, _, ok := s.requireAssetPathAccess(w, r, "id")
 	if !ok {
-		return
-	}
-	if _, ok := s.requireAssetAccess(w, r, assetID); !ok {
 		return
 	}
 	var state *db.ReaderState

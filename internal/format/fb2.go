@@ -462,10 +462,6 @@ func normalizeFB2XMLEncodingDecl(raw []byte) []byte {
 	return fb2XMLEncodingDeclRe.ReplaceAll(raw, []byte(`${1}"utf-8"`))
 }
 
-func decodeFB2XML(raw []byte) (*fb2Doc, error) {
-	return decodeFB2XMLContext(context.Background(), raw)
-}
-
 func decodeFB2XMLContext(ctx context.Context, raw []byte) (*fb2Doc, error) {
 	decoder := xml.NewDecoder(contextReader{ctx: ctx, r: bytes.NewReader(raw)})
 	decoder.CharsetReader = charset.NewReaderLabel
