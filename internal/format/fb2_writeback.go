@@ -5,9 +5,9 @@ import (
 	"bytes"
 	"compress/gzip"
 	"fmt"
-	"html"
 	"io"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -17,19 +17,16 @@ import (
 )
 
 // FB2 write-back rewrites the <description> element in place and leaves the
-// <body> and <binary> blobs byte-untouched. Polka owns <title-info> and
-// <publish-info>, so those are regenerated from the durable metadata snapshot;
-// the description children Polka does not model (<src-title-info>,
-// <document-info>, unrelated <custom-info>, and unknown children) are preserved
-// verbatim, mirroring how EPUB write-back keeps foreign OPF records. The
-// existing cover reference (title-info/coverpage) is carried through so the
-// embedded cover binary stays linked. This renderer never adds or replaces
-// cover bytes.
+// <body> and <binary> blobs byte-untouched. Within title-info and publish-info,
+// only fields that differ from the durable metadata snapshot are replaced.
+// Unmodeled metadata and unchanged field records retain their attributes and
+// nested content.
+// The complete coverpage stays linked to the existing embedded cover bytes.
+// This renderer never adds or replaces cover bytes.
 
 var (
 	fb2XMLDeclRe     = regexp.MustCompile(`(?is)<\?xml\b[^>]*\?>`)
 	fb2EncodingAttr  = regexp.MustCompile(`(?is)encoding\s*=\s*(?:"([^"]*)"|'([^']*)')`)
-	fb2ImageTagRe    = regexp.MustCompile(`(?is)<\s*image\b[^>]*?/?>`)
 	fb2ZipMagicBytes = []byte("PK\x03\x04")
 	fb2GzipMagic     = []byte{0x1f, 0x8b}
 )
@@ -170,14 +167,8 @@ func rewriteFB2GzipTo(w io.Writer, src io.ReaderAt, size int64, meta Metadata) e
 
 type fb2Span struct{ start, end int }
 
-type fb2CoverRef struct {
-	attrName string
-	href     string
-}
-
-// fb2Segment is one direct child of <description> in the rewritten output:
-// either freshly generated Polka-owned XML (gen, UTF-8) or a preserved raw
-// region carried verbatim from the source (raw, source encoding).
+// fb2Segment is generated Polka-owned XML (gen, UTF-8) or a raw region carried
+// verbatim from the source (raw, source encoding).
 type fb2Segment struct {
 	gen string
 	raw []byte
@@ -192,21 +183,30 @@ func rewriteFB2XMLBytes(raw []byte, meta bookmeta.Metadata) ([]byte, error) {
 		return nil, fmt.Errorf("fb2 write-back: <description> element not found")
 	}
 	inner := raw[open.end:closeTag.start]
+	doc, err := decodeFB2MetadataXML(raw)
+	if err != nil {
+		// Compare using the same bounded repairs as import, without changing
+		// the original byte regions that will be preserved in the output.
+		doc, err = decodeFB2MetadataReader(bytes.NewReader(raw))
+	}
+	if err != nil {
+		return nil, fmt.Errorf("fb2 write-back: %w", err)
+	}
+	current := metadataFromFB2(doc)
 
-	var srcTitle, docInfo []byte
+	var titleInfo, publishInfo, srcTitle, docInfo []byte
 	var customInfos, others [][]byte
-	var cover fb2CoverRef
-	titleSeen := false
 	for _, c := range scanFB2DirectChildren(inner) {
 		region := inner[c.start:c.end]
 		switch c.local {
 		case "title-info":
-			if !titleSeen {
-				cover = extractFB2CoverRef(region)
-				titleSeen = true
+			if titleInfo == nil {
+				titleInfo = region
 			}
 		case "publish-info":
-			// Regenerated from the snapshot below.
+			if publishInfo == nil {
+				publishInfo = region
+			}
 		case "src-title-info":
 			if srcTitle == nil {
 				srcTitle = region
@@ -229,32 +229,67 @@ func rewriteFB2XMLBytes(raw []byte, meta bookmeta.Metadata) ([]byte, error) {
 	childIndent := opfChildIndent(inner)
 	endIndent := opfEndIndent(inner)
 
-	segments := []fb2Segment{{gen: buildFB2TitleInfo(meta, cover, newline, childIndent)}}
+	tagsChanged := !slices.Equal(meta.Tags, current.Tags)
+	titleFields := map[string]bool{
+		"genre": tagsChanged, "keywords": tagsChanged,
+		"author": !slices.EqualFunc(meta.Authors, current.Authors, func(a, b bookmeta.AuthorMeta) bool {
+			return a.Name == b.Name && a.SortName == b.SortName
+		}),
+		"book-title": meta.Title != current.Title,
+		"annotation": meta.Description != current.Description,
+		"date":       meta.Date != current.Date,
+		"lang":       meta.Language != current.Language,
+		"sequence":   meta.Series != current.Series || meta.SeriesIndex != current.SeriesIndex,
+	}
+	// Keep the existing date mapping: catalog Date owns title-info/date.
+	// An explicit clear also removes fallback dates so they cannot reappear on
+	// extraction. Other edits preserve the source edition's independent year.
+	clearDate := titleFields["date"] && meta.Date == ""
+	publishFields := map[string]bool{
+		"publisher": meta.Publisher != current.Publisher,
+		"isbn":      !slices.Equal(fb2ISBNValues(meta.Identifier), fb2ISBNValues(current.Identifier)),
+		"year":      clearDate,
+		"sequence":  titleFields["sequence"] && meta.Series == "",
+	}
+	var segments []fb2Segment
+	addChild := func(parts ...fb2Segment) {
+		if len(parts) > 0 {
+			segments = append(segments, fb2Segment{gen: newline + childIndent})
+			segments = append(segments, parts...)
+		}
+	}
+	addChild(mergeFB2Info(titleInfo, buildFB2TitleInfo(meta, newline, childIndent), titleFields,
+		[]string{"genre", "author", "book-title", "annotation", "keywords", "date", "coverpage", "lang", "src-lang", "translator", "sequence"}, newline, childIndent)...)
 	if srcTitle != nil {
-		segments = append(segments, fb2Segment{raw: srcTitle})
+		if clearDate {
+			addChild(mergeFB2Info(srcTitle, "<src-title-info></src-title-info>", map[string]bool{"date": true},
+				[]string{"date"}, newline, childIndent)...)
+		} else {
+			addChild(fb2Segment{raw: srcTitle})
+		}
 	}
 	if docInfo != nil {
-		segments = append(segments, fb2Segment{raw: docInfo})
+		addChild(fb2Segment{raw: docInfo})
 	}
-	if publish := buildFB2PublishInfo(meta, newline, childIndent); publish != "" {
-		segments = append(segments, fb2Segment{gen: publish})
-	}
+	addChild(mergeFB2Info(publishInfo, buildFB2PublishInfo(meta, newline, childIndent), publishFields,
+		[]string{"book-name", "publisher", "city", "year", "isbn", "sequence"}, newline, childIndent)...)
 	if meta.PageCount > 0 {
-		segments = append(segments, fb2Segment{gen: fmt.Sprintf(`<custom-info info-type="schema:numberOfPages">%d</custom-info>`, meta.PageCount)})
+		addChild(fb2Segment{gen: fmt.Sprintf(`<custom-info info-type="schema:numberOfPages">%d</custom-info>`, meta.PageCount)})
 	}
 	for _, ci := range customInfos {
-		segments = append(segments, fb2Segment{raw: ci})
+		addChild(fb2Segment{raw: ci})
 	}
 	for _, o := range others {
-		segments = append(segments, fb2Segment{raw: o})
+		addChild(fb2Segment{raw: o})
 	}
+	segments = append(segments, fb2Segment{gen: newline + endIndent})
 
 	identity := func(r []byte) ([]byte, error) { return r, nil }
 	genBytes := func(g string) ([]byte, error) { return []byte(g), nil }
 
 	label := fb2DeclaredEncoding(raw)
 	if fb2IsUTF8Label(label) {
-		innerBytes, err := assembleFB2Inner(segments, newline, childIndent, endIndent, genBytes, identity)
+		innerBytes, err := assembleFB2Segments(segments, genBytes, identity)
 		if err != nil {
 			return nil, err
 		}
@@ -281,7 +316,7 @@ func rewriteFB2XMLBytes(raw []byte, meta bookmeta.Metadata) ([]byte, error) {
 		}
 		return encoded, nil
 	}
-	if innerBytes, err := assembleFB2Inner(segments, newline, childIndent, endIndent, encodeLegacy, identity); err == nil {
+	if innerBytes, err := assembleFB2Segments(segments, encodeLegacy, identity); err == nil {
 		return spliceFB2(raw, open.end, closeTag.start, innerBytes), nil
 	}
 
@@ -297,7 +332,7 @@ func rewriteFB2XMLBytes(raw []byte, meta bookmeta.Metadata) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("fb2 write-back: decode document tail: %w", err)
 	}
-	innerBytes, err := assembleFB2Inner(segments, newline, childIndent, endIndent, genBytes, decodeRaw)
+	innerBytes, err := assembleFB2Segments(segments, genBytes, decodeRaw)
 	if err != nil {
 		return nil, err
 	}
@@ -336,8 +371,8 @@ func locateFB2Description(raw []byte) (open fb2Span, closeTag fb2Span, ok bool) 
 	return open, closeTag, false
 }
 
-// scanFB2DirectChildren returns the byte ranges of the direct element children
-// of a <description> body, using the shared byte-level XML tag scanner.
+// scanFB2DirectChildren returns direct elements and standalone XML markup
+// (including comments), using the shared byte-level XML tag scanner.
 func scanFB2DirectChildren(inner []byte) []fb2Child {
 	var children []fb2Child
 	depth := 0
@@ -355,6 +390,9 @@ func scanFB2DirectChildren(inner []byte) []fb2Child {
 		}
 		info := opfParseTag(inner[tagStart:tagEnd])
 		if info.local == "" {
+			if depth == 0 {
+				children = append(children, fb2Child{start: tagStart, end: tagEnd})
+			}
 			pos = tagEnd
 			continue
 		}
@@ -389,41 +427,60 @@ type fb2Child struct {
 	end   int
 }
 
-// extractFB2CoverRef returns the first cover image reference in a title-info
-// region, keeping the source attribute name (typically l:href) so the re-emitted
-// coverpage keeps the file's xlink namespace prefix.
-func extractFB2CoverRef(titleInfo []byte) fb2CoverRef {
-	loc := fb2ImageTagRe.FindIndex(titleInfo)
-	if loc == nil {
-		return fb2CoverRef{}
+// mergeFB2Info combines changed catalog fields with original XML records in
+// schema order. Unknown children are retained after the schema-defined fields.
+// Raw parts stay in their source encoding until the final assembly.
+func mergeFB2Info(source []byte, generated string, changed map[string]bool, order []string, newline, indent string) []fb2Segment {
+	fresh := []byte(generated)
+	freshStart, freshEnd := opfTagEnd(fresh, 0), bytes.LastIndexByte(fresh, '<')
+	freshInner := fresh[freshStart:freshEnd]
+	freshChildren := scanFB2DirectChildren(freshInner)
+	if source == nil && len(freshChildren) == 0 {
+		return nil
 	}
-	tag := titleInfo[loc[0]:loc[1]]
-	for _, m := range opfAttrRe.FindAllSubmatch(tag, -1) {
-		if len(m) < 5 {
-			continue
+	opening, closing := fb2Segment{gen: string(fresh[:freshStart])}, fb2Segment{gen: string(fresh[freshEnd:])}
+	var inner []byte
+	if source != nil {
+		start := opfTagEnd(source, 0)
+		if opfParseTag(source[:start]).selfClosing {
+			opening = fb2Segment{raw: append(bytes.Clone(source[:start-2]), '>')}
+		} else {
+			end := bytes.LastIndexByte(source, '<')
+			opening, closing = fb2Segment{raw: source[:start]}, fb2Segment{raw: source[end:]}
+			inner = source[start:end]
 		}
-		name := strings.TrimSpace(string(m[1]))
-		if opfXMLLocalName(name) != "href" {
-			continue
-		}
-		value := m[3]
-		if len(value) == 0 {
-			value = m[4]
-		}
-		href := html.UnescapeString(string(value))
-		if strings.TrimSpace(href) == "" {
-			return fb2CoverRef{}
-		}
-		return fb2CoverRef{attrName: name, href: href}
 	}
-	return fb2CoverRef{}
+	original := scanFB2DirectChildren(inner)
+	parts := []fb2Segment{opening}
+	appendField := func(part fb2Segment) {
+		parts = append(parts, fb2Segment{gen: newline + indent + "  "}, part)
+	}
+	for _, name := range order {
+		if source == nil || changed[name] {
+			for _, child := range freshChildren {
+				if child.local == name {
+					appendField(fb2Segment{gen: string(freshInner[child.start:child.end])})
+				}
+			}
+		} else {
+			for _, child := range original {
+				if child.local == name {
+					appendField(fb2Segment{raw: inner[child.start:child.end]})
+				}
+			}
+		}
+	}
+	for _, child := range original {
+		if !slices.Contains(order, child.local) {
+			appendField(fb2Segment{raw: inner[child.start:child.end]})
+		}
+	}
+	return append(parts, fb2Segment{gen: newline + indent}, closing)
 }
 
-func assembleFB2Inner(segments []fb2Segment, newline, childIndent, endIndent string, renderGen func(string) ([]byte, error), renderRaw func([]byte) ([]byte, error)) ([]byte, error) {
+func assembleFB2Segments(segments []fb2Segment, renderGen func(string) ([]byte, error), renderRaw func([]byte) ([]byte, error)) ([]byte, error) {
 	var buf bytes.Buffer
-	buf.WriteString(newline)
 	for _, s := range segments {
-		buf.WriteString(childIndent)
 		var (
 			b   []byte
 			err error
@@ -437,9 +494,7 @@ func assembleFB2Inner(segments []fb2Segment, newline, childIndent, endIndent str
 			return nil, err
 		}
 		buf.Write(b)
-		buf.WriteString(newline)
 	}
-	buf.WriteString(endIndent)
 	return buf.Bytes(), nil
 }
 
@@ -452,7 +507,7 @@ func spliceFB2(raw []byte, start, end int, mid []byte) []byte {
 }
 
 // buildFB2TitleInfo renders the snapshot in FB2 schema order.
-func buildFB2TitleInfo(meta bookmeta.Metadata, cover fb2CoverRef, newline, indent string) string {
+func buildFB2TitleInfo(meta bookmeta.Metadata, newline, indent string) string {
 	sub := indent + "  "
 	var b strings.Builder
 	b.WriteString("<title-info>")
@@ -473,10 +528,12 @@ func buildFB2TitleInfo(meta bookmeta.Metadata, cover fb2CoverRef, newline, inden
 		b.WriteString(newline + sub + "<annotation>" + newline + sub + "  <p>" + opfEscapeText(desc) + "</p>" + newline + sub + "</annotation>")
 	}
 	if date := strings.TrimSpace(meta.Date); date != "" {
-		b.WriteString(newline + sub + `<date value="` + opfEscapeAttr(date) + `">` + opfEscapeText(date) + "</date>")
-	}
-	if cover.href != "" {
-		b.WriteString(newline + sub + "<coverpage>" + newline + sub + "  <image " + cover.attrName + `="` + opfEscapeAttr(cover.href) + `"/>` + newline + sub + "</coverpage>")
+		b.WriteString(newline + sub + "<date")
+		// FB2's optional value attribute is xs:date, which needs a full day.
+		if normalized, precision := bookmeta.ParseDate(date); precision == "day" {
+			b.WriteString(` value="` + normalized + `"`)
+		}
+		b.WriteString(">" + opfEscapeText(date) + "</date>")
 	}
 	if lang := strings.TrimSpace(meta.Language); lang != "" {
 		b.WriteString(newline + sub + "<lang>" + opfEscapeText(lang) + "</lang>")
@@ -492,15 +549,11 @@ func buildFB2TitleInfo(meta bookmeta.Metadata, cover fb2CoverRef, newline, inden
 	return b.String()
 }
 
-// buildFB2PublishInfo renders a <publish-info> element, or "" when the snapshot
-// has no publish-info content FB2 can carry (publisher / ISBN).
+// buildFB2PublishInfo renders the catalog fields of <publish-info>.
 func buildFB2PublishInfo(meta bookmeta.Metadata, newline, indent string) string {
 	sub := indent + "  "
 	publisher := strings.TrimSpace(meta.Publisher)
 	isbns := fb2ISBNValues(meta.Identifier)
-	if publisher == "" && len(isbns) == 0 {
-		return ""
-	}
 	var b strings.Builder
 	b.WriteString("<publish-info>")
 	if publisher != "" {
