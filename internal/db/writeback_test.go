@@ -16,14 +16,14 @@ func TestMetadataWritebackDirtyQuery(t *testing.T) {
 	mustExec(t, database, "INSERT INTO books (id, title, sort_title, metadata_rev) VALUES (165, 'PDF', 'PDF', 2)")
 	mustExec(t, database, "INSERT INTO books (id, title, sort_title, metadata_rev, deleted_at) VALUES (122, 'Deleted', 'Deleted', 2, 10)")
 	mustExec(t, database, `
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, writeback_rev, writeback_error, original_sha256, current_sha256)
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, writeback_rev, writeback_error, original_hash, current_hash)
 		VALUES
-			(1, 127, 'A/EPUB/as_epub_dirty.epub', 'as_epub_dirty.epub', '.epub', 'epub', 1, NULL, randomblob(32), randomblob(32)),
-			(2, 127, 'A/EPUB/as_kepub_dirty.kepub.epub', 'as_kepub_dirty.kepub.epub', '.kepub.epub', 'kepub', 1, NULL, randomblob(32), randomblob(32)),
-			(3, 127, 'A/EPUB/as_epub_failed.epub', 'as_epub_failed.epub', '.epub', 'epub', 0, 'bad opf', randomblob(32), randomblob(32)),
-			(4, 127, 'A/EPUB/as_epub_clean.epub', 'as_epub_clean.epub', '.epub', 'epub', 2, NULL, randomblob(32), randomblob(32)),
-			(5, 165, 'A/PDF/as_pdf_dirty.pdf', 'as_pdf_dirty.pdf', '.pdf', 'pdf', 0, NULL, randomblob(32), randomblob(32)),
-			(6, 122, 'A/Deleted/as_deleted_dirty.epub', 'as_deleted_dirty.epub', '.epub', 'epub', 0, NULL, randomblob(32), randomblob(32))
+			(1, 127, 'A/EPUB/as_epub_dirty.epub', 'as_epub_dirty.epub', '.epub', 'epub', 1, NULL, randomblob(16), randomblob(16)),
+			(2, 127, 'A/EPUB/as_kepub_dirty.kepub.epub', 'as_kepub_dirty.kepub.epub', '.kepub.epub', 'kepub', 1, NULL, randomblob(16), randomblob(16)),
+			(3, 127, 'A/EPUB/as_epub_failed.epub', 'as_epub_failed.epub', '.epub', 'epub', 0, 'bad opf', randomblob(16), randomblob(16)),
+			(4, 127, 'A/EPUB/as_epub_clean.epub', 'as_epub_clean.epub', '.epub', 'epub', 2, NULL, randomblob(16), randomblob(16)),
+			(5, 165, 'A/PDF/as_pdf_dirty.pdf', 'as_pdf_dirty.pdf', '.pdf', 'pdf', 0, NULL, randomblob(16), randomblob(16)),
+			(6, 122, 'A/Deleted/as_deleted_dirty.epub', 'as_deleted_dirty.epub', '.epub', 'epub', 0, NULL, randomblob(16), randomblob(16))
 	`)
 
 	counts, err := CountDirtyMetadataWritebackAssets(database.Read(t.Context()), FullVisibilityScope())
@@ -102,8 +102,8 @@ func TestMetadataWritebackDirtyQuery(t *testing.T) {
 
 func TestMetadataWritebackSnapshotAndAttempt(t *testing.T) {
 	database := newTestDB(t)
-	oldHash := bytes.Repeat([]byte{1}, 32)
-	newHash := bytes.Repeat([]byte{2}, 32)
+	oldHash := bytes.Repeat([]byte{1}, 16)
+	newHash := bytes.Repeat([]byte{2}, 16)
 	mustExec(t, database, `
 		INSERT INTO books
 			(id, title, sort_title, series, series_index, description, tags, publisher, published_date, language, identifiers, metadata_rev)
@@ -114,9 +114,9 @@ func TestMetadataWritebackSnapshotAndAttempt(t *testing.T) {
 	mustExec(t, database, "INSERT INTO book_authors (book_id, author_id, role, author_order) VALUES (1, 1, 'aut', 0)")
 	mustExec(t, database, `
 		INSERT INTO assets
-			(id, book_id, storage_path, filename, extension, format, current_sha256, current_size, writeback_rev, original_sha256)
+			(id, book_id, storage_path, filename, extension, format, current_hash, current_size, writeback_rev, original_hash)
 		VALUES
-			(1, 1, 'A/Book/as1.epub', 'as1.epub', '.epub', 'epub', ?, 123, 2, randomblob(32))
+			(1, 1, 'A/Book/as1.epub', 'as1.epub', '.epub', 'epub', ?, 123, 2, randomblob(16))
 	`, oldHash)
 
 	snap, err := LoadMetadataWritebackSnapshot(database.Read(t.Context()), 1)
@@ -137,8 +137,8 @@ func TestMetadataWritebackSnapshotAndAttempt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetMetadataWritebackAsset: %v", err)
 	}
-	if !bytes.Equal(row.CurrentSHA256, oldHash) || !row.CurrentSize.Valid || row.CurrentSize.Int64 != 123 {
-		t.Fatalf("asset current identity = %q/%+v", row.CurrentSHA256, row.CurrentSize)
+	if !bytes.Equal(row.CurrentHash, oldHash) || !row.CurrentSize.Valid || row.CurrentSize.Int64 != 123 {
+		t.Fatalf("asset current identity = %q/%+v", row.CurrentHash, row.CurrentSize)
 	}
 
 	attempt := MetadataWritebackAttempt{
@@ -146,7 +146,7 @@ func TestMetadataWritebackSnapshotAndAttempt(t *testing.T) {
 		MetadataRev: 4,
 		StoragePath: "A/Book/as1.epub",
 		TempPath:    "A/Book/.writeback-as1-rev4.tmp",
-		SHA256:      newHash,
+		Hash:        newHash,
 		Size:        456,
 	}
 	if err := UpsertMetadataWritebackAttempt(database.Write(t.Context()), attempt); err != nil {
@@ -163,7 +163,7 @@ func TestMetadataWritebackSnapshotAndAttempt(t *testing.T) {
 	var currentSize, writebackRev int64
 	var writebackError sql.NullString
 	if err := database.Read(t.Context()).QueryRow(`
-		SELECT current_sha256, current_size, COALESCE(koreader_hash, ''), writeback_rev, writeback_error
+		SELECT current_hash, current_size, COALESCE(koreader_hash, ''), writeback_rev, writeback_error
 		FROM assets WHERE id = 1
 	`).Scan(&currentHash, &currentSize, &koHash, &writebackRev, &writebackError); err != nil {
 		t.Fatalf("query success asset: %v", err)

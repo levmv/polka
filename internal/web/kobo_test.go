@@ -32,8 +32,8 @@ func seedKoboWebBook(t *testing.T, database *db.DB, dir string, bookID, assetID 
 	`, bookID, title, title)
 	mustExec(t, database, `
 		INSERT INTO assets
-		    (id, book_id, storage_path, filename, extension, format, is_primary, current_size, original_sha256, current_sha256)
-		VALUES (?, ?, ?, ?, '.epub', 'epub', 1, 1024, randomblob(32), randomblob(32))
+		    (id, book_id, storage_path, filename, extension, format, is_primary, current_size, original_hash, current_hash)
+		VALUES (?, ?, ?, ?, '.epub', 'epub', 1, 1024, randomblob(16), randomblob(16))
 	`, assetID, bookID, storagePath, strconv.FormatInt(assetID, 10)+".epub")
 
 	fullPath := filepath.Join(dir, filepath.FromSlash(storagePath))

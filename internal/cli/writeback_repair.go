@@ -97,7 +97,7 @@ func repairMetadataWritebackAttempt(ctx context.Context, database *db.DB, root s
 		return "cleared", nil
 	}
 
-	finalMatches, err := pathMatchesWritebackAttempt(ctx, root, attempt.StoragePath, attempt.SHA256, attempt.Size)
+	finalMatches, err := pathMatchesWritebackAttempt(ctx, root, attempt.StoragePath, attempt.Hash, attempt.Size)
 	if err != nil {
 		return "", err
 	}
@@ -109,7 +109,7 @@ func repairMetadataWritebackAttempt(ctx context.Context, database *db.DB, root s
 		return "finalized", nil
 	}
 
-	tempMatches, err := pathMatchesWritebackAttempt(ctx, root, attempt.TempPath, attempt.SHA256, attempt.Size)
+	tempMatches, err := pathMatchesWritebackAttempt(ctx, root, attempt.TempPath, attempt.Hash, attempt.Size)
 	if err != nil {
 		return "", err
 	}
@@ -138,7 +138,7 @@ func repairMetadataWritebackAttempt(ctx context.Context, database *db.DB, root s
 
 func markWritebackAttemptSuccess(ctx context.Context, database *db.DB, attempt db.MetadataWritebackAttemptRow) error {
 	return database.Transact(ctx, func(tx *db.Tx) error {
-		return db.MarkMetadataWritebackSuccess(tx, attempt.AssetID, attempt.StoragePath, attempt.SHA256, attempt.Size, attempt.MetadataRev)
+		return db.MarkMetadataWritebackSuccess(tx, attempt.AssetID, attempt.StoragePath, attempt.Hash, attempt.Size, attempt.MetadataRev)
 	})
 }
 
@@ -157,7 +157,7 @@ func pathMatchesWritebackAttempt(ctx context.Context, root storage.Root, relPath
 	if info.IsDir() || info.Size() != wantSize {
 		return false, nil
 	}
-	gotHash, gotSize, err := fileSHA256AndSizeContext(ctx, absPath)
+	gotHash, gotSize, err := fileHashAndSizeContext(ctx, absPath)
 	if os.IsNotExist(err) {
 		return false, nil
 	}

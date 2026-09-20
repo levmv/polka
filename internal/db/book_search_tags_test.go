@@ -30,7 +30,7 @@ func TestQuotedTagsMatchWholeValues(t *testing.T) {
 			if _, err := tx.Exec("INSERT INTO books (id, title, sort_title, tags) VALUES (?, ?, ?, ?)", book.id, fmt.Sprintf("Needle %d", book.id), book.id, book.tags); err != nil {
 				return err
 			}
-			if _, err := tx.Exec("INSERT INTO assets (id, book_id, storage_path, filename, extension, original_sha256, current_sha256) VALUES (?, ?, ?, ?, '.epub', randomblob(32), randomblob(32))", book.id, book.id, fmt.Sprintf("%d.epub", book.id), fmt.Sprintf("%d.epub", book.id)); err != nil {
+			if _, err := tx.Exec("INSERT INTO assets (id, book_id, storage_path, filename, extension, original_hash, current_hash) VALUES (?, ?, ?, ?, '.epub', randomblob(16), randomblob(16))", book.id, book.id, fmt.Sprintf("%d.epub", book.id), fmt.Sprintf("%d.epub", book.id)); err != nil {
 				return err
 			}
 			return UpdateSearchIndex(tx, book.id)
@@ -77,7 +77,7 @@ func TestExactTagShelfTracksMetadataAndAccess(t *testing.T) {
 		tags string
 	}{{1, "История"}, {2, "История искусства"}} {
 		mustExec(t, database, "INSERT INTO books (id, title, sort_title, tags) VALUES (?, ?, ?, ?)", book.id, book.id, book.id, book.tags)
-		mustExec(t, database, "INSERT INTO assets (id, book_id, storage_path, filename, extension, original_sha256, current_sha256) VALUES (?, ?, ?, ?, '.epub', randomblob(32), randomblob(32))", book.id, book.id, fmt.Sprintf("%d.epub", book.id), fmt.Sprintf("%d.epub", book.id))
+		mustExec(t, database, "INSERT INTO assets (id, book_id, storage_path, filename, extension, original_hash, current_hash) VALUES (?, ?, ?, ?, '.epub', randomblob(16), randomblob(16))", book.id, book.id, fmt.Sprintf("%d.epub", book.id), fmt.Sprintf("%d.epub", book.id))
 
 		setSearchTags(t, database, book.id, book.tags)
 	}

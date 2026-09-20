@@ -3,12 +3,13 @@ package web
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/hex"
 	"io"
 	"net/http"
 	"os"
 	"sync"
+
+	"github.com/levmv/polka/internal/storage"
 )
 
 // Only verified file identities are cached, never storage paths or open files.
@@ -21,7 +22,7 @@ type readerContentCache struct {
 
 type verifiedReaderContent struct {
 	info os.FileInfo
-	hash [32]byte
+	hash [16]byte
 }
 
 func (cache *readerContentCache) verify(ctx context.Context, f *os.File, expected []byte) (bool, error) {
@@ -50,7 +51,7 @@ func (cache *readerContentCache) verify(ctx context.Context, f *os.File, expecte
 	if len(cache.entries) == 128 {
 		cache.entries = cache.entries[1:]
 	}
-	cache.entries = append(cache.entries, verifiedReaderContent{info: info, hash: [32]byte(digest)})
+	cache.entries = append(cache.entries, verifiedReaderContent{info: info, hash: [16]byte(digest)})
 	return true, nil
 }
 
@@ -58,25 +59,12 @@ func readerFileHash(ctx context.Context, f *os.File) ([]byte, error) {
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
 		return nil, err
 	}
-	hash := sha256.New()
-	buffer := make([]byte, 128<<10)
-	for {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		n, err := f.Read(buffer)
-		if n > 0 {
-			_, _ = hash.Write(buffer[:n])
-		}
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
+	digest, err := storage.HashReader(ctx, f)
+	if err != nil {
+		return nil, err
 	}
-	_, err := f.Seek(0, io.SeekStart)
-	return hash.Sum(nil), err
+	_, err = f.Seek(0, io.SeekStart)
+	return digest, err
 }
 
 func (s *Server) verifyReaderContent(w http.ResponseWriter, r *http.Request, f *os.File, expected []byte) bool {

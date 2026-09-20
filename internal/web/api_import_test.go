@@ -326,8 +326,8 @@ func TestAPIImportRequiresLayoutBeforeWrite(t *testing.T) {
 					t.Fatalf("EnsureLayout: %v", err)
 				}
 				mustExec(t, database, `INSERT INTO books (id, title, sort_title) VALUES (169, 'Seed', 'Seed');
-					 INSERT INTO assets (id, book_id, storage_path, filename, extension, original_sha256, current_sha256)
-					   VALUES (1, 169, 'Seed/a_seed.epub', 'a_seed.epub', '.epub', randomblob(32), randomblob(32));`)
+					 INSERT INTO assets (id, book_id, storage_path, filename, extension, original_hash, current_hash)
+					   VALUES (1, 169, 'Seed/a_seed.epub', 'a_seed.epub', '.epub', randomblob(16), randomblob(16));`)
 
 				return root
 			},

@@ -45,11 +45,6 @@ func IsReportedFailure(err error) bool {
 	return reported || errors.Is(err, ErrIssuesFound) || errors.Is(err, errImportItemsFailed) || errors.Is(err, context.Canceled)
 }
 
-// Run is the context-free convenience entry point used by tests and embedders.
-func Run(args []string) error {
-	return RunContext(context.Background(), args)
-}
-
 // RunContext parses the arguments and dispatches the subcommand under the
 // caller-owned process lifetime.
 func RunContext(ctx context.Context, args []string) error {

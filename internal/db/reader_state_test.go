@@ -15,7 +15,7 @@ func TestResetReaderStatePreservesAnnotationsAndOtherUsers(t *testing.T) {
 	user := mustUser(t, database, "reader", RoleMember)
 	other := mustUser(t, database, "other", RoleMember)
 	mustExec(t, database, "INSERT INTO books (id, title, sort_title) VALUES (1, 'T1', 'T1')")
-	mustExec(t, database, "INSERT INTO assets (id, book_id, storage_path, filename, extension, is_primary, original_sha256, current_sha256) VALUES (1, 1, 'books/a.epub', 'a.epub', '.epub', 1, randomblob(32), randomblob(32))")
+	mustExec(t, database, "INSERT INTO assets (id, book_id, storage_path, filename, extension, is_primary, original_hash, current_hash) VALUES (1, 1, 'books/a.epub', 'a.epub', '.epub', 1, randomblob(16), randomblob(16))")
 
 	locator := Locator{CFI: "epubcfi(/6/2)"}
 	if _, _, err := database.SaveReaderState(t.Context(), user.ID, 1, testReaderWrite(0.42, locator, 0), ReadingStatusSourceWebReader); err != nil {
@@ -60,8 +60,8 @@ func TestTouchReaderRollsBackTogether(t *testing.T) {
 	user := mustUser(t, database, "reader", RoleMember)
 	mustExec(t, database, `
 		INSERT INTO books (id, title, sort_title) VALUES (1, 'Book', 'Book');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, original_sha256, current_sha256)
-		VALUES (1, 1, 'book.epub', 'book.epub', '.epub', randomblob(32), randomblob(32));
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, original_hash, current_hash)
+		VALUES (1, 1, 'book.epub', 'book.epub', '.epub', randomblob(16), randomblob(16));
 		CREATE TRIGGER fail_reader_open_status
 		BEFORE INSERT ON user_book_reading_events
 		BEGIN
@@ -89,8 +89,8 @@ func TestSaveReaderStateAndStatusCommitTogether(t *testing.T) {
 	user := mustUser(t, database, "reader-atomic", RoleReader)
 	mustExec(t, database, `
 		INSERT INTO books (id, title, sort_title) VALUES (108, 'Atomic', 'Atomic');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, original_sha256, current_sha256)
-		VALUES (1, 108, 'atomic.epub', 'atomic.epub', '.epub', randomblob(32), randomblob(32));
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, original_hash, current_hash)
+		VALUES (1, 108, 'atomic.epub', 'atomic.epub', '.epub', randomblob(16), randomblob(16));
 		CREATE TRIGGER reject_atomic_status
 		BEFORE INSERT ON user_book_reading_events
 		BEGIN
@@ -146,9 +146,9 @@ func TestCachePositionConversion(t *testing.T) {
 			user := mustUser(t, database, "reader", RoleMember)
 			other := mustUser(t, database, "other", RoleMember)
 			mustExec(t, database, `INSERT INTO books (id, title, sort_title) VALUES (1, 'Book', 'Book');
-                INSERT INTO assets (id, book_id, storage_path, filename, extension, original_sha256, current_sha256)
-                VALUES (1, 1, 'book.epub', 'book.epub', '.epub', randomblob(32), randomblob(32)),
-                       (2, 1, 'other.epub', 'other.epub', '.epub', randomblob(32), randomblob(32));`)
+                INSERT INTO assets (id, book_id, storage_path, filename, extension, original_hash, current_hash)
+                VALUES (1, 1, 'book.epub', 'book.epub', '.epub', randomblob(16), randomblob(16)),
+                       (2, 1, 'other.epub', 'other.epub', '.epub', randomblob(16), randomblob(16));`)
 			mustExec(t, database, `INSERT INTO reading_positions (user_id, asset_id, revision, progress, updated_at)
                 VALUES (?, 1, 1, NULL, 100), (?, 2, 1, NULL, 100)`, other.ID, user.ID)
 			input := testReaderWrite(.2, Locator{CFI: "epubcfi(/6/2!/4/2/1:4)"}, 0)
@@ -206,7 +206,7 @@ func TestAnnotationSelectionRetriesConflictsAndDeletion(t *testing.T) {
 	database := newTestDB(t)
 	alice := mustUser(t, database, "alice", RoleMember)
 	mustExec(t, database, "INSERT INTO books (id,title,sort_title) VALUES (1,'Book','Book')")
-	mustExec(t, database, "INSERT INTO assets (id,book_id,storage_path,filename,extension,original_sha256,current_sha256) VALUES (1,1,'a.epub','a.epub','.epub',randomblob(32),randomblob(32))")
+	mustExec(t, database, "INSERT INTO assets (id,book_id,storage_path,filename,extension,original_hash,current_hash) VALUES (1,1,'a.epub','a.epub','.epub',randomblob(16),randomblob(16))")
 	input := testAnnotation("epubcfi(/6/2!/4/2)", "  "+strings.Repeat("Я𐐀\n", 1200)+"  ")
 	input.ContextBefore, input.ContextAfter = " before\n", "\n after "
 	created, err := database.CreateAnnotation(t.Context(), alice.ID, 1, input)
@@ -306,12 +306,12 @@ func TestListContinueReading(t *testing.T) {
 	for _, bookID := range []int64{1, 2, 125, 122} {
 		mustExec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES (?, 1, 0)", bookID)
 	}
-	mustExec("INSERT INTO assets (id, book_id, storage_path, filename, extension, original_sha256, current_sha256) VALUES (1, 1, 'old.epub', 'old.epub', '.epub', randomblob(32), randomblob(32))")
-	mustExec("INSERT INTO assets (id, book_id, storage_path, filename, extension, original_sha256, current_sha256) VALUES (2, 1, 'new.fb2', 'new.fb2', '.fb2', randomblob(32), randomblob(32))")
-	mustExec("INSERT INTO assets (id, book_id, storage_path, filename, extension, original_sha256, current_sha256) VALUES (3, 2, 'zero.pdf', 'zero.pdf', '.pdf', randomblob(32), randomblob(32))")
-	mustExec("INSERT INTO assets (id, book_id, storage_path, filename, extension, original_sha256, current_sha256) VALUES (4, 125, 'done.pdf', 'done.pdf', '.pdf', randomblob(32), randomblob(32))")
-	mustExec("INSERT INTO assets (id, book_id, storage_path, filename, extension, original_sha256, current_sha256) VALUES (5, 125, 'done.epub', 'done.epub', '.epub', randomblob(32), randomblob(32))")
-	mustExec("INSERT INTO assets (id, book_id, storage_path, filename, extension, original_sha256, current_sha256) VALUES (6, 122, 'deleted.epub', 'deleted.epub', '.epub', randomblob(32), randomblob(32))")
+	mustExec("INSERT INTO assets (id, book_id, storage_path, filename, extension, original_hash, current_hash) VALUES (1, 1, 'old.epub', 'old.epub', '.epub', randomblob(16), randomblob(16))")
+	mustExec("INSERT INTO assets (id, book_id, storage_path, filename, extension, original_hash, current_hash) VALUES (2, 1, 'new.fb2', 'new.fb2', '.fb2', randomblob(16), randomblob(16))")
+	mustExec("INSERT INTO assets (id, book_id, storage_path, filename, extension, original_hash, current_hash) VALUES (3, 2, 'zero.pdf', 'zero.pdf', '.pdf', randomblob(16), randomblob(16))")
+	mustExec("INSERT INTO assets (id, book_id, storage_path, filename, extension, original_hash, current_hash) VALUES (4, 125, 'done.pdf', 'done.pdf', '.pdf', randomblob(16), randomblob(16))")
+	mustExec("INSERT INTO assets (id, book_id, storage_path, filename, extension, original_hash, current_hash) VALUES (5, 125, 'done.epub', 'done.epub', '.epub', randomblob(16), randomblob(16))")
+	mustExec("INSERT INTO assets (id, book_id, storage_path, filename, extension, original_hash, current_hash) VALUES (6, 122, 'deleted.epub', 'deleted.epub', '.epub', randomblob(16), randomblob(16))")
 
 	mustExec("INSERT INTO reading_positions (user_id, asset_id, progress, updated_at) VALUES (?, 1, 0.2, 10)", alice.ID)
 	mustExec("INSERT INTO reading_positions (user_id, asset_id, progress, updated_at) VALUES (?, 2, 0.4, 20)", alice.ID)
@@ -357,8 +357,8 @@ func TestReaderPositionRevisionRetryAndReset(t *testing.T) {
 	database := newTestDB(t)
 	user := mustUser(t, database, "revision-reader", RoleReader)
 	mustExec(t, database, `INSERT INTO books(id,title,sort_title) VALUES(1,'Book','Book');
-        INSERT INTO assets(id,book_id,storage_path,filename,extension,original_sha256,current_sha256)
-        VALUES(1,1,'book.epub','book.epub','.epub',randomblob(32),randomblob(32));`)
+        INSERT INTO assets(id,book_id,storage_path,filename,extension,original_hash,current_hash)
+        VALUES(1,1,'book.epub','book.epub','.epub',randomblob(16),randomblob(16));`)
 	input := testReaderWrite(.3, Locator{CFI: "epubcfi(/6/2)"}, 0)
 	first, _, err := database.SaveReaderState(t.Context(), user.ID, 1, input, ReadingStatusSourceWebReader)
 	if err != nil || first.Revision != 1 {
@@ -471,8 +471,8 @@ func TestResetEmptyReaderStateAdvancesRevision(t *testing.T) {
 			database := newTestDB(t)
 			user := mustUser(t, database, "reset-reader", RoleReader)
 			mustExec(t, database, `INSERT INTO books(id,title,sort_title) VALUES(1,'Book','Book');
-                INSERT INTO assets(id,book_id,storage_path,filename,extension,original_sha256,current_sha256)
-                VALUES(1,1,'book.epub','book.epub','.epub',randomblob(32),randomblob(32));`)
+                INSERT INTO assets(id,book_id,storage_path,filename,extension,original_hash,current_hash)
+                VALUES(1,1,'book.epub','book.epub','.epub',randomblob(16),randomblob(16));`)
 			if name == "opened" {
 				if err := database.TouchReader(t.Context(), user.ID, 1, ReadingStatusSourceWebReader); err != nil {
 					t.Fatal(err)
@@ -497,8 +497,8 @@ func TestPDFAnnotationLocatorValidationAndRetry(t *testing.T) {
 	database := newTestDB(t)
 	user := mustUser(t, database, "pdf-annotations", RoleReader)
 	mustExec(t, database, `INSERT INTO books(id,title,sort_title) VALUES(1,'PDF','PDF');
-        INSERT INTO assets(id,book_id,storage_path,filename,extension,original_sha256,current_sha256)
-        VALUES(1,1,'book.pdf','book.pdf','.pdf',randomblob(32),randomblob(32));`)
+        INSERT INTO assets(id,book_id,storage_path,filename,extension,original_hash,current_hash)
+        VALUES(1,1,'book.pdf','book.pdf','.pdf',randomblob(16),randomblob(16));`)
 	locator := Locator{Page: 2, Rects: []Rect{{X: -10, Y: 100, Width: 80, Height: 12}, {X: -10, Y: 84, Width: 40, Height: 12}}}
 	created, err := database.CreateAnnotation(t.Context(), user.ID, 1, AnnotationCreate{Locator: locator, Quote: "Two lines"})
 	if err != nil || !created.Locator.Equal(locator) {

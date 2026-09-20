@@ -437,8 +437,8 @@ func TestAPIEditRelayoutKeepsDBConsistent(t *testing.T) {
 		t.Fatalf("write file: %v", err)
 	}
 	mustExec(t, database, "INSERT INTO books (id, title, sort_title) VALUES (?, ?, ?)", bookID, oldTitle, oldTitle)
-	fileHash := bytes.Repeat([]byte{0xaa}, 32)
-	mustExec(t, database, "INSERT INTO assets (id, book_id, storage_path, filename, extension, original_sha256, current_sha256) VALUES (?, ?, ?, ?, ?, ?, ?)",
+	fileHash := bytes.Repeat([]byte{0xaa}, 16)
+	mustExec(t, database, "INSERT INTO assets (id, book_id, storage_path, filename, extension, original_hash, current_hash) VALUES (?, ?, ?, ?, ?, ?, ?)",
 		assetID, bookID, oldPath, filepath.Base(oldPath), ext, fileHash, fileHash)
 	mustExec(t, database, "INSERT INTO authors (id, name, sort_name) VALUES (1, ?, ?)", authorName, authorSort)
 	mustExec(t, database, "INSERT INTO book_authors (book_id, author_id, author_order) VALUES (?, 1, 0)", bookID)
@@ -489,7 +489,7 @@ func TestAPIEditMetadataOnlyDoesNotRequireStorage(t *testing.T) {
 	assetID := int64(1)
 	storagePath := defaultStoragePath(t, "Stored Title", "Jane Doe", bookmeta.AuthorSort("Jane Doe"), assetID, ".epub")
 	mustExec(t, database, "INSERT INTO books (id, title, sort_title) VALUES (?, 'Stored Title', 'Stored Title')", bookID)
-	mustExec(t, database, "INSERT INTO assets (id, book_id, storage_path, filename, extension, format, original_sha256, current_sha256) VALUES (?, ?, ?, ?, '.epub', 'epub', randomblob(32), randomblob(32))",
+	mustExec(t, database, "INSERT INTO assets (id, book_id, storage_path, filename, extension, format, original_hash, current_hash) VALUES (?, ?, ?, ?, '.epub', 'epub', randomblob(16), randomblob(16))",
 		assetID, bookID, storagePath, filepath.Base(storagePath))
 	mustExec(t, database, "INSERT INTO authors (id, name, sort_name) VALUES (1, 'Jane Doe', ?)", bookmeta.AuthorSort("Jane Doe"))
 	mustExec(t, database, "INSERT INTO book_authors (book_id, author_id, author_order) VALUES (?, 1, 0)", bookID)

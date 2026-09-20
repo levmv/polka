@@ -91,13 +91,6 @@ func AcquireWriterLease(ctx context.Context, database *DB, owner string, force b
 	return &WriterLease{db: database, owner: owner}, nil
 }
 
-func (l *WriterLease) Owner() string {
-	if l == nil {
-		return ""
-	}
-	return l.owner
-}
-
 func (l *WriterLease) Renew(ctx context.Context) error {
 	if l == nil {
 		return nil

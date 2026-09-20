@@ -67,21 +67,28 @@ func TestPlace(t *testing.T) {
 	}
 }
 
-func TestStageFinalizesFromRootStaging(t *testing.T) {
+func TestStagedFileLifecycle(t *testing.T) {
 	root := testRoot(t)
 	relPath := "books/A/Author/Book - Author [a_stage].epub"
 
-	staged, err := Stage(root, "[a_stage].epub", bytes.NewReader([]byte("staged book bytes")))
+	staged, err := Stage(root, "pending-import.epub", bytes.NewReader([]byte("staged book bytes")))
 	if err != nil {
 		t.Fatalf("Stage: %v", err)
 	}
 	if filepath.Dir(staged.tmpPath) != root.StagingDir() {
 		t.Fatalf("staged file dir = %q; want %q", filepath.Dir(staged.tmpPath), root.StagingDir())
 	}
-	if !strings.Contains(filepath.Base(staged.tmpPath), "[a_stage]") {
-		t.Fatalf("staged file %q does not include asset id", staged.tmpPath)
+	oldPath := staged.tmpPath
+	if err := staged.Relabel("[a_stage].epub"); err != nil {
+		t.Fatalf("Relabel: %v", err)
 	}
-
+	if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
+		t.Fatalf("old staged path still exists: %v", err)
+	}
+	label, ok := ParseStagedTempName(filepath.Base(staged.tmpPath))
+	if !ok || label != "[a_stage].epub" {
+		t.Fatalf("staged label = %q, %v; want [a_stage].epub", label, ok)
+	}
 	if err := staged.Finalize(root, relPath); err != nil {
 		t.Fatalf("Finalize: %v", err)
 	}

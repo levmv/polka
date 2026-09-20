@@ -22,13 +22,6 @@ const (
 	GeneratedStyleQuiet   = "quiet"
 )
 
-// Generated renders a deterministic generated cover variant for an explicit
-// edit action. Unlike Placeholder, this is meant to become a stored user-chosen
-// cover after Save, so the seed is allowed to change the visual result.
-func Generated(title, author string, variant Variant, opts Options, seed int) (Encoded, error) {
-	return GeneratedStyled(title, author, variant, opts, seed, GeneratedStyleClassic)
-}
-
 // GeneratedStyled renders one deterministic generated-cover style for the edit
 // cover picker. Unknown style ids fall back to the classic style so old clients
 // keep working if the style list changes.

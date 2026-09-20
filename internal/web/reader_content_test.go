@@ -1,7 +1,6 @@
 package web
 
 import (
-	"crypto/sha256"
 	"encoding/hex"
 	"net/http/httptest"
 	"os"
@@ -9,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/levmv/polka/internal/db"
+	"github.com/levmv/polka/internal/storage"
 )
 
 func TestPinnedReaderNeverLabelsReplacementAsOpenedContent(t *testing.T) {
@@ -33,8 +33,8 @@ func TestPinnedReaderNeverLabelsReplacementAsOpenedContent(t *testing.T) {
 	if err := os.WriteFile(path, original, 0600); err != nil {
 		t.Fatal(err)
 	}
-	hash := sha256.Sum256(original)
-	mustExec(t, database, "UPDATE assets SET format='epub',can_read=1,current_sha256=? WHERE id=1", hash[:])
+	hash := storage.Sum(original)
+	mustExec(t, database, "UPDATE assets SET format='epub',can_read=1,current_hash=? WHERE id=1", hash[:])
 	request := func(digest []byte) *httptest.ResponseRecorder {
 		t.Helper()
 		w := httptest.NewRecorder()
@@ -64,8 +64,8 @@ func TestPinnedReaderNeverLabelsReplacementAsOpenedContent(t *testing.T) {
 	if stale := request(hash[:]); stale.Code != 409 {
 		t.Fatalf("replacement mislabeled: %d %s", stale.Code, stale.Body.String())
 	}
-	next := sha256.Sum256(replacement)
-	mustExec(t, database, "UPDATE assets SET current_sha256=? WHERE id=1", next[:])
+	next := storage.Sum(replacement)
+	mustExec(t, database, "UPDATE assets SET current_hash=? WHERE id=1", next[:])
 	if stale := request(hash[:]); stale.Code != 409 {
 		t.Fatalf("old shell received new book: %d", stale.Code)
 	}

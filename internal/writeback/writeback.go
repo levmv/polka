@@ -3,7 +3,6 @@ package writeback
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -206,7 +205,7 @@ func writeAsset(ctx context.Context, database *db.DB, root storage.Root, assetID
 	if currentSize > maxMetadataWritebackInputBytes {
 		return fail(ctx, database, result, fmt.Errorf("%d exceeds metadata write-back input limit (%d bytes): %w", row.AssetID, maxMetadataWritebackInputBytes, ErrInputTooLarge))
 	}
-	currentHash, err := fileSHA256(ctx, src)
+	currentHash, err := storage.HashReader(ctx, src)
 	if err != nil {
 		return fail(ctx, database, result, fmt.Errorf("hash asset file: %w", err))
 	}
@@ -231,7 +230,7 @@ func writeAsset(ctx context.Context, database *db.DB, root storage.Root, assetID
 	// repeated --all write-back passes render byte-identical metadata.
 	modified := time.Unix(snapshot.UpdatedAt, 0).UTC()
 
-	renderedHash := sha256.New()
+	renderedHash := storage.NewHasher()
 	renderedSize := &countingWriter{}
 	tempRel, err := storage.WriteAdjacentTempWith(root, row.StoragePath, fmt.Sprintf("%d-rev%d", row.AssetID, snapshot.MetadataRev), func(w io.Writer) error {
 		return renderWritebackAsset(io.MultiWriter(w, renderedHash, renderedSize), row.Format, src, currentSize, snapshot.Metadata, modified, coverBytes)
@@ -248,12 +247,12 @@ func writeAsset(ctx context.Context, database *db.DB, root storage.Root, assetID
 	if err := validateRenderedWritebackAsset(root, tempRel, row.Format); err != nil {
 		return fail(ctx, database, result, fmt.Errorf("validate rendered metadata: %w", err))
 	}
-	renderedSHA256 := renderedHash.Sum(nil)
+	renderedContentHash := renderedHash.Sum(nil)
 	if err := context.Cause(ctx); err != nil {
 		return result, err
 	}
 
-	if bytes.Equal(renderedSHA256, currentHash) && renderedSize.N == currentSize {
+	if bytes.Equal(renderedContentHash, currentHash) && renderedSize.N == currentSize {
 		if err := markSuccess(ctx, database, row, currentHash, currentSize, snapshot.MetadataRev); err != nil {
 			return fail(ctx, database, result, err)
 		}
@@ -270,7 +269,7 @@ func writeAsset(ctx context.Context, database *db.DB, root storage.Root, assetID
 		MetadataRev: snapshot.MetadataRev,
 		StoragePath: row.StoragePath,
 		TempPath:    tempRel,
-		SHA256:      renderedSHA256,
+		Hash:        renderedContentHash,
 		Size:        renderedSize.N,
 	}
 	if err := database.Transact(ctx, func(tx *db.Tx) error {
@@ -294,7 +293,7 @@ func writeAsset(ctx context.Context, database *db.DB, root storage.Root, assetID
 	if err := storage.ReplaceWithStaged(root, tempRel, row.StoragePath); err != nil {
 		return fail(ctx, database, result, err)
 	}
-	if err := markSuccess(ctx, database, row, renderedSHA256, renderedSize.N, snapshot.MetadataRev); err != nil {
+	if err := markSuccess(ctx, database, row, renderedContentHash, renderedSize.N, snapshot.MetadataRev); err != nil {
 		return fail(ctx, database, result, err)
 	}
 	result.Status = StatusWritten
@@ -376,32 +375,9 @@ func (w *countingWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func fileSHA256(ctx context.Context, r io.Reader) ([]byte, error) {
-	h := sha256.New()
-	// Check cancellation between reads so slow storage does not delay shutdown
-	// for an entire hashing pass.
-	buf := make([]byte, 128<<10)
-	for {
-		if err := context.Cause(ctx); err != nil {
-			return nil, err
-		}
-		n, readErr := r.Read(buf)
-		if n > 0 {
-			h.Write(buf[:n])
-		}
-		if readErr == io.EOF {
-			break
-		}
-		if readErr != nil {
-			return nil, readErr
-		}
-	}
-	return h.Sum(nil), nil
-}
-
 func validateCurrentBytes(row db.MetadataWritebackAssetRow, currentHash []byte, currentSize int64) error {
-	if !bytes.Equal(row.CurrentSHA256, currentHash) {
-		return fmt.Errorf("current file drift for %d: db sha256=%x disk sha256=%x", row.AssetID, row.CurrentSHA256, currentHash)
+	if !bytes.Equal(row.CurrentHash, currentHash) {
+		return fmt.Errorf("current file drift for %d: db hash=%x disk hash=%x", row.AssetID, row.CurrentHash, currentHash)
 	}
 	if row.CurrentSize.Valid && row.CurrentSize.Int64 != currentSize {
 		return fmt.Errorf("current file drift for %d: db size=%d disk size=%d", row.AssetID, row.CurrentSize.Int64, currentSize)

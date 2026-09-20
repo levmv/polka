@@ -60,7 +60,7 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 	// Hash and serve the same open file; the section reader leaves its cursor alone.
 	if r.Method == http.MethodGet && asset.KOReaderHash == "" {
 		if hash, err := koreader.PartialMD5(io.NewSectionReader(f, 0, info.Size())); err == nil {
-			_ = s.db.CacheAssetKOReaderHash(r.Context(), assetID, asset.CurrentSHA256, hash)
+			_ = s.db.CacheAssetKOReaderHash(r.Context(), assetID, asset.CurrentHash, hash)
 		}
 	}
 
@@ -99,7 +99,7 @@ func (s *Server) handleDownloadAs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer f.Close()
-	if !s.verifyReaderContent(w, r, f, asset.CurrentSHA256) {
+	if !s.verifyReaderContent(w, r, f, asset.CurrentHash) {
 		return
 	}
 
@@ -169,7 +169,7 @@ func (s *Server) handleDownloadAs(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", fileContentDisposition("attachment", convertedDownloadFilename(asset.Filename, target)))
 	w.Header().Set("Content-Length", strconv.FormatInt(convertedSize, 10))
 	if conversionDependsOnlyOnSource(asset.Format, target) {
-		setVersionedConversionCacheControl(w, r, asset.CurrentSHA256)
+		setVersionedConversionCacheControl(w, r, asset.CurrentHash)
 	} else {
 		w.Header().Set("Cache-Control", "private, no-cache")
 	}
@@ -183,24 +183,24 @@ func conversionDependsOnlyOnSource(from format.Format, target converter.Target) 
 }
 
 type assetFileRow struct {
-	StoragePath   string
-	BookID        int64
-	Filename      string
-	Extension     string
-	Format        format.Format
-	CanRead       bool
-	CurrentSHA256 []byte
-	KOReaderHash  string
-	Title         string
-	SortTitle     string
-	Language      string
-	Description   string
-	Publisher     string
-	Date          string
-	Identifier    string
-	Series        string
-	SeriesIndex   float64
-	Tags          string
+	StoragePath  string
+	BookID       int64
+	Filename     string
+	Extension    string
+	Format       format.Format
+	CanRead      bool
+	CurrentHash  []byte
+	KOReaderHash string
+	Title        string
+	SortTitle    string
+	Language     string
+	Description  string
+	Publisher    string
+	Date         string
+	Identifier   string
+	Series       string
+	SeriesIndex  float64
+	Tags         string
 }
 
 func (s *Server) assetFile(ctx context.Context, assetID int64) (assetFileRow, error) {
@@ -209,7 +209,7 @@ func (s *Server) assetFile(ctx context.Context, assetID int64) (assetFileRow, er
 	var canRead int
 	err := s.db.Read(ctx).QueryRow(`
 		SELECT a.storage_path, a.book_id, a.filename, a.extension, a.format, a.can_read,
-		       a.current_sha256,
+		       a.current_hash,
 		       COALESCE(a.koreader_hash, ''),
 		       b.title, b.sort_title, COALESCE(b.language, ''),
 		       COALESCE(b.description, ''), COALESCE(b.publisher, ''),
@@ -220,7 +220,7 @@ func (s *Server) assetFile(ctx context.Context, assetID int64) (assetFileRow, er
 		JOIN books b ON b.id = a.book_id
 		WHERE a.id = ?
 	`, assetID).Scan(
-		&a.StoragePath, &a.BookID, &a.Filename, &a.Extension, &formatKey, &canRead, &a.CurrentSHA256, &a.KOReaderHash,
+		&a.StoragePath, &a.BookID, &a.Filename, &a.Extension, &formatKey, &canRead, &a.CurrentHash, &a.KOReaderHash,
 		&a.Title, &a.SortTitle, &a.Language, &a.Description, &a.Publisher,
 		&a.Date, &a.Identifier, &a.Series, &a.SeriesIndex, &a.Tags,
 	)

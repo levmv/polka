@@ -12,8 +12,8 @@ import (
 func TestAssetsByBookIDsOrdersPrimaryFirst(t *testing.T) {
 	database := newTestDB(t)
 	mustExec(t, database, "INSERT INTO books (id, title, sort_title) VALUES (1, 'T1', 'T1')")
-	mustExec(t, database, "INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_sha256, current_sha256) VALUES (1, 1, 'books/a_pdf.pdf', 'a_pdf.pdf', '.pdf', 'pdf', 0, 1, randomblob(32), randomblob(32))")
-	mustExec(t, database, "INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_sha256, current_sha256) VALUES (2, 1, 'books/a_epub.epub', 'a_epub.epub', '.epub', 'epub', 1, 1, randomblob(32), randomblob(32))")
+	mustExec(t, database, "INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_hash, current_hash) VALUES (1, 1, 'books/a_pdf.pdf', 'a_pdf.pdf', '.pdf', 'pdf', 0, 1, randomblob(16), randomblob(16))")
+	mustExec(t, database, "INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_hash, current_hash) VALUES (2, 1, 'books/a_epub.epub', 'a_epub.epub', '.epub', 'epub', 1, 1, randomblob(16), randomblob(16))")
 
 	assets, err := AssetsByBookIDs(database.Read(t.Context()), []int64{1})
 	if err != nil {
@@ -34,8 +34,8 @@ func TestPrimaryAssetForBook(t *testing.T) {
 	database := newTestDB(t)
 	mustExec(t, database, "INSERT INTO books (id, title, sort_title) VALUES (1, 'T1', 'T1')")
 	mustExec(t, database, "INSERT INTO books (id, title, sort_title) VALUES (2, 'T2', 'T2')")
-	mustExec(t, database, "INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_sha256, current_sha256) VALUES (1, 1, 'books/a_pdf.pdf', 'a_pdf.pdf', '.pdf', 'pdf', 0, 1, randomblob(32), randomblob(32))")
-	mustExec(t, database, "INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, current_sha256, original_sha256) VALUES (2, 1, 'books/a_epub.epub', 'a_epub.epub', '.epub', 'epub', 1, 1, X'0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', randomblob(32))")
+	mustExec(t, database, "INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_hash, current_hash) VALUES (1, 1, 'books/a_pdf.pdf', 'a_pdf.pdf', '.pdf', 'pdf', 0, 1, randomblob(16), randomblob(16))")
+	mustExec(t, database, "INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, current_hash, original_hash) VALUES (2, 1, 'books/a_epub.epub', 'a_epub.epub', '.epub', 'epub', 1, 1, X'0123456789abcdef0123456789abcdef', randomblob(16))")
 
 	asset, err := PrimaryAssetForBook(database.Read(t.Context()), FullVisibilityScope(), 1)
 	if err != nil {
@@ -44,8 +44,8 @@ func TestPrimaryAssetForBook(t *testing.T) {
 	if asset.ID != 2 || asset.BookID != 1 || asset.Title != "T1" || asset.Format != format.FormatEPUB || !asset.CanRead {
 		t.Fatalf("primary asset = %+v; want a_epub for 1", asset)
 	}
-	if hex.EncodeToString(asset.CurrentSHA256) != "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" {
-		t.Fatalf("primary asset current SHA-256 = %q", asset.CurrentSHA256)
+	if hex.EncodeToString(asset.CurrentHash) != "0123456789abcdef0123456789abcdef" {
+		t.Fatalf("primary asset current hash = %q", asset.CurrentHash)
 	}
 
 	if _, err := PrimaryAssetForBook(database.Read(t.Context()), FullVisibilityScope(), 2); !errors.Is(err, sql.ErrNoRows) {

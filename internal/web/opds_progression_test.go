@@ -18,8 +18,8 @@ func TestOPDSFormatsKeepBookMetadataAndSeparatePositions(t *testing.T) {
 	user := mustUser(t, database, "opds-formats", db.RoleReader)
 	_, err := database.Write(t.Context()).Exec(`
 		UPDATE books SET updated_at = 1700000000, language = 'en', publisher = 'Example Press' WHERE id = 1;
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, original_sha256, current_sha256)
-		VALUES (2, 1, 'book.pdf', 'book.pdf', '.pdf', randomblob(32), randomblob(32));`)
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, original_hash, current_hash)
+		VALUES (2, 1, 'book.pdf', 'book.pdf', '.pdf', randomblob(16), randomblob(16));`)
 	if err != nil {
 		t.Fatal(err)
 	}

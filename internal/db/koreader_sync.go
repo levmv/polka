@@ -162,15 +162,15 @@ func ResolveKOReaderHash(queryer Queryer, documentHash string) (KOReaderHashTarg
 
 // CacheAssetKOReaderHash records an original download with a short writer
 // deadline. The downloaded hash is kept even after a concurrent replacement;
-// the current-file cache is updated only while the expected SHA-256 matches.
-func (db *DB) CacheAssetKOReaderHash(ctx context.Context, assetID int64, currentSHA256 []byte, hash string) error {
+// the current-file cache is updated only while the expected content hash matches.
+func (db *DB) CacheAssetKOReaderHash(ctx context.Context, assetID int64, currentHash []byte, hash string) error {
 	_, err := bestEffortWrite(ctx, func(writeCtx context.Context) error {
 		return db.Transact(writeCtx, func(tx *Tx) error {
 			_, err := tx.Exec(`
 				UPDATE assets SET koreader_hash = ?
-				WHERE id = ? AND current_sha256 = ?
+				WHERE id = ? AND current_hash = ?
 				  AND (koreader_hash IS NULL OR koreader_hash = '')
-			`, hash, assetID, currentSHA256)
+			`, hash, assetID, currentHash)
 			if err != nil {
 				return err
 			}

@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"os"
 	"path/filepath"
 	"testing"
@@ -20,10 +19,10 @@ func TestRecoverableCoverIndex(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { database.Close() })
-	sourceHash := sha256.Sum256([]byte("source bytes"))
+	sourceHash := storage.Sum([]byte("source bytes"))
 	if _, err := database.Write(t.Context()).Exec(`
 		INSERT INTO books(id, title, sort_title) VALUES (1, 'One', 'One');
-		INSERT INTO assets(id, book_id, storage_path, filename, extension, original_sha256, current_sha256)
+		INSERT INTO assets(id, book_id, storage_path, filename, extension, original_hash, current_hash)
 		VALUES (1, 1, 'one.epub', 'one.epub', '.epub', ?, ?);
 	`, sourceHash[:], sourceHash[:]); err != nil {
 		t.Fatal(err)
@@ -116,8 +115,8 @@ func TestRepairImportCoverDoesNotFollowRolledBackBookID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	abortedHash := sha256.Sum256([]byte("aborted source bytes"))
-	if _, err := tx.Exec(`INSERT INTO assets(id, book_id, storage_path, filename, extension, original_sha256, current_sha256)
+	abortedHash := storage.Sum([]byte("aborted source bytes"))
+	if _, err := tx.Exec(`INSERT INTO assets(id, book_id, storage_path, filename, extension, original_hash, current_hash)
 		VALUES (1, ?, 'aborted.epub', 'aborted.epub', '.epub', ?, ?)`, abortedID, abortedHash[:], abortedHash[:]); err != nil {
 		t.Fatal(err)
 	}
@@ -131,16 +130,12 @@ func TestRepairImportCoverDoesNotFollowRolledBackBookID(t *testing.T) {
 	// A different import reuses the uncommitted ID. Fail its final cover
 	// placement so repair must distinguish the two staged covers.
 	source := root.Abs("source.epub")
-	writeEPUB(t, source, "Committed", "Ada Writer", "Writer, Ada")
-	plan, err := importer.Resolve(t.Context(), importer.Source{Path: source}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	plan.CoverBytes = []byte("committed cover")
+	committedCover := metaTinyPNG
+	writeMetaEPUBWithCover(t, source, committedCover)
 	if err := os.WriteFile(root.Abs("covers"), []byte("placement blocker"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := importer.Persist(t.Context(), database, root, plan, importer.Options{}); err == nil {
+	if _, err := importer.Import(t.Context(), database, root, importer.Source{Path: source}, nil, importer.Options{}); err == nil {
 		t.Fatal("cover placement unexpectedly succeeded")
 	}
 	books, err := db.AllBookCovers(database.Read(t.Context()))
@@ -164,7 +159,7 @@ func TestRepairImportCoverDoesNotFollowRolledBackBookID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(got, plan.CoverBytes) {
-		t.Fatalf("restored cover = %q; want %q", got, plan.CoverBytes)
+	if !bytes.Equal(got, committedCover) {
+		t.Fatalf("restored cover = %d bytes; want committed cover", len(got))
 	}
 }

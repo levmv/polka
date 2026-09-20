@@ -101,7 +101,7 @@ func runImportPath(ctx context.Context, dataDir, srcPath string, opts importComm
 		DryRun:        opts.dryRun,
 		DeleteSources: opts.deleteSources,
 	}
-	if !info.IsDir() && !importer.IsSupportedBook(srcPath) {
+	if !info.IsDir() && !importer.HasBookExtension(srcPath) {
 		err := fmt.Errorf("unsupported book file extension: %s", filepath.Base(srcPath))
 		recordImportOutcome(&report, opts, importOutcome{
 			Source: srcPath,
@@ -195,12 +195,12 @@ func importSinglePath(ctx context.Context, database *db.DB, dataDir, srcPath str
 
 func importFolderPath(ctx context.Context, database *db.DB, dataDir, rootPath string, opts importCommandOptions, report *importReport) error {
 	var root storage.Root
-	var coverRoot storage.Root
-	var template string
 	var extractor *format.Extractor
+	var importOpts importer.Options
 	if !opts.dryRun {
 		var err error
-		root, coverRoot, template, err = openImportStorage(database.Read(ctx), dataDir)
+		var coverRoot storage.Root
+		root, coverRoot, importOpts.PathTemplate, err = openImportStorage(database.Read(ctx), dataDir)
 		if err != nil {
 			return err
 		}
@@ -210,55 +210,49 @@ func importFolderPath(ctx context.Context, database *db.DB, dataDir, rootPath st
 		extractor = format.NewExtractor()
 		defer extractor.Close()
 		defer func() { report.PDFCoverRenderer = extractor.PDFBackendInfo() }()
-	}
-
-	err := filepath.WalkDir(rootPath, func(path string, d os.DirEntry, walkErr error) error {
-		if err := context.Cause(ctx); err != nil {
+		importOpts.CoverRoot = coverRoot
+		importOpts.KnownAssetSizes, err = db.AssetContentSizes(database.Read(ctx))
+		if err != nil {
 			return err
 		}
-		if walkErr != nil {
-			recordImportError(report, opts, path, fmt.Errorf("walk error %w", walkErr))
+	}
+
+	err := importer.WalkFolder(ctx, rootPath, func(found importer.FolderItem) error {
+		if found.Err != nil {
+			recordImportError(report, opts, found.Path, fmt.Errorf("walk error %w", found.Err))
+			return nil
+		}
+		if len(found.Sources) == 0 {
+			recordImportOutcome(report, opts, importOutcome{Source: found.Path, Status: "skipped"}, false)
 			return nil
 		}
 
-		if d.IsDir() {
-			sources, ok, detectErr := importer.CalibreBookSources(path)
-			if detectErr != nil {
-				recordImportError(report, opts, path, detectErr)
-				return filepath.SkipDir
-			}
-			if ok {
-				var item importOutcome
-				if opts.dryRun {
-					var probeErr error
-					item, probeErr = probeImportGroup(ctx, database.Read(ctx), path, sources)
-					if probeErr != nil {
-						return probeErr
-					}
-				} else {
-					item = importGroup(ctx, database, root, coverRoot, template, extractor, path, sources)
-					if item.Error != "" {
-						if cause := context.Cause(ctx); cause != nil {
-							return cause
-						}
-					}
-					if opts.deleteSources && item.Error == "" {
-						deleteImportedSource(path, true, &item)
+		if found.Group {
+			var item importOutcome
+			if opts.dryRun {
+				var probeErr error
+				item, probeErr = probeImportGroup(ctx, database.Read(ctx), found.Path, found.Sources)
+				if probeErr != nil {
+					return probeErr
+				}
+			} else {
+				item = importGroup(ctx, database, root, extractor, found.Path, found.Sources, importOpts)
+				if item.Error != "" {
+					if cause := context.Cause(ctx); cause != nil {
+						return cause
 					}
 				}
-				recordImportOutcome(report, opts, item, false)
-				return filepath.SkipDir
+				if opts.deleteSources && item.Error == "" {
+					deleteImportedSource(found.Path, true, &item)
+				}
 			}
+			recordImportOutcome(report, opts, item, false)
 			return nil
 		}
 
-		if !d.Type().IsRegular() || !importer.IsSupportedBook(d.Name()) {
-			recordImportOutcome(report, opts, importOutcome{Source: path, Status: "skipped"}, false)
-			return nil
-		}
-
+		source := found.Sources[0]
 		if opts.dryRun {
-			item, probeErr := probeImportOutcome(ctx, database.Read(ctx), path)
+			item, probeErr := probeImportOutcome(ctx, database.Read(ctx), source.Path)
 			if probeErr != nil {
 				if cause := context.Cause(ctx); cause != nil {
 					return cause
@@ -267,8 +261,8 @@ func importFolderPath(ctx context.Context, database *db.DB, dataDir, rootPath st
 			recordImportOutcome(report, opts, item, false)
 			return nil
 		}
-		res, importErr := importer.ImportFile(ctx, database, root, path, extractor, importer.Options{PathTemplate: template, CoverRoot: coverRoot})
-		item := importOutcome{Source: path}
+		res, importErr := importer.Import(ctx, database, root, source, extractor, importOpts)
+		item := importOutcome{Source: source.Path}
 		if importErr != nil {
 			if cause := context.Cause(ctx); cause != nil {
 				return cause
@@ -278,15 +272,15 @@ func importFolderPath(ctx context.Context, database *db.DB, dataDir, rootPath st
 			recordImportOutcome(report, opts, item, false)
 			return nil
 		}
-		item = importOutcomeFromResult(path, res)
+		item = importOutcomeFromResult(source.Path, res)
 		if opts.deleteSources {
-			deleteImportedSource(path, false, &item)
+			deleteImportedSource(source.Path, false, &item)
 		}
 		recordImportOutcome(report, opts, item, false)
 		return nil
 	})
 	if err != nil {
-		return fmt.Errorf("walk dir: %w", err)
+		return err
 	}
 
 	if !opts.jsonOutput {
@@ -356,40 +350,46 @@ func probeImportOutcome(ctx context.Context, database db.Queryer, path string) (
 	if err != nil {
 		return importOutcome{Source: path, Status: "error", Error: err.Error()}, err
 	}
+	return importOutcomeFromProbe(path, probe), nil
+}
+
+func importOutcomeFromProbe(path string, probe importer.SourceProbe) importOutcome {
 	if probe.Duplicate {
-		return importOutcomeFromResult(path, probe.Existing), nil
+		item := importOutcomeFromResult(path, probe.Existing)
+		item.Status = "duplicate"
+		if item.Format == "" {
+			item.Format = importFormatKey(probe.FormatLabel)
+			item.formatLabel = probe.FormatLabel
+		}
+		return item
 	}
 	return importOutcome{
 		Source:      path,
 		Status:      "would_import",
-		Format:      importFormatKey(probe.Format),
-		formatLabel: probe.Format,
-	}, nil
+		Format:      importFormatKey(probe.FormatLabel),
+		formatLabel: probe.FormatLabel,
+	}
 }
 
 func probeImportGroup(ctx context.Context, database db.Queryer, path string, sources []importer.Source) (importOutcome, error) {
 	item := importOutcome{Source: path}
-	groupErrors := 0
-	groupNew := 0
-	for _, source := range sources {
-		assetItem, err := probeImportOutcome(ctx, database, source.Path)
-		if err != nil {
-			if cause := context.Cause(ctx); cause != nil {
-				return importOutcome{}, cause
-			}
+	probe, err := importer.ProbeGroup(ctx, database, sources)
+	if err != nil {
+		if cause := context.Cause(ctx); cause != nil {
+			return importOutcome{}, cause
 		}
+		item.Status = "error"
+		item.Error = err.Error()
+		return item, nil
+	}
+
+	groupNew := 0
+	for i, sourceProbe := range probe {
+		assetItem := importOutcomeFromProbe(sources[i].Path, sourceProbe)
 		item.Assets = append(item.Assets, assetItem)
-		switch assetItem.Status {
-		case "error":
-			groupErrors++
-		case "would_import":
+		if assetItem.Status == "would_import" {
 			groupNew++
 		}
-	}
-	if groupErrors > 0 {
-		item.Status = "error"
-		item.Error = formatCount(groupErrors, "asset error", "asset errors")
-		return item, nil
 	}
 	if groupNew > 0 {
 		item.Status = "would_import"
@@ -399,8 +399,8 @@ func probeImportGroup(ctx context.Context, database db.Queryer, path string, sou
 	return item, nil
 }
 
-func importGroup(ctx context.Context, database *db.DB, root, coverRoot storage.Root, template string, extractor *format.Extractor, path string, sources []importer.Source) importOutcome {
-	group, err := importer.ImportGroup(ctx, database, root, sources, extractor, importer.Options{PathTemplate: template, CoverRoot: coverRoot})
+func importGroup(ctx context.Context, database *db.DB, root storage.Root, extractor *format.Extractor, path string, sources []importer.Source, opts importer.Options) importOutcome {
+	group, err := importer.ImportGroup(ctx, database, root, sources, extractor, opts)
 	item := importOutcome{Source: path}
 	if err != nil {
 		item.Status = "error"
@@ -415,11 +415,7 @@ func importGroup(ctx context.Context, database *db.DB, root, coverRoot storage.R
 	item.Warnings = importWarnings(group.Warnings)
 	groupImported := 0
 	for i, res := range group.Results {
-		sourcePath := ""
-		if i < len(sources) {
-			sourcePath = sources[i].Path
-		}
-		assetItem := importOutcomeFromResult(sourcePath, res)
+		assetItem := importOutcomeFromResult(sources[i].Path, res)
 		item.Assets = append(item.Assets, assetItem)
 		if res.Status != importer.StatusDuplicate {
 			groupImported++
@@ -448,11 +444,11 @@ func importOutcomeFromResult(source string, res importer.Result) importOutcome {
 		BookID:      res.BookID,
 		InTrash:     res.BookTrashed,
 		AssetID:     res.AssetID,
-		Format:      importFormatKey(res.Format),
+		Format:      importFormatKey(res.FormatLabel),
 		Title:       res.Title,
 		Authors:     res.Authors,
 		Warnings:    importWarnings(res.Warnings),
-		formatLabel: res.Format,
+		formatLabel: res.FormatLabel,
 		storagePath: res.StoragePath,
 	}
 }

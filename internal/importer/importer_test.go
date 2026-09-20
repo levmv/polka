@@ -4,10 +4,10 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -56,6 +56,57 @@ func writeEPUBWithBinaryFiles(t *testing.T, path string, opf []byte, binaryFiles
 	if err := os.WriteFile(path, testfixture.EPUB(t, opf, binaryFiles), 0o644); err != nil {
 		t.Fatalf("write epub: %v", err)
 	}
+}
+
+type resolvedTestSource struct {
+	sourceInfo
+	resolvedBook
+}
+
+func resolveTestSource(ctx context.Context, src Source, extractor *format.Extractor) (resolvedTestSource, error) {
+	info, err := fingerprintSource(ctx, src)
+	if err != nil {
+		return resolvedTestSource{}, err
+	}
+	f, err := os.Open(src.Path)
+	if err != nil {
+		return resolvedTestSource{}, fmt.Errorf("open source: %w", err)
+	}
+	defer f.Close()
+	resolved, pageCount, err := resolveSource(ctx, info, f, extractor)
+	if err != nil {
+		return resolvedTestSource{}, err
+	}
+	info.PageCount = pageCount
+	return resolvedTestSource{sourceInfo: info, resolvedBook: resolved}, nil
+}
+
+func stageTestSource(t *testing.T, root storage.Root, info sourceInfo) preparedSource {
+	t.Helper()
+	data, err := os.ReadFile(info.Source.Path)
+	if err != nil {
+		t.Fatalf("read source: %v", err)
+	}
+	staged, err := storage.Stage(root, fmt.Sprintf("%x%s", info.SourceHash, info.Extension), bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("stage source: %v", err)
+	}
+	t.Cleanup(staged.Cleanup)
+	return preparedSource{info: info, staged: staged}
+}
+
+func openTestLibrary(t *testing.T, dataDir, rootDir string) (*db.DB, storage.Root) {
+	t.Helper()
+	database, err := db.InitPath(filepath.Join(dataDir, "library.db"))
+	if err != nil {
+		t.Fatalf("db.Init: %v", err)
+	}
+	t.Cleanup(func() { database.Close() })
+	root := storage.NewRoot(rootDir)
+	if err := storage.EnsureLayout(root); err != nil {
+		t.Fatalf("EnsureLayout: %v", err)
+	}
+	return database, root
 }
 
 func writeCBZ(t *testing.T, path string, entries map[string][]byte) {
@@ -193,17 +244,6 @@ func testCBZPNG(t *testing.T, c color.Color) []byte {
 		t.Fatalf("encode png: %v", err)
 	}
 	return buf.Bytes()
-}
-
-func testGIFConfig(width, height uint16) []byte {
-	return []byte{
-		'G', 'I', 'F', '8', '9', 'a',
-		byte(width), byte(width >> 8), byte(height), byte(height >> 8),
-		0x80, 0x00, 0x00,
-		0x00, 0x00, 0x00,
-		0xff, 0xff, 0xff,
-		0x3b,
-	}
 }
 
 func testSizedPNG(t *testing.T, width, height int, c color.Color) []byte {
@@ -413,22 +453,74 @@ func TestResolveUsesOriginalNameForUploadFallbacks(t *testing.T) {
 		t.Fatalf("write temp upload: %v", err)
 	}
 
-	plan, err := Resolve(context.Background(), Source{Path: tmpPath, OriginalName: "Uploaded Book.fb2"}, nil)
+	resolved, err := resolveTestSource(context.Background(), Source{Path: tmpPath, OriginalName: "Uploaded Book.fb2"}, nil)
 	if err != nil {
-		t.Fatalf("Resolve: %v", err)
+		t.Fatalf("resolve source: %v", err)
 	}
 
-	if plan.Title != "Uploaded Book" {
-		t.Fatalf("Title = %q; want %q", plan.Title, "Uploaded Book")
+	if resolved.Metadata.Title != "Uploaded Book" {
+		t.Fatalf("Title = %q; want %q", resolved.Metadata.Title, "Uploaded Book")
 	}
-	if plan.Extension != ".fb2" {
-		t.Fatalf("Extension = %q; want .fb2", plan.Extension)
+	if resolved.Extension != ".fb2" {
+		t.Fatalf("Extension = %q; want .fb2", resolved.Extension)
 	}
-	if plan.Format != format.FormatFB2 {
-		t.Fatalf("Format = %v; want FormatFB2", plan.Format)
+	if resolved.Format != format.FormatFB2 {
+		t.Fatalf("Format = %v; want FormatFB2", resolved.Format)
 	}
-	if len(plan.Authors) != 0 {
-		t.Fatalf("Authors = %+v; want no authors", plan.Authors)
+	if len(resolved.Metadata.Authors) != 0 {
+		t.Fatalf("Authors = %+v; want no authors", resolved.Metadata.Authors)
+	}
+}
+
+func TestStagedImportSnapshotDrivesResolveAndPersist(t *testing.T) {
+	dataDir := t.TempDir()
+	database, root := openTestLibrary(t, dataDir, filepath.Join(dataDir, "books"))
+
+	original := []byte(`<?xml version="1.0" encoding="utf-8"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0">
+  <description><title-info><book-title>Staged Original</book-title></title-info></description>
+</FictionBook>`)
+	sourcePath := filepath.Join(dataDir, "snapshot.fb2")
+	if err := os.WriteFile(sourcePath, original, 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	prepared, err := prepareSource(t.Context(), root, Source{Path: sourcePath})
+	if err != nil {
+		t.Fatalf("prepareSource: %v", err)
+	}
+	defer prepared.staged.Cleanup()
+	wantHash := storage.Sum(original)
+	entries, err := os.ReadDir(root.StagingDir())
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("staging = %v, %v; want one source", entries, err)
+	}
+	label, ok := storage.ParseStagedTempName(entries[0].Name())
+	if wantLabel := fmt.Sprintf("%x.fb2", wantHash); !ok || label != wantLabel {
+		t.Fatalf("staging label = %q, %v; want %q", label, ok, wantLabel)
+	}
+	if err := os.WriteFile(sourcePath, []byte("replacement after staging"), 0o644); err != nil {
+		t.Fatalf("replace source: %v", err)
+	}
+
+	resolved, err := resolvePreparedSource(t.Context(), &prepared, nil)
+	if err != nil {
+		t.Fatalf("resolvePreparedSource: %v", err)
+	}
+	if resolved.Metadata.Title != "Staged Original" {
+		t.Fatalf("resolved title = %q; want staged original", resolved.Metadata.Title)
+	}
+
+	result, err := persistPrepared(t.Context(), database, root, prepared, resolved, Options{})
+	if err != nil {
+		t.Fatalf("persistPrepared: %v", err)
+	}
+	got, err := os.ReadFile(root.Abs(result.StoragePath))
+	if err != nil {
+		t.Fatalf("read managed source: %v", err)
+	}
+	if !bytes.Equal(got, original) {
+		t.Fatalf("managed bytes = %q; want staged original", got)
 	}
 }
 
@@ -443,27 +535,27 @@ func TestResolveKEPUBUsesEPUBMetadata(t *testing.T) {
   </metadata>
 </package>`))
 
-	plan, err := Resolve(context.Background(), Source{Path: path}, nil)
+	resolved, err := resolveTestSource(context.Background(), Source{Path: path}, nil)
 	if err != nil {
-		t.Fatalf("Resolve: %v", err)
+		t.Fatalf("resolve source: %v", err)
 	}
-	if plan.Format != format.FormatKEPUB {
-		t.Fatalf("Format = %v; want FormatKEPUB", plan.Format)
+	if resolved.Format != format.FormatKEPUB {
+		t.Fatalf("Format = %v; want FormatKEPUB", resolved.Format)
 	}
-	if plan.Extension != ".kepub.epub" {
-		t.Fatalf("Extension = %q; want .kepub.epub", plan.Extension)
+	if resolved.Extension != ".kepub.epub" {
+		t.Fatalf("Extension = %q; want .kepub.epub", resolved.Extension)
 	}
-	if !plan.CanRead {
+	if !resolved.CanRead {
 		t.Fatalf("CanRead = false; want true for KEPUB reader path")
 	}
-	if plan.Title != "Kobo Book" {
-		t.Fatalf("Title = %q; want Kobo Book", plan.Title)
+	if resolved.Metadata.Title != "Kobo Book" {
+		t.Fatalf("Title = %q; want Kobo Book", resolved.Metadata.Title)
 	}
-	if len(plan.Authors) != 1 || plan.Authors[0].Name != "Kobo Author" || plan.Authors[0].SortName != "Author, Kobo" {
-		t.Fatalf("Authors = %+v; want Kobo Author with file-as sort", plan.Authors)
+	if len(resolved.Metadata.Authors) != 1 || resolved.Metadata.Authors[0].Name != "Kobo Author" || resolved.Metadata.Authors[0].SortName != "Author, Kobo" {
+		t.Fatalf("Authors = %+v; want Kobo Author with file-as sort", resolved.Metadata.Authors)
 	}
-	if len(plan.Warnings) != 0 {
-		t.Fatalf("Warnings = %+v; want none for valid KEPUB", plan.Warnings)
+	if len(resolved.Warnings) != 0 {
+		t.Fatalf("Warnings = %+v; want none for valid KEPUB", resolved.Warnings)
 	}
 }
 
@@ -487,22 +579,22 @@ func TestResolveDJVUUsesFilenameFallbacks(t *testing.T) {
 				t.Fatalf("write source: %v", err)
 			}
 
-			plan, err := Resolve(context.Background(), Source{Path: path}, nil)
+			resolved, err := resolveTestSource(context.Background(), Source{Path: path}, nil)
 			if err != nil {
-				t.Fatalf("Resolve: %v", err)
+				t.Fatalf("resolve source: %v", err)
 			}
-			if plan.Format != format.FormatDJVU {
-				t.Fatalf("Format = %v; want FormatDJVU", plan.Format)
+			if resolved.Format != format.FormatDJVU {
+				t.Fatalf("Format = %v; want FormatDJVU", resolved.Format)
 			}
-			if !plan.CanRead {
+			if !resolved.CanRead {
 				t.Fatal("DjVu should be readable")
 			}
-			if (len(plan.CoverBytes) > 0) != tt.cover || (len(plan.Warnings) == 0) != tt.cover {
-				t.Fatalf("cover bytes=%d, warnings=%v; want cover=%v", len(plan.CoverBytes), plan.Warnings, tt.cover)
+			if (len(resolved.CoverBytes) > 0) != tt.cover || (len(resolved.Warnings) == 0) != tt.cover {
+				t.Fatalf("cover bytes=%d, warnings=%v; want cover=%v", len(resolved.CoverBytes), resolved.Warnings, tt.cover)
 			}
 			wantTitle := strings.TrimSuffix(tt.name, format.BookExtension(tt.name))
-			if plan.Title != wantTitle {
-				t.Fatalf("Title = %q; want %q", plan.Title, wantTitle)
+			if resolved.Metadata.Title != wantTitle {
+				t.Fatalf("Title = %q; want %q", resolved.Metadata.Title, wantTitle)
 			}
 		})
 	}
@@ -556,7 +648,7 @@ func TestResolveDJVUMetadataAndCover(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			plan, err := Resolve(t.Context(), Source{Path: path}, extractor)
+			resolved, err := resolveTestSource(t.Context(), Source{Path: path}, extractor)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -567,19 +659,19 @@ func TestResolveDJVUMetadataAndCover(t *testing.T) {
 			if strings.Contains(tt.opf, "creator") {
 				author = "Curator"
 			}
-			if plan.Title != title || len(plan.Authors) != 1 || plan.Authors[0].Name != author || plan.PageCount != 3 {
-				t.Fatalf("title=%q, authors=%v, pages=%d", plan.Title, plan.Authors, plan.PageCount)
+			if resolved.Metadata.Title != title || len(resolved.Metadata.Authors) != 1 || resolved.Metadata.Authors[0].Name != author || resolved.PageCount != 3 {
+				t.Fatalf("title=%q, authors=%v, pages=%d", resolved.Metadata.Title, resolved.Metadata.Authors, resolved.PageCount)
 			}
 			if tt.brokenImage {
-				if len(plan.CoverBytes) != 0 || len(plan.Warnings) != 1 || !strings.Contains(plan.Warnings[0].Error(), "render DjVu cover") {
-					t.Fatalf("cover bytes=%d, warnings=%v; want only a cover rendering warning", len(plan.CoverBytes), plan.Warnings)
+				if len(resolved.CoverBytes) != 0 || len(resolved.Warnings) != 1 || !strings.Contains(resolved.Warnings[0].Error(), "render DjVu cover") {
+					t.Fatalf("cover bytes=%d, warnings=%v; want only a cover rendering warning", len(resolved.CoverBytes), resolved.Warnings)
 				}
 				return
 			}
-			if len(plan.Warnings) != 0 {
-				t.Fatalf("unexpected warnings: %v", plan.Warnings)
+			if len(resolved.Warnings) != 0 {
+				t.Fatalf("unexpected warnings: %v", resolved.Warnings)
 			}
-			if len(plan.CoverBytes) == 0 || tt.cover && !bytes.Equal(plan.CoverBytes, sidecarCover) {
+			if len(resolved.CoverBytes) == 0 || tt.cover && !bytes.Equal(resolved.CoverBytes, sidecarCover) {
 				t.Fatal("missing or replaced sidecar cover")
 			}
 		})
@@ -605,29 +697,26 @@ func TestResolveMOBIFamilyUsesFilenameFallbacks(t *testing.T) {
 				t.Fatalf("write source: %v", err)
 			}
 
-			plan, err := Resolve(context.Background(), Source{Path: path}, nil)
+			resolved, err := resolveTestSource(context.Background(), Source{Path: path}, nil)
 			if err != nil {
-				t.Fatalf("Resolve: %v", err)
+				t.Fatalf("resolve source: %v", err)
 			}
 
-			if !IsSupportedBook(tt.name) {
-				t.Fatalf("%q should be accepted by folder import", tt.name)
+			if resolved.Format != tt.wantFormat {
+				t.Fatalf("Format = %v; want %v", resolved.Format, tt.wantFormat)
 			}
-			if plan.Format != tt.wantFormat {
-				t.Fatalf("Format = %v; want %v", plan.Format, tt.wantFormat)
+			if resolved.CanRead != tt.canRead {
+				t.Fatalf("CanRead = %v; want %v", resolved.CanRead, tt.canRead)
 			}
-			if plan.CanRead != tt.canRead {
-				t.Fatalf("CanRead = %v; want %v", plan.CanRead, tt.canRead)
-			}
-			if len(plan.Warnings) != 0 {
-				t.Fatalf("Warnings = %+v; want none for recognized MOBI-family format", plan.Warnings)
+			if len(resolved.Warnings) != 0 {
+				t.Fatalf("Warnings = %+v; want none for recognized MOBI-family format", resolved.Warnings)
 			}
 			wantTitle := tt.name[:len(tt.name)-len(filepath.Ext(tt.name))]
-			if plan.Title != wantTitle {
-				t.Fatalf("Title = %q; want %q", plan.Title, wantTitle)
+			if resolved.Metadata.Title != wantTitle {
+				t.Fatalf("Title = %q; want %q", resolved.Metadata.Title, wantTitle)
 			}
-			if len(plan.Authors) != 0 {
-				t.Fatalf("Authors = %+v; want no authors", plan.Authors)
+			if len(resolved.Metadata.Authors) != 0 {
+				t.Fatalf("Authors = %+v; want no authors", resolved.Metadata.Authors)
 			}
 		})
 	}
@@ -649,24 +738,24 @@ func TestResolvePalmDOCMetadata(t *testing.T) {
 				t.Fatalf("write source: %v", err)
 			}
 
-			plan, err := Resolve(context.Background(), Source{Path: path}, nil)
+			resolved, err := resolveTestSource(context.Background(), Source{Path: path}, nil)
 			if err != nil {
-				t.Fatalf("Resolve: %v", err)
+				t.Fatalf("resolve source: %v", err)
 			}
-			if plan.Format != format.FormatPDB {
-				t.Fatalf("Format = %v; want FormatPDB", plan.Format)
+			if resolved.Format != format.FormatPDB {
+				t.Fatalf("Format = %v; want FormatPDB", resolved.Format)
 			}
-			if plan.CanRead {
+			if resolved.CanRead {
 				t.Fatalf("CanRead = true; want false until PalmDOC reader/export exists")
 			}
-			if len(plan.Warnings) != 0 {
-				t.Fatalf("Warnings = %+v; want none for recognized PalmDOC", plan.Warnings)
+			if len(resolved.Warnings) != 0 {
+				t.Fatalf("Warnings = %+v; want none for recognized PalmDOC", resolved.Warnings)
 			}
-			if plan.Title != tt.title {
-				t.Fatalf("Title = %q; want %q", plan.Title, tt.title)
+			if resolved.Metadata.Title != tt.title {
+				t.Fatalf("Title = %q; want %q", resolved.Metadata.Title, tt.title)
 			}
-			if len(plan.Authors) != 0 {
-				t.Fatalf("Authors = %+v; want no authors", plan.Authors)
+			if len(resolved.Metadata.Authors) != 0 {
+				t.Fatalf("Authors = %+v; want no authors", resolved.Metadata.Authors)
 			}
 		})
 	}
@@ -692,31 +781,28 @@ func TestResolveComicArchivesUseAvailableCapabilities(t *testing.T) {
 				t.Fatalf("write source: %v", err)
 			}
 
-			plan, err := Resolve(context.Background(), Source{Path: path}, nil)
+			resolved, err := resolveTestSource(context.Background(), Source{Path: path}, nil)
 			if err != nil {
-				t.Fatalf("Resolve: %v", err)
+				t.Fatalf("resolve source: %v", err)
 			}
 
-			if !IsSupportedBook(tt.name) {
-				t.Fatalf("%q should be accepted by folder import", tt.name)
+			if resolved.Format != tt.wantFormat {
+				t.Fatalf("Format = %v; want %v", resolved.Format, tt.wantFormat)
 			}
-			if plan.Format != tt.wantFormat {
-				t.Fatalf("Format = %v; want %v", plan.Format, tt.wantFormat)
+			if resolved.CanRead != tt.canRead {
+				t.Fatalf("CanRead = %v; want %v", resolved.CanRead, tt.canRead)
 			}
-			if plan.CanRead != tt.canRead {
-				t.Fatalf("CanRead = %v; want %v", plan.CanRead, tt.canRead)
+			if (len(resolved.CoverBytes) > 0) != tt.hasCover {
+				t.Fatalf("CoverBytes length = %d; has cover want %v", len(resolved.CoverBytes), tt.hasCover)
 			}
-			if (len(plan.CoverBytes) > 0) != tt.hasCover {
-				t.Fatalf("CoverBytes length = %d; has cover want %v", len(plan.CoverBytes), tt.hasCover)
+			if len(resolved.Warnings) != 0 {
+				t.Fatalf("Warnings = %+v; want none for recognized comic archive", resolved.Warnings)
 			}
-			if len(plan.Warnings) != 0 {
-				t.Fatalf("Warnings = %+v; want none for recognized comic archive", plan.Warnings)
-			}
-			if plan.Title != tt.wantTitle {
-				t.Fatalf("Title = %q; want %q", plan.Title, tt.wantTitle)
+			if resolved.Metadata.Title != tt.wantTitle {
+				t.Fatalf("Title = %q; want %q", resolved.Metadata.Title, tt.wantTitle)
 			}
 			var names []string
-			for _, a := range plan.Authors {
+			for _, a := range resolved.Metadata.Authors {
 				names = append(names, a.Name)
 			}
 			if !slices.Equal(names, tt.wantAuthors) {
@@ -745,29 +831,26 @@ func TestResolveTextFormatsUseFilenameFallbacks(t *testing.T) {
 				t.Fatalf("write source: %v", err)
 			}
 
-			plan, err := Resolve(context.Background(), Source{Path: path}, nil)
+			resolved, err := resolveTestSource(context.Background(), Source{Path: path}, nil)
 			if err != nil {
-				t.Fatalf("Resolve: %v", err)
+				t.Fatalf("resolve source: %v", err)
 			}
 
-			if !IsSupportedBook(tt.name) {
-				t.Fatalf("%q should be accepted by folder import", tt.name)
+			if resolved.Format != tt.wantFormat {
+				t.Fatalf("Format = %v; want %v", resolved.Format, tt.wantFormat)
 			}
-			if plan.Format != tt.wantFormat {
-				t.Fatalf("Format = %v; want %v", plan.Format, tt.wantFormat)
-			}
-			if plan.CanRead {
+			if resolved.CanRead {
 				t.Fatalf("CanRead = true; want false until text reader/export exists")
 			}
-			if len(plan.Warnings) != 0 {
-				t.Fatalf("Warnings = %+v; want none for recognized text format", plan.Warnings)
+			if len(resolved.Warnings) != 0 {
+				t.Fatalf("Warnings = %+v; want none for recognized text format", resolved.Warnings)
 			}
 			wantTitle := strings.TrimSuffix(tt.name, format.BookExtension(tt.name))
-			if plan.Title != wantTitle {
-				t.Fatalf("Title = %q; want %q", plan.Title, wantTitle)
+			if resolved.Metadata.Title != wantTitle {
+				t.Fatalf("Title = %q; want %q", resolved.Metadata.Title, wantTitle)
 			}
-			if len(plan.Authors) != 0 {
-				t.Fatalf("Authors = %+v; want no authors", plan.Authors)
+			if len(resolved.Metadata.Authors) != 0 {
+				t.Fatalf("Authors = %+v; want no authors", resolved.Metadata.Authors)
 			}
 		})
 	}
@@ -780,22 +863,22 @@ func TestResolveMarkdownMetadataFromLeadingLabels(t *testing.T) {
 		t.Fatalf("write source: %v", err)
 	}
 
-	plan, err := Resolve(context.Background(), Source{Path: path}, nil)
+	resolved, err := resolveTestSource(context.Background(), Source{Path: path}, nil)
 	if err != nil {
-		t.Fatalf("Resolve: %v", err)
+		t.Fatalf("resolve source: %v", err)
 	}
 
-	if plan.Format != format.FormatMarkdown {
-		t.Fatalf("Format = %v; want Markdown", plan.Format)
+	if resolved.Format != format.FormatMarkdown {
+		t.Fatalf("Format = %v; want Markdown", resolved.Format)
 	}
-	if plan.Title != "Alice's Adventures in Wonderland" {
-		t.Fatalf("Title = %q; want markdown title", plan.Title)
+	if resolved.Metadata.Title != "Alice's Adventures in Wonderland" {
+		t.Fatalf("Title = %q; want markdown title", resolved.Metadata.Title)
 	}
-	if len(plan.Authors) != 1 || plan.Authors[0].Name != "Lewis Carroll" || plan.Authors[0].SortName != "Carroll, Lewis" {
-		t.Fatalf("Authors = %+v; want Lewis Carroll with sort", plan.Authors)
+	if len(resolved.Metadata.Authors) != 1 || resolved.Metadata.Authors[0].Name != "Lewis Carroll" || resolved.Metadata.Authors[0].SortName != "Carroll, Lewis" {
+		t.Fatalf("Authors = %+v; want Lewis Carroll with sort", resolved.Metadata.Authors)
 	}
-	if plan.Metadata == nil || plan.Metadata.Date != "1865" {
-		t.Fatalf("Metadata = %+v; want year from markdown labels", plan.Metadata)
+	if resolved.Metadata == nil || resolved.Metadata.Date != "1865" {
+		t.Fatalf("Metadata = %+v; want year from markdown labels", resolved.Metadata)
 	}
 }
 
@@ -908,40 +991,40 @@ func TestResolveParsedMetadataDispatch(t *testing.T) {
 			path := filepath.Join(dir, tt.name)
 			tt.write(t, path)
 
-			plan, err := Resolve(context.Background(), Source{Path: path}, nil)
+			resolved, err := resolveTestSource(context.Background(), Source{Path: path}, nil)
 			if err != nil {
-				t.Fatalf("Resolve: %v", err)
+				t.Fatalf("resolve source: %v", err)
 			}
-			if plan.Format != tt.wantFormat {
-				t.Fatalf("Format = %v; want %v", plan.Format, tt.wantFormat)
+			if resolved.Format != tt.wantFormat {
+				t.Fatalf("Format = %v; want %v", resolved.Format, tt.wantFormat)
 			}
-			if plan.CanRead {
+			if resolved.CanRead {
 				t.Fatalf("CanRead = true; want false for parsed metadata format")
 			}
-			if len(plan.Warnings) != 0 {
-				t.Fatalf("Warnings = %+v; want none for parsed metadata", plan.Warnings)
+			if len(resolved.Warnings) != 0 {
+				t.Fatalf("Warnings = %+v; want none for parsed metadata", resolved.Warnings)
 			}
-			if plan.Title != tt.wantTitle {
-				t.Fatalf("Title = %q; want %q", plan.Title, tt.wantTitle)
+			if resolved.Metadata.Title != tt.wantTitle {
+				t.Fatalf("Title = %q; want %q", resolved.Metadata.Title, tt.wantTitle)
 			}
 			var names []string
-			for _, a := range plan.Authors {
+			for _, a := range resolved.Metadata.Authors {
 				names = append(names, a.Name)
 			}
 			if !slices.Equal(names, tt.wantAuthors) {
 				t.Fatalf("Authors = %q; want %q", names, tt.wantAuthors)
 			}
-			if tt.wantAuthorSort != "" && plan.Authors[0].SortName != tt.wantAuthorSort {
-				t.Fatalf("Author sort = %q; want %q", plan.Authors[0].SortName, tt.wantAuthorSort)
+			if tt.wantAuthorSort != "" && resolved.Metadata.Authors[0].SortName != tt.wantAuthorSort {
+				t.Fatalf("Author sort = %q; want %q", resolved.Metadata.Authors[0].SortName, tt.wantAuthorSort)
 			}
-			if tt.wantLanguage != "" && (plan.Metadata == nil || plan.Metadata.Language != tt.wantLanguage) {
-				t.Fatalf("Metadata = %+v; want language %q", plan.Metadata, tt.wantLanguage)
+			if tt.wantLanguage != "" && (resolved.Metadata == nil || resolved.Metadata.Language != tt.wantLanguage) {
+				t.Fatalf("Metadata = %+v; want language %q", resolved.Metadata, tt.wantLanguage)
 			}
-			if tt.wantPublisher != "" && (plan.Metadata == nil || plan.Metadata.Publisher != tt.wantPublisher) {
-				t.Fatalf("Metadata = %+v; want publisher %q", plan.Metadata, tt.wantPublisher)
+			if tt.wantPublisher != "" && (resolved.Metadata == nil || resolved.Metadata.Publisher != tt.wantPublisher) {
+				t.Fatalf("Metadata = %+v; want publisher %q", resolved.Metadata, tt.wantPublisher)
 			}
-			if tt.wantDescription != "" && (plan.Metadata == nil || plan.Metadata.Description != tt.wantDescription) {
-				t.Fatalf("Metadata = %+v; want description %q", plan.Metadata, tt.wantDescription)
+			if tt.wantDescription != "" && (resolved.Metadata == nil || resolved.Metadata.Description != tt.wantDescription) {
+				t.Fatalf("Metadata = %+v; want description %q", resolved.Metadata, tt.wantDescription)
 			}
 		})
 	}
@@ -954,15 +1037,15 @@ func TestResolveRTFUnsupportedCodepageWarnsAndFallsBack(t *testing.T) {
 		t.Fatalf("write source: %v", err)
 	}
 
-	plan, err := Resolve(context.Background(), Source{Path: path}, nil)
+	resolved, err := resolveTestSource(context.Background(), Source{Path: path}, nil)
 	if err != nil {
-		t.Fatalf("Resolve: %v", err)
+		t.Fatalf("resolve source: %v", err)
 	}
-	if plan.Format != format.FormatRTF || plan.Title != "Fallback Title" {
-		t.Fatalf("Plan = format %v title %q; want RTF with filename fallback", plan.Format, plan.Title)
+	if resolved.Format != format.FormatRTF || resolved.Metadata.Title != "Fallback Title" {
+		t.Fatalf("resolved source = format %v title %q; want RTF with filename fallback", resolved.Format, resolved.Metadata.Title)
 	}
-	if len(plan.Warnings) != 1 || !strings.Contains(plan.Warnings[0].Error(), "unsupported RTF code page 932") {
-		t.Fatalf("Warnings = %+v; want unsupported code page warning", plan.Warnings)
+	if len(resolved.Warnings) != 1 || !strings.Contains(resolved.Warnings[0].Error(), "unsupported RTF code page 932") {
+		t.Fatalf("Warnings = %+v; want unsupported code page warning", resolved.Warnings)
 	}
 }
 
@@ -1026,18 +1109,18 @@ func TestResolveContainerCoverDispatch(t *testing.T) {
 			cover := tt.cover(t)
 			tt.write(t, path, cover)
 
-			plan, err := Resolve(context.Background(), Source{Path: path}, nil)
+			resolved, err := resolveTestSource(context.Background(), Source{Path: path}, nil)
 			if err != nil {
-				t.Fatalf("Resolve: %v", err)
+				t.Fatalf("resolve source: %v", err)
 			}
-			if plan.Format != tt.wantFormat {
-				t.Fatalf("Format = %v; want %v", plan.Format, tt.wantFormat)
+			if resolved.Format != tt.wantFormat {
+				t.Fatalf("Format = %v; want %v", resolved.Format, tt.wantFormat)
 			}
-			if !bytes.Equal(plan.CoverBytes, cover) {
-				t.Fatalf("CoverBytes = %d bytes; want embedded/container cover", len(plan.CoverBytes))
+			if !bytes.Equal(resolved.CoverBytes, cover) {
+				t.Fatalf("CoverBytes = %d bytes; want embedded/container cover", len(resolved.CoverBytes))
 			}
-			if len(plan.Warnings) != 0 {
-				t.Fatalf("Warnings = %+v; want none for valid cover", plan.Warnings)
+			if len(resolved.Warnings) != 0 {
+				t.Fatalf("Warnings = %+v; want none for valid cover", resolved.Warnings)
 			}
 		})
 	}
@@ -1077,27 +1160,24 @@ func TestResolveHTMLFormatsUseMetadata(t *testing.T) {
 				t.Fatalf("write source: %v", err)
 			}
 
-			plan, err := Resolve(context.Background(), Source{Path: path}, nil)
+			resolved, err := resolveTestSource(context.Background(), Source{Path: path}, nil)
 			if err != nil {
-				t.Fatalf("Resolve: %v", err)
+				t.Fatalf("resolve source: %v", err)
 			}
-			if !IsSupportedBook(tt.name) {
-				t.Fatalf("%q should be accepted by folder import", tt.name)
+			if resolved.Format != tt.wantFormat {
+				t.Fatalf("Format = %v; want %v", resolved.Format, tt.wantFormat)
 			}
-			if plan.Format != tt.wantFormat {
-				t.Fatalf("Format = %v; want %v", plan.Format, tt.wantFormat)
-			}
-			if plan.CanRead {
+			if resolved.CanRead {
 				t.Fatalf("CanRead = true; want false until sanitized HTML reader/export exists")
 			}
-			if len(plan.Warnings) != 0 {
-				t.Fatalf("Warnings = %+v; want none for recognized HTML", plan.Warnings)
+			if len(resolved.Warnings) != 0 {
+				t.Fatalf("Warnings = %+v; want none for recognized HTML", resolved.Warnings)
 			}
-			if plan.Title != "Saved Page" {
-				t.Fatalf("Title = %q; want HTML metadata title", plan.Title)
+			if resolved.Metadata.Title != "Saved Page" {
+				t.Fatalf("Title = %q; want HTML metadata title", resolved.Metadata.Title)
 			}
-			if len(plan.Authors) != 1 || plan.Authors[0].Name != "Web Author" || plan.Authors[0].SortName != "Author, Web" {
-				t.Fatalf("Authors = %+v; want Web Author with sort", plan.Authors)
+			if len(resolved.Metadata.Authors) != 1 || resolved.Metadata.Authors[0].Name != "Web Author" || resolved.Metadata.Authors[0].SortName != "Author, Web" {
+				t.Fatalf("Authors = %+v; want Web Author with sort", resolved.Metadata.Authors)
 			}
 		})
 	}
@@ -1110,27 +1190,24 @@ func TestResolveCHMUsesFilenameFallbacks(t *testing.T) {
 		t.Fatalf("write source: %v", err)
 	}
 
-	plan, err := Resolve(context.Background(), Source{Path: path}, nil)
+	resolved, err := resolveTestSource(context.Background(), Source{Path: path}, nil)
 	if err != nil {
-		t.Fatalf("Resolve: %v", err)
+		t.Fatalf("resolve source: %v", err)
 	}
-	if !IsSupportedBook("Technical Manual.chm") {
-		t.Fatalf("CHM should be accepted by folder import")
+	if resolved.Format != format.FormatCHM {
+		t.Fatalf("Format = %v; want FormatCHM", resolved.Format)
 	}
-	if plan.Format != format.FormatCHM {
-		t.Fatalf("Format = %v; want FormatCHM", plan.Format)
-	}
-	if plan.CanRead {
+	if resolved.CanRead {
 		t.Fatalf("CanRead = true; want false until CHM reader/export exists")
 	}
-	if len(plan.Warnings) != 0 {
-		t.Fatalf("Warnings = %+v; want none for recognized CHM", plan.Warnings)
+	if len(resolved.Warnings) != 0 {
+		t.Fatalf("Warnings = %+v; want none for recognized CHM", resolved.Warnings)
 	}
-	if plan.Title != "Technical Manual" {
-		t.Fatalf("Title = %q; want filename fallback", plan.Title)
+	if resolved.Metadata.Title != "Technical Manual" {
+		t.Fatalf("Title = %q; want filename fallback", resolved.Metadata.Title)
 	}
-	if len(plan.Authors) != 0 {
-		t.Fatalf("Authors = %+v; want no authors", plan.Authors)
+	if len(resolved.Metadata.Authors) != 0 {
+		t.Fatalf("Authors = %+v; want no authors", resolved.Metadata.Authors)
 	}
 }
 
@@ -1142,21 +1219,21 @@ func TestResolveStructuredFilenameFallbackMetadata(t *testing.T) {
 		t.Fatalf("write source: %v", err)
 	}
 
-	plan, err := Resolve(context.Background(), Source{Path: path}, nil)
+	resolved, err := resolveTestSource(context.Background(), Source{Path: path}, nil)
 	if err != nil {
-		t.Fatalf("Resolve: %v", err)
+		t.Fatalf("resolve source: %v", err)
 	}
-	if plan.Format != format.FormatPDF {
-		t.Fatalf("Format = %v; want FormatPDF", plan.Format)
+	if resolved.Format != format.FormatPDF {
+		t.Fatalf("Format = %v; want FormatPDF", resolved.Format)
 	}
-	if plan.Title != "Structured Title" {
-		t.Fatalf("Title = %q; want structured filename title", plan.Title)
+	if resolved.Metadata.Title != "Structured Title" {
+		t.Fatalf("Title = %q; want structured filename title", resolved.Metadata.Title)
 	}
-	if len(plan.Authors) != 1 || plan.Authors[0].Name != "Jane Writer" || plan.Authors[0].SortName != "Writer, Jane" {
-		t.Fatalf("Authors = %+v; want Jane Writer with sort", plan.Authors)
+	if len(resolved.Metadata.Authors) != 1 || resolved.Metadata.Authors[0].Name != "Jane Writer" || resolved.Metadata.Authors[0].SortName != "Writer, Jane" {
+		t.Fatalf("Authors = %+v; want Jane Writer with sort", resolved.Metadata.Authors)
 	}
-	if plan.Metadata == nil || plan.Metadata.Identifier != "isbn:9780306406157" {
-		t.Fatalf("Metadata = %+v; want ISBN from structured filename", plan.Metadata)
+	if resolved.Metadata == nil || resolved.Metadata.Identifier != "isbn:9780306406157" {
+		t.Fatalf("Metadata = %+v; want ISBN from structured filename", resolved.Metadata)
 	}
 }
 
@@ -1168,15 +1245,15 @@ func TestResolveIgnoresUnsignaledDelimitedFilename(t *testing.T) {
 		t.Fatalf("write source: %v", err)
 	}
 
-	plan, err := Resolve(context.Background(), Source{Path: path}, nil)
+	resolved, err := resolveTestSource(context.Background(), Source{Path: path}, nil)
 	if err != nil {
-		t.Fatalf("Resolve: %v", err)
+		t.Fatalf("resolve source: %v", err)
 	}
-	if plan.Title != "One -- Two -- Three -- Four" {
-		t.Fatalf("Title = %q; want plain filename fallback", plan.Title)
+	if resolved.Metadata.Title != "One -- Two -- Three -- Four" {
+		t.Fatalf("Title = %q; want plain filename fallback", resolved.Metadata.Title)
 	}
-	if len(plan.Authors) != 0 {
-		t.Fatalf("Authors = %+v; want no authors", plan.Authors)
+	if len(resolved.Metadata.Authors) != 0 {
+		t.Fatalf("Authors = %+v; want no authors", resolved.Metadata.Authors)
 	}
 }
 
@@ -1225,22 +1302,22 @@ func TestResolveWarnsForUnrecognizedRegisteredFormats(t *testing.T) {
 				t.Fatalf("write source: %v", err)
 			}
 
-			plan, err := Resolve(context.Background(), Source{Path: path}, nil)
+			resolved, err := resolveTestSource(context.Background(), Source{Path: path}, nil)
 			if err != nil {
-				t.Fatalf("Resolve: %v", err)
+				t.Fatalf("resolve source: %v", err)
 			}
-			if plan.Format != format.FormatUnknown {
-				t.Fatalf("Format = %v; want FormatUnknown", plan.Format)
+			if resolved.Format != format.FormatUnknown {
+				t.Fatalf("Format = %v; want FormatUnknown", resolved.Format)
 			}
-			if plan.CanRead {
+			if resolved.CanRead {
 				t.Fatalf("CanRead = true; want false for unrecognized format")
 			}
 			want := "unrecognized " + strings.ToLower(format.BookExtension(tt.name)) + " contents"
-			if len(plan.Warnings) != 1 || !strings.Contains(plan.Warnings[0].Error(), want) {
-				t.Fatalf("Warnings = %+v; want %q warning", plan.Warnings, want)
+			if len(resolved.Warnings) != 1 || !strings.Contains(resolved.Warnings[0].Error(), want) {
+				t.Fatalf("Warnings = %+v; want %q warning", resolved.Warnings, want)
 			}
-			if tt.wantTitle != "" && plan.Title != tt.wantTitle {
-				t.Fatalf("Title = %q; want %q", plan.Title, tt.wantTitle)
+			if tt.wantTitle != "" && resolved.Metadata.Title != tt.wantTitle {
+				t.Fatalf("Title = %q; want %q", resolved.Metadata.Title, tt.wantTitle)
 			}
 		})
 	}
@@ -1279,20 +1356,21 @@ func TestResolvePrefersSidecarCoverOverEmbeddedEPUBCover(t *testing.T) {
 		t.Fatalf("write sidecar cover: %v", err)
 	}
 
-	plan, err := Resolve(context.Background(), Source{Path: path, SidecarDir: dir}, nil)
+	resolved, err := resolveTestSource(context.Background(), Source{Path: path, SidecarDir: dir}, nil)
 	if err != nil {
-		t.Fatalf("Resolve: %v", err)
+		t.Fatalf("resolve source: %v", err)
 	}
-	if !bytes.Equal(plan.CoverBytes, sidecarCover) {
-		t.Fatalf("CoverBytes = %q; want sidecar cover", plan.CoverBytes)
+	if !bytes.Equal(resolved.CoverBytes, sidecarCover) {
+		t.Fatalf("CoverBytes = %q; want sidecar cover", resolved.CoverBytes)
 	}
 }
 
-func TestResolveDropsInvalidSidecarCover(t *testing.T) {
+func TestResolveFallsBackFromInvalidSidecarCover(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
 		coverName   string
 		coverBytes  []byte
+		oversized   bool
 		wantWarning string
 	}{
 		{
@@ -1302,68 +1380,57 @@ func TestResolveDropsInvalidSidecarCover(t *testing.T) {
 			wantWarning: "decode image config",
 		},
 		{
-			name:        "too-large",
-			coverName:   "cover.png",
-			coverBytes:  testGIFConfig(10000, 10000),
-			wantWarning: "exceed",
-		},
-		{
-			name:        "corrupt-pixel-data",
-			coverName:   "cover.png",
-			coverBytes:  testCorruptPNG(t),
-			wantWarning: "decode image",
+			name:        "oversized-file",
+			coverName:   "cover.jpg",
+			oversized:   true,
+			wantWarning: "exceeds 33554432 bytes",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			path := filepath.Join(dir, tc.name+".epub")
+			embeddedCover := testCBZPNG(t, color.NRGBA{R: 12, G: 34, B: 56, A: 255})
 			opf := []byte(`<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="2.0">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
     <dc:title>EPUB With Invalid Sidecar Cover</dc:title>
     <dc:creator>Cover Author</dc:creator>
+    <meta name="cover" content="cover-image"/>
   </metadata>
+  <manifest>
+    <item id="cover-image" href="images/cover.png" media-type="image/png"/>
+  </manifest>
 </package>`)
-			writeEPUB(t, path, opf)
-			if err := os.WriteFile(filepath.Join(dir, tc.coverName), tc.coverBytes, 0o644); err != nil {
+			writeEPUBWithBinaryFiles(t, path, opf, map[string][]byte{"OEBPS/images/cover.png": embeddedCover})
+			sidecarPath := filepath.Join(dir, tc.coverName)
+			if err := os.WriteFile(sidecarPath, tc.coverBytes, 0o644); err != nil {
 				t.Fatalf("write sidecar cover: %v", err)
 			}
+			if tc.oversized {
+				if err := os.Truncate(sidecarPath, maxSidecarCoverBytes+1); err != nil {
+					t.Fatalf("grow sidecar cover: %v", err)
+				}
+			}
 
-			plan, err := Resolve(context.Background(), Source{Path: path, SidecarDir: dir}, nil)
+			resolved, err := resolveTestSource(context.Background(), Source{Path: path, SidecarDir: dir}, nil)
 			if err != nil {
-				t.Fatalf("Resolve: %v", err)
+				t.Fatalf("resolve source: %v", err)
 			}
-			if len(plan.CoverBytes) != 0 {
-				t.Fatalf("CoverBytes = %d bytes; want no cover", len(plan.CoverBytes))
+			if !bytes.Equal(resolved.CoverBytes, embeddedCover) {
+				t.Fatalf("CoverBytes = %d bytes; want embedded cover fallback", len(resolved.CoverBytes))
 			}
-			if len(plan.Warnings) != 1 {
-				t.Fatalf("Warnings = %+v; want one warning", plan.Warnings)
+			if len(resolved.Warnings) != 1 {
+				t.Fatalf("Warnings = %+v; want one warning", resolved.Warnings)
 			}
-			warning := plan.Warnings[0].Error()
-			if !strings.Contains(warning, "skip invalid cover") || !strings.Contains(warning, tc.wantWarning) {
-				t.Fatalf("Warning = %v; want invalid cover warning containing %q", plan.Warnings[0], tc.wantWarning)
+			warning := resolved.Warnings[0].Error()
+			if !strings.Contains(warning, tc.wantWarning) {
+				t.Fatalf("Warning = %v; want invalid cover warning containing %q", resolved.Warnings[0], tc.wantWarning)
 			}
-			if plan.Title != "EPUB With Invalid Sidecar Cover" {
-				t.Fatalf("Title = %q; want metadata despite invalid cover", plan.Title)
+			if resolved.Metadata.Title != "EPUB With Invalid Sidecar Cover" {
+				t.Fatalf("Title = %q; want metadata despite invalid cover", resolved.Metadata.Title)
 			}
 		})
 	}
-}
-
-func testCorruptPNG(t *testing.T) []byte {
-	t.Helper()
-	src := testCBZPNG(t, color.White)
-	idat := bytes.Index(src, []byte("IDAT"))
-	if idat < 4 {
-		t.Fatal("encoded PNG has no IDAT chunk")
-	}
-	chunkLen := int(binary.BigEndian.Uint32(src[idat-4 : idat]))
-	crc := idat + 4 + chunkLen
-	if crc+4 > len(src) {
-		t.Fatal("encoded PNG has truncated IDAT checksum")
-	}
-	src[crc] ^= 0xff
-	return src
 }
 
 func TestResolveRecoversForbiddenEPUBOPFControl(t *testing.T) {
@@ -1375,21 +1442,21 @@ func TestResolveRecoversForbiddenEPUBOPFControl(t *testing.T) {
 </package>`
 	writeEPUB(t, path, []byte(opf))
 
-	plan, err := Resolve(context.Background(), Source{Path: path}, nil)
+	resolved, err := resolveTestSource(context.Background(), Source{Path: path}, nil)
 	if err != nil {
-		t.Fatalf("Resolve: %v", err)
+		t.Fatalf("resolve source: %v", err)
 	}
-	if plan.Format != format.FormatEPUB {
-		t.Fatalf("Format = %v; want FormatEPUB", plan.Format)
+	if resolved.Format != format.FormatEPUB {
+		t.Fatalf("Format = %v; want FormatEPUB", resolved.Format)
 	}
-	if len(plan.Warnings) != 0 {
-		t.Fatalf("Warnings = %+v; want recovered OPF metadata without a warning", plan.Warnings)
+	if len(resolved.Warnings) != 0 {
+		t.Fatalf("Warnings = %+v; want recovered OPF metadata without a warning", resolved.Warnings)
 	}
-	if plan.Title != "Invalid OPF" {
-		t.Fatalf("Title = %q; want recovered OPF title", plan.Title)
+	if resolved.Metadata.Title != "Invalid OPF" {
+		t.Fatalf("Title = %q; want recovered OPF title", resolved.Metadata.Title)
 	}
-	if len(plan.Authors) != 0 {
-		t.Fatalf("Authors = %+v; want no authors", plan.Authors)
+	if len(resolved.Metadata.Authors) != 0 {
+		t.Fatalf("Authors = %+v; want no authors", resolved.Metadata.Authors)
 	}
 }
 
@@ -1418,25 +1485,25 @@ func TestResolvePrefersCompleteSidecar(t *testing.T) {
 		t.Fatalf("write sidecar cover: %v", err)
 	}
 
-	plan, err := Resolve(context.Background(), Source{Path: path}, nil)
+	resolved, err := resolveTestSource(context.Background(), Source{Path: path}, nil)
 	if err != nil {
-		t.Fatalf("Resolve: %v", err)
+		t.Fatalf("resolve source: %v", err)
 	}
-	if len(plan.Warnings) != 0 {
-		t.Fatalf("Warnings = %+v; want none when complete sidecar metadata is present", plan.Warnings)
+	if len(resolved.Warnings) != 0 {
+		t.Fatalf("Warnings = %+v; want none when complete sidecar metadata is present", resolved.Warnings)
 	}
-	if plan.Title != "Curated Sidecar Title" {
-		t.Fatalf("Title = %q; want sidecar title", plan.Title)
+	if resolved.Metadata.Title != "Curated Sidecar Title" {
+		t.Fatalf("Title = %q; want sidecar title", resolved.Metadata.Title)
 	}
-	if len(plan.Authors) != 1 || plan.Authors[0].Name != "Curated Author" {
-		t.Fatalf("Authors = %+v; want sidecar author", plan.Authors)
+	if len(resolved.Metadata.Authors) != 1 || resolved.Metadata.Authors[0].Name != "Curated Author" {
+		t.Fatalf("Authors = %+v; want sidecar author", resolved.Metadata.Authors)
 	}
 	wantAddedAt := time.Date(2013, time.February, 1, 10, 11, 12, 345678000, time.UTC)
-	if !plan.AddedAt.Equal(wantAddedAt) {
-		t.Fatalf("AddedAt = %s; want calibre timestamp %s", plan.AddedAt, wantAddedAt)
+	if !resolved.AddedAt.Equal(wantAddedAt) {
+		t.Fatalf("AddedAt = %s; want calibre timestamp %s", resolved.AddedAt, wantAddedAt)
 	}
-	if !bytes.Equal(plan.CoverBytes, sidecarCover) {
-		t.Fatalf("CoverBytes = %q; want sidecar cover", plan.CoverBytes)
+	if !bytes.Equal(resolved.CoverBytes, sidecarCover) {
+		t.Fatalf("CoverBytes = %q; want sidecar cover", resolved.CoverBytes)
 	}
 }
 
@@ -1448,26 +1515,26 @@ func TestResolveMOBIMetadataAndCover(t *testing.T) {
 		t.Fatalf("write mobi: %v", err)
 	}
 
-	plan, err := Resolve(context.Background(), Source{Path: path}, nil)
+	resolved, err := resolveTestSource(context.Background(), Source{Path: path}, nil)
 	if err != nil {
-		t.Fatalf("Resolve: %v", err)
+		t.Fatalf("resolve source: %v", err)
 	}
-	if plan.Format != format.FormatMOBI {
-		t.Fatalf("Format = %v; want FormatMOBI", plan.Format)
+	if resolved.Format != format.FormatMOBI {
+		t.Fatalf("Format = %v; want FormatMOBI", resolved.Format)
 	}
-	if !plan.CanRead {
+	if !resolved.CanRead {
 		t.Fatalf("CanRead = false; want true for MOBI foliate reader")
 	}
-	if len(plan.Warnings) != 0 {
-		t.Fatalf("Warnings = %+v; want none for valid MOBI metadata/cover", plan.Warnings)
+	if len(resolved.Warnings) != 0 {
+		t.Fatalf("Warnings = %+v; want none for valid MOBI metadata/cover", resolved.Warnings)
 	}
-	if plan.Title != "MOBI Book" {
-		t.Fatalf("Title = %q; want MOBI Book", plan.Title)
+	if resolved.Metadata.Title != "MOBI Book" {
+		t.Fatalf("Title = %q; want MOBI Book", resolved.Metadata.Title)
 	}
-	if len(plan.Authors) != 1 || plan.Authors[0].Name != "Jane Doe" || plan.Authors[0].SortName != "Doe, Jane" {
-		t.Fatalf("Authors = %+v; want Jane Doe with sort", plan.Authors)
+	if len(resolved.Metadata.Authors) != 1 || resolved.Metadata.Authors[0].Name != "Jane Doe" || resolved.Metadata.Authors[0].SortName != "Doe, Jane" {
+		t.Fatalf("Authors = %+v; want Jane Doe with sort", resolved.Metadata.Authors)
 	}
-	if !bytes.Equal(plan.CoverBytes, cover) {
+	if !bytes.Equal(resolved.CoverBytes, cover) {
 		t.Fatalf("CoverBytes did not come from MOBI cover record")
 	}
 }
@@ -1495,26 +1562,26 @@ func TestResolveFB2MetadataAndCover(t *testing.T) {
 		t.Fatalf("write fb2: %v", err)
 	}
 
-	plan, err := Resolve(context.Background(), Source{Path: path}, nil)
+	resolved, err := resolveTestSource(context.Background(), Source{Path: path}, nil)
 	if err != nil {
-		t.Fatalf("Resolve: %v", err)
+		t.Fatalf("resolve source: %v", err)
 	}
-	if plan.Format != format.FormatFB2 {
-		t.Fatalf("Format = %v; want FormatFB2", plan.Format)
+	if resolved.Format != format.FormatFB2 {
+		t.Fatalf("Format = %v; want FormatFB2", resolved.Format)
 	}
-	if len(plan.Warnings) != 0 {
-		t.Fatalf("Warnings = %+v; want none for valid FB2", plan.Warnings)
+	if len(resolved.Warnings) != 0 {
+		t.Fatalf("Warnings = %+v; want none for valid FB2", resolved.Warnings)
 	}
-	if plan.Title != "FB2 Book" {
-		t.Fatalf("Title = %q; want FB2 Book", plan.Title)
+	if resolved.Metadata.Title != "FB2 Book" {
+		t.Fatalf("Title = %q; want FB2 Book", resolved.Metadata.Title)
 	}
-	if len(plan.Authors) != 1 || plan.Authors[0].Name != "Jane Author" || plan.Authors[0].SortName != "Author, Jane" {
-		t.Fatalf("Authors = %+v; want Jane Author with sort", plan.Authors)
+	if len(resolved.Metadata.Authors) != 1 || resolved.Metadata.Authors[0].Name != "Jane Author" || resolved.Metadata.Authors[0].SortName != "Author, Jane" {
+		t.Fatalf("Authors = %+v; want Jane Author with sort", resolved.Metadata.Authors)
 	}
-	if plan.Metadata == nil || plan.Metadata.Identifier != "isbn:978-0-306-40615-7" {
-		t.Fatalf("Identifier = %v; want isbn", plan.Metadata)
+	if resolved.Metadata == nil || resolved.Metadata.Identifier != "isbn:978-0-306-40615-7" {
+		t.Fatalf("Identifier = %v; want isbn", resolved.Metadata)
 	}
-	if len(plan.CoverBytes) == 0 {
+	if len(resolved.CoverBytes) == 0 {
 		t.Fatalf("CoverBytes empty; want FB2 embedded cover")
 	}
 }
@@ -1537,18 +1604,18 @@ func TestResolveFB2IgnoresInvalidEmbeddedCover(t *testing.T) {
 		t.Fatalf("write fb2: %v", err)
 	}
 
-	plan, err := Resolve(context.Background(), Source{Path: path}, nil)
+	resolved, err := resolveTestSource(context.Background(), Source{Path: path}, nil)
 	if err != nil {
-		t.Fatalf("Resolve: %v", err)
+		t.Fatalf("resolve source: %v", err)
 	}
-	if len(plan.Warnings) != 0 {
-		t.Fatalf("Warnings = %+v; want none for invalid embedded cover", plan.Warnings)
+	if len(resolved.Warnings) != 0 {
+		t.Fatalf("Warnings = %+v; want none for invalid embedded cover", resolved.Warnings)
 	}
-	if plan.Title != "Broken Cover FB2" {
-		t.Fatalf("Title = %q; want metadata despite invalid cover", plan.Title)
+	if resolved.Metadata.Title != "Broken Cover FB2" {
+		t.Fatalf("Title = %q; want metadata despite invalid cover", resolved.Metadata.Title)
 	}
-	if len(plan.CoverBytes) != 0 {
-		t.Fatalf("CoverBytes = %d bytes; want no cover", len(plan.CoverBytes))
+	if len(resolved.CoverBytes) != 0 {
+		t.Fatalf("CoverBytes = %d bytes; want no cover", len(resolved.CoverBytes))
 	}
 }
 
@@ -1580,23 +1647,23 @@ func TestResolveZippedFB2MetadataAndCover(t *testing.T) {
 			path := filepath.Join(dir, tt.name)
 			writeFB2Zip(t, path, src)
 
-			plan, err := Resolve(context.Background(), Source{Path: path}, nil)
+			resolved, err := resolveTestSource(context.Background(), Source{Path: path}, nil)
 			if err != nil {
-				t.Fatalf("Resolve: %v", err)
+				t.Fatalf("resolve source: %v", err)
 			}
-			if plan.Format != format.FormatFB2 {
-				t.Fatalf("Format = %v; want FormatFB2", plan.Format)
+			if resolved.Format != format.FormatFB2 {
+				t.Fatalf("Format = %v; want FormatFB2", resolved.Format)
 			}
-			if plan.Extension != tt.ext {
-				t.Fatalf("Extension = %q; want %q", plan.Extension, tt.ext)
+			if resolved.Extension != tt.ext {
+				t.Fatalf("Extension = %q; want %q", resolved.Extension, tt.ext)
 			}
-			if plan.Title != "Zipped FB2 Book" {
-				t.Fatalf("Title = %q; want Zipped FB2 Book", plan.Title)
+			if resolved.Metadata.Title != "Zipped FB2 Book" {
+				t.Fatalf("Title = %q; want Zipped FB2 Book", resolved.Metadata.Title)
 			}
-			if len(plan.Authors) != 1 || plan.Authors[0].Name != "Zip Author" || plan.Authors[0].SortName != "Author, Zip" {
-				t.Fatalf("Authors = %+v; want Zip Author with sort", plan.Authors)
+			if len(resolved.Metadata.Authors) != 1 || resolved.Metadata.Authors[0].Name != "Zip Author" || resolved.Metadata.Authors[0].SortName != "Author, Zip" {
+				t.Fatalf("Authors = %+v; want Zip Author with sort", resolved.Metadata.Authors)
 			}
-			if len(plan.CoverBytes) == 0 {
+			if len(resolved.CoverBytes) == 0 {
 				t.Fatalf("CoverBytes empty; want zipped FB2 embedded cover")
 			}
 		})
@@ -1623,51 +1690,37 @@ func TestResolveCBZMetadataAndCover(t *testing.T) {
 		"page001.png": cover,
 	})
 
-	plan, err := Resolve(context.Background(), Source{Path: path}, nil)
+	resolved, err := resolveTestSource(context.Background(), Source{Path: path}, nil)
 	if err != nil {
-		t.Fatalf("Resolve: %v", err)
+		t.Fatalf("resolve source: %v", err)
 	}
-	if plan.Format != format.FormatCBZ {
-		t.Fatalf("Format = %v; want FormatCBZ", plan.Format)
+	if resolved.Format != format.FormatCBZ {
+		t.Fatalf("Format = %v; want FormatCBZ", resolved.Format)
 	}
-	if plan.PageCount != 1 {
-		t.Fatalf("PageCount = %d; want one image page", plan.PageCount)
+	if resolved.PageCount != 1 {
+		t.Fatalf("PageCount = %d; want one image page", resolved.PageCount)
 	}
-	if !plan.CanRead {
+	if !resolved.CanRead {
 		t.Fatalf("CanRead = false; want true for CBZ foliate reader")
 	}
-	if len(plan.Warnings) != 0 {
-		t.Fatalf("Warnings = %+v; want none for valid CBZ", plan.Warnings)
+	if len(resolved.Warnings) != 0 {
+		t.Fatalf("Warnings = %+v; want none for valid CBZ", resolved.Warnings)
 	}
-	if plan.Title != "Batman: The Dark Knight Returns" {
-		t.Fatalf("Title = %q; want ComicInfo title", plan.Title)
+	if resolved.Metadata.Title != "Batman: The Dark Knight Returns" {
+		t.Fatalf("Title = %q; want ComicInfo title", resolved.Metadata.Title)
 	}
-	if len(plan.Authors) != 1 || plan.Authors[0].Name != "Frank Miller" || plan.Authors[0].SortName != "Miller, Frank" {
-		t.Fatalf("Authors = %+v; want Frank Miller with sort", plan.Authors)
+	if len(resolved.Metadata.Authors) != 1 || resolved.Metadata.Authors[0].Name != "Frank Miller" || resolved.Metadata.Authors[0].SortName != "Miller, Frank" {
+		t.Fatalf("Authors = %+v; want Frank Miller with sort", resolved.Metadata.Authors)
 	}
-	if plan.Metadata == nil || plan.Metadata.Series != "Batman" || plan.Metadata.SeriesIndex != 1 {
-		t.Fatalf("Metadata = %+v; want ComicInfo series", plan.Metadata)
+	if resolved.Metadata == nil || resolved.Metadata.Series != "Batman" || resolved.Metadata.SeriesIndex != 1 {
+		t.Fatalf("Metadata = %+v; want ComicInfo series", resolved.Metadata)
 	}
-	if !bytes.Equal(plan.CoverBytes, cover) {
+	if !bytes.Equal(resolved.CoverBytes, cover) {
 		t.Fatalf("CoverBytes did not come from first CBZ page")
 	}
 }
 
 func TestImportGroupElectsReadablePrimary(t *testing.T) {
-	newLibrary := func(t *testing.T) (*db.DB, storage.Root) {
-		t.Helper()
-		dataDir := t.TempDir()
-		database, err := db.InitPath(filepath.Join(dataDir, "library.db"))
-		if err != nil {
-			t.Fatalf("db.Init: %v", err)
-		}
-		t.Cleanup(func() { database.Close() })
-		root := storage.NewRoot(dataDir)
-		if err := storage.EnsureLayout(root); err != nil {
-			t.Fatalf("EnsureLayout: %v", err)
-		}
-		return database, root
-	}
 	writeSources := func(t *testing.T) (string, string) {
 		t.Helper()
 		sourceDir := t.TempDir()
@@ -1700,7 +1753,8 @@ func TestImportGroupElectsReadablePrimary(t *testing.T) {
 	}
 
 	t.Run("new grouped book", func(t *testing.T) {
-		database, root := newLibrary(t)
+		dataDir := t.TempDir()
+		database, root := openTestLibrary(t, dataDir, dataDir)
 		docxPath, epubPath := writeSources(t)
 
 		result, err := ImportGroup(context.Background(), database, root, []Source{{Path: docxPath}, {Path: epubPath}}, nil, Options{})
@@ -1711,7 +1765,8 @@ func TestImportGroupElectsReadablePrimary(t *testing.T) {
 	})
 
 	t.Run("readable format added to existing book", func(t *testing.T) {
-		database, root := newLibrary(t)
+		dataDir := t.TempDir()
+		database, root := openTestLibrary(t, dataDir, dataDir)
 		docxPath, epubPath := writeSources(t)
 
 		initial, err := ImportGroup(context.Background(), database, root, []Source{{Path: docxPath}}, nil, Options{})
@@ -1737,15 +1792,7 @@ func TestImportGroupDeduplicatesSourceCopies(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			dataDir := t.TempDir()
-			database, err := db.InitPath(filepath.Join(dataDir, "library.db"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer database.Close()
-			root := storage.NewRoot(filepath.Join(dataDir, "books"))
-			if err := storage.EnsureLayout(root); err != nil {
-				t.Fatal(err)
-			}
+			database, root := openTestLibrary(t, dataDir, filepath.Join(dataDir, "books"))
 			var sources []Source
 			for i, name := range []string{"Book.txt", "Book.md", "Book - copy.md"} {
 				content := "A short synthetic book.\n"
@@ -1803,6 +1850,53 @@ func TestImportGroupDeduplicatesSourceCopies(t *testing.T) {
 	}
 }
 
+func TestProbeGroupAppliesGroupRules(t *testing.T) {
+	t.Run("repeated new source", func(t *testing.T) {
+		dataDir := t.TempDir()
+		database, _ := openTestLibrary(t, dataDir, filepath.Join(dataDir, "books"))
+		dir := t.TempDir()
+		first := filepath.Join(dir, "Book.txt")
+		second := filepath.Join(dir, "Book.md")
+		for _, path := range []string{first, second} {
+			if err := os.WriteFile(path, []byte("same source bytes"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		probe, err := ProbeGroup(t.Context(), database.Read(t.Context()), []Source{{Path: first}, {Path: second}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(probe) != 2 || probe[0].Duplicate || !probe[1].Duplicate {
+			t.Fatalf("probe = %+v; want one import followed by one duplicate", probe)
+		}
+	})
+
+	t.Run("existing sources from different books", func(t *testing.T) {
+		dataDir := t.TempDir()
+		database, root := openTestLibrary(t, dataDir, filepath.Join(dataDir, "books"))
+		dir := t.TempDir()
+		first := filepath.Join(dir, "First.txt")
+		second := filepath.Join(dir, "Second.txt")
+		if err := os.WriteFile(first, []byte("first source"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(second, []byte("second source"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		for _, path := range []string{first, second} {
+			if _, err := Import(t.Context(), database, root, Source{Path: path}, nil, Options{}); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		_, err := ProbeGroup(t.Context(), database.Read(t.Context()), []Source{{Path: first}, {Path: second}})
+		if err == nil || !strings.Contains(err.Error(), "already belong to different books") {
+			t.Fatalf("ProbeGroup error = %v; want different-books conflict", err)
+		}
+	})
+}
+
 func TestAddedAtForSources(t *testing.T) {
 	now := time.Date(2026, time.September, 1, 12, 0, 0, 0, time.UTC)
 	earlier := time.Date(2012, time.March, 4, 5, 6, 7, 0, time.UTC)
@@ -1812,31 +1906,31 @@ func TestAddedAtForSources(t *testing.T) {
 	tests := []struct {
 		name      string
 		timestamp string
-		infos     []sourceInfo
+		modTimes  []time.Time
 		want      time.Time
 	}{
 		{
 			name:      "calibre timestamp wins over earlier file",
 			timestamp: calibre.Format(time.RFC3339Nano),
-			infos:     []sourceInfo{{ModTime: earlier}},
+			modTimes:  []time.Time{earlier},
 			want:      calibre,
 		},
 		{
 			name:      "invalid calibre timestamp falls back to earliest file",
 			timestamp: "not-a-timestamp",
-			infos:     []sourceInfo{{ModTime: later}, {ModTime: earlier}},
+			modTimes:  []time.Time{later, earlier},
 			want:      earlier,
 		},
 		{
-			name:  "implausible file times fall back to now",
-			infos: []sourceInfo{{ModTime: time.Unix(0, 0)}, {ModTime: now.Add(time.Hour)}},
-			want:  now,
+			name:     "implausible file times fall back to now",
+			modTimes: []time.Time{time.Unix(0, 0), now.Add(time.Hour)},
+			want:     now,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := addedAtForSources(tt.timestamp, tt.infos, now)
+			got := addedAtForSources(tt.timestamp, tt.modTimes, now)
 			if !got.Equal(tt.want) {
 				t.Fatalf("addedAtForSources = %s; want %s", got, tt.want)
 			}
@@ -1846,15 +1940,7 @@ func TestAddedAtForSources(t *testing.T) {
 
 func TestImportGroupStoresEarliestSourceModTimeAsAddedAt(t *testing.T) {
 	dataDir := t.TempDir()
-	database, err := db.InitPath(filepath.Join(dataDir, "library.db"))
-	if err != nil {
-		t.Fatalf("db.Init: %v", err)
-	}
-	t.Cleanup(func() { database.Close() })
-	root := storage.NewRoot(filepath.Join(dataDir, "books"))
-	if err := storage.EnsureLayout(root); err != nil {
-		t.Fatalf("EnsureLayout: %v", err)
-	}
+	database, root := openTestLibrary(t, dataDir, filepath.Join(dataDir, "books"))
 
 	sourceDir := t.TempDir()
 	laterPath := filepath.Join(sourceDir, "Book.txt")
@@ -1894,20 +1980,6 @@ func TestImportGroupStoresEarliestSourceModTimeAsAddedAt(t *testing.T) {
 }
 
 func TestImportGroupRestoresTrashedBookOnlyWhenAddingAsset(t *testing.T) {
-	newLibrary := func(t *testing.T) (*db.DB, storage.Root) {
-		t.Helper()
-		dataDir := t.TempDir()
-		database, err := db.InitPath(filepath.Join(dataDir, "library.db"))
-		if err != nil {
-			t.Fatalf("db.Init: %v", err)
-		}
-		t.Cleanup(func() { database.Close() })
-		root := storage.NewRoot(dataDir)
-		if err := storage.EnsureLayout(root); err != nil {
-			t.Fatalf("EnsureLayout: %v", err)
-		}
-		return database, root
-	}
 	writeSources := func(t *testing.T) (string, string) {
 		t.Helper()
 		sourceDir := t.TempDir()
@@ -1941,7 +2013,8 @@ func TestImportGroupRestoresTrashedBookOnlyWhenAddingAsset(t *testing.T) {
 	}
 
 	t.Run("plain duplicate stays trashed", func(t *testing.T) {
-		database, root := newLibrary(t)
+		dataDir := t.TempDir()
+		database, root := openTestLibrary(t, dataDir, dataDir)
 		docxPath, _ := writeSources(t)
 		initial, err := ImportGroup(context.Background(), database, root, []Source{{Path: docxPath}}, nil, Options{})
 		if err != nil {
@@ -1963,7 +2036,8 @@ func TestImportGroupRestoresTrashedBookOnlyWhenAddingAsset(t *testing.T) {
 	})
 
 	t.Run("new asset restores book idempotently", func(t *testing.T) {
-		database, root := newLibrary(t)
+		dataDir := t.TempDir()
+		database, root := openTestLibrary(t, dataDir, dataDir)
 		docxPath, epubPath := writeSources(t)
 		initial, err := ImportGroup(context.Background(), database, root, []Source{{Path: docxPath}}, nil, Options{})
 		if err != nil {
@@ -2015,32 +2089,32 @@ func TestImportGroupRestoresTrashedBookOnlyWhenAddingAsset(t *testing.T) {
 	})
 }
 
-func TestPersistStoresBookMetadata(t *testing.T) {
+func TestPersistPreparedStoresBookMetadata(t *testing.T) {
 	dataDir := t.TempDir()
-	database, err := db.InitPath(filepath.Join(dataDir, "library.db"))
-	if err != nil {
-		t.Fatalf("db.Init: %v", err)
-	}
-	defer database.Close()
-	root := storage.NewRoot(filepath.Join(dataDir, "books"))
-	if err := storage.EnsureLayout(root); err != nil {
-		t.Fatalf("EnsureLayout: %v", err)
-	}
+	database, root := openTestLibrary(t, dataDir, filepath.Join(dataDir, "books"))
 
 	source := []byte("metadata mapping source")
 	sourcePath := filepath.Join(dataDir, "source.fb2")
 	if err := os.WriteFile(sourcePath, source, 0o644); err != nil {
 		t.Fatalf("write source: %v", err)
 	}
-	sum := sha256.Sum256(source)
-	plan := Plan{
-		Source:       Source{Path: sourcePath},
-		Size:         int64(len(source)),
-		SourceSHA256: sum[:],
-		Format:       format.FormatFB2,
-		Extension:    ".fb2",
-		CanRead:      true,
+	sum := storage.Sum(source)
+	info := sourceInfo{
+		Source:     Source{Path: sourcePath},
+		Size:       int64(len(source)),
+		SourceHash: sum[:],
+		Format:     format.FormatFB2,
+		Extension:  ".fb2",
+		CanRead:    true,
+	}
+	resolved := resolvedBook{
 		Metadata: &bookmeta.Metadata{
+			Title:     "Mapped Title",
+			SortTitle: "Title, Mapped",
+			Authors: []bookmeta.AuthorMeta{
+				{Name: "Primary Author", SortName: "Author, Primary", Role: "aut"},
+				{Name: "Second Author", SortName: "Author, Second", Role: "trl"},
+			},
 			Language:    "pt_BR",
 			Description: "Mapping description",
 			Publisher:   "Mapping Press",
@@ -2051,17 +2125,11 @@ func TestPersistStoresBookMetadata(t *testing.T) {
 			Tags:        []string{"mapping", "contract"},
 		},
 		CoverBytes: []byte("cover bytes"),
-		Title:      "Mapped Title",
-		SortTitle:  "Title, Mapped",
-		Authors: []bookmeta.AuthorMeta{
-			{Name: "Primary Author", SortName: "Author, Primary", Role: "aut"},
-			{Name: "Second Author", SortName: "Author, Second", Role: "trl"},
-		},
 	}
 
-	result, err := Persist(context.Background(), database, root, plan, Options{})
+	result, err := persistPrepared(context.Background(), database, root, stageTestSource(t, root, info), resolved, Options{})
 	if err != nil {
-		t.Fatalf("Persist: %v", err)
+		t.Fatalf("persistPrepared: %v", err)
 	}
 
 	type storedMetadata struct {
@@ -2087,17 +2155,17 @@ func TestPersistStoresBookMetadata(t *testing.T) {
 		t.Fatalf("query book metadata: %v", err)
 	}
 	want := storedMetadata{
-		title:        plan.Title,
-		sortTitle:    plan.SortTitle,
-		series:       plan.Metadata.Series,
-		seriesIndex:  plan.Metadata.SeriesIndex,
-		description:  plan.Metadata.Description,
-		tags:         strings.Join(plan.Metadata.Tags, ", "),
+		title:        resolved.Metadata.Title,
+		sortTitle:    resolved.Metadata.SortTitle,
+		series:       resolved.Metadata.Series,
+		seriesIndex:  resolved.Metadata.SeriesIndex,
+		description:  resolved.Metadata.Description,
+		tags:         strings.Join(resolved.Metadata.Tags, ", "),
 		coverVersion: 1,
-		publisher:    plan.Metadata.Publisher,
-		date:         plan.Metadata.Date,
+		publisher:    resolved.Metadata.Publisher,
+		date:         resolved.Metadata.Date,
 		language:     "pt-BR",
-		identifiers:  plan.Metadata.Identifier,
+		identifiers:  resolved.Metadata.Identifier,
 	}
 	if got != want {
 		t.Fatalf("stored book metadata = %+v; want %+v", got, want)
@@ -2125,43 +2193,35 @@ func TestPersistStoresBookMetadata(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatalf("book authors: %v", err)
 	}
-	if !slices.Equal(authors, plan.Authors) {
-		t.Fatalf("stored book authors = %+v; want %+v", authors, plan.Authors)
+	if !slices.Equal(authors, resolved.Metadata.Authors) {
+		t.Fatalf("stored book authors = %+v; want %+v", authors, resolved.Metadata.Authors)
 	}
 }
 
-func TestPersistStoresAssetHashesAndCover(t *testing.T) {
+func TestPersistPreparedStoresAssetHashesAndCover(t *testing.T) {
 	dataDir := t.TempDir()
-	database, err := db.InitPath(filepath.Join(dataDir, "library.db"))
-	if err != nil {
-		t.Fatalf("db.Init: %v", err)
-	}
-	defer database.Close()
-	root := storage.NewRoot(dataDir)
-	if err := storage.EnsureLayout(root); err != nil {
-		t.Fatalf("EnsureLayout: %v", err)
-	}
+	database, root := openTestLibrary(t, dataDir, dataDir)
 
 	srcBytes := []byte("plain opaque source")
 	srcPath := filepath.Join(dataDir, "source.fb2")
 	if err := os.WriteFile(srcPath, srcBytes, 0o644); err != nil {
 		t.Fatalf("write source: %v", err)
 	}
-	plan, err := Resolve(context.Background(), Source{Path: srcPath}, nil)
+	resolved, err := resolveTestSource(context.Background(), Source{Path: srcPath}, nil)
 	if err != nil {
-		t.Fatalf("Resolve: %v", err)
+		t.Fatalf("resolve source: %v", err)
 	}
-	plan.CoverBytes = []byte("cover-bytes")
+	resolved.CoverBytes = []byte("cover-bytes")
 
-	res, err := Persist(context.Background(), database, root, plan, Options{})
+	res, err := persistPrepared(context.Background(), database, root, stageTestSource(t, root, resolved.sourceInfo), resolved.resolvedBook, Options{})
 	if err != nil {
-		t.Fatalf("Persist: %v", err)
+		t.Fatalf("persistPrepared: %v", err)
 	}
 	if res.Status != StatusImported {
 		t.Fatalf("Status = %q; want imported", res.Status)
 	}
 
-	sum := sha256.Sum256(srcBytes)
+	sum := storage.Sum(srcBytes)
 	wantHash := sum[:]
 	var originalHash, currentHash []byte
 	var storagePath string
@@ -2169,7 +2229,7 @@ func TestPersistStoresAssetHashesAndCover(t *testing.T) {
 	var originalSize, currentSize int64
 	var isPrimary, canRead int
 	if err := database.Read(t.Context()).QueryRow(`
-			SELECT original_sha256, current_sha256, original_size, current_size, storage_path, format, is_primary, can_read
+			SELECT original_hash, current_hash, original_size, current_size, storage_path, format, is_primary, can_read
 			FROM assets
 			WHERE id = ?
 		`, res.AssetID).Scan(&originalHash, &currentHash, &originalSize, &currentSize, &storagePath, &formatKey, &isPrimary, &canRead); err != nil {
@@ -2187,16 +2247,16 @@ func TestPersistStoresAssetHashesAndCover(t *testing.T) {
 	if canRead != 1 {
 		t.Fatalf("can_read = %d; want 1", canRead)
 	}
-	if formatKey != format.FormatKey(plan.Format) {
-		t.Fatalf("format = %q; want %q", formatKey, format.FormatKey(plan.Format))
+	if formatKey != format.FormatKey(resolved.Format) {
+		t.Fatalf("format = %q; want %q", formatKey, format.FormatKey(resolved.Format))
 	}
 	var primaryAuthorSort string
 	if err := database.Read(t.Context()).QueryRow("SELECT primary_author_sort FROM books WHERE id = ?", res.BookID).Scan(&primaryAuthorSort); err != nil {
 		t.Fatalf("query primary_author_sort: %v", err)
 	}
 	wantAuthorSort := ""
-	if len(plan.Authors) > 0 {
-		wantAuthorSort = plan.Authors[0].SortName
+	if len(resolved.Metadata.Authors) > 0 {
+		wantAuthorSort = resolved.Metadata.Authors[0].SortName
 	}
 	if primaryAuthorSort != wantAuthorSort {
 		t.Fatalf("primary_author_sort = %q; want %q", primaryAuthorSort, wantAuthorSort)
@@ -2219,113 +2279,22 @@ func TestPersistStoresAssetHashesAndCover(t *testing.T) {
 	}
 }
 
-func TestPersistRejectsChangedSource(t *testing.T) {
-	for _, tt := range []struct {
-		name, changed string
-		restore       bool
-	}{
-		{"import/shrunk", "short", false},
-		{"import/same size", "another source", false},
-		{"import/grew", "a source that grew during import", false},
-		{"restore/changed", "another source", true},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			dataDir := t.TempDir()
-			database, err := db.InitPath(filepath.Join(dataDir, "library.db"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer database.Close()
-			root := storage.NewRoot(filepath.Join(dataDir, "books"))
-			if err := storage.EnsureLayout(root); err != nil {
-				t.Fatal(err)
-			}
-			const original = "initial source"
-			srcPath := filepath.Join(dataDir, "source.txt")
-			if err := os.WriteFile(srcPath, []byte(original), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			plan, err := Resolve(context.Background(), Source{Path: srcPath}, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			wantCount := 0
-			var missingPath string
-			if tt.restore {
-				result, err := Persist(context.Background(), database, root, plan, Options{})
-				if err != nil {
-					t.Fatal(err)
-				}
-				missingPath = root.Abs(result.StoragePath)
-				if err := os.Remove(missingPath); err != nil {
-					t.Fatal(err)
-				}
-				wantCount = 1
-			}
-			if err := os.WriteFile(srcPath, []byte(tt.changed), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := Persist(context.Background(), database, root, plan, Options{}); err == nil || !strings.Contains(err.Error(), "source changed during import") {
-				t.Fatalf("Persist = %v; want changed source error", err)
-			}
-			var books, assets int
-			if err := database.Read(t.Context()).QueryRow("SELECT (SELECT COUNT(*) FROM books), (SELECT COUNT(*) FROM assets)").Scan(&books, &assets); err != nil {
-				t.Fatal(err)
-			}
-			if books != wantCount || assets != wantCount {
-				t.Fatalf("books/assets = %d/%d; want %d/%d", books, assets, wantCount, wantCount)
-			}
-			if tt.restore {
-				if _, err := os.Stat(missingPath); !os.IsNotExist(err) {
-					t.Fatalf("changed source was placed: %v", err)
-				}
-				var hash []byte
-				if err := database.Read(t.Context()).QueryRow("SELECT current_sha256 FROM assets").Scan(&hash); err != nil || !bytes.Equal(hash, plan.SourceSHA256) {
-					t.Fatalf("current hash = %x, %v; want original fingerprint", hash, err)
-				}
-			}
-			entries, err := os.ReadDir(root.StagingDir())
-			if err != nil || len(entries) != 0 {
-				t.Fatalf("staging = %v, %v; want empty", entries, err)
-			}
-			if err := os.WriteFile(srcPath, []byte(original), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			result, err := Persist(context.Background(), database, root, plan, Options{})
-			if err != nil {
-				t.Fatalf("retry stable source: %v", err)
-			}
-			if data, err := os.ReadFile(root.Abs(result.StoragePath)); err != nil || string(data) != original {
-				t.Fatalf("retry bytes = %q, %v; want original source", data, err)
-			}
-		})
-	}
-}
-
-func TestPersistCanceledContextRollsBackAndCleansStaging(t *testing.T) {
+func TestPersistPreparedCanceledContextRollsBackAndCleansStaging(t *testing.T) {
 	dataDir := t.TempDir()
-	database, err := db.InitPath(filepath.Join(dataDir, "library.db"))
-	if err != nil {
-		t.Fatalf("db.Init: %v", err)
-	}
-	defer database.Close()
-	root := storage.NewRoot(filepath.Join(dataDir, "books"))
-	if err := storage.EnsureLayout(root); err != nil {
-		t.Fatalf("EnsureLayout: %v", err)
-	}
-
+	database, root := openTestLibrary(t, dataDir, filepath.Join(dataDir, "books"))
 	srcPath := filepath.Join(dataDir, "source.fb2")
 	if err := os.WriteFile(srcPath, []byte("opaque source"), 0o644); err != nil {
 		t.Fatalf("write source: %v", err)
 	}
-	plan, err := Resolve(context.Background(), Source{Path: srcPath}, nil)
+	resolved, err := resolveTestSource(context.Background(), Source{Path: srcPath}, nil)
 	if err != nil {
-		t.Fatalf("Resolve: %v", err)
+		t.Fatalf("resolve source: %v", err)
 	}
+	prepared := stageTestSource(t, root, resolved.sourceInfo)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := Persist(ctx, database, root, plan, Options{}); !errors.Is(err, context.Canceled) {
-		t.Fatalf("Persist error = %v; want context.Canceled", err)
+	if _, err := persistPrepared(ctx, database, root, prepared, resolved.resolvedBook, Options{}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("persistPrepared error = %v; want context.Canceled", err)
 	}
 
 	var books, assets int
@@ -2364,8 +2333,8 @@ func TestCanceledPreparationReturnsContextCause(t *testing.T) {
 	cancel(cause)
 
 	operations := map[string]func() error{
-		"resolve": func() error {
-			_, err := Resolve(ctx, Source{Path: srcPath}, nil)
+		"import": func() error {
+			_, err := Import(ctx, database, storage.Root{}, Source{Path: srcPath}, nil, Options{})
 			return err
 		},
 		"probe": func() error {
@@ -2384,15 +2353,7 @@ func TestCanceledPreparationReturnsContextCause(t *testing.T) {
 
 func TestDuplicateImportRestoreUpdatesCurrentHash(t *testing.T) {
 	dataDir := t.TempDir()
-	database, err := db.InitPath(filepath.Join(dataDir, "library.db"))
-	if err != nil {
-		t.Fatalf("db.Init: %v", err)
-	}
-	defer database.Close()
-	root := storage.NewRoot(dataDir)
-	if err := storage.EnsureLayout(root); err != nil {
-		t.Fatalf("EnsureLayout: %v", err)
-	}
+	database, root := openTestLibrary(t, dataDir, dataDir)
 
 	srcPath := filepath.Join(dataDir, "source.epub")
 	writeEPUB(t, srcPath, []byte(`<?xml version="1.0" encoding="UTF-8"?>
@@ -2406,36 +2367,47 @@ func TestDuplicateImportRestoreUpdatesCurrentHash(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read source: %v", err)
 	}
-	originalSum := sha256.Sum256(originalBytes)
+	originalSum := storage.Sum(originalBytes)
 	originalHash := originalSum[:]
+	opts := Options{KnownAssetSizes: make(map[int64]struct{})}
 
-	res, err := Import(context.Background(), database, root, Source{Path: srcPath}, nil, Options{})
+	res, err := Import(context.Background(), database, root, Source{Path: srcPath}, nil, opts)
 	if err != nil {
 		t.Fatalf("Import: %v", err)
 	}
 	if res.Status != StatusImported {
 		t.Fatalf("Status = %q; want imported", res.Status)
 	}
+	if _, found := opts.KnownAssetSizes[int64(len(originalBytes))]; !found {
+		t.Fatal("committed asset size was not added to batch hints")
+	}
 
 	managedPath := filepath.Join(dataDir, res.StoragePath)
 	rewrittenBytes := []byte("future write-back bytes")
-	rewrittenSum := sha256.Sum256(rewrittenBytes)
+	rewrittenSum := storage.Sum(rewrittenBytes)
 	rewrittenHash := rewrittenSum[:]
 	if err := os.WriteFile(managedPath, rewrittenBytes, 0o644); err != nil {
 		t.Fatalf("rewrite managed file: %v", err)
 	}
 	if _, err := database.Write(t.Context()).Exec(`
 		UPDATE assets
-		SET current_sha256 = ?, current_size = ?, koreader_hash = 'stale-rewritten-hash', updated_at = unixepoch()
+		SET current_hash = ?, current_size = ?, koreader_hash = 'stale-rewritten-hash', updated_at = unixepoch()
 		WHERE id = ?
 	`, rewrittenHash, len(rewrittenBytes), res.AssetID); err != nil {
 		t.Fatalf("mark rewritten current hash: %v", err)
+	}
+	unchanged, err := Import(context.Background(), database, root, Source{Path: srcPath}, nil, opts)
+	if err != nil {
+		t.Fatalf("duplicate Import after writeback: %v", err)
+	}
+	if unchanged.Status != StatusDuplicate || unchanged.AssetID != res.AssetID {
+		t.Fatalf("duplicate after writeback = %+v; want existing asset", unchanged)
 	}
 	if err := os.Remove(managedPath); err != nil {
 		t.Fatalf("remove managed file: %v", err)
 	}
 
-	dup, err := Import(context.Background(), database, root, Source{Path: srcPath}, nil, Options{})
+	dup, err := Import(context.Background(), database, root, Source{Path: srcPath}, nil, opts)
 	if err != nil {
 		t.Fatalf("duplicate Import: %v", err)
 	}
@@ -2452,7 +2424,7 @@ func TestDuplicateImportRestoreUpdatesCurrentHash(t *testing.T) {
 	var koReaderHash string
 	var originalDBSize, currentDBSize int64
 	if err := database.Read(t.Context()).QueryRow(`
-		SELECT original_sha256, current_sha256, original_size, current_size,
+		SELECT original_hash, current_hash, original_size, current_size,
 		       COALESCE(koreader_hash, '')
 		FROM assets
 		WHERE id = ?
@@ -2467,5 +2439,49 @@ func TestDuplicateImportRestoreUpdatesCurrentHash(t *testing.T) {
 	}
 	if koReaderHash != "" {
 		t.Fatalf("restored koreader hash = %q; want empty lazy identity", koReaderHash)
+	}
+}
+
+func TestKnownAssetSizeSkipsStagingOnlyForDuplicate(t *testing.T) {
+	dataDir := t.TempDir()
+	database, root := openTestLibrary(t, dataDir, dataDir)
+
+	firstPath := filepath.Join(dataDir, "first.txt")
+	differentPath := filepath.Join(dataDir, "different.txt")
+	firstBytes := []byte("first book\n")
+	differentBytes := []byte("other book\n")
+	if len(firstBytes) != len(differentBytes) {
+		t.Fatal("test sources must have equal sizes")
+	}
+	if err := os.WriteFile(firstPath, firstBytes, 0o644); err != nil {
+		t.Fatalf("write first source: %v", err)
+	}
+
+	opts := Options{KnownAssetSizes: make(map[int64]struct{})}
+	first, err := Import(t.Context(), database, root, Source{Path: firstPath}, nil, opts)
+	if err != nil || first.Status != StatusImported {
+		t.Fatalf("first Import = %+v, %v; want imported", first, err)
+	}
+
+	if err := os.RemoveAll(root.StagingDir()); err != nil {
+		t.Fatalf("remove staging directory: %v", err)
+	}
+	if err := os.WriteFile(root.StagingDir(), []byte("blocked"), 0o644); err != nil {
+		t.Fatalf("block staging path: %v", err)
+	}
+	duplicate, err := Import(t.Context(), database, root, Source{Path: firstPath}, nil, opts)
+	if err != nil || duplicate.Status != StatusDuplicate {
+		t.Fatalf("duplicate Import with blocked staging = %+v, %v; want duplicate", duplicate, err)
+	}
+	if err := os.Remove(root.StagingDir()); err != nil {
+		t.Fatalf("unblock staging path: %v", err)
+	}
+	if err := os.WriteFile(differentPath, differentBytes, 0o644); err != nil {
+		t.Fatalf("write different source: %v", err)
+	}
+
+	different, err := Import(t.Context(), database, root, Source{Path: differentPath}, nil, opts)
+	if err != nil || different.Status != StatusImported {
+		t.Fatalf("same-size different Import = %+v, %v; want imported", different, err)
 	}
 }

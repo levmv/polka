@@ -17,7 +17,7 @@ func readingActivityFixture(t *testing.T, zone string) (*DB, int64) {
 	}
 	for _, statement := range []string{
 		`INSERT INTO books (id, title, sort_title) VALUES (1, 'Book', 'Book')`,
-		`INSERT INTO assets (id, book_id, storage_path, filename, extension, original_sha256, current_sha256) VALUES (1, 1, 'one.epub', 'one.epub', '.epub', randomblob(32), randomblob(32)), (2, 1, 'two.pdf', 'two.pdf', '.pdf', randomblob(32), randomblob(32))`,
+		`INSERT INTO assets (id, book_id, storage_path, filename, extension, original_hash, current_hash) VALUES (1, 1, 'one.epub', 'one.epub', '.epub', randomblob(16), randomblob(16)), (2, 1, 'two.pdf', 'two.pdf', '.pdf', randomblob(16), randomblob(16))`,
 	} {
 		mustExec(t, database, statement)
 

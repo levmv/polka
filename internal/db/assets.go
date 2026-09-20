@@ -24,13 +24,13 @@ type AssetRow struct {
 }
 
 type PrimaryAssetRow struct {
-	ID            int64
-	BookID        int64
-	Title         string
-	Extension     string
-	Format        format.Format
-	CanRead       bool
-	CurrentSHA256 []byte
+	ID          int64
+	BookID      int64
+	Title       string
+	Extension   string
+	Format      format.Format
+	CanRead     bool
+	CurrentHash []byte
 }
 
 type AssetWithAuthorRow struct {
@@ -41,8 +41,8 @@ type AssetWithAuthorRow struct {
 	Extension        string
 	Format           format.Format
 	CanRead          bool
-	OriginalSHA256   []byte
-	CurrentSHA256    []byte
+	OriginalHash     []byte
+	CurrentHash      []byte
 	OriginalSize     sql.NullInt64
 	CurrentSize      sql.NullInt64
 	Title            string
@@ -67,15 +67,15 @@ func requireAsset(queryer Queryer, assetID int64) error {
 
 // RecordAssetRestore keeps write-back acknowledgement only when restoring the
 // exact bytes it described. Original import identity is never changed.
-func RecordAssetRestore(database Execer, assetID int64, sha256 []byte, size int64) error {
+func RecordAssetRestore(database Execer, assetID int64, hash []byte, size int64) error {
 	_, err := database.Exec(`
 		UPDATE assets
-		SET writeback_rev = CASE WHEN current_sha256 = ? THEN writeback_rev ELSE 0 END,
+		SET writeback_rev = CASE WHEN current_hash = ? THEN writeback_rev ELSE 0 END,
 		    writeback_error = NULL,
-		    koreader_hash = CASE WHEN current_sha256 = ? THEN koreader_hash ELSE NULL END,
-		    current_sha256 = ?, current_size = ?, updated_at = unixepoch()
+		    koreader_hash = CASE WHEN current_hash = ? THEN koreader_hash ELSE NULL END,
+		    current_hash = ?, current_size = ?, updated_at = unixepoch()
 		WHERE id = ?
-	`, sha256, sha256, sha256, size, assetID)
+	`, hash, hash, hash, size, assetID)
 	return err
 }
 
@@ -183,12 +183,12 @@ func PrimaryAssetForBook(queryer Queryer, scope VisibilityScope, bookID int64) (
 	var formatKey string
 	where, args := scope.AppendBookWhere("b.id = ? AND b.deleted_at IS NULL AND a.is_primary = 1", "b.id", bookID)
 	err := queryer.QueryRow(`
-			SELECT b.id, b.title, a.id, a.extension, a.format, a.can_read, a.current_sha256
+			SELECT b.id, b.title, a.id, a.extension, a.format, a.can_read, a.current_hash
 			FROM books b
 			JOIN assets a ON a.book_id = b.id
 			WHERE `+where+`
 			LIMIT 1
-	`, args...).Scan(&a.BookID, &a.Title, &a.ID, &a.Extension, &formatKey, &a.CanRead, &a.CurrentSHA256)
+	`, args...).Scan(&a.BookID, &a.Title, &a.ID, &a.Extension, &formatKey, &a.CanRead, &a.CurrentHash)
 	if err != nil {
 		return PrimaryAssetRow{}, err
 	}
@@ -199,7 +199,7 @@ func PrimaryAssetForBook(queryer Queryer, scope VisibilityScope, bookID int64) (
 func AllAssetsWithPrimaryAuthor(queryer Queryer) ([]AssetWithAuthorRow, error) {
 	rows, err := queryer.Query(`
 		SELECT a.id, a.book_id, a.storage_path, a.original_filename, a.extension, a.format, a.can_read,
-		       a.original_sha256, a.current_sha256,
+		       a.original_hash, a.current_hash,
 		       a.original_size, a.current_size,
 		       b.title, b.sort_title, COALESCE(b.series, ''),
 		       CASE WHEN b.series_index IS NULL THEN '' ELSE CAST(b.series_index AS TEXT) END,
@@ -219,7 +219,7 @@ func AllAssetsWithPrimaryAuthor(queryer Queryer) ([]AssetWithAuthorRow, error) {
 		var a AssetWithAuthorRow
 		var formatKey string
 		var canRead int
-		if err := rows.Scan(&a.ID, &a.BookID, &a.StoragePath, &a.OriginalFilename, &a.Extension, &formatKey, &canRead, &a.OriginalSHA256, &a.CurrentSHA256, &a.OriginalSize, &a.CurrentSize, &a.Title, &a.SortTitle, &a.Series, &a.SeriesIndex, &a.AuthorName, &a.AuthorSortName); err != nil {
+		if err := rows.Scan(&a.ID, &a.BookID, &a.StoragePath, &a.OriginalFilename, &a.Extension, &formatKey, &canRead, &a.OriginalHash, &a.CurrentHash, &a.OriginalSize, &a.CurrentSize, &a.Title, &a.SortTitle, &a.Series, &a.SeriesIndex, &a.AuthorName, &a.AuthorSortName); err != nil {
 			return nil, fmt.Errorf("scan all assets: %w", err)
 		}
 		a.Format = format.FormatFromKey(formatKey)
@@ -238,6 +238,35 @@ func HasAnyAsset(q Queryer) (bool, error) {
 		return false, fmt.Errorf("check for assets: %w", err)
 	}
 	return exists, nil
+}
+
+// AssetContentSizes returns recorded original and current sizes, including
+// assets of trashed books and omitting NULL sizes. Import batches use this set
+// only as a prefilter; content hashes determine duplicates.
+func AssetContentSizes(q Queryer) (map[int64]struct{}, error) {
+	rows, err := q.Query(`SELECT original_size, current_size FROM assets`)
+	if err != nil {
+		return nil, fmt.Errorf("query asset content sizes: %w", err)
+	}
+	defer rows.Close()
+
+	sizes := make(map[int64]struct{})
+	for rows.Next() {
+		var original, current sql.NullInt64
+		if err := rows.Scan(&original, &current); err != nil {
+			return nil, fmt.Errorf("scan asset content sizes: %w", err)
+		}
+		if original.Valid {
+			sizes[original.Int64] = struct{}{}
+		}
+		if current.Valid {
+			sizes[current.Int64] = struct{}{}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("asset content sizes rows: %w", err)
+	}
+	return sizes, nil
 }
 
 // LibraryStorageStats reports the number of live books and the total on-disk

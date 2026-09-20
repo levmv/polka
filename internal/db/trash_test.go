@@ -20,7 +20,7 @@ func seedTrashFixture(t *testing.T, d *DB) {
 		`INSERT INTO book_authors (book_id, author_id, author_order) VALUES (1,1,0)`,
 		`INSERT INTO search (rowid, title, authors) VALUES (1,'Dune','Frank Herbert')`,
 		`INSERT INTO search (rowid, title, authors) VALUES (2,'Hyperion','')`,
-		`INSERT INTO assets (id, book_id, storage_path, filename, extension, original_sha256, current_sha256) VALUES (1,1,'H/Dune/as1.epub','as1.epub','.epub', randomblob(32), randomblob(32))`,
+		`INSERT INTO assets (id, book_id, storage_path, filename, extension, original_hash, current_hash) VALUES (1,1,'H/Dune/as1.epub','as1.epub','.epub', randomblob(16), randomblob(16))`,
 		`INSERT INTO shelves (id, name, kind, owner_id, visibility) VALUES (1,'Faves','manual',1,'shared')`,
 		`INSERT INTO shelf_books (shelf_id, book_id) VALUES (1,1)`,
 	}
@@ -108,7 +108,7 @@ func TestRestoreBringsBookBack(t *testing.T) {
 	}
 }
 
-func TestPurgeRemovesRowsAndRefusesLiveBook(t *testing.T) {
+func TestPurgeBooksRemovesRowsAndKeepsLiveBook(t *testing.T) {
 	d := newTrashTestDB(t)
 	mustExec(t, d, `
 		INSERT INTO user_annotations (user_id, asset_id, locator, quote, note)
@@ -121,19 +121,30 @@ func TestPurgeRemovesRowsAndRefusesLiveBook(t *testing.T) {
 	`)
 
 	// A live book cannot be purged — purge is the trash-only, irreversible half.
-	tx, _ := d.BeginWrite(context.Background())
-	if err := PurgeBook(tx, 1); !errors.Is(err, sql.ErrNoRows) {
-		t.Fatalf("purge live book err = %v, want ErrNoRows", err)
+	tx, err := d.BeginWrite(t.Context())
+	if err != nil {
+		t.Fatalf("begin purge: %v", err)
 	}
-	tx.Rollback()
+	defer tx.Rollback()
+	if n, err := PurgeBooks(tx, []int64{1}); err != nil || n != 0 {
+		t.Fatalf("purge live book = %d, %v; want 0, nil", n, err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit live-book no-op: %v", err)
+	}
+	assertCount(t, d, 1, "SELECT count(*) FROM books WHERE id=1")
 
 	if err := SoftDeleteBook(d.Write(t.Context()), 1, 1); err != nil {
 		t.Fatalf("soft delete: %v", err)
 	}
 
-	tx, _ = d.BeginWrite(context.Background())
-	if err := PurgeBook(tx, 1); err != nil {
-		t.Fatalf("purge: %v", err)
+	tx, err = d.BeginWrite(t.Context())
+	if err != nil {
+		t.Fatalf("begin purge: %v", err)
+	}
+	defer tx.Rollback()
+	if n, err := PurgeBooks(tx, []int64{1, 2}); err != nil || n != 1 {
+		t.Fatalf("purge mixed selection = %d, %v; want 1, nil", n, err)
 	}
 	if err := tx.Commit(); err != nil {
 		t.Fatalf("commit: %v", err)

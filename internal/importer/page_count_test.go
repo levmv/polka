@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/levmv/polka/internal/db"
-	"github.com/levmv/polka/internal/storage"
 	"github.com/levmv/polka/internal/testfixture"
 )
 
@@ -20,15 +19,7 @@ func TestImportPageCountsBelongToAssets(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
-			database, err := db.InitPath(filepath.Join(dir, "library.db"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer database.Close()
-			root := storage.NewRoot(filepath.Join(dir, "books"))
-			if err := storage.EnsureLayout(root); err != nil {
-				t.Fatal(err)
-			}
+			database, root := openTestLibrary(t, dir, filepath.Join(dir, "books"))
 			sources := t.TempDir()
 			if err := os.WriteFile(filepath.Join(sources, "metadata.opf"), []byte(`<metadata><title>Curated</title><creator>Author</creator><meta name="calibre:user_metadata:#pages" content='{"#value#":999}'/></metadata>`), 0o600); err != nil {
 				t.Fatal(err)
@@ -106,15 +97,15 @@ func TestImportFB2CountWithCuratedSidecar(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(dir, "metadata.opf"), []byte(`<metadata><title>Curated</title><creator>Author</creator>`+tc.declaration+`</metadata>`), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			plan, err := Resolve(t.Context(), Source{Path: name, SidecarDir: dir}, nil)
+			resolved, err := resolveTestSource(t.Context(), Source{Path: name, SidecarDir: dir}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if plan.Title != "Curated" || plan.PageCount == 0 {
-				t.Fatalf("curated metadata or count lost: %+v", plan)
+			if resolved.Metadata.Title != "Curated" || resolved.PageCount == 0 {
+				t.Fatalf("curated metadata or count lost: %+v", resolved)
 			}
-			if tc.want > 0 && plan.PageCount != tc.want {
-				t.Fatalf("page count = %d; want declaration %d", plan.PageCount, tc.want)
+			if tc.want > 0 && resolved.PageCount != tc.want {
+				t.Fatalf("page count = %d; want declaration %d", resolved.PageCount, tc.want)
 			}
 		})
 	}

@@ -10,7 +10,6 @@ package covers
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -124,8 +123,8 @@ func ParseTempLabel(label string) (int64, bool) {
 }
 
 // ImportTempLabel ties a staged cover to the imported source before IDs exist.
-func ImportTempLabel(sourceSHA256 []byte) string {
-	return hex.EncodeToString(sourceSHA256) + "-cover"
+func ImportTempLabel(sourceHash []byte) string {
+	return hex.EncodeToString(sourceHash) + "-cover"
 }
 
 func ParseImportTempLabel(label string) ([]byte, bool) {
@@ -134,7 +133,7 @@ func ParseImportTempLabel(label string) ([]byte, bool) {
 		return nil, false
 	}
 	sum, err := hex.DecodeString(encoded)
-	return sum, err == nil && len(sum) == sha256.Size
+	return sum, err == nil && len(sum) == 16
 }
 
 // CachePath deliberately does not include cover_version. cover_version is only

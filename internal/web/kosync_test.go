@@ -3,7 +3,6 @@ package web
 import (
 	"bytes"
 	"crypto/md5"
-	"crypto/sha256"
 	"encoding/json/v2"
 	"fmt"
 	"net/http"
@@ -16,6 +15,7 @@ import (
 	"github.com/levmv/polka/internal/db"
 	"github.com/levmv/polka/internal/koreader"
 	"github.com/levmv/polka/internal/opds"
+	"github.com/levmv/polka/internal/storage"
 )
 
 func TestKOReaderSyncRoutes(t *testing.T) {
@@ -135,8 +135,8 @@ func TestKOReaderDocumentAccess(t *testing.T) {
 			password := mustAppToken(t, database, user.ID)
 			if name == "multiple assets of one book" {
 				mustExec(t, database, `INSERT INTO assets
-                    (id, book_id, storage_path, filename, extension, original_sha256, current_sha256)
-                    VALUES (2, 1, 'other.epub', 'other.epub', '.epub', randomblob(32), randomblob(32))`)
+                    (id, book_id, storage_path, filename, extension, original_hash, current_hash)
+                    VALUES (2, 1, 'other.epub', 'other.epub', '.epub', randomblob(16), randomblob(16))`)
 			}
 			const document = "11111111111111111111111111111111"
 			mustExec(t, database, "INSERT INTO koreader_hashes(asset_id, hash) SELECT id, unhex(?) FROM assets", document)
@@ -228,8 +228,8 @@ func TestKOReaderSharedPosition(t *testing.T) {
 	if err := os.WriteFile(file, epub, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	sha := sha256.Sum256(epub)
-	mustExec(t, database, "UPDATE assets SET format='epub', current_sha256=? WHERE id=1", sha[:])
+	sha := storage.Sum(epub)
+	mustExec(t, database, "UPDATE assets SET format='epub', current_hash=? WHERE id=1", sha[:])
 	s := newTestServer(database, dir)
 	handler := testRoutes(t, s)
 	download := func() string {

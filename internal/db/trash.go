@@ -167,22 +167,3 @@ func PurgeAllTrashedBooks(tx *Tx) (int, error) {
 	}
 	return int(n), nil
 }
-
-// PurgeBook permanently deletes a trashed book and everything keyed to it:
-// assets, authorship links, shelf membership and per-user reader state fall away
-// through ON DELETE CASCADE; the FTS row (a virtual table, not covered by FK
-// cascade) and any now-orphaned author rows are removed explicitly. It refuses a
-// live book — only a trashed book can be purged — returning sql.ErrNoRows when
-// no trashed book has this id. The caller captures the asset/cover file paths
-// *before* calling this (the rows are gone afterward) and unlinks them after the
-// transaction commits, preserving "DB first, then storage".
-func PurgeBook(tx *Tx, bookID int64) error {
-	n, err := PurgeBooks(tx, []int64{bookID})
-	if err != nil {
-		return err
-	}
-	if n == 0 {
-		return sql.ErrNoRows
-	}
-	return nil
-}

@@ -222,11 +222,19 @@ func (s *Service) ScanOnce(ctx context.Context, force bool) (Summary, error) {
 			continue
 		}
 
-		if len(c.Sources) == 0 && !importer.IsSupportedBook(c.Path) {
+		if len(c.Sources) == 0 && !importer.HasBookExtension(c.Path) {
 			summary.Failed++
 			s.markProcessed(c, true)
 			s.setLastError(fmt.Errorf("%s: unsupported book format", c.RelPath))
 			continue
+		}
+		if importOptions.KnownAssetSizes == nil {
+			knownSizes, err := db.AssetContentSizes(s.db.Read(ctx))
+			if err != nil {
+				s.setLastError(err)
+				return summary, err
+			}
+			importOptions.KnownAssetSizes = knownSizes
 		}
 
 		outcome, err := s.importCandidate(ctx, s.storageRoot, c, extractor, importOptions)

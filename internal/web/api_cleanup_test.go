@@ -45,10 +45,10 @@ func TestCleanupDuplicateMergeUsesMutationSequencerAndStagesCover(t *testing.T) 
 		VALUES (?, 1, 0), (?, 1, 0)
 	`, survivorID, loserID)
 	mustExec(t, database, `
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, writeback_rev, original_sha256, current_sha256)
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, writeback_rev, original_hash, current_hash)
 		VALUES
-			(?, ?, ?, ?, '.epub', 'epub', 1, 0, randomblob(32), randomblob(32)),
-			(?, ?, ?, ?, '.epub', 'epub', 1, 0, randomblob(32), randomblob(32))
+			(?, ?, ?, ?, '.epub', 'epub', 1, 0, randomblob(16), randomblob(16)),
+			(?, ?, ?, ?, '.epub', 'epub', 1, 0, randomblob(16), randomblob(16))
 	`, survivorA, survivorID, survivorPath, filepath.Base(survivorPath), loserA, loserID, loserPath, filepath.Base(loserPath))
 
 	for rel, body := range map[string][]byte{

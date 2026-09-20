@@ -3,7 +3,6 @@ package writeback
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"database/sql"
 	"encoding/xml"
 	"image"
@@ -65,12 +64,12 @@ func TestRunWritesDirtyEPUBAndUpdatesAssetIdentity(t *testing.T) {
 	var currentSize, writebackRev int64
 	var writebackError sql.NullString
 	if err := database.Read(t.Context()).QueryRow(`
-		SELECT current_sha256, current_size, COALESCE(koreader_hash, ''), writeback_rev, writeback_error
+		SELECT current_hash, current_size, COALESCE(koreader_hash, ''), writeback_rev, writeback_error
 		FROM assets WHERE id = ?
 	`, assetID).Scan(&currentHash, &currentSize, &koHash, &writebackRev, &writebackError); err != nil {
 		t.Fatalf("query asset identity: %v", err)
 	}
-	if !bytes.Equal(currentHash, sha256ForTest(rewritten)) || currentSize != int64(len(rewritten)) || koHash != "" || writebackRev != 1 || writebackError.Valid {
+	if !bytes.Equal(currentHash, hashForTest(rewritten)) || currentSize != int64(len(rewritten)) || koHash != "" || writebackRev != 1 || writebackError.Valid {
 		t.Fatalf("asset identity = hash:%x size:%d ko:%q rev:%d err:%+v", currentHash, currentSize, koHash, writebackRev, writebackError)
 	}
 	var knownHashes int
@@ -173,9 +172,9 @@ func TestRunWritesDirtyEPUBCover(t *testing.T) {
 	}
 	if _, err := database.Write(t.Context()).Exec(`
 		UPDATE assets
-		SET current_sha256 = ?, current_size = ?, original_sha256 = ?, original_size = ?
+		SET current_hash = ?, current_size = ?, original_hash = ?, original_size = ?
 		WHERE id = ?
-	`, sha256ForTest(src), len(src), sha256ForTest(src), len(src), assetID); err != nil {
+	`, hashForTest(src), len(src), hashForTest(src), len(src), assetID); err != nil {
 		t.Fatalf("update asset identity: %v", err)
 	}
 	coverPath := dataRoot.Abs(covers.OriginalPath(1))
@@ -315,10 +314,10 @@ func TestRunFailedOnlyPlansFailedDirtyAssets(t *testing.T) {
 	defer database.Close()
 	if _, err := database.Write(t.Context()).Exec(`
 		INSERT INTO books (id, title, sort_title, metadata_rev) VALUES (1, 'Book', 'Book', 2);
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, writeback_rev, writeback_error, original_sha256, current_sha256)
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, writeback_rev, writeback_error, original_hash, current_hash)
 		VALUES
-			(1, 1, 'Book/clean.epub', 'clean.epub', '.epub', 'epub', 1, NULL, randomblob(32), randomblob(32)),
-			(2, 1, 'Book/failed.epub', 'failed.epub', '.epub', 'epub', 1, 'bad opf', randomblob(32), randomblob(32));
+			(1, 1, 'Book/clean.epub', 'clean.epub', '.epub', 'epub', 1, NULL, randomblob(16), randomblob(16)),
+			(2, 1, 'Book/failed.epub', 'failed.epub', '.epub', 'epub', 1, 'bad opf', randomblob(16), randomblob(16));
 	`); err != nil {
 		t.Fatalf("seed failed-only rows: %v", err)
 	}
@@ -340,7 +339,7 @@ func TestServiceRunOnceWritesOnlyInAutoMode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if saved, err := db.StorePageCount(database.Write(t.Context()), assetID, sha256ForTest(original), 123); err != nil || !saved {
+	if saved, err := db.StorePageCount(database.Write(t.Context()), assetID, hashForTest(original), 123); err != nil || !saved {
 		t.Fatalf("store page count: saved=%v, %v", saved, err)
 	}
 	svc := NewService(database, root, ServiceOptions{BatchLimit: 1})
@@ -651,10 +650,10 @@ func setupWritebackBook(t *testing.T, title, author, formatKey string, src []byt
 	}
 	if _, err := database.Write(t.Context()).Exec(`
 		INSERT INTO assets
-			(id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_sha256, current_sha256, original_size, current_size)
+			(id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_hash, current_hash, original_size, current_size)
 		VALUES
 			(?, 1, ?, ?, ?, ?, 1, 1, ?, ?, ?, ?)
-	`, assetID, relPath, filename, "."+formatKey, formatKey, sha256ForTest(src), sha256ForTest(src), len(src), len(src)); err != nil {
+	`, assetID, relPath, filename, "."+formatKey, formatKey, hashForTest(src), hashForTest(src), len(src), len(src)); err != nil {
 		t.Fatalf("insert asset: %v", err)
 	}
 	return database, root, assetID, relPath
@@ -715,7 +714,7 @@ func assertNoPendingAttempts(t *testing.T, database *db.DB, assetID int64) {
 	}
 }
 
-func sha256ForTest(data []byte) []byte {
-	sum := sha256.Sum256(data)
+func hashForTest(data []byte) []byte {
+	sum := storage.Sum(data)
 	return sum[:]
 }

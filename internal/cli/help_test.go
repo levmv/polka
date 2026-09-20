@@ -24,12 +24,12 @@ func TestArgumentDiagnostics(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			stderr, err := captureStderr(t, func() error { return Run(tc.args) })
+			stderr, err := captureStderr(t, func() error { return RunContext(t.Context(), tc.args) })
 			if err == nil {
-				t.Fatal("Run returned nil error")
+				t.Fatal("RunContext returned nil error")
 			}
 			if err.Error() != tc.wantError {
-				t.Fatalf("Run error = %q; want %q", err, tc.wantError)
+				t.Fatalf("RunContext error = %q; want %q", err, tc.wantError)
 			}
 			if reported := IsReportedFailure(err); reported != tc.wantReported {
 				t.Fatalf("IsReportedFailure(%q) = %v; want %v", err, reported, tc.wantReported)
@@ -58,12 +58,12 @@ func TestHelpIsSelfContainedAndDoesNotRequireLibrary(t *testing.T) {
 		t.Run(strings.Join(args, "_"), func(t *testing.T) {
 			dataDir := filepath.Join(t.TempDir(), "missing-library")
 			fullArgs := append([]string{"--data", dataDir}, args...)
-			stderr, err := captureStderr(t, func() error { return Run(fullArgs) })
+			stderr, err := captureStderr(t, func() error { return RunContext(t.Context(), fullArgs) })
 			if err != nil {
-				t.Fatalf("Run(%q) returned error: %v", strings.Join(fullArgs, " "), err)
+				t.Fatalf("RunContext(%q) returned error: %v", strings.Join(fullArgs, " "), err)
 			}
 			if !strings.Contains(stderr, "Global flags:\n  --data <dir>") {
-				t.Fatalf("Run(%q) help omitted global --data flag:\n%s", strings.Join(fullArgs, " "), stderr)
+				t.Fatalf("RunContext(%q) help omitted global --data flag:\n%s", strings.Join(fullArgs, " "), stderr)
 			}
 			if _, err := os.Stat(dataDir); !os.IsNotExist(err) {
 				t.Fatalf("help path touched data dir %s: %v", dataDir, err)

@@ -45,7 +45,9 @@ func TestAPIAdminStorageImportFolderPreview(t *testing.T) {
 		t.Fatalf("mkdir calibre dir: %v", err)
 	}
 	writeFile(t, filepath.Join(calibreDir, "metadata.opf"), []byte(`<package></package>`))
-	writeFile(t, filepath.Join(calibreDir, "calibre.epub"), testEPUB(t, "Calibre Book", "Cal Writer", "Writer, Cal"))
+	calibreBytes := testEPUB(t, "Calibre Book", "Cal Writer", "Writer, Cal")
+	writeFile(t, filepath.Join(calibreDir, "calibre.epub"), calibreBytes)
+	writeFile(t, filepath.Join(calibreDir, "calibre-copy.epub"), calibreBytes)
 
 	s := &Server{db: database, dataDir: dataDir, sessions: newSessionStore(database)}
 	w := httptest.NewRecorder()
@@ -57,8 +59,8 @@ func TestAPIAdminStorageImportFolderPreview(t *testing.T) {
 	if err := json.UnmarshalRead(w.Body, &got); err != nil {
 		t.Fatalf("decode preview: %v", err)
 	}
-	if got.Files != 3 || got.CalibreBooks != 1 || got.WouldImport != 2 || got.Duplicates != 1 || got.Trashed != 1 || got.Skipped != 1 || got.Failed != 0 {
-		t.Fatalf("preview = %+v; want files=3 calibre=1 would=2 duplicates=1 trashed=1 skipped=1 failed=0", got)
+	if got.Files != 4 || got.CalibreBooks != 1 || got.WouldImport != 2 || got.Duplicates != 2 || got.Trashed != 1 || got.Skipped != 1 || got.Failed != 0 {
+		t.Fatalf("preview = %+v; want files=4 calibre=1 would=2 duplicates=2 trashed=1 skipped=1 failed=0", got)
 	}
 }
 
@@ -107,7 +109,7 @@ func TestAPIAdminStorageImportFolderPreviewFollowsRootSymlink(t *testing.T) {
 	}
 }
 
-func TestAPIAdminStorageImportFolderRun(t *testing.T) {
+func TestAPIAdminStorageImportFolderRunGroupsSelectedCalibreDirectory(t *testing.T) {
 	dataDir := t.TempDir()
 	database, err := db.InitPath(filepath.Join(dataDir, "library.db"))
 	if err != nil {
@@ -118,11 +120,11 @@ func TestAPIAdminStorageImportFolderRun(t *testing.T) {
 
 	admin := mustUser(t, database, "admin", db.RoleAdmin)
 	sourceDir := t.TempDir()
+	writeFile(t, filepath.Join(sourceDir, "metadata.opf"), []byte(`<package></package>`))
 	firstPath := filepath.Join(sourceDir, "first.epub")
-	secondPath := filepath.Join(sourceDir, "second.epub")
+	secondPath := filepath.Join(sourceDir, "second.txt")
 	writeFile(t, firstPath, testEPUB(t, "First Import", "One Writer", "Writer, One"))
-	writeFile(t, secondPath, testEPUB(t, "Second Import", "Two Writer", "Writer, Two"))
-	writeFile(t, filepath.Join(sourceDir, "notes.xyz"), []byte("not a book"))
+	writeFile(t, secondPath, []byte("second format"))
 
 	s := &Server{db: database, dataDir: dataDir, sessions: newSessionStore(database)}
 	w := httptest.NewRecorder()
@@ -134,11 +136,11 @@ func TestAPIAdminStorageImportFolderRun(t *testing.T) {
 	if err := json.UnmarshalRead(w.Body, &got); err != nil {
 		t.Fatalf("decode import: %v", err)
 	}
-	if got.Files != 2 || got.Imported != 2 || got.Duplicates != 0 || got.Skipped != 1 || got.Failed != 0 {
-		t.Fatalf("import result = %+v; want files=2 imported=2 skipped=1 failed=0", got)
+	if got.Files != 2 || got.CalibreBooks != 1 || got.Imported != 2 || got.Duplicates != 0 || got.Skipped != 0 || got.Failed != 0 {
+		t.Fatalf("import result = %+v; want one Calibre book with two imported files", got)
 	}
-	if got.Storage.Books.BookCount != 2 {
-		t.Fatalf("storage book count = %d, want 2", got.Storage.Books.BookCount)
+	if got.Storage.Books.BookCount != 1 {
+		t.Fatalf("storage book count = %d, want 1", got.Storage.Books.BookCount)
 	}
 	if _, err := os.Stat(firstPath); err != nil {
 		t.Fatalf("source first was removed: %v", err)

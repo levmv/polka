@@ -77,11 +77,12 @@ CREATE TABLE assets (
     -- Reader capability checked at import, so listing needs no file validation.
     -- Repair can recompute it only after verifying the current file's identity.
     can_read INTEGER NOT NULL DEFAULT 0 CHECK (can_read IN (0, 1)),
-    -- original_sha256 is the hash of the bytes first imported. It never changes,
-    -- even if polka later rewrites metadata into the managed file. current_sha256
-    -- tracks the bytes currently on disk and changes after such rewrites.
-    original_sha256 BLOB NOT NULL CHECK (typeof(original_sha256) = 'blob' AND length(original_sha256) = 32),
-    current_sha256 BLOB NOT NULL CHECK (typeof(current_sha256) = 'blob' AND length(current_sha256) = 32),
+    -- Content hashes are the first 16 bytes of SHA-256.
+    -- original_hash identifies the bytes first imported and never changes.
+    -- current_hash identifies the expected managed bytes after write-back or
+    -- restoration; check/repair reconcile the file with this recorded identity.
+    original_hash BLOB NOT NULL CHECK (typeof(original_hash) = 'blob' AND length(original_hash) = 16),
+    current_hash BLOB NOT NULL CHECK (typeof(current_hash) = 'blob' AND length(current_hash) = 16),
     -- Byte sizes for the same original/current identities; avoid stat on lists.
     original_size INTEGER,
     current_size INTEGER,
@@ -97,8 +98,8 @@ CREATE TABLE assets (
     updated_at INTEGER NOT NULL DEFAULT (unixepoch())
 );
 
-CREATE UNIQUE INDEX idx_assets_original_sha256 ON assets(original_sha256);
-CREATE INDEX idx_assets_current_sha256 ON assets(current_sha256);
+CREATE UNIQUE INDEX idx_assets_original_hash ON assets(original_hash);
+CREATE INDEX idx_assets_current_hash ON assets(current_hash);
 -- Keep this predicate in sync with format.MetadataWritebackFormatKeys().
 CREATE INDEX idx_assets_writeback_dirty ON assets(book_id, writeback_rev) WHERE format IN ('epub', 'fb2', 'kepub');
 CREATE INDEX idx_assets_book_id ON assets(book_id);
@@ -115,7 +116,7 @@ CREATE TABLE metadata_writeback_attempts (
     metadata_rev INTEGER NOT NULL,
     storage_path TEXT NOT NULL,
     temp_path TEXT NOT NULL,
-    sha256 BLOB NOT NULL CHECK (typeof(sha256) = 'blob' AND length(sha256) = 32),
+    hash BLOB NOT NULL CHECK (typeof(hash) = 'blob' AND length(hash) = 16),
     size INTEGER NOT NULL,
     created_at INTEGER NOT NULL DEFAULT (unixepoch())
 );

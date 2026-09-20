@@ -3,7 +3,6 @@ package cli
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"errors"
@@ -21,11 +20,11 @@ import (
 )
 
 type coverRecoveryAsset struct {
-	ID            int64
-	StoragePath   string
-	Format        format.Format
-	CurrentSHA256 []byte
-	CurrentSize   sql.NullInt64
+	ID          int64
+	StoragePath string
+	Format      format.Format
+	CurrentHash []byte
+	CurrentSize sql.NullInt64
 }
 
 func runRepair(parent context.Context, dataDir string, args []string) (retErr error) {
@@ -199,7 +198,7 @@ func repairAssets(ctx context.Context, database *db.DB, root storage.Root, templ
 			foundAbsPath = actualFileAbsPath
 		}
 		if foundAbsPath == "" {
-			foundAbsPath, err = recoverableByName.find(asset.ID, asset.CurrentSHA256)
+			foundAbsPath, err = recoverableByName.find(asset.ID, asset.CurrentHash)
 			if err != nil {
 				return summary, err
 			}
@@ -209,7 +208,7 @@ func repairAssets(ctx context.Context, database *db.DB, root storage.Root, templ
 		}
 		recoveredByHash := false
 		if foundAbsPath == "" {
-			if match, err := recoverableByHash.find(asset.CurrentSHA256); err != nil {
+			if match, err := recoverableByHash.find(asset.CurrentHash); err != nil {
 				fmt.Printf("Failed to scan orphans for %d: %v\n", asset.ID, err)
 			} else if match != "" {
 				foundAbsPath = match
@@ -236,7 +235,7 @@ func repairAssets(ctx context.Context, database *db.DB, root storage.Root, templ
 		// mis-compares and Move fails Root.Resolve's backslash validation.
 		foundRelPath = filepath.ToSlash(foundRelPath)
 
-		currentHash, currentSize, err := fileSHA256AndSizeContext(ctx, foundAbsPath)
+		currentHash, currentSize, err := fileHashAndSizeContext(ctx, foundAbsPath)
 		if err != nil {
 			if cause := context.Cause(ctx); cause != nil {
 				return summary, cause
@@ -244,7 +243,7 @@ func repairAssets(ctx context.Context, database *db.DB, root storage.Root, templ
 			fmt.Printf("Failed to hash %d: %v\n", asset.ID, err)
 			continue
 		}
-		if !bytes.Equal(asset.CurrentSHA256, currentHash) {
+		if !bytes.Equal(asset.CurrentHash, currentHash) {
 			fmt.Printf("Hash mismatch: %d (%s)\n", asset.ID, foundRelPath)
 			summary.HashMismatches++
 			if asset.CurrentSize.Valid && asset.CurrentSize.Int64 != currentSize {
@@ -314,7 +313,7 @@ func repairAssets(ctx context.Context, database *db.DB, root storage.Root, templ
 				summary.ReaderCapabilities++
 			}
 		}
-		if !asset.OriginalSize.Valid && bytes.Equal(asset.OriginalSHA256, currentHash) {
+		if !asset.OriginalSize.Valid && bytes.Equal(asset.OriginalHash, currentHash) {
 			if _, err := writer.Exec("UPDATE assets SET original_size = ?, updated_at = unixepoch() WHERE id = ?", currentSize, asset.ID); err != nil {
 				fmt.Printf("Failed to backfill original size for %d: %v\n", asset.ID, err)
 				continue
@@ -553,12 +552,12 @@ func validateCoverRecoveryAssetBytes(ctx context.Context, asset coverRecoveryAss
 	if hashAlreadyVerified {
 		return nil
 	}
-	got, err := fileSHA256Context(ctx, absPath)
+	got, err := fileHashContext(ctx, absPath)
 	if err != nil {
 		return err
 	}
-	if !bytes.Equal(got, asset.CurrentSHA256) {
-		return fmt.Errorf("%d (%s): primary asset hash mismatch, db %x, disk %x", asset.ID, asset.StoragePath, asset.CurrentSHA256, got)
+	if !bytes.Equal(got, asset.CurrentHash) {
+		return fmt.Errorf("%d (%s): primary asset hash mismatch, db %x, disk %x", asset.ID, asset.StoragePath, asset.CurrentHash, got)
 	}
 	return nil
 }
@@ -567,11 +566,11 @@ func primaryAssetForCoverRecovery(queryer db.Queryer, bookID int64) (coverRecove
 	var asset coverRecoveryAsset
 	var formatKey string
 	err := queryer.QueryRow(`
-		SELECT id, storage_path, COALESCE(format, ''), current_sha256, current_size
+		SELECT id, storage_path, COALESCE(format, ''), current_hash, current_size
 		FROM assets
 		WHERE book_id = ? AND is_primary = 1
 		LIMIT 1
-	`, bookID).Scan(&asset.ID, &asset.StoragePath, &formatKey, &asset.CurrentSHA256, &asset.CurrentSize)
+	`, bookID).Scan(&asset.ID, &asset.StoragePath, &formatKey, &asset.CurrentHash, &asset.CurrentSize)
 	if errors.Is(err, sql.ErrNoRows) {
 		return coverRecoveryAsset{}, false, nil
 	}
@@ -589,7 +588,7 @@ type recoverableAssetNameIndex struct {
 	root         storage.Root
 	referenced   map[string]bool
 	byTag        map[string][]string
-	bySourceHash map[[sha256.Size]byte][]string
+	bySourceHash map[[16]byte][]string
 	built        bool
 	buildErr     error
 }
@@ -598,11 +597,11 @@ func newRecoverableAssetNameIndex(ctx context.Context, root storage.Root, refere
 	return &recoverableAssetNameIndex{
 		ctx: ctx, root: root, referenced: referenced,
 		byTag:        make(map[string][]string),
-		bySourceHash: make(map[[sha256.Size]byte][]string),
+		bySourceHash: make(map[[16]byte][]string),
 	}
 }
 
-func (idx *recoverableAssetNameIndex) find(assetID int64, wantSHA256 []byte) (string, error) {
+func (idx *recoverableAssetNameIndex) find(assetID int64, wantHash []byte) (string, error) {
 	if !idx.built {
 		idx.buildErr = idx.build()
 		idx.built = true
@@ -611,10 +610,10 @@ func (idx *recoverableAssetNameIndex) find(assetID int64, wantSHA256 []byte) (st
 		return "", idx.buildErr
 	}
 	candidates := idx.byTag[storage.AssetTag(assetID)]
-	if path, err := matchingAssetFile(idx.ctx, candidates, wantSHA256, idx.referenced); path != "" || err != nil {
+	if path, err := matchingAssetFile(idx.ctx, candidates, wantHash, idx.referenced); path != "" || err != nil {
 		return path, err
 	}
-	return matchingAssetFile(idx.ctx, idx.bySourceHash[[sha256.Size]byte(wantSHA256)], wantSHA256, idx.referenced)
+	return matchingAssetFile(idx.ctx, idx.bySourceHash[[16]byte(wantHash)], wantHash, idx.referenced)
 }
 
 func (idx *recoverableAssetNameIndex) build() error {
@@ -649,8 +648,8 @@ func (idx *recoverableAssetNameIndex) build() error {
 		}
 		encoded, _, _ := strings.Cut(label, ".")
 		sum, err := hex.DecodeString(encoded)
-		if err == nil && len(sum) == sha256.Size {
-			key := [sha256.Size]byte(sum)
+		if err == nil && len(sum) == 16 {
+			key := [16]byte(sum)
 			idx.bySourceHash[key] = append(idx.bySourceHash[key], path)
 		}
 		return nil
@@ -661,7 +660,7 @@ func (idx *recoverableAssetNameIndex) build() error {
 	return err
 }
 
-func matchingAssetFile(ctx context.Context, candidates []string, wantSHA256 []byte, referenced map[string]bool) (string, error) {
+func matchingAssetFile(ctx context.Context, candidates []string, wantHash []byte, referenced map[string]bool) (string, error) {
 	for _, path := range candidates {
 		if err := context.Cause(ctx); err != nil {
 			return "", err
@@ -669,11 +668,11 @@ func matchingAssetFile(ctx context.Context, candidates []string, wantSHA256 []by
 		if referenced[path] {
 			continue
 		}
-		got, err := fileSHA256Context(ctx, path)
+		got, err := fileHashContext(ctx, path)
 		if cause := context.Cause(ctx); cause != nil {
 			return "", cause
 		}
-		if err == nil && bytes.Equal(got, wantSHA256) {
+		if err == nil && bytes.Equal(got, wantHash) {
 			return path, nil
 		}
 	}
@@ -705,7 +704,7 @@ type recoverableAssetHashIndex struct {
 	ctx        context.Context
 	root       storage.Root
 	referenced map[string]bool
-	bySHA256   map[[sha256.Size]byte][]string
+	byHash     map[[16]byte][]string
 	built      bool
 	buildErr   error
 }
@@ -715,11 +714,11 @@ func newRecoverableAssetHashIndex(ctx context.Context, root storage.Root, refere
 		ctx:        ctx,
 		root:       root,
 		referenced: referenced,
-		bySHA256:   make(map[[sha256.Size]byte][]string),
+		byHash:     make(map[[16]byte][]string),
 	}
 }
 
-func (idx *recoverableAssetHashIndex) find(wantSHA256 []byte) (string, error) {
+func (idx *recoverableAssetHashIndex) find(wantHash []byte) (string, error) {
 	if !idx.built {
 		idx.buildErr = idx.build()
 		idx.built = true
@@ -728,7 +727,7 @@ func (idx *recoverableAssetHashIndex) find(wantSHA256 []byte) (string, error) {
 		return "", idx.buildErr
 	}
 
-	return matchingAssetFile(idx.ctx, idx.bySHA256[[sha256.Size]byte(wantSHA256)], wantSHA256, idx.referenced)
+	return matchingAssetFile(idx.ctx, idx.byHash[[16]byte(wantHash)], wantHash, idx.referenced)
 }
 
 func (idx *recoverableAssetHashIndex) build() error {
@@ -748,12 +747,12 @@ func (idx *recoverableAssetHashIndex) build() error {
 		if idx.referenced[path] {
 			return nil
 		}
-		got, err := fileSHA256Context(idx.ctx, path)
+		got, err := fileHashContext(idx.ctx, path)
 		if err != nil {
 			return nil
 		}
-		key := [sha256.Size]byte(got)
-		idx.bySHA256[key] = append(idx.bySHA256[key], path)
+		key := [16]byte(got)
+		idx.byHash[key] = append(idx.byHash[key], path)
 		return nil
 	})
 }
@@ -797,7 +796,7 @@ func (idx *recoverableCoverIndex) stagedBookID(name string) (int64, error) {
 		return 0, nil
 	}
 	var bookID int64
-	err := idx.db.QueryRow("SELECT book_id FROM assets WHERE original_sha256 = ?", sourceHash).Scan(&bookID)
+	err := idx.db.QueryRow("SELECT book_id FROM assets WHERE original_hash = ?", sourceHash).Scan(&bookID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, nil
 	}

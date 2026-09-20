@@ -18,8 +18,8 @@ func TestMutateBooksBumpsMetadataRevAndReindexes(t *testing.T) {
 		t.Fatalf("insert book: %v", err)
 	}
 	if _, err := database.Write(t.Context()).Exec(`
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, writeback_rev, original_sha256, current_sha256)
-		VALUES (1, 1, 'old/a_1.epub', 'a_1.epub', '.epub', 'epub', 0, randomblob(32), randomblob(32));
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, writeback_rev, original_hash, current_hash)
+		VALUES (1, 1, 'old/a_1.epub', 'a_1.epub', '.epub', 'epub', 0, randomblob(16), randomblob(16));
 		INSERT INTO search (rowid, title) VALUES (1, 'Old Title');
 	`); err != nil {
 		t.Fatalf("insert asset: %v", err)

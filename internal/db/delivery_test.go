@@ -60,10 +60,10 @@ func TestDeliveryBookForPlanAppliesScope(t *testing.T) {
 	mustExec(t, database, `
 		INSERT INTO books (id, title, sort_title) VALUES (11, 'Allowed', 'Allowed');
 		INSERT INTO books (id, title, sort_title) VALUES (12, 'Blocked', 'Blocked');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, current_size, is_primary, original_sha256, current_sha256)
-			VALUES (1, 11, 'a.epub', 'a.epub', '.epub', 'epub', 100, 1, randomblob(32), randomblob(32));
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, current_size, is_primary, original_sha256, current_sha256)
-			VALUES (2, 12, 'b.epub', 'b.epub', '.epub', 'epub', 100, 1, randomblob(32), randomblob(32));
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, current_size, is_primary, original_hash, current_hash)
+			VALUES (1, 11, 'a.epub', 'a.epub', '.epub', 'epub', 100, 1, randomblob(16), randomblob(16));
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, current_size, is_primary, original_hash, current_hash)
+			VALUES (2, 12, 'b.epub', 'b.epub', '.epub', 'epub', 100, 1, randomblob(16), randomblob(16));
 	`)
 
 	if err := database.AddBookToShelf(t.Context(), shelf.ID, 0, 11); err != nil {
@@ -94,8 +94,8 @@ func TestDeliveryJobLifecycle(t *testing.T) {
 	user := mustUser(t, database, "alice", RoleReader)
 	mustExec(t, database, `
 		INSERT INTO books (id, title, sort_title) VALUES (1, 'Book', 'Book');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, original_sha256, current_sha256)
-			VALUES (1, 1, 'a.epub', 'a.epub', '.epub', 'epub', randomblob(32), randomblob(32));
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, original_hash, current_hash)
+			VALUES (1, 1, 'a.epub', 'a.epub', '.epub', 'epub', randomblob(16), randomblob(16));
 	`)
 
 	device, err := database.CreateDeliveryDevice(context.Background(), user.ID, "Kindle", "alice@kindle.com", DeliveryPresetKindle, true)

@@ -7,11 +7,11 @@ import (
 
 func TestPageCountBelongsToAsset(t *testing.T) {
 	database := newTestDB(t)
-	hash := bytes.Repeat([]byte{1}, 32)
+	hash := bytes.Repeat([]byte{1}, 16)
 	mustExec(t, database, `INSERT INTO books (id, title, sort_title, metadata_rev) VALUES (1, 'Book', 'Book', 4)`)
-	mustExec(t, database, `INSERT INTO assets (id, book_id, storage_path, filename, extension, format, original_sha256, current_sha256, writeback_rev) VALUES
+	mustExec(t, database, `INSERT INTO assets (id, book_id, storage_path, filename, extension, format, original_hash, current_hash, writeback_rev) VALUES
 		(10, 1, 'book.epub', 'book.epub', '.epub', 'epub', ?, ?, 4),
-		(11, 1, 'other.epub', 'other.epub', '.epub', 'epub', randomblob(32), randomblob(32), 4)`, hash, hash)
+		(11, 1, 'other.epub', 'other.epub', '.epub', 'epub', randomblob(16), randomblob(16), 4)`, hash, hash)
 	store := func(identity []byte, pages int) bool {
 		t.Helper()
 		saved, err := StorePageCount(database.Write(t.Context()), 10, identity, pages)
@@ -20,7 +20,7 @@ func TestPageCountBelongsToAsset(t *testing.T) {
 		}
 		return saved
 	}
-	if store(bytes.Repeat([]byte{2}, 32), 100) {
+	if store(bytes.Repeat([]byte{2}, 16), 100) {
 		t.Fatal("stored a count for obsolete bytes")
 	}
 	if !store(hash, 123) || store(hash, 456) {

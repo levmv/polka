@@ -3,7 +3,6 @@ package cli
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -92,7 +91,7 @@ func TestRepairReconciliation(t *testing.T) {
 	// Retain only the durable fields that repair owns.
 	type assetSnapshot struct {
 		StoragePath, Filename, OriginalFilename string
-		OriginalSHA256, CurrentSHA256           []byte
+		OriginalHash, CurrentHash               []byte
 		OriginalSize, CurrentSize               int64
 		Format                                  string
 		CanRead                                 bool
@@ -102,12 +101,12 @@ func TestRepairReconciliation(t *testing.T) {
 		var snapshot assetSnapshot
 		if err := database.Read(t.Context()).QueryRow(`
 			SELECT storage_path, filename, original_filename,
-			       original_sha256, current_sha256, original_size, current_size,
+			       original_hash, current_hash, original_size, current_size,
 			       format, can_read
 			FROM assets WHERE id = ?
 		`, assetID).Scan(
 			&snapshot.StoragePath, &snapshot.Filename, &snapshot.OriginalFilename,
-			&snapshot.OriginalSHA256, &snapshot.CurrentSHA256,
+			&snapshot.OriginalHash, &snapshot.CurrentHash,
 			&snapshot.OriginalSize, &snapshot.CurrentSize,
 			&snapshot.Format, &snapshot.CanRead,
 		); err != nil {
@@ -183,7 +182,7 @@ func TestRepairFinalizesCompletedWritebackAttempt(t *testing.T) {
 	if err := os.WriteFile(finalAbs, newBytes, 0o644); err != nil {
 		t.Fatalf("replace final bytes: %v", err)
 	}
-	newHash, newSize, err := fileSHA256AndSizeContext(t.Context(), finalAbs)
+	newHash, newSize, err := fileHashAndSizeContext(t.Context(), finalAbs)
 	if err != nil {
 		t.Fatalf("hash replaced final: %v", err)
 	}
@@ -218,7 +217,7 @@ func TestRepairAppliesPendingWritebackTemp(t *testing.T) {
 		t.Fatalf("write adjacent temp: %v", err)
 	}
 	tempAbs := root.Abs(tempRel)
-	newHash, newSize, err := fileSHA256AndSizeContext(t.Context(), tempAbs)
+	newHash, newSize, err := fileHashAndSizeContext(t.Context(), tempAbs)
 	if err != nil {
 		t.Fatalf("hash temp: %v", err)
 	}
@@ -230,7 +229,7 @@ func TestRepairAppliesPendingWritebackTemp(t *testing.T) {
 	if _, err := os.Stat(tempAbs); !os.IsNotExist(err) {
 		t.Fatalf("temp after repair stat err = %v; want not exist", err)
 	}
-	finalHash, finalSize, err := fileSHA256AndSizeContext(t.Context(), root.Abs(storagePath))
+	finalHash, finalSize, err := fileHashAndSizeContext(t.Context(), root.Abs(storagePath))
 	if err != nil {
 		t.Fatalf("hash final: %v", err)
 	}
@@ -275,7 +274,7 @@ func TestRepairMergedWritebackAttemptLeavesSurvivorMetadataPending(t *testing.T)
 			if err != nil {
 				t.Fatal(err)
 			}
-			hash, size, err := fileSHA256AndSizeContext(t.Context(), root.Abs(tempRel))
+			hash, size, err := fileHashAndSizeContext(t.Context(), root.Abs(tempRel))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -398,7 +397,7 @@ func insertWritebackAttempt(t *testing.T, database *db.DB, assetID int64, storag
 		MetadataRev: rev,
 		StoragePath: storagePath,
 		TempPath:    tempRel,
-		SHA256:      hash,
+		Hash:        hash,
 		Size:        size,
 	}); err != nil {
 		t.Fatalf("insert writeback attempt: %v", err)
@@ -423,7 +422,7 @@ func assertAssetWritebackState(t *testing.T, database *db.DB, assetID int64, has
 	var gotSize, gotRev int64
 	var writebackError string
 	if err := database.Read(t.Context()).QueryRow(`
-		SELECT current_sha256, current_size, COALESCE(koreader_hash, ''), writeback_rev, COALESCE(writeback_error, '')
+		SELECT current_hash, current_size, COALESCE(koreader_hash, ''), writeback_rev, COALESCE(writeback_error, '')
 		FROM assets
 		WHERE id = ?
 	`, assetID).Scan(&gotHash, &gotSize, &gotKO, &gotRev, &writebackError); err != nil {
@@ -756,7 +755,7 @@ func TestCheckAndRepairCoverOriginals(t *testing.T) {
 		t.Fatalf("set cover_version: %v", err)
 	}
 	var sourceHash []byte
-	if err := database.Read(t.Context()).QueryRow("SELECT original_sha256 FROM assets WHERE book_id = ? LIMIT 1", bookID).Scan(&sourceHash); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT original_hash FROM assets WHERE book_id = ? LIMIT 1", bookID).Scan(&sourceHash); err != nil {
 		t.Fatal(err)
 	}
 	stagedCover := filepath.Join(dataRoot.StagingDir(), ".tmp-deadbeef-"+covers.ImportTempLabel(sourceHash))
@@ -995,7 +994,7 @@ func TestRepairRecoversRootStagedAsset(t *testing.T) {
 
 	var sourceHash []byte
 	var storagePath string
-	if err := database.Read(t.Context()).QueryRow("SELECT original_sha256, storage_path FROM assets LIMIT 1").Scan(&sourceHash, &storagePath); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT original_hash, storage_path FROM assets LIMIT 1").Scan(&sourceHash, &storagePath); err != nil {
 		t.Fatalf("query asset: %v", err)
 	}
 
@@ -1053,8 +1052,8 @@ func TestRepairLeavesUnverifiedAssetFilesUntouched(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { database.Close() })
-			originalHash := sha256.Sum256([]byte("source bytes"))
-			currentHash := sha256.Sum256([]byte(tc.current))
+			originalHash := storage.Sum([]byte("source bytes"))
+			currentHash := storage.Sum([]byte(tc.current))
 			candidate := strings.ReplaceAll(tc.path, "{hash}", fmt.Sprintf("%x", originalHash))
 			recorded := "Book [a1].epub"
 			if tc.recorded {
@@ -1062,7 +1061,7 @@ func TestRepairLeavesUnverifiedAssetFilesUntouched(t *testing.T) {
 			}
 			if _, err := database.Write(t.Context()).Exec(`
 				INSERT INTO books(id, title, sort_title) VALUES (1, 'Book', 'Book');
-				INSERT INTO assets(id, book_id, storage_path, filename, extension, original_sha256, current_sha256)
+				INSERT INTO assets(id, book_id, storage_path, filename, extension, original_hash, current_hash)
 				VALUES (1, 1, ?, ?, '.epub', ?, ?);
 			`, recorded, filepath.Base(recorded), originalHash[:], currentHash[:]); err != nil {
 				t.Fatal(err)
@@ -1070,8 +1069,8 @@ func TestRepairLeavesUnverifiedAssetFilesUntouched(t *testing.T) {
 			if tc.referenced {
 				if _, err := database.Write(t.Context()).Exec(`
 					INSERT INTO books(id, title, sort_title) VALUES (2, 'Other [a1]', 'Other [a1]');
-					INSERT INTO assets(id, book_id, storage_path, filename, extension, current_sha256, original_sha256)
-					VALUES (2, 2, ?, ?, '.epub', ?, randomblob(32));
+					INSERT INTO assets(id, book_id, storage_path, filename, extension, current_hash, original_hash)
+					VALUES (2, 2, ?, ?, '.epub', ?, randomblob(16));
 				`, candidate, filepath.Base(candidate), currentHash[:]); err != nil {
 					t.Fatal(err)
 				}
@@ -1242,7 +1241,7 @@ func TestCheckAndRepairRejectChangedBytes(t *testing.T) {
 	var storagePath string
 	var importedHash []byte
 	var importedSize int64
-	if err := database.Read(t.Context()).QueryRow("SELECT id, storage_path, current_sha256, current_size FROM assets LIMIT 1").Scan(&assetID, &storagePath, &importedHash, &importedSize); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT id, storage_path, current_hash, current_size FROM assets LIMIT 1").Scan(&assetID, &storagePath, &importedHash, &importedSize); err != nil {
 		t.Fatalf("query asset: %v", err)
 	}
 	root, err := storage.OpenRoot(database.Read(t.Context()), dataDir)
@@ -1266,7 +1265,7 @@ func TestCheckAndRepairRejectChangedBytes(t *testing.T) {
 
 	var afterMismatchRepair []byte
 	var sizeAfterMismatchRepair int64
-	if err := database.Read(t.Context()).QueryRow("SELECT current_sha256, current_size FROM assets WHERE id = ?", assetID).Scan(&afterMismatchRepair, &sizeAfterMismatchRepair); err != nil {
+	if err := database.Read(t.Context()).QueryRow("SELECT current_hash, current_size FROM assets WHERE id = ?", assetID).Scan(&afterMismatchRepair, &sizeAfterMismatchRepair); err != nil {
 		t.Fatalf("query hash/size after mismatch repair: %v", err)
 	}
 	if !bytes.Equal(afterMismatchRepair, importedHash) {

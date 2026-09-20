@@ -182,7 +182,7 @@ func seedRelayoutBook(t *testing.T, database *db.DB, bookID, assetID int64, titl
 	if _, err := database.Write(t.Context()).Exec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES (?, 1, 0)", bookID); err != nil {
 		t.Fatalf("insert book_author: %v", err)
 	}
-	if _, err := database.Write(t.Context()).Exec("INSERT INTO assets (id, book_id, storage_path, filename, extension, original_sha256, current_sha256) VALUES (?, ?, ?, ?, ?, randomblob(32), randomblob(32))",
+	if _, err := database.Write(t.Context()).Exec("INSERT INTO assets (id, book_id, storage_path, filename, extension, original_hash, current_hash) VALUES (?, ?, ?, ?, ?, randomblob(16), randomblob(16))",
 		assetID, bookID, storagePath, filepath.Base(storagePath), ext); err != nil {
 		t.Fatalf("insert asset: %v", err)
 	}

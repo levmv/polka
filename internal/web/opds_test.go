@@ -441,10 +441,10 @@ func TestOPDSPaginationBoundaries(t *testing.T) {
 			(3, 'Boundary One', 'Boundary One'),
 			(4, 'Boundary Two', 'Boundary Two'),
 			(5, 'Boundary Three', 'Boundary Three');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, original_sha256, current_sha256) VALUES
-			(3, 3, 'one.epub', 'one.epub', '.epub', randomblob(32), randomblob(32)),
-			(4, 4, 'two.epub', 'two.epub', '.epub', randomblob(32), randomblob(32)),
-			(5, 5, 'three.epub', 'three.epub', '.epub', randomblob(32), randomblob(32));
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, original_hash, current_hash) VALUES
+			(3, 3, 'one.epub', 'one.epub', '.epub', randomblob(16), randomblob(16)),
+			(4, 4, 'two.epub', 'two.epub', '.epub', randomblob(16), randomblob(16)),
+			(5, 5, 'three.epub', 'three.epub', '.epub', randomblob(16), randomblob(16));
 		INSERT INTO search (rowid, title, authors) VALUES
 			(3, 'Boundary One', ''),
 			(4, 'Boundary Two', ''),

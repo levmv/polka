@@ -23,6 +23,26 @@ type StagedFile struct {
 	tmpPath string
 }
 
+// Open opens the complete staged bytes for inspection before placement.
+func (s StagedFile) Open() (*os.File, error) {
+	f, err := os.Open(s.tmpPath)
+	if err != nil {
+		return nil, fmt.Errorf("open staged file: %w", err)
+	}
+	return f, nil
+}
+
+// Relabel renames the staged file within staging. Use it when the recovery label
+// depends on a content hash learned during copying.
+func (s *StagedFile) Relabel(label string) error {
+	nextPath := filepath.Join(filepath.Dir(s.tmpPath), ".tmp-"+randHex(8)+"-"+filepath.Base(label))
+	if err := os.Rename(s.tmpPath, nextPath); err != nil {
+		return fmt.Errorf("relabel staged file: %w", err)
+	}
+	s.tmpPath = nextPath
+	return nil
+}
+
 func (r Root) StagingDir() string {
 	return r.Abs(".staging")
 }
@@ -129,8 +149,8 @@ func randHex(n int) string {
 }
 
 // Stage copies one source into the root-level staging area before the caller
-// opens its database transaction. Import labels carry the original source hash
-// so repair can recover a committed row if final placement fails.
+// opens its database transaction. The label remains in the temporary name so
+// recovery can identify a file left after a committed operation.
 func Stage(root Root, label string, src io.Reader) (StagedFile, error) {
 	if label == "" {
 		return StagedFile{}, fmt.Errorf("empty staging label")

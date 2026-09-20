@@ -180,8 +180,8 @@ func TestAPISendOptionsChoicesUsePersistedFormat(t *testing.T) {
 	admin := mustUser(t, database, "admin", db.RoleAdmin)
 	mustExec(t, database, `
 		INSERT INTO books (id, title, sort_title) VALUES (132, 'FB2 Zip', 'FB2 Zip');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, current_size, is_primary, original_sha256, current_sha256)
-			VALUES (2, 132, 'Books/fb2.zip', 'fb2.zip', '.fb2.zip', 'fb2', 1024, 1, randomblob(32), randomblob(32));
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, current_size, is_primary, original_hash, current_hash)
+			VALUES (2, 132, 'Books/fb2.zip', 'fb2.zip', '.fb2.zip', 'fb2', 1024, 1, randomblob(16), randomblob(16));
 	`)
 
 	enableSending(t, database)

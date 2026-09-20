@@ -34,7 +34,7 @@ func TestRunMetaTreatsArgumentsAfterDoubleDashAsFilenames(t *testing.T) {
 	if err := os.WriteFile(name, []byte("A small synthetic book.\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	output, err := captureStdout(t, func() error { return Run([]string{"meta", "--json", "--", name}) })
+	output, err := captureStdout(t, func() error { return RunContext(t.Context(), []string{"meta", "--json", "--", name}) })
 	if err != nil {
 		t.Fatal(err)
 	}

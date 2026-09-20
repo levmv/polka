@@ -17,8 +17,8 @@ func seedKoboBook(t *testing.T, database *DB, bookID, assetID int64, title strin
 	`, bookID, title, title, tags)
 	mustExec(t, database, `
 		INSERT INTO assets
-		    (id, book_id, storage_path, filename, extension, format, is_primary, current_size, original_sha256, current_sha256)
-		VALUES (?, ?, ?, ?, ?, ?, 1, 1234, randomblob(32), randomblob(32))
+		    (id, book_id, storage_path, filename, extension, format, is_primary, current_size, original_hash, current_hash)
+		VALUES (?, ?, ?, ?, ?, ?, 1, 1234, randomblob(16), randomblob(16))
 	`, assetID, bookID, strconv.FormatInt(bookID, 10)+"/"+strconv.FormatInt(assetID, 10)+"."+formatKey, strconv.FormatInt(assetID, 10)+"."+formatKey, formatKey, formatKey)
 	mustExec(t, database, `INSERT INTO search (rowid, title, tags) VALUES (?1, ?2, ?3)`, bookID, title, tags)
 
@@ -165,8 +165,8 @@ func TestKoboConnectionIncrementalLifecycle(t *testing.T) {
 	mustExec(t, database, `
 		UPDATE assets SET is_primary = 0 WHERE id = 1;
 		INSERT INTO assets
-		    (id, book_id, storage_path, filename, extension, format, is_primary, current_size, original_sha256, current_sha256)
-		VALUES (3, 161, '161/a_kepub.kepub', 'a_kepub.kepub', 'kepub', 'kepub', 0, 1400, randomblob(32), randomblob(32));
+		    (id, book_id, storage_path, filename, extension, format, is_primary, current_size, original_hash, current_hash)
+		VALUES (3, 161, '161/a_kepub.kepub', 'a_kepub.kepub', 'kepub', 'kepub', 0, 1400, randomblob(16), randomblob(16));
 	`)
 
 	if err := database.AddBookToShelf(t.Context(), shelf.ID, user.ID, 161); err != nil {

@@ -320,9 +320,9 @@ func TestAPIBookAnnotationsIncludeAllFilesAndRespectAccess(t *testing.T) {
 	alice := mustUser(t, database, "alice-book-notes", db.RoleReader)
 	bob := mustUser(t, database, "bob-book-notes", db.RoleReader)
 	mustExec(t, database, `
-        INSERT INTO assets (id, book_id, storage_path, filename, original_filename, extension, original_sha256, current_sha256)
-        VALUES (2, 1, 'second.fb2', 'second.fb2', 'second.fb2', '.fb2', randomblob(32), randomblob(32)),
-               (3, 2, 'other.epub', 'other.epub', 'other.epub', '.epub', randomblob(32), randomblob(32));
+        INSERT INTO assets (id, book_id, storage_path, filename, original_filename, extension, original_hash, current_hash)
+        VALUES (2, 1, 'second.fb2', 'second.fb2', 'second.fb2', '.fb2', randomblob(16), randomblob(16)),
+               (3, 2, 'other.epub', 'other.epub', 'other.epub', '.epub', randomblob(16), randomblob(16));
     `)
 	for _, fixture := range []struct {
 		userID, assetID int64

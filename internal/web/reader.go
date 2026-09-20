@@ -34,12 +34,12 @@ type readerPageData struct {
 }
 
 type readerPageAsset struct {
-	BookID        int64
-	AssetID       int64
-	Title         string
-	Extension     string
-	Format        format.Format
-	CurrentSHA256 []byte
+	BookID      int64
+	AssetID     int64
+	Title       string
+	Extension   string
+	Format      format.Format
+	CurrentHash []byte
 }
 
 func (s *Server) handleRead(w http.ResponseWriter, r *http.Request) {
@@ -68,12 +68,12 @@ func (s *Server) handleRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	renderReaderPage(w, readerPageAsset{
-		BookID:        asset.BookID,
-		AssetID:       asset.ID,
-		Title:         asset.Title,
-		Extension:     asset.Extension,
-		Format:        asset.Format,
-		CurrentSHA256: asset.CurrentSHA256,
+		BookID:      asset.BookID,
+		AssetID:     asset.ID,
+		Title:       asset.Title,
+		Extension:   asset.Extension,
+		Format:      asset.Format,
+		CurrentHash: asset.CurrentHash,
 	})
 }
 
@@ -95,12 +95,12 @@ func (s *Server) handleReadAssetPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	renderReaderPage(w, readerPageAsset{
-		BookID:        asset.BookID,
-		AssetID:       assetID,
-		Title:         asset.Title,
-		Extension:     asset.Extension,
-		Format:        asset.Format,
-		CurrentSHA256: asset.CurrentSHA256,
+		BookID:      asset.BookID,
+		AssetID:     assetID,
+		Title:       asset.Title,
+		Extension:   asset.Extension,
+		Format:      asset.Format,
+		CurrentHash: asset.CurrentHash,
 	})
 }
 
@@ -114,8 +114,8 @@ func renderReaderPage(w http.ResponseWriter, asset readerPageAsset) {
 		Title:           asset.Title,
 		Extension:       strings.TrimPrefix(strings.ToUpper(ext), "."),
 		TransportFormat: readerTransportFormat(asset.Format),
-		ReadURL:         readerAssetURL(asset.AssetID, asset.Format, asset.CurrentSHA256),
-		FallbackURL:     readerFallbackURL(asset.AssetID, asset.Format, asset.CurrentSHA256),
+		ReadURL:         readerAssetURL(asset.AssetID, asset.Format, asset.CurrentHash),
+		FallbackURL:     readerFallbackURL(asset.AssetID, asset.Format, asset.CurrentHash),
 		IsPDF:           reader == format.ReaderPDF,
 		IsDJVU:          reader == format.ReaderDJVU,
 		IsPaged:         reader == format.ReaderPDF || reader == format.ReaderDJVU,
@@ -136,19 +136,19 @@ func renderReaderPage(w http.ResponseWriter, asset readerPageAsset) {
 	renderPage(w, readerTmpl, "reader.html", data)
 }
 
-func readerFallbackURL(assetID int64, kind format.Format, currentSHA256 []byte) string {
+func readerFallbackURL(assetID int64, kind format.Format, currentHash []byte) string {
 	if kind != format.FormatEPUB || !converter.CanConvert(kind, converter.TargetKEPUB) {
 		return ""
 	}
-	return pinnedReaderURL(versionedURL("/download/"+strconv.FormatInt(assetID, 10)+"/as/kepub", conversionCacheVersion(currentSHA256)), currentSHA256)
+	return pinnedReaderURL(versionedURL("/download/"+strconv.FormatInt(assetID, 10)+"/as/kepub", conversionCacheVersion(currentHash)), currentHash)
 }
 
-func readerAssetURL(assetID int64, kind format.Format, currentSHA256 []byte) string {
-	version := assetCacheVersion(currentSHA256)
+func readerAssetURL(assetID int64, kind format.Format, currentHash []byte) string {
+	version := assetCacheVersion(currentHash)
 	if kind == format.FormatCBR || kind == format.FormatCB7 {
-		version = conversionCacheVersion(currentSHA256)
+		version = conversionCacheVersion(currentHash)
 	}
-	return pinnedReaderURL(versionedURL("/read/assets/"+strconv.FormatInt(assetID, 10), version), currentSHA256)
+	return pinnedReaderURL(versionedURL("/read/assets/"+strconv.FormatInt(assetID, 10), version), currentHash)
 }
 
 func pinnedReaderURL(base string, hash []byte) string {
@@ -161,8 +161,8 @@ func pinnedReaderURL(base string, hash []byte) string {
 
 const assetCacheVersionBytes = 8
 
-func assetCacheVersion(currentSHA256 []byte) string {
-	return hex.EncodeToString(currentSHA256[:assetCacheVersionBytes])
+func assetCacheVersion(currentHash []byte) string {
+	return hex.EncodeToString(currentHash[:assetCacheVersionBytes])
 }
 
 func versionedURL(baseURL, version string) string {
@@ -172,23 +172,23 @@ func versionedURL(baseURL, version string) string {
 	return baseURL + "?v=" + version
 }
 
-func conversionCacheVersion(currentSHA256 []byte) string {
+func conversionCacheVersion(currentHash []byte) string {
 	if version.Version == "" {
 		return ""
 	}
 	h := sha256.New()
-	h.Write(currentSHA256)
+	h.Write(currentHash)
 	h.Write([]byte{0})
 	h.Write([]byte(version.Version))
 	return hex.EncodeToString(h.Sum(nil)[:assetCacheVersionBytes])
 }
 
-func setVersionedAssetCacheControl(w http.ResponseWriter, r *http.Request, currentSHA256 []byte) {
-	setCacheControlForVersion(w, r, assetCacheVersion(currentSHA256))
+func setVersionedAssetCacheControl(w http.ResponseWriter, r *http.Request, currentHash []byte) {
+	setCacheControlForVersion(w, r, assetCacheVersion(currentHash))
 }
 
-func setVersionedConversionCacheControl(w http.ResponseWriter, r *http.Request, currentSHA256 []byte) {
-	setCacheControlForVersion(w, r, conversionCacheVersion(currentSHA256))
+func setVersionedConversionCacheControl(w http.ResponseWriter, r *http.Request, currentHash []byte) {
+	setCacheControlForVersion(w, r, conversionCacheVersion(currentHash))
 }
 
 func setCacheControlForVersion(w http.ResponseWriter, r *http.Request, version string) {
@@ -234,8 +234,8 @@ func (s *Server) handleReadAsset(w http.ResponseWriter, r *http.Request) {
 	if asset.Format == format.FormatCBR || asset.Format == format.FormatCB7 {
 		// Foliate reads ZIP comic archives. Keep the original archive asset as the
 		// source of truth and normalize a bounded temporary CBZ for this read.
-		setVersionedConversionCacheControl(w, r, asset.CurrentSHA256)
-		redirectURL := versionedURL("/download/"+strconv.FormatInt(assetID, 10)+"/as/cbz", conversionCacheVersion(asset.CurrentSHA256))
+		setVersionedConversionCacheControl(w, r, asset.CurrentHash)
+		redirectURL := versionedURL("/download/"+strconv.FormatInt(assetID, 10)+"/as/cbz", conversionCacheVersion(asset.CurrentHash))
 		if source := r.URL.Query().Get("source"); source != "" {
 			redirectURL += "&source=" + url.QueryEscape(source)
 		}
@@ -257,7 +257,7 @@ func (s *Server) handleReadAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer f.Close()
-	if !s.verifyReaderContent(w, r, f, asset.CurrentSHA256) {
+	if !s.verifyReaderContent(w, r, f, asset.CurrentHash) {
 		return
 	}
 	info, err := f.Stat()
@@ -265,7 +265,7 @@ func (s *Server) handleReadAsset(w http.ResponseWriter, r *http.Request) {
 		serverError(w, r, err)
 		return
 	}
-	setVersionedAssetCacheControl(w, r, asset.CurrentSHA256)
+	setVersionedAssetCacheControl(w, r, asset.CurrentHash)
 	w.Header().Set("Content-Type", format.MediaTypeForExtension(asset.Extension))
 	w.Header().Set("Content-Disposition", fileContentDisposition("inline", asset.Filename))
 	http.ServeContent(w, r, asset.Filename, info.ModTime(), f)
@@ -281,7 +281,7 @@ func (s *Server) serveFB2ReadAsset(w http.ResponseWriter, r *http.Request, asset
 		return
 	}
 	defer f.Close()
-	if !s.verifyReaderContent(w, r, f, asset.CurrentSHA256) {
+	if !s.verifyReaderContent(w, r, f, asset.CurrentHash) {
 		return
 	}
 
@@ -301,7 +301,7 @@ func (s *Server) serveFB2ReadAsset(w http.ResponseWriter, r *http.Request, asset
 	}
 	defer source.Reader.Close()
 
-	setVersionedAssetCacheControl(w, r, asset.CurrentSHA256)
+	setVersionedAssetCacheControl(w, r, asset.CurrentHash)
 	w.Header().Set("Content-Type", "application/x-fictionbook+xml")
 	w.Header().Set("Content-Disposition", fileContentDisposition("inline", format.FB2PlainFilename(asset.Filename)))
 	if source.ContentLength > 0 {

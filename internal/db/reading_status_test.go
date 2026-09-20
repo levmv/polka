@@ -14,8 +14,8 @@ func TestReadingStatusLifecycleHistoryAndIsolation(t *testing.T) {
 	bob := mustUser(t, database, "bob", RoleMember)
 	mustExec(t, database, `
 		INSERT INTO books (id, title, sort_title) VALUES (1, 'Book', 'Book');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, koreader_hash, original_sha256, current_sha256)
-		VALUES (1, 1, 'book.epub', 'book.epub', '.epub', 'hash1', randomblob(32), randomblob(32));
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, koreader_hash, original_hash, current_hash)
+		VALUES (1, 1, 'book.epub', 'book.epub', '.epub', 'hash1', randomblob(16), randomblob(16));
 	`)
 
 	state, err := GetReadingStatus(database.Read(t.Context()), alice.ID, 1)
@@ -110,8 +110,8 @@ func TestAutomaticReadingStatusKeepsExplicitTerminalStates(t *testing.T) {
 	user := mustUser(t, database, "reader", RoleReader)
 	mustExec(t, database, `
 		INSERT INTO books (id, title, sort_title) VALUES (1, 'Book', 'Book');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, koreader_hash, original_sha256, current_sha256)
-		VALUES (1, 1, 'book.epub', 'book.epub', '.epub', '55555555555555555555555555555555', randomblob(32), randomblob(32));
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, koreader_hash, original_hash, current_hash)
+		VALUES (1, 1, 'book.epub', 'book.epub', '.epub', '55555555555555555555555555555555', randomblob(16), randomblob(16));
 		INSERT INTO koreader_hashes(asset_id, hash) SELECT id, unhex(koreader_hash) FROM assets;
 	`)
 

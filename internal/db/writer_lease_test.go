@@ -32,16 +32,19 @@ func TestWriterLeaseAllowsStaleOrForcedClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Acquire stale: %v", err)
 	}
-	if stale.Owner() != "stale-claim" {
-		t.Fatalf("stale owner = %q", stale.Owner())
+	if err := stale.Renew(ctx); err != nil {
+		t.Fatalf("renew stale claim: %v", err)
 	}
 
 	forced, err := AcquireWriterLease(ctx, database, "forced", true)
 	if err != nil {
 		t.Fatalf("Acquire forced: %v", err)
 	}
-	if forced.Owner() != "forced" {
-		t.Fatalf("forced owner = %q", forced.Owner())
+	if err := forced.Renew(ctx); err != nil {
+		t.Fatalf("renew forced claim: %v", err)
+	}
+	if err := stale.Renew(ctx); !errors.Is(err, ErrWriterLeaseHeld) {
+		t.Fatalf("renew displaced owner: %v; want ErrWriterLeaseHeld", err)
 	}
 
 	if err := stale.Release(ctx); err != nil {

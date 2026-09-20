@@ -59,8 +59,8 @@ func TestEnsureReadablePrimaryAsset(t *testing.T) {
 
 			for _, asset := range tt.assets {
 				mustExec(t, database, `
-					INSERT INTO assets (id, book_id, storage_path, filename, extension, can_read, is_primary, created_at, original_sha256, current_sha256)
-					VALUES (?, 1, ?, ?, '.book', ?, ?, ?, randomblob(32), randomblob(32))
+					INSERT INTO assets (id, book_id, storage_path, filename, extension, can_read, is_primary, created_at, original_hash, current_hash)
+					VALUES (?, 1, ?, ?, '.book', ?, ?, ?, randomblob(16), randomblob(16))
 				`, asset.id, strconv.FormatInt(asset.id, 10)+".book", strconv.FormatInt(asset.id, 10)+".book", asset.canRead, asset.isPrimary, asset.createdAt)
 
 			}

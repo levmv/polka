@@ -51,7 +51,7 @@ func TestPlaceholderDeterministic(t *testing.T) {
 }
 
 func TestGeneratedCoverSeedAndStyle(t *testing.T) {
-	baseline, err := Generated("Dune", "Frank Herbert", VariantThumb, DefaultOptions(), 1)
+	baseline, err := GeneratedStyled("Dune", "Frank Herbert", VariantThumb, DefaultOptions(), 1, GeneratedStyleClassic)
 	if err != nil {
 		t.Fatal(err)
 	}

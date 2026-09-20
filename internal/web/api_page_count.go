@@ -67,7 +67,7 @@ func (s *Server) handleAPIBookPageCount(w http.ResponseWriter, r *http.Request) 
 	if asset.PageCount == 0 && !s.pageCountCoolingDown(asset) {
 		pages, err := s.measurePageCount(ctx, asset)
 		if err == nil && pages > 0 {
-			stored, err := db.StorePageCount(s.db.Write(ctx), asset.AssetID, asset.SHA256, pages)
+			stored, err := db.StorePageCount(s.db.Write(ctx), asset.AssetID, asset.Hash, pages)
 			if err != nil {
 				serverError(w, r, err)
 				return
@@ -125,7 +125,7 @@ func (s *Server) measurePageCount(ctx context.Context, asset db.PageCountAsset) 
 
 func (s *Server) pageCountCoolingDown(asset db.PageCountAsset) bool {
 	retry := s.pageCountCooldown[asset.AssetID]
-	return retry.hash == string(asset.SHA256) && time.Now().Before(retry.retryAfter)
+	return retry.hash == string(asset.Hash) && time.Now().Before(retry.retryAfter)
 }
 
 func (s *Server) deferPageCountRetry(asset db.PageCountAsset) {
@@ -142,7 +142,7 @@ func (s *Server) deferPageCountRetry(asset db.PageCountAsset) {
 		}
 		delete(s.pageCountCooldown, oldestID)
 	}
-	s.pageCountCooldown[asset.AssetID] = pageCountRetry{hash: string(asset.SHA256), retryAfter: time.Now().Add(24 * time.Hour)}
+	s.pageCountCooldown[asset.AssetID] = pageCountRetry{hash: string(asset.Hash), retryAfter: time.Now().Add(24 * time.Hour)}
 }
 
 type pageCountSource struct {

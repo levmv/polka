@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
-	"crypto/sha256"
 	"encoding/json/v2"
 	"io"
 	"net/http"
@@ -25,7 +24,7 @@ import (
 	"github.com/levmv/polka/internal/testfixture"
 )
 
-var testReaderCurrentSHA256 = bytes.Repeat([]byte{0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef}, 4)
+var testReaderCurrentHash = bytes.Repeat([]byte{0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef}, 2)
 
 func mustExec(t *testing.T, database *db.DB, query string, args ...any) {
 	t.Helper()
@@ -45,7 +44,7 @@ func setupTestDB(t *testing.T) (*db.DB, string) {
 	}
 
 	contents := []byte("epub content")
-	fileHash := sha256.Sum256(contents)
+	fileHash := storage.Sum(contents)
 	_, err = database.Write(t.Context()).Exec(`
 		INSERT INTO books (id, title, sort_title) VALUES (1, 'The Hobbit', 'Hobbit, The');
 		INSERT INTO books (id, title, sort_title) VALUES (2, 'Dune', 'Dune');
@@ -56,7 +55,7 @@ func setupTestDB(t *testing.T) (*db.DB, string) {
 		INSERT INTO book_authors (book_id, author_id) VALUES (1, 1);
 		INSERT INTO book_authors (book_id, author_id) VALUES (2, 2);
 
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, original_sha256, current_sha256)
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, original_hash, current_hash)
 		VALUES (1, 1, 'Tolkien/The_Hobbit/a_1.epub', 'a_1.epub', '.epub', ?, ?);
 	`, fileHash[:], fileHash[:])
 	if err != nil {
@@ -246,7 +245,7 @@ func TestDownloadHandler(t *testing.T) {
 
 	_, err := database.Write(t.Context()).Exec(`
 		INSERT INTO books (id, title, sort_title) VALUES (135, 'Zipped FB2', 'Zipped FB2');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, original_sha256, current_sha256) VALUES (2, 135, 'FB2/Zipped/book.fb2.zip', 'book.fb2.zip', '.fb2.zip', 'fb2', randomblob(32), randomblob(32));
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, original_hash, current_hash) VALUES (2, 135, 'FB2/Zipped/book.fb2.zip', 'book.fb2.zip', '.fb2.zip', 'fb2', randomblob(16), randomblob(16));
 	`)
 	if err != nil {
 		t.Fatalf("insert fb2.zip fixture: %v", err)
@@ -365,7 +364,7 @@ func TestDownloadAsAZW4PDF(t *testing.T) {
 
 	_, err := database.Write(t.Context()).Exec(`
 		INSERT INTO books (id, title, sort_title) VALUES (111, 'Print Replica', 'Print Replica');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, original_sha256, current_sha256) VALUES (2, 111, 'Kindle/Print/print-replica.azw4', 'print-replica.azw4', '.azw4', 'azw4', randomblob(32), randomblob(32));
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, original_hash, current_hash) VALUES (2, 111, 'Kindle/Print/print-replica.azw4', 'print-replica.azw4', '.azw4', 'azw4', randomblob(16), randomblob(16));
 	`)
 	if err != nil {
 		t.Fatalf("insert azw4 fixture: %v", err)
@@ -408,7 +407,7 @@ func TestDownloadAsRejectsUnsupportedConversion(t *testing.T) {
 
 	_, err := database.Write(t.Context()).Exec(`
 		INSERT INTO books (id, title, sort_title) VALUES (155, 'Legacy MOBI', 'Legacy MOBI');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, original_sha256, current_sha256) VALUES (2, 155, 'Kindle/Legacy/legacy.mobi', 'legacy.mobi', '.mobi', 'mobi', randomblob(32), randomblob(32));
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, original_hash, current_hash) VALUES (2, 155, 'Kindle/Legacy/legacy.mobi', 'legacy.mobi', '.mobi', 'mobi', randomblob(16), randomblob(16));
 	`)
 	if err != nil {
 		t.Fatalf("insert mobi fixture: %v", err)
@@ -444,7 +443,7 @@ func TestDownloadAsCBRToCBZ(t *testing.T) {
 
 	_, err := database.Write(t.Context()).Exec(`
 		INSERT INTO books (id, title, sort_title) VALUES (118, 'RAR Comic', 'RAR Comic');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, original_sha256, current_sha256) VALUES (2, 118, 'Comics/RAR/rar-comic.cbr', 'rar-comic.cbr', '.cbr', 'cbr', randomblob(32), randomblob(32));
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, original_hash, current_hash) VALUES (2, 118, 'Comics/RAR/rar-comic.cbr', 'rar-comic.cbr', '.cbr', 'cbr', randomblob(16), randomblob(16));
 	`)
 	if err != nil {
 		t.Fatalf("insert CBR fixture: %v", err)
@@ -486,7 +485,7 @@ func TestDownloadAsAZW4WithoutPDFDoesNotSendAttachment(t *testing.T) {
 
 	_, err := database.Write(t.Context()).Exec(`
 		INSERT INTO books (id, title, sort_title) VALUES (126, 'Empty Print Replica', 'Empty Print Replica');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, original_sha256, current_sha256) VALUES (2, 126, 'Kindle/Empty/empty.azw4', 'empty.azw4', '.azw4', 'azw4', randomblob(32), randomblob(32));
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, original_hash, current_hash) VALUES (2, 126, 'Kindle/Empty/empty.azw4', 'empty.azw4', '.azw4', 'azw4', randomblob(16), randomblob(16));
 	`)
 	if err != nil {
 		t.Fatalf("insert empty azw4 fixture: %v", err)
@@ -525,7 +524,7 @@ func TestDownloadAsTXTToEPUB(t *testing.T) {
 
 	_, err := database.Write(t.Context()).Exec(`
 		INSERT INTO books (id, title, sort_title) VALUES (177, 'Plain Notes', 'Plain Notes');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, original_sha256, current_sha256) VALUES (2, 177, 'Text/Plain/plain.txt', 'plain.txt', '.txt', 'txt', randomblob(32), randomblob(32));
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, original_hash, current_hash) VALUES (2, 177, 'Text/Plain/plain.txt', 'plain.txt', '.txt', 'txt', randomblob(16), randomblob(16));
 	`)
 	if err != nil {
 		t.Fatalf("insert txt fixture: %v", err)
@@ -567,7 +566,7 @@ func TestDownloadAsOversizedTXTReturns413(t *testing.T) {
 
 	_, err := database.Write(t.Context()).Exec(`
 		INSERT INTO books (id, title, sort_title) VALUES (138, 'Huge Notes', 'Huge Notes');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, original_sha256, current_sha256) VALUES (2, 138, 'Text/Huge/huge.txt', 'huge.txt', '.txt', 'txt', randomblob(32), randomblob(32));
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, original_hash, current_hash) VALUES (2, 138, 'Text/Huge/huge.txt', 'huge.txt', '.txt', 'txt', randomblob(16), randomblob(16));
 	`)
 	if err != nil {
 		t.Fatalf("insert huge txt fixture: %v", err)
@@ -610,12 +609,12 @@ func TestDownloadAsEPUBToKEPUB(t *testing.T) {
 
 	_, err := database.Write(t.Context()).Exec(`
 		INSERT INTO books (id, title, sort_title) VALUES (128, 'Kobo Source', 'Kobo Source');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, original_sha256, current_sha256) VALUES (2, 128, 'EPUB/Kobo/source.epub', 'source.epub', '.epub', 'epub', randomblob(32), randomblob(32));
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, original_hash, current_hash) VALUES (2, 128, 'EPUB/Kobo/source.epub', 'source.epub', '.epub', 'epub', randomblob(16), randomblob(16));
 	`)
 	if err != nil {
 		t.Fatalf("insert epub fixture: %v", err)
 	}
-	mustExec(t, database, "UPDATE assets SET current_sha256 = ? WHERE id = 2", testReaderCurrentSHA256)
+	mustExec(t, database, "UPDATE assets SET current_hash = ? WHERE id = 2", testReaderCurrentHash)
 
 	fileDir := filepath.Join(dir, "EPUB", "Kobo")
 	if err := os.MkdirAll(fileDir, 0o755); err != nil {
@@ -629,7 +628,7 @@ func TestDownloadAsEPUBToKEPUB(t *testing.T) {
 	s := newTestServer(database, dir)
 	handler := testRoutes(t, s)
 
-	convertedVersion := conversionCacheVersion(testReaderCurrentSHA256)
+	convertedVersion := conversionCacheVersion(testReaderCurrentHash)
 	if convertedVersion == "" {
 		t.Fatal("test build has no Polka version for converted asset cache key")
 	}
@@ -687,7 +686,7 @@ func TestDownloadAsEPUBToRepairedEPUB(t *testing.T) {
 
 	_, err := database.Write(t.Context()).Exec(`
 		INSERT INTO books (id, title, sort_title) VALUES (129, 'Repair Source', 'Repair Source');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, original_sha256, current_sha256) VALUES (2, 129, 'EPUB/Repair/source.epub', 'source.epub', '.epub', 'epub', randomblob(32), randomblob(32));
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, original_hash, current_hash) VALUES (2, 129, 'EPUB/Repair/source.epub', 'source.epub', '.epub', 'epub', randomblob(16), randomblob(16));
 	`)
 	if err != nil {
 		t.Fatalf("insert EPUB rebuild fixture: %v", err)
@@ -747,7 +746,7 @@ func TestDownloadAsConversionFailureDoesNotCommitAttachment(t *testing.T) {
 
 	_, err := database.Write(t.Context()).Exec(`
 		INSERT INTO books (id, title, sort_title) VALUES (114, 'Broken EPUB', 'Broken EPUB');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, original_sha256, current_sha256) VALUES (2, 114, 'EPUB/Broken/source.epub', 'source.epub', '.epub', 'epub', randomblob(32), randomblob(32));
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, original_hash, current_hash) VALUES (2, 114, 'EPUB/Broken/source.epub', 'source.epub', '.epub', 'epub', randomblob(16), randomblob(16));
 	`)
 	if err != nil {
 		t.Fatalf("insert broken EPUB fixture: %v", err)
@@ -837,35 +836,35 @@ func TestReaderRoutesServeReadablePrimaryAssets(t *testing.T) {
 
 	_, err := database.Write(t.Context()).Exec(`
 		INSERT INTO books (id, title, sort_title) VALUES (165, 'PDF Book', 'PDF Book');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_sha256, current_sha256) VALUES (2, 165, 'PDF/PDF_Book/asset_pdf.pdf', 'asset_pdf.pdf', '.pdf', 'pdf', 1, 1, randomblob(32), randomblob(32));
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_hash, current_hash) VALUES (2, 165, 'PDF/PDF_Book/asset_pdf.pdf', 'asset_pdf.pdf', '.pdf', 'pdf', 1, 1, randomblob(16), randomblob(16));
 		INSERT INTO books (id, title, sort_title) VALUES (127, 'EPUB Book', 'EPUB Book');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_sha256, current_sha256) VALUES (3, 127, 'EPUB/EPUB_Book/asset_epub.epub', 'asset_epub.epub', '.epub', 'epub', 1, 1, randomblob(32), randomblob(32));
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_sha256, current_sha256) VALUES (4, 127, 'EPUB/EPUB_Book/asset_epub_alt.fb2', 'asset_epub_alt.fb2', '.fb2', 'fb2', 0, 1, randomblob(32), randomblob(32));
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_hash, current_hash) VALUES (3, 127, 'EPUB/EPUB_Book/asset_epub.epub', 'asset_epub.epub', '.epub', 'epub', 1, 1, randomblob(16), randomblob(16));
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_hash, current_hash) VALUES (4, 127, 'EPUB/EPUB_Book/asset_epub_alt.fb2', 'asset_epub_alt.fb2', '.fb2', 'fb2', 0, 1, randomblob(16), randomblob(16));
 		INSERT INTO books (id, title, sort_title) VALUES (153, 'Missing EPUB', 'Missing EPUB');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_sha256, current_sha256) VALUES (5, 153, 'EPUB/Missing/asset_missing.epub', 'asset_missing.epub', '.epub', 'epub', 1, 1, randomblob(32), randomblob(32));
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_hash, current_hash) VALUES (5, 153, 'EPUB/Missing/asset_missing.epub', 'asset_missing.epub', '.epub', 'epub', 1, 1, randomblob(16), randomblob(16));
 		INSERT INTO books (id, title, sort_title) VALUES (141, 'KEPUB Book', 'KEPUB Book');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_sha256, current_sha256) VALUES (6, 141, 'KEPUB/KEPUB_Book/asset_kepub.kepub.epub', 'asset_kepub.kepub.epub', '.kepub.epub', 'kepub', 1, 1, randomblob(32), randomblob(32));
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_hash, current_hash) VALUES (6, 141, 'KEPUB/KEPUB_Book/asset_kepub.kepub.epub', 'asset_kepub.kepub.epub', '.kepub.epub', 'kepub', 1, 1, randomblob(16), randomblob(16));
 		INSERT INTO books (id, title, sort_title) VALUES (154, 'MOBI Book', 'MOBI Book');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_sha256, current_sha256) VALUES (7, 154, 'MOBI/MOBI_Book/asset_mobi.mobi', 'asset_mobi.mobi', '.mobi', 'mobi', 1, 1, randomblob(32), randomblob(32));
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_hash, current_hash) VALUES (7, 154, 'MOBI/MOBI_Book/asset_mobi.mobi', 'asset_mobi.mobi', '.mobi', 'mobi', 1, 1, randomblob(16), randomblob(16));
 		INSERT INTO books (id, title, sort_title) VALUES (130, 'FB2 Book', 'FB2 Book');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_sha256, current_sha256) VALUES (8, 130, 'FB2/FB2_Book/asset_fb2.fb2', 'asset_fb2.fb2', '.fb2', 'fb2', 1, 1, randomblob(32), randomblob(32));
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_hash, current_hash) VALUES (8, 130, 'FB2/FB2_Book/asset_fb2.fb2', 'asset_fb2.fb2', '.fb2', 'fb2', 1, 1, randomblob(16), randomblob(16));
 		INSERT INTO books (id, title, sort_title) VALUES (134, 'Zipped FB2 Book', 'Zipped FB2 Book');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_sha256, current_sha256) VALUES (9, 134, 'FB2Zip/FB2Zip_Book/asset_fb2zip.fb2.zip', 'asset_fb2zip.fb2.zip', '.fb2.zip', 'fb2', 1, 1, randomblob(32), randomblob(32));
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_hash, current_hash) VALUES (9, 134, 'FB2Zip/FB2Zip_Book/asset_fb2zip.fb2.zip', 'asset_fb2zip.fb2.zip', '.fb2.zip', 'fb2', 1, 1, randomblob(16), randomblob(16));
 		INSERT INTO books (id, title, sort_title) VALUES (131, 'Mislabeled Zipped FB2 Book', 'Mislabeled Zipped FB2 Book');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_sha256, current_sha256) VALUES (10, 131, 'FB2Mislabeled/FB2Mislabeled_Book/asset_fb2_mislabeled.fb2', 'asset_fb2_mislabeled.fb2', '.fb2', 'fb2', 1, 1, randomblob(32), randomblob(32));
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_hash, current_hash) VALUES (10, 131, 'FB2Mislabeled/FB2Mislabeled_Book/asset_fb2_mislabeled.fb2', 'asset_fb2_mislabeled.fb2', '.fb2', 'fb2', 1, 1, randomblob(16), randomblob(16));
 		INSERT INTO books (id, title, sort_title) VALUES (133, 'Gzipped FB2 Book', 'Gzipped FB2 Book');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_sha256, current_sha256) VALUES (11, 133, 'FB2Gzip/FB2Gzip_Book/asset_fb2gz.fb2.gz', 'asset_fb2gz.fb2.gz', '.fb2.gz', 'fb2', 1, 1, randomblob(32), randomblob(32));
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_hash, current_hash) VALUES (11, 133, 'FB2Gzip/FB2Gzip_Book/asset_fb2gz.fb2.gz', 'asset_fb2gz.fb2.gz', '.fb2.gz', 'fb2', 1, 1, randomblob(16), randomblob(16));
 		INSERT INTO books (id, title, sort_title) VALUES (119, 'CBZ Book', 'CBZ Book');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_sha256, current_sha256) VALUES (12, 119, 'CBZ/CBZ_Book/asset_cbz.cbz', 'asset_cbz.cbz', '.cbz', 'cbz', 1, 1, randomblob(32), randomblob(32));
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_hash, current_hash) VALUES (12, 119, 'CBZ/CBZ_Book/asset_cbz.cbz', 'asset_cbz.cbz', '.cbz', 'cbz', 1, 1, randomblob(16), randomblob(16));
 		INSERT INTO books (id, title, sort_title) VALUES (117, 'CBR Book', 'CBR Book');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_sha256, current_sha256) VALUES (13, 117, 'CBR/CBR_Book/asset_cbr.cbr', 'asset_cbr.cbr', '.cbr', 'cbr', 1, 1, randomblob(32), randomblob(32));
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_hash, current_hash) VALUES (13, 117, 'CBR/CBR_Book/asset_cbr.cbr', 'asset_cbr.cbr', '.cbr', 'cbr', 1, 1, randomblob(16), randomblob(16));
 		INSERT INTO books (id, title, sort_title) VALUES (116, 'CB7 Book', 'CB7 Book');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_sha256, current_sha256) VALUES (14, 116, 'CB7/CB7_Book/asset_cb7.cb7', 'asset_cb7.cb7', '.cb7', 'cb7', 1, 1, randomblob(32), randomblob(32));
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_hash, current_hash) VALUES (14, 116, 'CB7/CB7_Book/asset_cb7.cb7', 'asset_cb7.cb7', '.cb7', 'cb7', 1, 1, randomblob(16), randomblob(16));
 		`)
 	if err != nil {
 		t.Fatalf("insert reader fixtures: %v", err)
 	}
-	mustExec(t, database, "UPDATE assets SET current_sha256 = ? WHERE id IN (3, 5, 13, 14)", testReaderCurrentSHA256)
+	mustExec(t, database, "UPDATE assets SET current_hash = ? WHERE id IN (3, 5, 13, 14)", testReaderCurrentHash)
 
 	fileDir := filepath.Join(dir, "PDF", "PDF_Book")
 	if err := os.MkdirAll(fileDir, 0o755); err != nil {
@@ -975,7 +974,7 @@ func TestReaderRoutesServeReadablePrimaryAssets(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("epub read page status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
 	}
-	convertedVersion := conversionCacheVersion(testReaderCurrentSHA256)
+	convertedVersion := conversionCacheVersion(testReaderCurrentHash)
 	if convertedVersion == "" {
 		t.Fatal("test build has no Polka version for converted asset cache key")
 	}
@@ -1284,8 +1283,8 @@ func TestReaderRoutesRequireReadableStoredFormat(t *testing.T) {
 
 	_, err := database.Write(t.Context()).Exec(`
 		INSERT INTO books (id, title, sort_title) VALUES (172, 'Stale Reader', 'Stale Reader');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_sha256, current_sha256)
-			VALUES (2, 172, 'Stale/Stale_Reader/asset_stale_reader.chm', 'asset_stale_reader.chm', '.chm', 'chm', 1, 1, randomblob(32), randomblob(32));
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_hash, current_hash)
+			VALUES (2, 172, 'Stale/Stale_Reader/asset_stale_reader.chm', 'asset_stale_reader.chm', '.chm', 'chm', 1, 1, randomblob(16), randomblob(16));
 	`)
 	if err != nil {
 		t.Fatalf("insert stale reader fixture: %v", err)
@@ -1335,7 +1334,7 @@ func TestReadZippedFB2AssetRejectsAmbiguousArchive(t *testing.T) {
 
 	_, err := database.Write(t.Context()).Exec(`
 		INSERT INTO books (id, title, sort_title) VALUES (156, 'Ambiguous FB2', 'Ambiguous FB2');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, original_sha256, current_sha256) VALUES (2, 156, 'FB2/Multi/ambiguous.fb2.zip', 'ambiguous.fb2.zip', '.fb2.zip', 'fb2', 1, randomblob(32), randomblob(32));
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, original_hash, current_hash) VALUES (2, 156, 'FB2/Multi/ambiguous.fb2.zip', 'ambiguous.fb2.zip', '.fb2.zip', 'fb2', 1, randomblob(16), randomblob(16));
 	`)
 	if err != nil {
 		t.Fatalf("insert ambiguous fb2 fixture: %v", err)

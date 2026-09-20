@@ -463,6 +463,32 @@ func TestImportFolderDeleteSources(t *testing.T) {
 	if assets != 1 {
 		t.Fatalf("assets after import + duplicate cleanup = %d; want 1", assets)
 	}
+	var storagePath string
+	if err := db2.Read(t.Context()).QueryRow("SELECT storage_path FROM assets").Scan(&storagePath); err != nil {
+		t.Fatalf("query storage path: %v", err)
+	}
+	root, err := storage.OpenRoot(db2.Read(t.Context()), dataDir)
+	if err != nil {
+		t.Fatalf("open storage root: %v", err)
+	}
+	if err := os.Truncate(root.Abs(storagePath), 1); err != nil {
+		t.Fatalf("truncate managed duplicate: %v", err)
+	}
+
+	damagedDuplicatePath := filepath.Join(srcDir, "damaged-copy.epub")
+	writeEPUB(t, damagedDuplicatePath, "Delete Source", "Ada Writer", "Writer, Ada")
+	output, err := captureStdout(t, func() error {
+		return runImport(context.Background(), dataDir, []string{"--delete-sources", srcDir})
+	})
+	if !errors.Is(err, errImportItemsFailed) {
+		t.Fatalf("damaged duplicate import error = %v; want item failure", err)
+	}
+	if !strings.Contains(output, "has unexpected size") {
+		t.Fatalf("damaged duplicate output = %q; want size mismatch", output)
+	}
+	if _, err := os.Stat(damagedDuplicatePath); err != nil {
+		t.Fatalf("source was removed after managed size mismatch: %v", err)
+	}
 }
 
 func TestImportRefusesSourcesOverlappingManagedRoot(t *testing.T) {

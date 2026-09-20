@@ -2,7 +2,6 @@ package web
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +12,7 @@ import (
 	"testing/synctest"
 
 	"github.com/levmv/polka/internal/db"
+	"github.com/levmv/polka/internal/storage"
 	"github.com/levmv/polka/internal/workslot"
 )
 
@@ -21,12 +21,12 @@ func setupPageCountServer(t *testing.T) (*Server, string) {
 	database, dataDir := setupTestDB(t)
 	t.Cleanup(func() { database.Close() })
 	raw := []byte(strings.Repeat("A paragraph of text. ", 1000))
-	hash := sha256.Sum256(raw)
+	hash := storage.Sum(raw)
 	name := filepath.Join(dataDir, "Tolkien/The_Hobbit/a_1.epub")
 	if err := os.WriteFile(name, raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	mustExec(t, database, `UPDATE assets SET format='txt', is_primary=1, current_size=?, current_sha256=? WHERE id=1`, len(raw), hash[:])
+	mustExec(t, database, `UPDATE assets SET format='txt', is_primary=1, current_size=?, current_hash=? WHERE id=1`, len(raw), hash[:])
 	return &Server{db: database, dataDir: dataDir, storageQueue: workslot.New()}, name
 }
 

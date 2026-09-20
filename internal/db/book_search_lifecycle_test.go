@@ -20,7 +20,8 @@ func TestBookIdentitySurvivesPurgeAndVacuum(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := database.Transact(t.Context(), func(tx *Tx) error {
-		return PurgeBook(tx, 21)
+		_, err := PurgeBooks(tx, []int64{21})
+		return err
 	}); err != nil {
 		t.Fatal(err)
 	}

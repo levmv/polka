@@ -136,7 +136,7 @@ func (report *checkReport) checkAssets(ctx context.Context, root storage.Root, t
 					report.sizeMismatches = append(report.sizeMismatches, fmt.Sprintf("%d (%s): db %d, disk %d", a.ID, a.StoragePath, a.CurrentSize.Int64, info.Size()))
 				}
 				if deep && sizeMatches {
-					gotHash, err := fileSHA256Context(ctx, absPath)
+					gotHash, err := fileHashContext(ctx, absPath)
 					if err != nil {
 						if cause := context.Cause(ctx); cause != nil {
 							return nil, cause
@@ -144,8 +144,8 @@ func (report *checkReport) checkAssets(ctx context.Context, root storage.Root, t
 						report.ioErrors = append(report.ioErrors, fmt.Sprintf("hash %s: %v", a.StoragePath, err))
 						continue
 					}
-					if !bytes.Equal(gotHash, a.CurrentSHA256) {
-						report.hashMismatches = append(report.hashMismatches, fmt.Sprintf("%d (%s): db %x, disk %x", a.ID, a.StoragePath, a.CurrentSHA256, gotHash))
+					if !bytes.Equal(gotHash, a.CurrentHash) {
+						report.hashMismatches = append(report.hashMismatches, fmt.Sprintf("%d (%s): db %x, disk %x", a.ID, a.StoragePath, a.CurrentHash, gotHash))
 					}
 				}
 				if deep {
@@ -164,14 +164,14 @@ func (report *checkReport) checkAssets(ctx context.Context, root storage.Root, t
 			}
 		}
 
-		cPath, err := storage.BookPath(template, assetBookPathData(a))
+		canonicalPath, err := storage.BookPath(template, assetBookPathData(a))
 		if err != nil {
 			return nil, err
 		}
-		if a.StoragePath != cPath {
-			report.staleLayouts = append(report.staleLayouts, fmt.Sprintf("%d: %s -> %s", a.ID, a.StoragePath, cPath))
+		if a.StoragePath != canonicalPath {
+			report.staleLayouts = append(report.staleLayouts, fmt.Sprintf("%d: %s -> %s", a.ID, a.StoragePath, canonicalPath))
 		}
-		canonicalPaths = append(canonicalPaths, storage.BookPathCandidate{AssetID: a.ID, Path: cPath})
+		canonicalPaths = append(canonicalPaths, storage.BookPathCandidate{AssetID: a.ID, Path: canonicalPath})
 	}
 
 	for _, collision := range storage.DetectBookPathCollisions(canonicalPaths) {

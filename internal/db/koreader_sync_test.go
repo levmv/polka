@@ -2,20 +2,21 @@ package db
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/levmv/polka/internal/storage"
 )
 
 func TestAssetKOReaderHash(t *testing.T) {
 	database := newTestDB(t)
 	mustExec(t, database, "INSERT INTO books (id, title, sort_title) VALUES (1, 'T', 'T')")
-	epubHash := sha256.Sum256([]byte("EPUB"))
-	pdfHash := sha256.Sum256([]byte("PDF"))
-	mustExec(t, database, `INSERT INTO assets (id, book_id, storage_path, filename, extension, original_sha256, current_sha256)
+	epubHash := storage.Sum([]byte("EPUB"))
+	pdfHash := storage.Sum([]byte("PDF"))
+	mustExec(t, database, `INSERT INTO assets (id, book_id, storage_path, filename, extension, original_hash, current_hash)
 		VALUES (1, 1, 'book.epub', 'book.epub', '.epub', ?, ?), (2, 1, 'book.pdf', 'book.pdf', '.pdf', ?, ?)`, epubHash[:], epubHash[:], pdfHash[:], pdfHash[:])
 
 	if err := database.CacheAssetKOReaderHash(t.Context(), 1, epubHash[:], "0123456789abcdef0123456789abcdef"); err != nil {
@@ -38,8 +39,8 @@ func TestAssetKOReaderHash(t *testing.T) {
 	}
 	mustExec(t, database, `
 		INSERT INTO books (id, title, sort_title) VALUES (2, 'Other', 'Other');
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, koreader_hash, original_sha256, current_sha256)
-		VALUES (3, 2, 'other.epub', 'other.epub', '.epub', '0123456789abcdef0123456789abcdef', randomblob(32), randomblob(32));
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, koreader_hash, original_hash, current_hash)
+		VALUES (3, 2, 'other.epub', 'other.epub', '.epub', '0123456789abcdef0123456789abcdef', randomblob(16), randomblob(16));
 		INSERT INTO koreader_hashes(asset_id, hash) VALUES (3, unhex('0123456789abcdef0123456789abcdef'));
 	`)
 
@@ -62,9 +63,9 @@ func TestAssetKOReaderHash(t *testing.T) {
 
 func TestAssetKOReaderHashOptionalWrite(t *testing.T) {
 	database := newTestDB(t)
-	hash := sha256.Sum256([]byte("EPUB"))
+	hash := storage.Sum([]byte("EPUB"))
 	mustExec(t, database, "INSERT INTO books (id, title, sort_title) VALUES (1, 'Book', 'Book')")
-	mustExec(t, database, `INSERT INTO assets (id, book_id, storage_path, filename, extension, original_sha256, current_sha256)
+	mustExec(t, database, `INSERT INTO assets (id, book_id, storage_path, filename, extension, original_hash, current_hash)
 		VALUES (1, 1, 'book.epub', 'book.epub', '.epub', ?, ?)`, hash[:], hash[:])
 	cache := func(ctx context.Context) error {
 		return database.CacheAssetKOReaderHash(ctx, 1, hash[:], "11111111111111111111111111111111")
@@ -98,8 +99,8 @@ func TestAssetKOReaderHashOptionalWrite(t *testing.T) {
 }
 
 func TestAssetKOReaderHashUsesCurrentBytes(t *testing.T) {
-	oldHash := sha256.Sum256([]byte("downloaded bytes"))
-	currentHash := sha256.Sum256([]byte("replacement bytes"))
+	oldHash := storage.Sum([]byte("downloaded bytes"))
+	currentHash := storage.Sum([]byte("replacement bytes"))
 	for _, tt := range []struct {
 		name     string
 		observed []byte
@@ -114,7 +115,7 @@ func TestAssetKOReaderHashUsesCurrentBytes(t *testing.T) {
 			database := newTestDB(t)
 			mustExec(t, database, "INSERT INTO books (id, title, sort_title) VALUES (1, 'Book', 'Book')")
 			mustExec(t, database, `INSERT INTO assets
-				(id, book_id, storage_path, filename, extension, original_sha256, current_sha256, koreader_hash)
+				(id, book_id, storage_path, filename, extension, original_hash, current_hash, koreader_hash)
 				VALUES (1, 1, 'book.epub', 'book.epub', '.epub', ?, ?, NULLIF(?, ''))`, oldHash[:], currentHash[:], tt.cached)
 			if err := database.CacheAssetKOReaderHash(t.Context(), 1, tt.observed, "11111111111111111111111111111111"); err != nil {
 				t.Fatal(err)
@@ -214,8 +215,8 @@ func TestKOReaderExternalPositionAdoption(t *testing.T) {
 			mustExec(t, database, "UPDATE koreader_external_positions SET updated_at=100 WHERE user_id=?", user.ID)
 			external.UpdatedAt = 100
 			mustExec(t, database, `INSERT INTO books (id, title, sort_title) VALUES (1, 'Book', 'Book');
-                INSERT INTO assets (id, book_id, storage_path, filename, extension, original_sha256, current_sha256)
-                VALUES (1, 1, 'book.epub', 'book.epub', '.epub', randomblob(32), randomblob(32));
+                INSERT INTO assets (id, book_id, storage_path, filename, extension, original_hash, current_hash)
+                VALUES (1, 1, 'book.epub', 'book.epub', '.epub', randomblob(16), randomblob(16));
                 INSERT INTO koreader_hashes(asset_id, hash) VALUES (1, unhex('11111111111111111111111111111111'));`)
 			switch existing {
 			case "opened":
@@ -313,8 +314,8 @@ func TestKOReaderProgressAndStatusCommitTogether(t *testing.T) {
 			}
 			mustExec(t, database, `
                 INSERT INTO books (id, title, sort_title) VALUES (144, 'Atomic', 'Atomic');
-                INSERT INTO assets (id, book_id, storage_path, filename, extension, original_sha256, current_sha256)
-                VALUES (1, 144, 'atomic.epub', 'atomic.epub', '.epub', randomblob(32), randomblob(32));
+                INSERT INTO assets (id, book_id, storage_path, filename, extension, original_hash, current_hash)
+                VALUES (1, 144, 'atomic.epub', 'atomic.epub', '.epub', randomblob(16), randomblob(16));
                 INSERT INTO koreader_hashes(asset_id, hash) VALUES (1, unhex('44444444444444444444444444444444'));
                 CREATE TRIGGER reject_kosync_status BEFORE INSERT ON user_book_reading_events
                 BEGIN SELECT RAISE(ABORT, 'status write rejected'); END;`)
@@ -357,8 +358,8 @@ func TestKOReaderDownloadsShareAssetPosition(t *testing.T) {
 			database := newTestDB(t)
 			user := mustUser(t, database, "reader", RoleMember)
 			mustExec(t, database, `INSERT INTO books (id, title, sort_title) VALUES (1, 'Book', 'Book');
-                INSERT INTO assets (id, book_id, storage_path, filename, extension, format, koreader_hash, original_sha256, current_sha256)
-                VALUES (1, 1, 'book.epub', 'book.epub', '.epub', 'epub', ?, randomblob(32), randomblob(32));`, newHash)
+                INSERT INTO assets (id, book_id, storage_path, filename, extension, format, koreader_hash, original_hash, current_hash)
+                VALUES (1, 1, 'book.epub', 'book.epub', '.epub', 'epub', ?, randomblob(16), randomblob(16));`, newHash)
 			mustExec(t, database, `INSERT INTO koreader_hashes(asset_id, hash, conversion)
                 VALUES (1, unhex(?), ''), (1, unhex(?), ''), (1, unhex(?), 'kepub');`, oldHash, newHash, convertedHash)
 			save := func(input KOReaderProgress) *ReaderState {
@@ -402,8 +403,8 @@ func TestKOReaderHashCollisionPreservesExistingAssetPosition(t *testing.T) {
 		user := mustUser(t, database, "reader", RoleMember)
 		const hash = "11111111111111111111111111111111"
 		mustExec(t, database, `INSERT INTO books(id,title,sort_title) VALUES(1,'First','First'),(2,'Second','Second');
-            INSERT INTO assets(id,book_id,storage_path,filename,extension,original_sha256,current_sha256)
-            VALUES(1,1,'book.epub','book.epub','.epub',randomblob(32),randomblob(32));
+            INSERT INTO assets(id,book_id,storage_path,filename,extension,original_hash,current_hash)
+            VALUES(1,1,'book.epub','book.epub','.epub',randomblob(16),randomblob(16));
             INSERT INTO koreader_hashes(asset_id, hash) VALUES(1,unhex('11111111111111111111111111111111'));`)
 		input := KOReaderProgress{DocumentHash: hash, Position: "chapter-1", Progress: .2, DeviceName: "Reader", DeviceID: "a"}
 		if _, err := database.SaveKOReaderProgress(t.Context(), user.ID, input); err != nil {
@@ -413,8 +414,8 @@ func TestKOReaderHashCollisionPreservesExistingAssetPosition(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		mustExec(t, database, `INSERT INTO assets(id,book_id,storage_path,filename,extension,original_sha256,current_sha256)
-            VALUES(2,?,'other.epub','other.epub','.epub',randomblob(32),randomblob(32));
+		mustExec(t, database, `INSERT INTO assets(id,book_id,storage_path,filename,extension,original_hash,current_hash)
+            VALUES(2,?,'other.epub','other.epub','.epub',randomblob(16),randomblob(16));
             INSERT INTO koreader_hashes(asset_id, hash) VALUES(2,unhex('11111111111111111111111111111111'));`, bookID)
 		input.Position, input.Progress = "chapter-2", 1
 		external, err := database.SaveKOReaderProgress(t.Context(), user.ID, input)
@@ -448,9 +449,9 @@ func TestKOReaderHashCollisionPreservesExistingAssetPosition(t *testing.T) {
 func TestKOReaderHashesRecordDownloadsAndSurviveFileChanges(t *testing.T) {
 	database := newTestDB(t)
 	oldHash, newHash := strings.Repeat("aa", 16), strings.Repeat("bb", 16)
-	original := sha256.Sum256([]byte("original book"))
+	original := storage.Sum([]byte("original book"))
 	mustExec(t, database, `INSERT INTO books(id,title,sort_title) VALUES(1,'First','First')`)
-	mustExec(t, database, `INSERT INTO assets(id,book_id,storage_path,filename,extension,original_sha256,current_sha256)
+	mustExec(t, database, `INSERT INTO assets(id,book_id,storage_path,filename,extension,original_hash,current_hash)
         VALUES(1,1,'first.epub','first.epub','.epub',?,?)`, original[:], original[:])
 	assertHashes := func(wantCache string, wantCount int) {
 		t.Helper()
@@ -471,9 +472,9 @@ func TestKOReaderHashesRecordDownloadsAndSurviveFileChanges(t *testing.T) {
 	}
 	assertHashes(oldHash, 1)
 	// Metadata-only intermediate versions never accumulate in the hash table.
-	var rewritten [32]byte
+	var rewritten [16]byte
 	for _, content := range []string{"updated metadata", "another metadata edit"} {
-		rewritten = sha256.Sum256([]byte(content))
+		rewritten = storage.Sum([]byte(content))
 		if err := database.Transact(t.Context(), func(tx *Tx) error {
 			return MarkMetadataWritebackSuccess(tx, 1, "first.epub", rewritten[:], 100, 1)
 		}); err != nil {

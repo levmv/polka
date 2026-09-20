@@ -141,7 +141,7 @@ func (s *Server) readImportUpload(w http.ResponseWriter, r *http.Request) (sourc
 		}
 
 		originalName = cleanUploadFilename(part.FileName())
-		if !importer.IsSupportedBook(originalName) {
+		if !importer.HasBookExtension(originalName) {
 			http.Error(w, "Unsupported book format", http.StatusBadRequest)
 			return importer.Source{}, false
 		}

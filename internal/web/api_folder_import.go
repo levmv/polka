@@ -3,7 +3,6 @@ package web
 import (
 	"context"
 	"fmt"
-	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -163,42 +162,39 @@ func (s *Server) validateFolderImportPath(raw string) (string, error) {
 
 func (s *Server) previewFolderImport(ctx context.Context, rootPath string) (FolderImportPreviewDTO, error) {
 	out := FolderImportPreviewDTO{Path: rootPath}
-	err := walkFolderImport(rootPath, func(path string, d fs.DirEntry) error {
-		if err := context.Cause(ctx); err != nil {
-			return err
-		}
-		if d.IsDir() {
-			sources, ok, detectErr := importer.CalibreBookSources(path)
-			if detectErr != nil {
-				out.addError(path, rootPath, detectErr)
-				return filepath.SkipDir
-			}
-			if ok {
-				out.CalibreBooks++
-				for _, source := range sources {
-					out.Files++
-					if err := out.addProbe(ctx, source.Path, rootPath, s.db.Read(ctx)); err != nil {
-						return err
-					}
-				}
-				return filepath.SkipDir
-			}
+	err := importer.WalkFolder(ctx, rootPath, func(found importer.FolderItem) error {
+		if found.Err != nil {
+			out.addError(found.Path, rootPath, found.Err, 1)
 			return nil
 		}
-		if !d.Type().IsRegular() {
-			return nil
-		}
-		if !importer.IsSupportedBook(d.Name()) {
+		if len(found.Sources) == 0 {
 			out.Skipped++
 			return nil
 		}
+		if found.Group {
+			out.CalibreBooks++
+			out.Files += len(found.Sources)
+			probe, err := importer.ProbeGroup(ctx, s.db.Read(ctx), found.Sources)
+			if err != nil {
+				if cause := context.Cause(ctx); cause != nil {
+					return cause
+				}
+				out.addError(found.Path, rootPath, err, len(found.Sources))
+				return nil
+			}
+			for _, source := range probe {
+				out.addProbeResult(source)
+			}
+			return nil
+		}
 		out.Files++
-		return out.addProbe(ctx, path, rootPath, s.db.Read(ctx))
-	}, func(path string, err error) {
-		out.addError(path, rootPath, err)
+		if err := out.addProbe(ctx, found.Sources[0].Path, rootPath, s.db.Read(ctx)); err != nil {
+			return err
+		}
+		return nil
 	})
 	if err != nil {
-		return FolderImportPreviewDTO{}, fmt.Errorf("walk folder import: %w", err)
+		return FolderImportPreviewDTO{}, err
 	}
 	return out, nil
 }
@@ -209,9 +205,14 @@ func (p *FolderImportPreviewDTO) addProbe(ctx context.Context, path, rootPath st
 		if cause := context.Cause(ctx); cause != nil {
 			return cause
 		}
-		p.addError(path, rootPath, err)
+		p.addError(path, rootPath, err, 1)
 		return nil
 	}
+	p.addProbeResult(probe)
+	return nil
+}
+
+func (p *FolderImportPreviewDTO) addProbeResult(probe importer.SourceProbe) {
 	if probe.Duplicate {
 		p.Duplicates++
 		if probe.Existing.BookTrashed {
@@ -220,71 +221,64 @@ func (p *FolderImportPreviewDTO) addProbe(ctx context.Context, path, rootPath st
 	} else {
 		p.WouldImport++
 	}
-	return nil
 }
 
-func (p *FolderImportPreviewDTO) addError(path, rootPath string, err error) {
-	p.Failed++
+func (p *FolderImportPreviewDTO) addError(path, rootPath string, err error, files int) {
+	p.Failed += files
 	p.Errors = appendBoundedError(p.Errors, rootPath, path, err)
 }
 
 func (s *Server) importFolder(ctx context.Context, rootPath string, root storage.Root, extractor *format.Extractor, opts importer.Options) (FolderImportResultDTO, error) {
 	out := FolderImportResultDTO{Path: rootPath}
-	err := walkFolderImport(rootPath, func(path string, d fs.DirEntry) error {
-		if err := context.Cause(ctx); err != nil {
-			return err
-		}
-		if d.IsDir() {
-			sources, ok, detectErr := importer.CalibreBookSources(path)
-			if detectErr != nil {
-				out.addError(path, rootPath, detectErr, 1)
-				return filepath.SkipDir
-			}
-			if ok {
-				out.CalibreBooks++
-				out.Files += len(sources)
-				group, err := importer.ImportGroup(ctx, s.db, root, sources, extractor, opts)
-				if err != nil {
-					if cause := context.Cause(ctx); cause != nil {
-						return cause
-					}
-					out.addError(path, rootPath, err, len(sources))
-					return filepath.SkipDir
-				}
-				out.Warnings += len(group.Warnings)
-				if group.Restored {
-					out.Restored++
-				}
-				for _, res := range group.Results {
-					out.addImportResult(res)
-				}
-				return filepath.SkipDir
-			}
+	knownSizes, err := db.AssetContentSizes(s.db.Read(ctx))
+	if err != nil {
+		return out, err
+	}
+	opts.KnownAssetSizes = knownSizes
+	err = importer.WalkFolder(ctx, rootPath, func(found importer.FolderItem) error {
+		if found.Err != nil {
+			out.addError(found.Path, rootPath, found.Err, 1)
 			return nil
 		}
-		if !d.Type().IsRegular() {
-			return nil
-		}
-		if !importer.IsSupportedBook(d.Name()) {
+		if len(found.Sources) == 0 {
 			out.Skipped++
 			return nil
 		}
-		out.Files++
-		res, err := importer.ImportFile(ctx, s.db, root, path, extractor, opts)
+
+		out.Files += len(found.Sources)
+		if found.Group {
+			out.CalibreBooks++
+			group, err := importer.ImportGroup(ctx, s.db, root, found.Sources, extractor, opts)
+			if err != nil {
+				if cause := context.Cause(ctx); cause != nil {
+					return cause
+				}
+				out.addError(found.Path, rootPath, err, len(found.Sources))
+				return nil
+			}
+			out.Warnings += len(group.Warnings)
+			if group.Restored {
+				out.Restored++
+			}
+			for _, res := range group.Results {
+				out.addImportResult(res)
+			}
+			return nil
+		}
+
+		res, err := importer.Import(ctx, s.db, root, found.Sources[0], extractor, opts)
 		if err != nil {
 			if cause := context.Cause(ctx); cause != nil {
 				return cause
 			}
-			out.addError(path, rootPath, err, 1)
+			out.addError(found.Path, rootPath, err, 1)
 			return nil
 		}
 		out.addImportResult(res)
 		return nil
-	}, func(path string, err error) {
-		out.addError(path, rootPath, err, 1)
 	})
 	if err != nil {
-		return FolderImportResultDTO{}, fmt.Errorf("walk folder import: %w", err)
+		return FolderImportResultDTO{}, err
 	}
 	return out, nil
 }
@@ -302,30 +296,8 @@ func (r *FolderImportResultDTO) addImportResult(res importer.Result) {
 }
 
 func (r *FolderImportResultDTO) addError(path, rootPath string, err error, files int) {
-	if files <= 0 {
-		files = 1
-	}
 	r.Failed += files
 	r.Errors = appendBoundedError(r.Errors, rootPath, path, err)
-}
-
-func walkFolderImport(rootPath string, visit func(path string, d fs.DirEntry) error, onError func(path string, err error)) error {
-	return filepath.WalkDir(rootPath, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			if path == rootPath {
-				return err
-			}
-			onError(path, err)
-			if d != nil && d.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if path == rootPath {
-			return nil
-		}
-		return visit(path, d)
-	})
 }
 
 func appendBoundedError(errors []string, rootPath, path string, err error) []string {
