@@ -48,7 +48,8 @@ func (r Root) StagingDir() string {
 }
 
 func StagingRelPath(label string) string {
-	return path.Join(".staging", ".relayout-"+randHex(8)+"-"+filepath.Base(label))
+	base := ".relayout-" + randHex(8) + "-" + filepath.Base(label)
+	return path.Join(".staging", shortenPathSegment(base))
 }
 
 func WritebackTempRelPath(finalRelPath, label string) string {
@@ -265,7 +266,8 @@ func Place(root Root, relPath, label string, src io.Reader, commitDB func() erro
 }
 
 func stagedPath(dir, relPath string) string {
-	return filepath.Join(dir, ".tmp-"+randHex(8)+"-"+filepath.Base(relPath))
+	base := ".tmp-" + randHex(8) + "-" + filepath.Base(relPath)
+	return filepath.Join(dir, shortenPathSegment(base))
 }
 
 func moveFile(src, dst string) error {

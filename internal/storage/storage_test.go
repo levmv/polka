@@ -346,6 +346,39 @@ func TestMoveFileFallsBackOnEXDEV(t *testing.T) {
 	}
 }
 
+func TestLongBookPathStagesAndMovesAcrossFilesystems(t *testing.T) {
+	root := testRoot(t)
+	rel, err := BookPath("", BookPathData{
+		Title: strings.Repeat("Long title ", 40), Author: strings.Repeat("Автор ", 50), AssetID: 123, Ext: "epub",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	staged, err := Stage(root, "[a123].epub", strings.NewReader("original bytes"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer staged.Cleanup()
+	if err := staged.Finalize(root, rel); err != nil {
+		t.Fatal(err)
+	}
+	staging := StagingRelPath(AssetTag(123) + "-" + filepath.Base(rel))
+	if !strings.Contains(filepath.Base(staging), AssetTag(123)) {
+		t.Fatal("relayout staging lost its recovery tag")
+	}
+	for _, paths := range [][2]string{{rel, staging}, {staging, rel}} {
+		err := moveFileWithRename(root.Abs(paths[0]), root.Abs(paths[1]), func(_, _ string) error {
+			return syscall.EXDEV
+		})
+		if err != nil {
+			t.Fatalf("cross-filesystem move: %v", err)
+		}
+	}
+	if got, err := os.ReadFile(root.Abs(rel)); err != nil || string(got) != "original bytes" {
+		t.Fatalf("final content = %q, %v", got, err)
+	}
+}
+
 func TestMoveFileDoesNotFallbackOnOtherRenameError(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "source.epub")

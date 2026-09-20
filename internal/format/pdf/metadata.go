@@ -740,7 +740,13 @@ func isPDFWhitespace(b byte) bool {
 }
 
 func Is(r io.ReaderAt) bool {
-	var head [5]byte
+	return pdfHeaderOffset(r) >= 0
+}
+
+// Readers tolerate a short wrapper before the PDF header, including polyglots.
+// Keep recognition bounded; damaged files without a header are a separate case.
+func pdfHeaderOffset(r io.ReaderAt) int64 {
+	var head [1024]byte
 	n, _ := r.ReadAt(head[:], 0)
-	return n == len(head) && string(head[:]) == "%PDF-"
+	return int64(bytes.Index(head[:n], []byte("%PDF-")))
 }

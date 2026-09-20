@@ -694,6 +694,8 @@ func bracketTags(name string) []string {
 			break
 		}
 		end := open + closeRel
+		// A shortened title may leave an unmatched '[' before the recovery tag.
+		open = strings.LastIndexByte(name[:end], '[')
 		tags = append(tags, name[open:end+1])
 		name = name[end+1:]
 	}

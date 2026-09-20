@@ -30,9 +30,9 @@ import (
 	"github.com/levmv/polka/internal/covers"
 )
 
-// DefaultDPI renders a 6×9in trade page at ~900×1350 — matching the covers
-// display variant, so a derived thumbnail downsamples without upscaling.
-const DefaultDPI = 150
+// DefaultCoverSize bounds the longest edge in pixels, matching the display
+// cover's maximum height regardless of the PDF page's physical dimensions.
+const DefaultCoverSize = 1350
 
 const (
 	defaultOperationTimeout = 30 * time.Second
@@ -154,19 +154,20 @@ func (r *Renderer) ensureWASM() error {
 }
 
 // RenderCoverJPEG renders the first nonblank opening page to JPEG bytes at the
-// given DPI (DefaultDPI when dpi <= 0). The WASM provider also returns the page
-// count from the same document, even if rendering subsequently fails. Poppler
-// returns zero for the count. Both providers stream/seek over the source.
+// given maximum edge in pixels (DefaultCoverSize when maxSize <= 0), preserving
+// aspect ratio. The WASM provider also returns the page count from the same
+// document, even if rendering subsequently fails. Poppler returns zero for the
+// count. Both providers stream/seek over the source.
 // Lookahead is limited to covers.CoverPageLimit; the first page is the fallback.
-func (r *Renderer) RenderCoverJPEG(ctx context.Context, pdf io.ReadSeeker, size int64, dpi int) ([]byte, int, error) {
+func (r *Renderer) RenderCoverJPEG(ctx context.Context, pdf io.ReadSeeker, size int64, maxSize int) ([]byte, int, error) {
 	if pdf == nil || size <= 0 {
 		return nil, 0, errors.New("empty pdf")
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, 0, err
 	}
-	if dpi <= 0 {
-		dpi = DefaultDPI
+	if maxSize <= 0 {
+		maxSize = DefaultCoverSize
 	}
 	renderCtx, cancel := context.WithTimeoutCause(ctx, r.operationTimeout, errOperationTimeout)
 	defer cancel()
@@ -187,13 +188,13 @@ func (r *Renderer) RenderCoverJPEG(ctx context.Context, pdf io.ReadSeeker, size 
 			if _, err := pdf.Seek(0, io.SeekStart); err != nil {
 				return nil, err
 			}
-			return r.renderPoppler(renderCtx, pdf, size, dpi, page+1)
+			return r.renderPoppler(renderCtx, pdf, size, maxSize, page+1)
 		})
 	case BackendPDFiumWASM:
 		if size > maxSeekablePDFBytes {
 			return nil, 0, fmt.Errorf("pdf is too large for the seekable WASM renderer (%d bytes)", size)
 		}
-		result, err = r.renderWASM(renderCtx, pdf, size, dpi)
+		result, err = r.renderWASM(renderCtx, pdf, size, maxSize)
 	default:
 		return nil, 0, fmt.Errorf("unknown PDF cover backend %q", r.backend.Backend)
 	}
@@ -250,9 +251,9 @@ func (r *Renderer) renderCoverPages(ctx context.Context, pages int, render func(
 	return first, nil
 }
 
-func (r *Renderer) renderWASM(ctx context.Context, pdf io.ReadSeeker, size int64, dpi int) (pdfResult, error) {
+func (r *Renderer) renderWASM(ctx context.Context, pdf io.ReadSeeker, size int64, maxSize int) (pdfResult, error) {
 	return r.withWASMInstance(ctx, "render PDF cover", func(instance pdfOperations) (pdfResult, error) {
-		return r.renderWASMInstance(ctx, instance, pdf, size, dpi)
+		return r.renderWASMInstance(ctx, instance, pdf, size, maxSize)
 	})
 }
 
@@ -378,7 +379,7 @@ func operationContextError(ctx context.Context, action string, timeout time.Dura
 	return fmt.Errorf("%s: %w", action, ctx.Err())
 }
 
-func (r *Renderer) renderWASMInstance(ctx context.Context, instance pdfOperations, pdf io.ReadSeeker, size int64, dpi int) (pdfResult, error) {
+func (r *Renderer) renderWASMInstance(ctx context.Context, instance pdfOperations, pdf io.ReadSeeker, size int64, maxSize int) (pdfResult, error) {
 	doc, err := instance.OpenDocument(&requests.OpenDocument{
 		FileReader:     pdf,
 		FileReaderSize: size,
@@ -393,9 +394,10 @@ func (r *Renderer) renderWASMInstance(ctx context.Context, instance pdfOperation
 
 	result.jpeg, err = r.renderCoverPages(ctx, max(result.pages, 1), func(page int) ([]byte, error) {
 		res, err := instance.RenderToFile(&requests.RenderToFile{
-			RenderPageInDPI: &requests.RenderPageInDPI{
-				DPI:  dpi,
-				Page: requests.Page{ByIndex: &requests.PageByIndex{Document: doc.Document, Index: page}},
+			RenderPageInPixels: &requests.RenderPageInPixels{
+				Width:  maxSize,
+				Height: maxSize,
+				Page:   requests.Page{ByIndex: &requests.PageByIndex{Document: doc.Document, Index: page}},
 			},
 			OutputFormat:  requests.RenderToFileOutputFormatJPG,
 			OutputTarget:  requests.RenderToFileOutputTargetBytes,

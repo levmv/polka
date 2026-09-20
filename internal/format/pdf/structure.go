@@ -53,10 +53,23 @@ func openPDFStructure(r io.ReaderAt, size int64) *pdfStructure {
 	if r == nil || size <= 0 {
 		return nil
 	}
-	p := &pdfStructure{r: r, size: size, remainingBytes: maxPDFStructureReadBytes}
-	if !bytes.HasPrefix(p.read(0, 16), []byte("%PDF-")) {
+	header := pdfHeaderOffset(r)
+	if header < 0 {
 		return nil
 	}
+	if header > 0 {
+		// Prefer header-relative offsets; some producers count the prefix instead.
+		// Each bounded attempt uses one origin throughout the xref chain, without
+		// changing the bytes used by rendering, hashing or persistence.
+		if p := parsePDFStructure(io.NewSectionReader(r, header, size-header), size-header); p != nil {
+			return p
+		}
+	}
+	return parsePDFStructure(r, size)
+}
+
+func parsePDFStructure(r io.ReaderAt, size int64) *pdfStructure {
+	p := &pdfStructure{r: r, size: size, remainingBytes: maxPDFStructureReadBytes}
 	tail := bytes.TrimRightFunc(p.read(max(size-8192, 0), 8192), func(c rune) bool {
 		return c <= 255 && isPDFWhitespace(byte(c))
 	})

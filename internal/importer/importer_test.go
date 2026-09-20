@@ -109,6 +109,33 @@ func openTestLibrary(t *testing.T, dataDir, rootDir string) (*db.DB, storage.Roo
 	return database, root
 }
 
+func TestImportKeepsLongMetadataWithShortStoragePath(t *testing.T) {
+	dataDir := t.TempDir()
+	database, root := openTestLibrary(t, dataDir, dataDir)
+	source := filepath.Join(t.TempDir(), "book.epub")
+	title, author := strings.Repeat("Long title ", 40)+"end", strings.Repeat("Author, ", 50)+"Last"
+	writeEPUB(t, source, []byte(fmt.Sprintf(`<package xmlns="http://www.idpf.org/2007/opf" version="2.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>%s</dc:title><dc:creator>%s</dc:creator></metadata></package>`, title, author)))
+	result, err := ImportFile(t.Context(), database, root, source, nil, Options{})
+	if err != nil || result.Status != StatusImported || len(result.Warnings) != 0 {
+		t.Fatalf("Import = %+v, %v", result, err)
+	}
+	var storedTitle, storedAuthor string
+	if err := database.Read(t.Context()).QueryRow(`SELECT b.title, a.name FROM books b JOIN book_authors ba ON ba.book_id = b.id JOIN authors a ON a.id = ba.author_id WHERE b.id = ?`, result.BookID).Scan(&storedTitle, &storedAuthor); err != nil {
+		t.Fatal(err)
+	}
+	if storedTitle != title || storedAuthor != author {
+		t.Fatal("metadata was shortened along with the storage path")
+	}
+	want, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(root.Abs(result.StoragePath))
+	if err != nil || !bytes.Equal(got, want) {
+		t.Fatalf("managed file differs from source: %v", err)
+	}
+}
+
 func writeCBZ(t *testing.T, path string, entries map[string][]byte) {
 	t.Helper()
 	buf := new(bytes.Buffer)

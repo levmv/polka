@@ -1364,6 +1364,7 @@ func TestBracketTags(t *testing.T) {
 		{"no brackets", "plain.epub", nil},
 		{"two tags", "A [x] B [y].fb2", []string{"[x]", "[y]"}},
 		{"unclosed", "Title [as_1.epub", nil},
+		{"unclosed title bracket", "Title [unfinished [a12].epub", []string{"[a12]"}},
 		{"empty tag", "x [].epub", []string{"[]"}},
 	}
 	for _, tt := range tests {

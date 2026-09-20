@@ -1,8 +1,55 @@
 package storage
 
 import (
+	"path"
+	"strings"
 	"testing"
+	"unicode/utf8"
 )
+
+func TestBookPathShortensLongComponents(t *testing.T) {
+	for _, name := range []string{strings.Repeat("a", 255), strings.Repeat("a", 256), strings.Repeat("Автор本", 100)} {
+		data := BookPathData{Title: name, AuthorSort: name, AssetID: 123, Ext: ".kepub.epub"}
+		got, err := BookPath("", data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, segment := range strings.Split(got, "/") {
+			if len(segment) > 255 || !utf8.ValidString(segment) {
+				t.Fatalf("invalid path component: %d bytes, valid UTF-8 %v", len(segment), utf8.ValidString(segment))
+			}
+		}
+		if !strings.HasSuffix(got, " [a123].kepub.epub") {
+			t.Fatalf("lost asset tag or extension: %q", got)
+		}
+		if len(name) == 255 && path.Base(path.Dir(got)) != name {
+			t.Fatal("shortened a directory that already fits")
+		}
+		again, err := BookPath("", data)
+		if err != nil || again != got {
+			t.Fatalf("path is not deterministic: %q, %v", again, err)
+		}
+	}
+
+	// A custom template may omit IDs, so differing omitted text must still
+	// distinguish both directories and filenames.
+	prefix, suffix := strings.Repeat("Beginning", 40), strings.Repeat("Ending", 40)
+	var previous []string
+	for _, middle := range []string{"one", "two"} {
+		name := prefix + middle + suffix
+		got, err := BookPath("{author}/{title}{dot_ext}", BookPathData{Author: name, Title: name, Ext: "pdf"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		segments := strings.Split(got, "/")
+		for i, segment := range previous {
+			if segment == segments[i] {
+				t.Fatal("shortening introduced a path collision")
+			}
+		}
+		previous = segments
+	}
+}
 
 func TestDefaultBookPath(t *testing.T) {
 	tests := []struct {

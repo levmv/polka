@@ -1,9 +1,13 @@
 package storage
 
 import (
+	"fmt"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
+
+const maxPathSegmentBytes = 255
 
 // The default book layout groups files by author and includes the numeric asset
 // ID in each filename. SQLite stores the current path relative to the books
@@ -33,6 +37,25 @@ func sanitizePathSegment(s string) string {
 	// here. An all-dots segment (".", "..") trims to empty and hits the caller's
 	// "rendered empty" guard.
 	return strings.TrimLeft(res, ". ")
+}
+
+// shortenPathSegment keeps both ends, including the usual asset tag and
+// extension. The hash distinguishes names that differ only in the omitted text.
+func shortenPathSegment(s string) string {
+	if len(s) <= maxPathSegmentBytes {
+		return s
+	}
+	digest := Sum([]byte(s))
+	marker := fmt.Sprintf("~%x~", digest[:8])
+	head := (maxPathSegmentBytes - len(marker)) / 2
+	tail := len(s) - (maxPathSegmentBytes - len(marker) - head)
+	for !utf8.RuneStart(s[head]) {
+		head--
+	}
+	for !utf8.RuneStart(s[tail]) {
+		tail++
+	}
+	return s[:head] + marker + s[tail:]
 }
 
 // authorBucket returns the top-level bucket directory for an author sort key.

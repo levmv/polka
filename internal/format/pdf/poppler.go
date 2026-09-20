@@ -69,7 +69,7 @@ func detectPoppler(command externalCommand, lookPath func(string) (string, error
 	}, nil
 }
 
-func (r *Renderer) renderPoppler(ctx context.Context, pdf io.Reader, size int64, dpi, page int) ([]byte, error) {
+func (r *Renderer) renderPoppler(ctx context.Context, pdf io.Reader, size int64, maxSize, page int) ([]byte, error) {
 	var stdout, stderr limitedBuffer
 	stdout.limit = maxRenderedCoverBytes
 	stderr.limit = maxDiagnosticBytes
@@ -77,7 +77,8 @@ func (r *Renderer) renderPoppler(ctx context.Context, pdf io.Reader, size int64,
 		"-f", strconv.Itoa(page),
 		"-l", strconv.Itoa(page),
 		"-singlefile",
-		"-r", strconv.Itoa(dpi),
+		"-cropbox",
+		"-scale-to", strconv.Itoa(maxSize),
 		"-jpeg",
 		"-jpegopt", "quality=90",
 		"-",

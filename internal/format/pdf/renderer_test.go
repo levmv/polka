@@ -48,7 +48,7 @@ func TestWASMFallbackRendersWithoutHostFilesystem(t *testing.T) {
 	if len(rendered) == 0 || pages != 1 {
 		t.Fatalf("RenderCoverJPEG returned %d bytes and %d pages; want a cover and one page", len(rendered), pages)
 	}
-	// The one-inch page at 1 DPI produces a single pixel even with a healthy
+	// A one-pixel limit produces a single pixel even with a healthy
 	// renderer. Reject it as a cover while retaining the known page count.
 	rendered, pages, err = r.RenderCoverJPEG(t.Context(), bytes.NewReader(pdf), int64(len(pdf)), 1)
 	if err == nil || !strings.Contains(err.Error(), "1x1") || rendered != nil || pages != 1 {
@@ -191,7 +191,7 @@ func TestRendererUsesProbedPoppler(t *testing.T) {
 	if !bytes.Equal(got, jpegBytes) {
 		t.Fatalf("rendered bytes differ from fake Poppler output")
 	}
-	wantArgs := []string{"-f", "1", "-l", "1", "-singlefile", "-r", "96", "-jpeg", "-jpegopt", "quality=90", "-"}
+	wantArgs := []string{"-f", "1", "-l", "1", "-singlefile", "-cropbox", "-scale-to", "96", "-jpeg", "-jpegopt", "quality=90", "-"}
 	if !slices.Equal(renderArgs, wantArgs) {
 		t.Fatalf("pdftoppm args = %q, want %q", renderArgs, wantArgs)
 	}
@@ -387,6 +387,59 @@ func TestWASMPageCount(t *testing.T) {
 		if err != nil || got != want {
 			t.Fatalf("count = %d, %v; want %d", got, err, want)
 		}
+	}
+}
+
+func TestCoverPageGeometry(t *testing.T) {
+	for _, backend := range []Backend{BackendPDFiumWASM, BackendPoppler} {
+		t.Run(string(backend), func(t *testing.T) {
+			info := BackendInfo{Backend: backend}
+			if backend == BackendPoppler {
+				var err error
+				info.Executable, err = exec.LookPath("pdftoppm")
+				if err != nil {
+					t.Skip("pdftoppm is not installed")
+				}
+			}
+			r := newRenderer(rendererConfig{backend: info})
+			t.Cleanup(func() { _ = r.Close() })
+			for _, tc := range []struct {
+				name                  string
+				width, height         int
+				crop                  string
+				wantWidth, wantHeight int
+			}{
+				{"wide", 12000, 2400, "", DefaultCoverSize, DefaultCoverSize / 5},
+				{"tall", 2400, 12000, "", DefaultCoverSize / 5, DefaultCoverSize},
+				{"cropped", 12000, 2400, "/CropBox [4800 600 7200 1800]", DefaultCoverSize, DefaultCoverSize / 2},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					content := fmt.Sprintf("1 0 0 rg %d %d 200 200 re f\n", tc.width/2-100, tc.height/2-100)
+					data := pdfTestDocument(
+						`<< /Type /Catalog /Pages 2 0 R >>`,
+						`<< /Type /Pages /Kids [3 0 R] /Count 1 >>`,
+						fmt.Sprintf(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 %d %d] %s /Resources << >> /Contents 5 0 R >>`, tc.width, tc.height, tc.crop),
+						`<< /Title (Large page) >>`,
+						fmt.Sprintf("<< /Length %d >>\nstream\n%sendstream", len(content), content),
+					)
+					cover, _, err := r.RenderCoverJPEG(t.Context(), bytes.NewReader(data), int64(len(data)), 0)
+					if err != nil {
+						t.Fatal(err)
+					}
+					img, err := jpeg.Decode(bytes.NewReader(cover))
+					if err != nil {
+						t.Fatal(err)
+					}
+					if bounds := img.Bounds(); bounds.Dx() != tc.wantWidth || bounds.Dy() != tc.wantHeight {
+						t.Fatalf("cover = %dx%d; want %dx%d", bounds.Dx(), bounds.Dy(), tc.wantWidth, tc.wantHeight)
+					}
+					red, green, blue, _ := img.At(tc.wantWidth/2, tc.wantHeight/2).RGBA()
+					if red < 0xc000 || green > 0x4000 || blue > 0x4000 {
+						t.Fatalf("center pixel = %d/%d/%d; want the red page content", red, green, blue)
+					}
+				})
+			}
+		})
 	}
 }
 

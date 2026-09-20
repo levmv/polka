@@ -68,7 +68,7 @@ func RenderBookPathTemplate(template string, data BookPathData) (string, error) 
 		if safe == "" {
 			return "", fmt.Errorf("book path segment %q rendered empty", raw)
 		}
-		segments = append(segments, safe)
+		segments = append(segments, shortenPathSegment(safe))
 	}
 	return path.Join(segments...), nil
 }

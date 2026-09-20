@@ -7,10 +7,75 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"unicode/utf16"
 
 	"github.com/levmv/polka/internal/bookmeta"
-	"unicode/utf16"
 )
+
+func TestPDFHeaderRecognitionIsBounded(t *testing.T) {
+	if !Is(strings.NewReader(strings.Repeat("x", 1019) + "%PDF-1.7\n")) {
+		t.Fatal("header at the end of the search window was not recognized")
+	}
+	if Is(strings.NewReader(strings.Repeat("x", 1020) + "%PDF-1.7\n")) {
+		t.Fatal("header extending beyond the search window was recognized")
+	}
+}
+
+func TestPrefixedPDFUsesCurrentObjects(t *testing.T) {
+	const prefix = "wrapper before PDF\n"
+	for _, origin := range []struct{ name, prefix string }{
+		{"header-relative", ""},
+		{"file-relative", prefix},
+	} {
+		base := pdfTestDocumentWithPrefix(origin.prefix,
+			`<< /Type /Catalog /Pages 2 0 R >>`,
+			`<< /Type /Pages /Kids [3 0 R] /Count 1 >>`,
+			`<< /Type /Page /Parent 2 0 R >>`,
+			`<< /Title (Original) /Author (Original Author) >>`,
+		)
+		for _, tt := range []struct {
+			name, info, infoRef, title, author string
+			free                               bool
+		}{
+			{"updated", `<< /Title (Revised) /Author (Current Author) >>`, "4 0 R", "Revised", "Current Author", false},
+			{"removed title", `<< /Author (Current Author) >>`, "4 0 R", "", "Current Author", false},
+			{"null Info", `<< /Title (Revised) /Author (Current Author) >>`, "null", "", "", false},
+			{"free Info", `<< /Title (Revised) /Author (Current Author) >>`, "4 0 R", "", "", true},
+		} {
+			t.Run(origin.name+"/"+tt.name, func(t *testing.T) {
+				var updated bytes.Buffer
+				updated.Write(base)
+				infoOffset := updated.Len()
+				fmt.Fprintf(&updated, "4 0 obj\n%s\nendobj\n", tt.info)
+				xref := updated.Len()
+				updated.WriteString("xref\n4 1\n")
+				if tt.free {
+					updated.WriteString("0000000000 00001 f \n")
+				} else {
+					fmt.Fprintf(&updated, "%010d 00000 n \n", infoOffset)
+				}
+				fmt.Fprintf(&updated, "trailer\n<< /Size 5 /Root 1 0 R /Info %s /Prev %d >>\nstartxref\n%d\n%%%%EOF\n", tt.infoRef, bytes.Index(base, []byte("xref\n")), xref)
+				data := updated.Bytes()
+				if origin.prefix == "" {
+					// Adding the wrapper last leaves all offsets relative to the header.
+					data = append([]byte(prefix), data...)
+				}
+				meta := metadataFromBytes(data)
+				pages := ReadyPageCount(bytes.NewReader(data), int64(len(data)))
+				if meta.Title != tt.title || meta.PageCount != 1 || pages != 1 {
+					t.Fatalf("metadata = %+v; count = %d; want title %q and one page", meta, pages, tt.title)
+				}
+				if tt.author == "" {
+					if len(meta.Authors) != 0 {
+						t.Fatalf("Authors = %+v; want none", meta.Authors)
+					}
+				} else if len(meta.Authors) != 1 || meta.Authors[0].Name != tt.author {
+					t.Fatalf("Authors = %+v; want %q", meta.Authors, tt.author)
+				}
+			})
+		}
+	}
+}
 
 func TestExtractPDFMetadataInfoStrings(t *testing.T) {
 	utf16Literal := []byte("<< /Title (")
@@ -369,7 +434,12 @@ func TestPDFStructureUsesCurrentObjects(t *testing.T) {
 }
 
 func pdfTestDocument(objects ...string) []byte {
+	return pdfTestDocumentWithPrefix("", objects...)
+}
+
+func pdfTestDocumentWithPrefix(prefix string, objects ...string) []byte {
 	var out bytes.Buffer
+	out.WriteString(prefix)
 	out.WriteString("%PDF-1.4\n")
 	offsets := make([]int, len(objects))
 	for i, object := range objects {
