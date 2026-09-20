@@ -25,7 +25,6 @@ import (
 	"github.com/levmv/polka/internal/covers"
 	"github.com/levmv/polka/internal/db"
 	"github.com/levmv/polka/internal/format"
-	"github.com/levmv/polka/internal/pdfcover"
 	"github.com/levmv/polka/internal/storage"
 )
 
@@ -187,8 +186,8 @@ func (r contextReader) Read(p []byte) (int, error) {
 }
 
 // ImportFile imports srcPath using the file's own name for detection/fallbacks.
-func ImportFile(ctx context.Context, database *db.DB, root storage.Root, srcPath string, renderer *pdfcover.Renderer, opts Options) (Result, error) {
-	return Import(ctx, database, root, Source{Path: srcPath}, renderer, opts)
+func ImportFile(ctx context.Context, database *db.DB, root storage.Root, srcPath string, extractor *format.Extractor, opts Options) (Result, error) {
+	return Import(ctx, database, root, Source{Path: srcPath}, extractor, opts)
 }
 
 // Import imports a source into the library, checking for duplicate content
@@ -196,7 +195,7 @@ func ImportFile(ctx context.Context, database *db.DB, root storage.Root, srcPath
 // normal callers. A duplicate of a trashed book stays trashed; an explicit
 // single-book surface such as browser upload may use Result.BookTrashed to
 // restore it deliberately.
-func Import(ctx context.Context, database *db.DB, root storage.Root, src Source, renderer *pdfcover.Renderer, opts Options) (Result, error) {
+func Import(ctx context.Context, database *db.DB, root storage.Root, src Source, extractor *format.Extractor, opts Options) (Result, error) {
 	info, err := fingerprintSource(ctx, src)
 	if err != nil {
 		return Result{}, err
@@ -211,7 +210,7 @@ func Import(ctx context.Context, database *db.DB, root storage.Root, src Source,
 		return existing, nil
 	}
 
-	plan, err := resolveFromInfo(ctx, info, renderer)
+	plan, err := resolveFromInfo(ctx, info, extractor)
 	if err != nil {
 		return Result{}, err
 	}
@@ -223,7 +222,7 @@ func Import(ctx context.Context, database *db.DB, root storage.Root, src Source,
 // book directory. If every source is already present, no new book is created
 // and a trashed book stays trashed. Attaching at least one new asset restores a
 // trashed book in the same transaction, so new bytes never land invisibly.
-func ImportGroup(ctx context.Context, database *db.DB, root storage.Root, sources []Source, renderer *pdfcover.Renderer, opts Options) (GroupResult, error) {
+func ImportGroup(ctx context.Context, database *db.DB, root storage.Root, sources []Source, extractor *format.Extractor, opts Options) (GroupResult, error) {
 	if len(sources) == 0 {
 		return GroupResult{}, errors.New("no sources to import")
 	}
@@ -275,18 +274,18 @@ func ImportGroup(ctx context.Context, database *db.DB, root storage.Root, source
 		group = GroupResult{BookID: existingBookID, Results: results}
 	case existingBookID != 0:
 		for _, idx := range newIndexes {
-			infos[idx].PageCount = sourcePageCount(ctx, infos[idx], renderer)
+			infos[idx].PageCount = sourcePageCount(ctx, infos[idx], extractor)
 		}
 		group, err = addAssetsToExistingBook(ctx, database, root, existingBookID, infos, newIndexes, results, opts)
 	default:
-		plan, resolveErr := resolveFromInfo(ctx, infos[newIndexes[0]], renderer)
+		plan, resolveErr := resolveFromInfo(ctx, infos[newIndexes[0]], extractor)
 		if resolveErr != nil {
 			return GroupResult{}, resolveErr
 		}
 		plan.AddedAt = addedAtForSources(plan.Metadata.CalibreTimestamp, infos, time.Now())
 		infos[newIndexes[0]].PageCount = plan.PageCount
 		for _, idx := range newIndexes[1:] {
-			infos[idx].PageCount = sourcePageCount(ctx, infos[idx], renderer)
+			infos[idx].PageCount = sourcePageCount(ctx, infos[idx], extractor)
 		}
 		group, err = persistNewBookGroup(ctx, database, root, plan, infos, newIndexes, results, opts)
 	}
@@ -302,12 +301,12 @@ func ImportGroup(ctx context.Context, database *db.DB, root storage.Root, source
 
 // Resolve reads metadata and cover data from a source without writing the DB or
 // storage. Persist can later store the returned plan.
-func Resolve(ctx context.Context, src Source, renderer *pdfcover.Renderer) (Plan, error) {
+func Resolve(ctx context.Context, src Source, extractor *format.Extractor) (Plan, error) {
 	info, err := fingerprintSource(ctx, src)
 	if err != nil {
 		return Plan{}, err
 	}
-	return resolveFromInfo(ctx, info, renderer)
+	return resolveFromInfo(ctx, info, extractor)
 }
 
 // ProbeSource performs the cheap import checks needed by dry-run paths: it
@@ -826,7 +825,7 @@ func cleanupIfUncommitted(committed bool, files []storage.StagedFile) {
 
 // resolveFromInfo accepts partial metadata and missing covers. Explicit context
 // checks keep suppressed extraction errors from hiding cancellation.
-func resolveFromInfo(ctx context.Context, info sourceInfo, renderer *pdfcover.Renderer) (Plan, error) {
+func resolveFromInfo(ctx context.Context, info sourceInfo, extractor *format.Extractor) (Plan, error) {
 	if err := context.Cause(ctx); err != nil {
 		return Plan{}, err
 	}
@@ -848,88 +847,24 @@ func resolveFromInfo(ctx context.Context, info sourceInfo, renderer *pdfcover.Re
 		plan.Warnings = append(plan.Warnings, warning)
 	}
 
-	contextSource := contextFile{ctx: ctx, file: f}
 	coverBytes := readSidecarCover(ctx, info.Source)
 	sidecarMeta := readSidecarOPF(ctx, info.Source)
 	if err := context.Cause(ctx); err != nil {
 		return Plan{}, err
 	}
-	sidecarComplete := sidecarMetadataComplete(sidecarMeta)
-	var embedded *bookmeta.Metadata
-	var extractErr error
-	// Share parsing work between metadata, cover and page-count extraction.
-	// A complete comic sidecar lets us skip ComicInfo, which can require decoding
-	// a solid archive.
-	coverChecked := false
-	if len(coverBytes) == 0 {
-		switch {
-		case format.IsEPUBContainerFormat(info.Format):
-			embedded, coverBytes, _, extractErr = format.ExtractEPUBMetadataAndCover(contextSource, info.Size)
-			coverChecked = true
-		case info.Format == format.FormatFB2:
-			embedded, coverBytes, _, extractErr = format.ExtractFB2MetadataAndCover(contextSource, info.Size)
-			coverChecked = true
-		case info.Format == format.FormatCBR && !sidecarComplete:
-			embedded, coverBytes, _, extractErr = format.ExtractCBRMetadataAndCover(contextSource, info.Size)
-			coverChecked = true
-		case info.Format == format.FormatCB7 && !sidecarComplete:
-			embedded, coverBytes, _, extractErr = format.ExtractCB7MetadataAndCover(contextSource, info.Size)
-			coverChecked = true
-		}
-	}
-	metadataRead := coverChecked
-	if !sidecarComplete && !metadataRead {
-		embedded, extractErr = format.ExtractMetadata(contextSource, info.Size, info.Format)
-		metadataRead = true
-	}
+	extracted, extractErr := extractor.Extract(ctx, f, info.Size, info.Format, format.ExtractOptions{
+		Metadata:  !sidecarMetadataComplete(sidecarMeta),
+		Cover:     len(coverBytes) == 0,
+		PageCount: true,
+	})
 	if err := context.Cause(ctx); err != nil {
 		return Plan{}, err
 	}
 	if extractErr != nil {
-		plan.Warnings = append(plan.Warnings, fmt.Errorf("extract %s metadata/cover for %s: %w", format.FormatLabel(info.Format), info.Path, extractErr))
+		plan.Warnings = append(plan.Warnings, fmt.Errorf("%s: %w", info.Path, extractErr))
 	}
-	if len(coverBytes) == 0 && !coverChecked {
-		if b, _, err := format.ExtractCover(contextSource, info.Size, info.Format); err != nil {
-			plan.Warnings = append(plan.Warnings, fmt.Errorf("extract %s cover for %s: %w", format.FormatLabel(info.Format), info.Path, err))
-		} else {
-			coverBytes = b
-		}
-		if err := context.Cause(ctx); err != nil {
-			return Plan{}, err
-		}
-	}
-
-	filePages, fixedLayout := 0, false
-	if embedded != nil {
-		filePages = embedded.PageCount
-		fixedLayout = embedded.FixedLayout
-	}
-	// Complete sidecars can skip embedded extraction; DjVu exposes its native
-	// count separately from book metadata.
-	if !metadataRead || info.Format == format.FormatDJVU {
-		if pages, fixed := readySourcePageCount(contextSource, info.Size, info.Format); pages > 0 {
-			filePages, fixedLayout = pages, fixed
-		}
-	}
-
-	// PDFs rarely carry an extractable cover; render the first page as a
-	// best-effort fallback when nothing better was found. Gated on renderer being
-	// supplied so EPUB-only imports never spin up pdfium. Keep the source
-	// seekable: pdfium can request the ranges it needs without a second
-	// whole-file allocation in both Go and WASM memory.
-	if len(coverBytes) == 0 && info.Format == format.FormatPDF && renderer != nil {
-		rendered, pages, rerr := renderer.RenderFirstPageJPEG(ctx, contextSource, info.Size, 0)
-		if pages > 0 {
-			filePages = pages
-		}
-		if rerr != nil {
-			plan.Warnings = append(plan.Warnings, fmt.Errorf("render PDF cover %s: %w", info.Path, rerr))
-		} else {
-			coverBytes = rendered
-		}
-		if err := context.Cause(ctx); err != nil {
-			return Plan{}, err
-		}
+	if len(coverBytes) == 0 {
+		coverBytes = extracted.Cover
 	}
 	if len(coverBytes) > 0 {
 		if err := context.Cause(ctx); err != nil {
@@ -943,17 +878,9 @@ func resolveFromInfo(ctx context.Context, info sourceInfo, renderer *pdfcover.Re
 			return Plan{}, err
 		}
 	}
-	if info.Format == format.FormatPDF && filePages == 0 && renderer != nil {
-		if pages, _ := renderer.CountPages(ctx, contextSource, info.Size); pages > 0 {
-			filePages = pages
-		}
-		if err := context.Cause(ctx); err != nil {
-			return Plan{}, err
-		}
-	}
-	plan.PageCount = selectPageCount(info.Format, filePages, fixedLayout, sidecarMeta)
+	plan.PageCount = selectPageCount(info.Format, extracted.Metadata.PageCount, extracted.Metadata.FixedLayout, sidecarMeta)
 	plan.CoverBytes = coverBytes
-	plan.applyMetadata(embedded, sidecarMeta)
+	plan.applyMetadata(extracted.Metadata, sidecarMeta)
 	plan.AddedAt = addedAtForSources(plan.Metadata.CalibreTimestamp, []sourceInfo{info}, time.Now())
 	return plan, nil
 }
@@ -1005,29 +932,17 @@ func (p *Plan) applyMetadata(embedded, sidecar *bookmeta.Metadata) {
 	p.Metadata = meta
 }
 
-// Keep EPUB's layout information so the sidecar cannot override a spine count.
-func readySourcePageCount(src io.ReaderAt, size int64, kind format.Format) (pages int, fixedLayout bool) {
-	if kind == format.FormatEPUB || kind == format.FormatKEPUB {
-		if meta, _ := format.ExtractEPUBMetadata(src, size); meta != nil {
-			return meta.PageCount, meta.FixedLayout
-		}
-		return 0, false
-	}
-	pages, _ = format.ReadyPageCount(src, size, kind)
-	return pages, false
-}
-
-func sourcePageCount(ctx context.Context, info sourceInfo, renderer *pdfcover.Renderer) int {
+func sourcePageCount(ctx context.Context, info sourceInfo, extractor *format.Extractor) int {
 	f, err := os.Open(info.Path)
 	if err != nil {
 		return 0
 	}
 	defer f.Close()
-	src := contextFile{ctx: ctx, file: f}
-	filePages, fixedLayout := readySourcePageCount(src, info.Size, info.Format)
-	if info.Format == format.FormatPDF && filePages == 0 && renderer != nil {
-		filePages, _ = renderer.CountPages(ctx, src, info.Size)
+	extracted, _ := extractor.Extract(ctx, f, info.Size, info.Format, format.ExtractOptions{PageCount: true})
+	if extracted.Metadata == nil {
+		return 0
 	}
+	filePages, fixedLayout := extracted.Metadata.PageCount, extracted.Metadata.FixedLayout
 	var sidecarMeta *bookmeta.Metadata
 	if !fixedLayout && format.IsPageCountApproximate(info.Format) {
 		sidecarMeta = readSidecarOPF(ctx, info.Source)

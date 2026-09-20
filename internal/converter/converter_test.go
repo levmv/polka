@@ -2733,7 +2733,7 @@ func TestConvertFB2ToKEPUB(t *testing.T) {
 			t.Fatalf("composed KEPUB text.xhtml missing %q:\n%s", want, xhtml)
 		}
 	}
-	cover, _, err := format.ExtractCover(bytes.NewReader(out.Bytes()), int64(out.Len()), format.FormatKEPUB)
+	cover, _, err := format.ExtractEPUBCover(bytes.NewReader(out.Bytes()), int64(out.Len()))
 	if err != nil || !bytes.Equal(cover, converterTinyPNG) {
 		t.Fatalf("composed KEPUB cover = %d bytes, error %v; want original PNG", len(cover), err)
 	}
@@ -2771,7 +2771,7 @@ func TestConvertFB2ToEPUBPreservesCover(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			src := []byte(`<FictionBook><description>` + tt.description + `</description><body><section><p>Text.</p></section></body>` + tt.firstBinary +
 				`<binary id="cover.png" content-type="image/png">` + base64.StdEncoding.EncodeToString(converterTinyPNG) + `</binary></FictionBook>`)
-			sourceCover, _, err := format.ExtractCover(bytes.NewReader(src), int64(len(src)), format.FormatFB2)
+			sourceCover, _, err := format.ExtractFB2Cover(bytes.NewReader(src), int64(len(src)))
 			if err != nil || !bytes.Equal(sourceCover, converterTinyPNG) {
 				t.Fatalf("source cover = %d bytes, error %v; want original PNG", len(sourceCover), err)
 			}
@@ -2779,7 +2779,7 @@ func TestConvertFB2ToEPUBPreservesCover(t *testing.T) {
 			if err := ConvertContext(context.Background(), &out, bytes.NewReader(src), format.FormatFB2, int64(len(src)), TargetEPUB); err != nil {
 				t.Fatalf("Convert FB2 to EPUB: %v", err)
 			}
-			cover, _, err := format.ExtractCover(bytes.NewReader(out.Bytes()), int64(out.Len()), format.FormatEPUB)
+			cover, _, err := format.ExtractEPUBCover(bytes.NewReader(out.Bytes()), int64(out.Len()))
 			if err != nil || !bytes.Equal(cover, converterTinyPNG) {
 				t.Fatalf("converted cover = %d bytes, error %v; want original PNG", len(cover), err)
 			}

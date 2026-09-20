@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/levmv/polka/internal/db"
+	"github.com/levmv/polka/internal/format"
 	"github.com/levmv/polka/internal/importer"
-	"github.com/levmv/polka/internal/pdfcover"
 	"github.com/levmv/polka/internal/storage"
 	"github.com/levmv/polka/internal/workslot"
 )
@@ -45,7 +45,7 @@ type Service struct {
 	stableScans   int
 	deleteSources bool
 	logf          func(format string, args ...any)
-	importFile    func(context.Context, *db.DB, storage.Root, string, *pdfcover.Renderer, importer.Options) (importer.Result, error)
+	importFile    func(context.Context, *db.DB, storage.Root, string, *format.Extractor, importer.Options) (importer.Result, error)
 
 	mu           sync.Mutex
 	observed     map[string]observation
@@ -199,8 +199,8 @@ func (s *Service) ScanOnce(ctx context.Context, force bool) (Summary, error) {
 		return summary, err
 	}
 
-	renderer := pdfcover.NewRenderer()
-	defer renderer.Close()
+	extractor := format.NewExtractor()
+	defer extractor.Close()
 	importOptions := importer.Options{CoverRoot: s.coverRoot}
 	template, err := storage.OpenBookPathTemplate(s.db.Read(ctx))
 	if err != nil {
@@ -229,7 +229,7 @@ func (s *Service) ScanOnce(ctx context.Context, force bool) (Summary, error) {
 			continue
 		}
 
-		outcome, err := s.importCandidate(ctx, s.storageRoot, c, renderer, importOptions)
+		outcome, err := s.importCandidate(ctx, s.storageRoot, c, extractor, importOptions)
 		if err != nil {
 			s.setLastError(err)
 			return summary, err
@@ -335,7 +335,7 @@ func (s *Service) scanAndLog(ctx context.Context) {
 	}
 }
 
-func (s *Service) importCandidate(ctx context.Context, root storage.Root, c candidate, renderer *pdfcover.Renderer, opts importer.Options) (outcome importOutcome, err error) {
+func (s *Service) importCandidate(ctx context.Context, root storage.Root, c candidate, extractor *format.Extractor, opts importer.Options) (outcome importOutcome, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			outcome = importOutcome{status: s.failCandidate(c, fmt.Sprintf("panic while importing: %v", r))}
@@ -350,7 +350,7 @@ func (s *Service) importCandidate(ctx context.Context, root storage.Root, c cand
 	defer release()
 
 	if len(c.Sources) > 0 {
-		group, groupErr := importer.ImportGroup(ctx, s.db, root, c.Sources, renderer, opts)
+		group, groupErr := importer.ImportGroup(ctx, s.db, root, c.Sources, extractor, opts)
 		if groupErr != nil {
 			err = groupErr
 		} else {
@@ -362,7 +362,7 @@ func (s *Service) importCandidate(ctx context.Context, root storage.Root, c cand
 		}
 	} else {
 		var res importer.Result
-		res, err = s.importFile(ctx, s.db, root, c.Path, renderer, opts)
+		res, err = s.importFile(ctx, s.db, root, c.Path, extractor, opts)
 		outcome = importOutcome{status: res.Status, bookTrashed: res.BookTrashed}
 	}
 	if err != nil {

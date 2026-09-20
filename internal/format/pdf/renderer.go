@@ -1,18 +1,20 @@
-// Package pdfcover renders the first page of a PDF to a raster image. It uses a
-// usable pdftoppm found on PATH when the Renderer is created, otherwise PDFium
+// Package pdf reads PDF metadata and page counts and renders covers. It uses a
+// usable pdftoppm found on PATH when a cover is first rendered, otherwise PDFium
 // compiled to WebAssembly and run via wazero. The fallback is pure Go, so Polka
 // retains a zero-configuration, no-CGO renderer and its single static binary.
 //
-// PDFium also supplies page counts when internal/format cannot resolve them.
+// PDFium also supplies page counts the native parser cannot resolve.
 // Cover rendering runs during import or explicit maintenance; serving an
 // existing cover never starts a renderer.
-package pdfcover
+package pdf
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"image/jpeg"
 	"io"
 	"sync"
 	"time"
@@ -69,7 +71,8 @@ type rendererConfig struct {
 	operationTimeout time.Duration
 }
 
-// Renderer retains one cover backend; document failures do not switch engines.
+// Renderer selects a cover backend on its first render and retains it;
+// document failures do not switch engines. Construction performs no IO.
 // CountPages always uses PDFium, including when covers use Poppler. The WASM
 // module compiles on the first PDFium operation. Share a Renderer across
 // sequential operations and close it after the batch.
@@ -84,17 +87,14 @@ type Renderer struct {
 	initErr error
 }
 
-var (
-	defaultBackendOnce  sync.Once
-	defaultBackendInfo  BackendInfo
-	errOperationTimeout = errors.New("PDF operation timeout")
-)
+var defaultBackend = sync.OnceValue(func() BackendInfo {
+	return detectBackend(externalCommandContext, nil)
+})
+
+var errOperationTimeout = errors.New("PDF operation timeout")
 
 func NewRenderer() *Renderer {
-	defaultBackendOnce.Do(func() {
-		defaultBackendInfo = detectBackend(externalCommandContext, nil)
-	})
-	return newRenderer(rendererConfig{backend: defaultBackendInfo})
+	return newRenderer(rendererConfig{})
 }
 
 func detectBackend(command externalCommand, lookPath func(string) (string, error)) BackendInfo {
@@ -127,6 +127,8 @@ func newRenderer(config rendererConfig) *Renderer {
 	}
 }
 
+// BackendInfo reports the selected cover backend, or zero before the first render.
+// Reading metadata and counting pages do not select a cover backend.
 func (r *Renderer) BackendInfo() BackendInfo { return r.backend }
 
 func (r *Renderer) ensureWASM() error {
@@ -151,11 +153,12 @@ func (r *Renderer) ensureWASM() error {
 	return r.initErr
 }
 
-// RenderFirstPageJPEG renders page 1 of a seekable PDF to JPEG bytes at the
+// RenderCoverJPEG renders the first nonblank opening page to JPEG bytes at the
 // given DPI (DefaultDPI when dpi <= 0). The WASM provider also returns the page
 // count from the same document, even if rendering subsequently fails. Poppler
 // returns zero for the count. Both providers stream/seek over the source.
-func (r *Renderer) RenderFirstPageJPEG(ctx context.Context, pdf io.ReadSeeker, size int64, dpi int) ([]byte, int, error) {
+// Lookahead is limited to covers.CoverPageLimit; the first page is the fallback.
+func (r *Renderer) RenderCoverJPEG(ctx context.Context, pdf io.ReadSeeker, size int64, dpi int) ([]byte, int, error) {
 	if pdf == nil || size <= 0 {
 		return nil, 0, errors.New("empty pdf")
 	}
@@ -170,6 +173,9 @@ func (r *Renderer) RenderFirstPageJPEG(ctx context.Context, pdf io.ReadSeeker, s
 	if _, err := pdf.Seek(0, io.SeekStart); err != nil {
 		return nil, 0, fmt.Errorf("seek pdf: %w", err)
 	}
+	if r.backend.Backend == "" {
+		r.backend = defaultBackend()
+	}
 
 	var (
 		result pdfResult
@@ -177,7 +183,12 @@ func (r *Renderer) RenderFirstPageJPEG(ctx context.Context, pdf io.ReadSeeker, s
 	)
 	switch r.backend.Backend {
 	case BackendPoppler:
-		result.jpeg, err = r.renderPoppler(renderCtx, pdf, size, dpi)
+		result.jpeg, err = r.renderCoverPages(renderCtx, covers.CoverPageLimit, func(page int) ([]byte, error) {
+			if _, err := pdf.Seek(0, io.SeekStart); err != nil {
+				return nil, err
+			}
+			return r.renderPoppler(renderCtx, pdf, size, dpi, page+1)
+		})
 	case BackendPDFiumWASM:
 		if size > maxSeekablePDFBytes {
 			return nil, 0, fmt.Errorf("pdf is too large for the seekable WASM renderer (%d bytes)", size)
@@ -189,27 +200,63 @@ func (r *Renderer) RenderFirstPageJPEG(ctx context.Context, pdf io.ReadSeeker, s
 	if err != nil {
 		return nil, result.pages, err
 	}
-	if len(result.jpeg) > maxRenderedCoverBytes {
-		return nil, result.pages, fmt.Errorf("rendered PDF cover exceeds %d bytes", maxRenderedCoverBytes)
-	}
-	info, err := covers.Inspect(result.jpeg)
-	if err != nil {
-		return nil, result.pages, fmt.Errorf("%s returned invalid JPEG: %w", r.backend.Backend, err)
-	}
-	// Poppler can report success for a damaged PDF while returning one pixel.
-	if info.Width == 1 && info.Height == 1 {
-		return nil, result.pages, fmt.Errorf("%s returned a degenerate 1x1 PDF cover", r.backend.Backend)
-	}
 	return result.jpeg, result.pages, nil
 }
 
+func (r *Renderer) coverIsBlank(data []byte) (bool, error) {
+	if len(data) > maxRenderedCoverBytes {
+		return false, fmt.Errorf("rendered PDF cover exceeds %d bytes", maxRenderedCoverBytes)
+	}
+	info, err := covers.Inspect(data)
+	if err != nil {
+		return false, fmt.Errorf("%s returned invalid JPEG: %w", r.backend.Backend, err)
+	}
+	// Poppler can report success for a damaged PDF while returning one pixel.
+	if info.Width == 1 && info.Height == 1 {
+		return false, fmt.Errorf("%s returned a degenerate 1x1 PDF cover", r.backend.Backend)
+	}
+	img, err := jpeg.Decode(bytes.NewReader(data))
+	if err != nil {
+		return false, fmt.Errorf("%s returned invalid JPEG: %w", r.backend.Backend, err)
+	}
+	return covers.IsBlankPage(img), nil
+}
+
+func (r *Renderer) renderCoverPages(ctx context.Context, pages int, render func(int) ([]byte, error)) ([]byte, error) {
+	var first []byte
+	for page := range min(pages, covers.CoverPageLimit) {
+		data, err := render(page)
+		blank := false
+		if err == nil {
+			blank, err = r.coverIsBlank(data)
+		}
+		if ctx.Err() != nil {
+			return nil, operationContextError(ctx, "render PDF cover", r.operationTimeout)
+		}
+		if err != nil {
+			// A failed optional lookahead must not discard a usable first page.
+			if first != nil {
+				return first, nil
+			}
+			return nil, err
+		}
+		if !blank {
+			return data, nil
+		}
+		if page == 0 {
+			first = data
+		}
+	}
+	return first, nil
+}
+
 func (r *Renderer) renderWASM(ctx context.Context, pdf io.ReadSeeker, size int64, dpi int) (pdfResult, error) {
-	return r.withWASMInstance(ctx, "render PDF page 1", func(instance pdfOperations) (pdfResult, error) {
-		return renderWASMInstance(instance, pdf, size, dpi)
+	return r.withWASMInstance(ctx, "render PDF cover", func(instance pdfOperations) (pdfResult, error) {
+		return r.renderWASMInstance(ctx, instance, pdf, size, dpi)
 	})
 }
 
-// CountPages is the fallback for counts unavailable to internal/format.
+// CountPages is the fallback for counts unavailable to the native parser.
 // It uses PDFium even when covers use Poppler.
 func (r *Renderer) CountPages(ctx context.Context, pdf io.ReadSeeker, size int64) (int, error) {
 	if pdf == nil || size <= 0 || size > maxSeekablePDFBytes {
@@ -331,7 +378,7 @@ func operationContextError(ctx context.Context, action string, timeout time.Dura
 	return fmt.Errorf("%s: %w", action, ctx.Err())
 }
 
-func renderWASMInstance(instance pdfOperations, pdf io.ReadSeeker, size int64, dpi int) (pdfResult, error) {
+func (r *Renderer) renderWASMInstance(ctx context.Context, instance pdfOperations, pdf io.ReadSeeker, size int64, dpi int) (pdfResult, error) {
 	doc, err := instance.OpenDocument(&requests.OpenDocument{
 		FileReader:     pdf,
 		FileReaderSize: size,
@@ -344,23 +391,25 @@ func renderWASMInstance(instance pdfOperations, pdf io.ReadSeeker, size int64, d
 		result.pages = pages.PageCount
 	}
 
-	res, err := instance.RenderToFile(&requests.RenderToFile{
-		RenderPageInDPI: &requests.RenderPageInDPI{
-			DPI:  dpi,
-			Page: requests.Page{ByIndex: &requests.PageByIndex{Document: doc.Document, Index: 0}},
-		},
-		OutputFormat:  requests.RenderToFileOutputFormatJPG,
-		OutputTarget:  requests.RenderToFileOutputTargetBytes,
-		OutputQuality: 90,
+	result.jpeg, err = r.renderCoverPages(ctx, max(result.pages, 1), func(page int) ([]byte, error) {
+		res, err := instance.RenderToFile(&requests.RenderToFile{
+			RenderPageInDPI: &requests.RenderPageInDPI{
+				DPI:  dpi,
+				Page: requests.Page{ByIndex: &requests.PageByIndex{Document: doc.Document, Index: page}},
+			},
+			OutputFormat:  requests.RenderToFileOutputFormatJPG,
+			OutputTarget:  requests.RenderToFileOutputTargetBytes,
+			OutputQuality: 90,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("render page %d: %w", page+1, err)
+		}
+		if res.ImageBytes == nil {
+			return nil, errors.New("pdfium returned no image bytes")
+		}
+		return *res.ImageBytes, nil
 	})
-	if err != nil {
-		return result, fmt.Errorf("render page 1: %w", err)
-	}
-	if res.ImageBytes == nil {
-		return result, errors.New("pdfium returned no image bytes")
-	}
-	result.jpeg = *res.ImageBytes
-	return result, nil
+	return result, err
 }
 
 // Close releases the pdfium pool. Safe to call when the pool was never

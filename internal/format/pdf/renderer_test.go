@@ -1,4 +1,4 @@
-package pdfcover
+package pdf
 
 import (
 	"bytes"
@@ -9,6 +9,7 @@ import (
 	"image/color"
 	"image/jpeg"
 	"io"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -40,16 +41,16 @@ func TestWASMFallbackRendersWithoutHostFilesystem(t *testing.T) {
 	})
 
 	pdf := testBlankPDF()
-	rendered, pages, err := r.RenderFirstPageJPEG(context.Background(), bytes.NewReader(pdf), int64(len(pdf)), 72)
+	rendered, pages, err := r.RenderCoverJPEG(context.Background(), bytes.NewReader(pdf), int64(len(pdf)), 72)
 	if err != nil {
-		t.Fatalf("RenderFirstPageJPEG: %v", err)
+		t.Fatalf("RenderCoverJPEG: %v", err)
 	}
 	if len(rendered) == 0 || pages != 1 {
-		t.Fatalf("RenderFirstPageJPEG returned %d bytes and %d pages; want a cover and one page", len(rendered), pages)
+		t.Fatalf("RenderCoverJPEG returned %d bytes and %d pages; want a cover and one page", len(rendered), pages)
 	}
 	// The one-inch page at 1 DPI produces a single pixel even with a healthy
 	// renderer. Reject it as a cover while retaining the known page count.
-	rendered, pages, err = r.RenderFirstPageJPEG(t.Context(), bytes.NewReader(pdf), int64(len(pdf)), 1)
+	rendered, pages, err = r.RenderCoverJPEG(t.Context(), bytes.NewReader(pdf), int64(len(pdf)), 1)
 	if err == nil || !strings.Contains(err.Error(), "1x1") || rendered != nil || pages != 1 {
 		t.Fatalf("single-pixel render = %d bytes, %d pages, %v; want no cover, one page and dimension error", len(rendered), pages, err)
 	}
@@ -59,16 +60,16 @@ func TestWASMFallbackRendersWithoutHostFilesystem(t *testing.T) {
 	// instance for the next document.
 	blocker.arm()
 	r.operationTimeout = 100 * time.Millisecond
-	if _, _, err := r.RenderFirstPageJPEG(context.Background(), bytes.NewReader(pdf), int64(len(pdf)), 72); err == nil || !strings.Contains(err.Error(), "timed out") {
-		t.Fatalf("blocked RenderFirstPageJPEG error = %v, want timeout", err)
+	if _, _, err := r.RenderCoverJPEG(context.Background(), bytes.NewReader(pdf), int64(len(pdf)), 72); err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("blocked RenderCoverJPEG error = %v, want timeout", err)
 	}
 	if !blocker.didBlock() {
 		t.Fatalf("controlled PDFium render blocker was not reached")
 	}
 
 	r.operationTimeout = time.Minute
-	if _, _, err := r.RenderFirstPageJPEG(context.Background(), bytes.NewReader(pdf), int64(len(pdf)), 72); err != nil {
-		t.Fatalf("RenderFirstPageJPEG after worker reset: %v", err)
+	if _, _, err := r.RenderCoverJPEG(context.Background(), bytes.NewReader(pdf), int64(len(pdf)), 72); err != nil {
+		t.Fatalf("RenderCoverJPEG after worker reset: %v", err)
 	}
 
 	// Parent cancellation uses the same worker-reset owner as the private
@@ -77,7 +78,7 @@ func TestWASMFallbackRendersWithoutHostFilesystem(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	renderDone := make(chan error, 1)
 	go func() {
-		_, _, err := r.RenderFirstPageJPEG(ctx, bytes.NewReader(pdf), int64(len(pdf)), 72)
+		_, _, err := r.RenderCoverJPEG(ctx, bytes.NewReader(pdf), int64(len(pdf)), 72)
 		renderDone <- err
 	}()
 	blocker.waitUntilBlocked(t)
@@ -85,13 +86,13 @@ func TestWASMFallbackRendersWithoutHostFilesystem(t *testing.T) {
 	select {
 	case err := <-renderDone:
 		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("canceled RenderFirstPageJPEG error = %v, want context.Canceled", err)
+			t.Fatalf("canceled RenderCoverJPEG error = %v, want context.Canceled", err)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("canceled RenderFirstPageJPEG did not stop")
+		t.Fatal("canceled RenderCoverJPEG did not stop")
 	}
-	if _, _, err := r.RenderFirstPageJPEG(context.Background(), bytes.NewReader(pdf), int64(len(pdf)), 72); err != nil {
-		t.Fatalf("RenderFirstPageJPEG after cancellation reset: %v", err)
+	if _, _, err := r.RenderCoverJPEG(context.Background(), bytes.NewReader(pdf), int64(len(pdf)), 72); err != nil {
+		t.Fatalf("RenderCoverJPEG after cancellation reset: %v", err)
 	}
 }
 
@@ -183,9 +184,9 @@ func TestRendererUsesProbedPoppler(t *testing.T) {
 	if info.Backend != BackendPoppler || info.Version != "pdftoppm version 24.01.0" || !filepath.IsAbs(info.Executable) {
 		t.Fatalf("BackendInfo = %+v, want probed Poppler with absolute path", info)
 	}
-	got, _, err := r.RenderFirstPageJPEG(context.Background(), bytes.NewReader([]byte("pdf")), 3, 96)
+	got, _, err := r.RenderCoverJPEG(context.Background(), bytes.NewReader([]byte("pdf")), 3, 96)
 	if err != nil {
-		t.Fatalf("RenderFirstPageJPEG: %v", err)
+		t.Fatalf("RenderCoverJPEG: %v", err)
 	}
 	if !bytes.Equal(got, jpegBytes) {
 		t.Fatalf("rendered bytes differ from fake Poppler output")
@@ -218,7 +219,7 @@ func TestPopplerRenderCoverDimensions(t *testing.T) {
 					return nil, errors.New("unexpected WASM initialization")
 				},
 			})
-			got, _, err := r.RenderFirstPageJPEG(t.Context(), bytes.NewReader([]byte("pdf")), 3, 0)
+			got, _, err := r.RenderCoverJPEG(t.Context(), bytes.NewReader([]byte("pdf")), 3, 0)
 			if tc.wantError {
 				if err == nil || !strings.Contains(err.Error(), "poppler returned a degenerate 1x1 PDF cover") || got != nil {
 					t.Fatalf("render = %d bytes, %v; want no cover and dimension error", len(got), err)
@@ -286,9 +287,9 @@ func TestPopplerDocumentFailureDoesNotRetryWithWASM(t *testing.T) {
 		},
 	})
 
-	_, _, err := r.RenderFirstPageJPEG(context.Background(), bytes.NewReader([]byte("pdf")), 3, 0)
+	_, _, err := r.RenderCoverJPEG(context.Background(), bytes.NewReader([]byte("pdf")), 3, 0)
 	if !errors.Is(err, renderErr) {
-		t.Fatalf("RenderFirstPageJPEG error = %v, want wrapped render error", err)
+		t.Fatalf("RenderCoverJPEG error = %v, want wrapped render error", err)
 	}
 	if poolCalls != 0 {
 		t.Fatalf("WASM pool initialized %d times after Poppler document failure", poolCalls)
@@ -313,9 +314,9 @@ func TestPopplerRenderTimeout(t *testing.T) {
 		operationTimeout: 10 * time.Millisecond,
 	})
 
-	_, _, err := r.RenderFirstPageJPEG(context.Background(), bytes.NewReader([]byte("pdf")), 3, 0)
+	_, _, err := r.RenderCoverJPEG(context.Background(), bytes.NewReader([]byte("pdf")), 3, 0)
 	if err == nil || !strings.Contains(err.Error(), "timed out") {
-		t.Fatalf("RenderFirstPageJPEG error = %v, want timeout", err)
+		t.Fatalf("RenderCoverJPEG error = %v, want timeout", err)
 	}
 }
 
@@ -344,9 +345,9 @@ func TestPopplerRenderObservesParentCancellation(t *testing.T) {
 		cancel()
 	}()
 
-	_, _, err := r.RenderFirstPageJPEG(ctx, bytes.NewReader([]byte("pdf")), 3, 0)
+	_, _, err := r.RenderCoverJPEG(ctx, bytes.NewReader([]byte("pdf")), 3, 0)
 	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("RenderFirstPageJPEG error = %v, want context.Canceled", err)
+		t.Fatalf("RenderCoverJPEG error = %v, want context.Canceled", err)
 	}
 }
 
@@ -389,7 +390,56 @@ func TestWASMPageCount(t *testing.T) {
 	}
 }
 
+func TestCoverSkipsBlankPages(t *testing.T) {
+	for _, backend := range []Backend{BackendPDFiumWASM, BackendPoppler} {
+		t.Run(string(backend), func(t *testing.T) {
+			info := BackendInfo{Backend: backend}
+			if backend == BackendPoppler {
+				var err error
+				info.Executable, err = exec.LookPath("pdftoppm")
+				if err != nil {
+					t.Skip("pdftoppm is not installed")
+				}
+			}
+			r := newRenderer(rendererConfig{backend: info})
+			t.Cleanup(func() { _ = r.Close() })
+			const marked = "0 0 0 rg 18 18 36 36 re f\n"
+			for _, tc := range []struct {
+				name    string
+				pages   []string
+				content bool
+			}{
+				{"first page", []string{marked, ""}, true},
+				{"two blank pages", []string{"", "", marked}, true},
+				{"all blank", []string{""}, false},
+				{"bounded lookahead", []string{"", "", "", marked}, false},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					data := testPDFPages(tc.pages...)
+					cover, _, err := r.RenderCoverJPEG(t.Context(), bytes.NewReader(data), int64(len(data)), 72)
+					if err != nil {
+						t.Fatal(err)
+					}
+					img, err := jpeg.Decode(bytes.NewReader(cover))
+					if err != nil {
+						t.Fatal(err)
+					}
+					red, _, _, _ := img.At(36, 36).RGBA()
+					if (red < 8192) != tc.content {
+						t.Fatalf("center pixel = %d; want content %v", red, tc.content)
+					}
+				})
+			}
+		})
+	}
+}
+
 func testBlankPDFPages(pages int) []byte {
+	return testPDFPages(make([]string, pages)...)
+}
+
+func testPDFPages(contents ...string) []byte {
+	pages := len(contents)
 	var kids strings.Builder
 	for i := range pages {
 		fmt.Fprintf(&kids, "%d 0 R ", i+3)
@@ -398,8 +448,11 @@ func testBlankPDFPages(pages int) []byte {
 		"<< /Type /Catalog /Pages 2 0 R >>",
 		fmt.Sprintf("<< /Type /Pages /Kids [%s] /Count %d >>", kids.String(), pages),
 	}
-	for range pages {
-		objects = append(objects, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 72 72] /Resources << >> >>")
+	for i := range pages {
+		objects = append(objects, fmt.Sprintf("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 72 72] /Resources << >> /Contents %d 0 R >>", pages+3+i))
+	}
+	for _, content := range contents {
+		objects = append(objects, fmt.Sprintf("<< /Length %d >>\nstream\n%sendstream", len(content), content))
 	}
 	var pdf bytes.Buffer
 	pdf.WriteString("%PDF-1.4\n")

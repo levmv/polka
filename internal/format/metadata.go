@@ -1,10 +1,13 @@
 package format
 
 import (
+	"context"
 	"io"
 	"strings"
 
 	"github.com/levmv/polka/internal/bookmeta"
+	"github.com/levmv/polka/internal/format/djvu"
+	"github.com/levmv/polka/internal/format/pdf"
 )
 
 type Metadata = bookmeta.Metadata
@@ -17,7 +20,7 @@ func ExtractMetadata(r io.ReaderAt, size int64, kind Format) (*Metadata, error) 
 	case FormatEPUB, FormatKEPUB:
 		return ExtractEPUBMetadata(r, size)
 	case FormatPDF:
-		return ExtractPDFMetadataReader(r, size), nil
+		return pdf.ExtractMetadata(r, size), nil
 	case FormatMOBI, FormatAZW, FormatAZW3, FormatAZW4, FormatPRC:
 		return ExtractMOBIMetadata(r, size)
 	case FormatPDB:
@@ -31,7 +34,7 @@ func ExtractMetadata(r io.ReaderAt, size int64, kind Format) (*Metadata, error) 
 	case FormatCB7:
 		return ExtractCB7Metadata(r, size)
 	case FormatDJVU:
-		return ExtractDJVUMetadata(r, size)
+		return djvu.ExtractMetadata(context.Background(), r, size)
 	case FormatTXTZ:
 		return ExtractTXTZMetadata(r, size)
 	case FormatMarkdown:
@@ -52,16 +55,7 @@ func ExtractMetadata(r io.ReaderAt, size int64, kind Format) (*Metadata, error) 
 	return nil, nil
 }
 
-// ExtractCover reads an embedded cover image from an already-open book file
-// when the format has a native cheap cover path. The returned extension is
-// normalized with a leading dot. If no cover is found, it returns nil bytes, an
-// empty extension, and nil error.
-func ExtractCover(r io.ReaderAt, size int64, kind Format) ([]byte, string, error) {
-	cover, ext, err := extractCover(r, size, kind)
-	return cover, normalizeCoverExtension(ext), err
-}
-
-func extractCover(r io.ReaderAt, size int64, kind Format) ([]byte, string, error) {
+func extractEmbeddedCover(r io.ReaderAt, size int64, kind Format) ([]byte, string, error) {
 	switch kind {
 	case FormatEPUB, FormatKEPUB:
 		return ExtractEPUBCover(r, size)

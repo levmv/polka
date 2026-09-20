@@ -133,7 +133,7 @@ func runSubcommand(ctx context.Context, dataDir, subcommand string, subArgs []st
 	case "convert":
 		return runConvert(ctx, dataDir, subArgs)
 	case "meta":
-		return runMeta(dataDir, subArgs)
+		return runMeta(ctx, subArgs)
 	case "ingest":
 		return runIngest(ctx, dataDir, subArgs)
 	case "storage":

@@ -534,13 +534,8 @@ function renderPDFSearchHighlight(
     renderedTextLayer: PDFRenderedTextLayer | null,
 ): void {
     clearPDFSearchHighlight(readerPage);
-    const page = readerPage.querySelector<HTMLElement>('[data-pdf-page]');
-    if (
-        !page ||
-        !renderedTextLayer ||
-        renderedTextLayer.pageNumber !== highlight.pageNumber ||
-        page.dataset.pdfRenderedPage !== String(highlight.pageNumber)
-    ) {
+    const page = readerPage.querySelector<HTMLElement>('[data-page-surface]');
+    if (!page || !renderedTextLayer || renderedTextLayer.pageNumber !== highlight.pageNumber) {
         return;
     }
 
@@ -691,7 +686,7 @@ function scrollPDFSearchHighlight(
     rectangles: DOMRect[],
     overlay: HTMLElement,
 ): void {
-    const stage = readerPage.querySelector<HTMLElement>('[data-pdf-stage]');
+    const stage = readerPage.querySelector<HTMLElement>('[data-page-stage]');
     if (!stage) return;
     const canScrollStage =
         stage.scrollWidth > stage.clientWidth || stage.scrollHeight > stage.clientHeight;

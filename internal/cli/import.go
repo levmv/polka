@@ -11,8 +11,9 @@ import (
 	"strings"
 
 	"github.com/levmv/polka/internal/db"
+	"github.com/levmv/polka/internal/format"
+	"github.com/levmv/polka/internal/format/pdf"
 	"github.com/levmv/polka/internal/importer"
-	"github.com/levmv/polka/internal/pdfcover"
 	"github.com/levmv/polka/internal/storage"
 )
 
@@ -26,12 +27,12 @@ type importCommandOptions struct {
 }
 
 type importReport struct {
-	PDFCoverRenderer pdfcover.BackendInfo `json:"pdf_cover_renderer,omitzero"`
-	Source           string               `json:"source"`
-	DryRun           bool                 `json:"dry_run"`
-	DeleteSources    bool                 `json:"delete_sources,omitzero"`
-	Summary          importSummary        `json:"summary"`
-	Items            []importOutcome      `json:"items"`
+	PDFCoverRenderer pdf.BackendInfo `json:"pdf_cover_renderer,omitzero"`
+	Source           string          `json:"source"`
+	DryRun           bool            `json:"dry_run"`
+	DeleteSources    bool            `json:"delete_sources,omitzero"`
+	Summary          importSummary   `json:"summary"`
+	Items            []importOutcome `json:"items"`
 }
 
 type importSummary struct {
@@ -171,11 +172,11 @@ func importSinglePath(ctx context.Context, database *db.DB, dataDir, srcPath str
 	if err := rejectManagedImportSource(srcPath, root); err != nil {
 		return err
 	}
-	renderer := pdfcover.NewRenderer()
-	defer renderer.Close()
-	report.PDFCoverRenderer = renderer.BackendInfo()
+	extractor := format.NewExtractor()
+	defer extractor.Close()
+	defer func() { report.PDFCoverRenderer = extractor.PDFBackendInfo() }()
 
-	res, err := importer.ImportFile(ctx, database, root, srcPath, renderer, importer.Options{PathTemplate: template, CoverRoot: coverRoot})
+	res, err := importer.ImportFile(ctx, database, root, srcPath, extractor, importer.Options{PathTemplate: template, CoverRoot: coverRoot})
 	item := importOutcome{Source: srcPath}
 	if err != nil {
 		item.Status = "error"
@@ -196,7 +197,7 @@ func importFolderPath(ctx context.Context, database *db.DB, dataDir, rootPath st
 	var root storage.Root
 	var coverRoot storage.Root
 	var template string
-	var renderer *pdfcover.Renderer
+	var extractor *format.Extractor
 	if !opts.dryRun {
 		var err error
 		root, coverRoot, template, err = openImportStorage(database.Read(ctx), dataDir)
@@ -206,9 +207,9 @@ func importFolderPath(ctx context.Context, database *db.DB, dataDir, rootPath st
 		if err := rejectManagedImportSource(rootPath, root); err != nil {
 			return err
 		}
-		renderer = pdfcover.NewRenderer()
-		defer renderer.Close()
-		report.PDFCoverRenderer = renderer.BackendInfo()
+		extractor = format.NewExtractor()
+		defer extractor.Close()
+		defer func() { report.PDFCoverRenderer = extractor.PDFBackendInfo() }()
 	}
 
 	err := filepath.WalkDir(rootPath, func(path string, d os.DirEntry, walkErr error) error {
@@ -235,7 +236,7 @@ func importFolderPath(ctx context.Context, database *db.DB, dataDir, rootPath st
 						return probeErr
 					}
 				} else {
-					item = importGroup(ctx, database, root, coverRoot, template, renderer, path, sources)
+					item = importGroup(ctx, database, root, coverRoot, template, extractor, path, sources)
 					if item.Error != "" {
 						if cause := context.Cause(ctx); cause != nil {
 							return cause
@@ -266,7 +267,7 @@ func importFolderPath(ctx context.Context, database *db.DB, dataDir, rootPath st
 			recordImportOutcome(report, opts, item, false)
 			return nil
 		}
-		res, importErr := importer.ImportFile(ctx, database, root, path, renderer, importer.Options{PathTemplate: template, CoverRoot: coverRoot})
+		res, importErr := importer.ImportFile(ctx, database, root, path, extractor, importer.Options{PathTemplate: template, CoverRoot: coverRoot})
 		item := importOutcome{Source: path}
 		if importErr != nil {
 			if cause := context.Cause(ctx); cause != nil {
@@ -398,8 +399,8 @@ func probeImportGroup(ctx context.Context, database db.Queryer, path string, sou
 	return item, nil
 }
 
-func importGroup(ctx context.Context, database *db.DB, root, coverRoot storage.Root, template string, renderer *pdfcover.Renderer, path string, sources []importer.Source) importOutcome {
-	group, err := importer.ImportGroup(ctx, database, root, sources, renderer, importer.Options{PathTemplate: template, CoverRoot: coverRoot})
+func importGroup(ctx context.Context, database *db.DB, root, coverRoot storage.Root, template string, extractor *format.Extractor, path string, sources []importer.Source) importOutcome {
+	group, err := importer.ImportGroup(ctx, database, root, sources, extractor, importer.Options{PathTemplate: template, CoverRoot: coverRoot})
 	item := importOutcome{Source: path}
 	if err != nil {
 		item.Status = "error"

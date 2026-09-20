@@ -12,8 +12,8 @@ import (
 
 	"github.com/levmv/polka/internal/covers"
 	"github.com/levmv/polka/internal/db"
+	"github.com/levmv/polka/internal/format"
 	"github.com/levmv/polka/internal/importer"
-	"github.com/levmv/polka/internal/pdfcover"
 	"github.com/levmv/polka/internal/storage"
 	"github.com/levmv/polka/internal/testfixture"
 )
@@ -539,7 +539,7 @@ func TestServiceRecoversImportPanicAndLeavesFileInPlace(t *testing.T) {
 		t.Fatalf("storage.EnsureLayout: %v", err)
 	}
 	service := NewService(database, root, ingestDir, Options{StableScans: 1})
-	service.importFile = func(context.Context, *db.DB, storage.Root, string, *pdfcover.Renderer, importer.Options) (importer.Result, error) {
+	service.importFile = func(context.Context, *db.DB, storage.Root, string, *format.Extractor, importer.Options) (importer.Result, error) {
 		panic("boom")
 	}
 	src := filepath.Join(ingestDir, "panic.epub")

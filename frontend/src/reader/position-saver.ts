@@ -25,7 +25,7 @@ export interface PositionSaver {
     flush(): Promise<void>;
 }
 
-// Retries and feedback are shared by both reader engines.
+// Retries and feedback are shared by the reader engines.
 // Pending position and merge rules live in ReaderPositionSync, without DOM or HTTP.
 export function createPositionSaver(
     assetId: number,

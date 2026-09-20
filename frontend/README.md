@@ -1,38 +1,42 @@
 # Frontend
 
 Vanilla TypeScript, bundled by [build.mjs](build.mjs) into
-`internal/web/static` and embedded in the Go binary. The app, Foliate reader
-and PDF.js reader have separate bundles. Each engine belongs only in its own
-reader bundle; keep the app and shared reader UI independent of both engines.
+`internal/web/static/generated` and embedded in the Go binary. Static assets
+from [static/](static/) are copied there during the build. The app, Foliate
+reader, PDF.js reader and DjVu reader have separate bundles. Keep each engine
+in its own reader bundle and shared UI independent of the engines.
 
-Foliate adaptations live in [foliate-build.mjs](foliate-build.mjs). The build
-fails if the expected source snippets change; review them when upgrading Foliate.
+Foliate source patches live in [foliate-build.mjs](foliate-build.mjs); review
+them when upgrading Foliate.
 
 ## Development
 
-Run commands from the repository root:
-
-- `make serve` builds and runs a local library.
-- `make frontend` bundles assets; `make test` formats sources and runs checks,
-  unit tests and the build.
-- `make browser-test` runs the UI suite. Select a file or browser with, for example,
-  `make browser-test PWARGS='tests/pdf-reader.spec.ts --project=ipad-webkit'`.
-
-Browser tests receive a fresh copy of a prepared library, including its files
-and accounts. Tests can change it freely; the fixture stops the server and
-removes the copy afterward. Use `test.use({ account: 'reader' })` for a reader
-account or `test.use({ seed: 'pagination' })` for the 55-book catalog.
-
-The root [package.json](../package.json) owns the toolchain and focused scripts.
-Pure logic tests live in [test/](test/); browser tests live in
-[browser-test/tests/](../browser-test/tests/). Follow the
+Run commands from the repository root. `make frontend` rebuilds assets; the root
+[package.json](../package.json) has focused checks. Follow the
 [browser support baseline](../docs/browser-support.md), with iPad Safari as the
 practical constraint.
+
+The build downloads and caches DjVuTang's WASM on first use. Its browser adapter
+and types are vendored. See [DjVuTang updates](../internal/format/djvu/README.md)
+when changing the dependency.
+
+Pure logic tests live in [test/](test/); browser tests live in
+[browser-test/tests/](../browser-test/tests/). For a focused browser run:
+
+```sh
+make browser-test PWARGS='tests/pdf-reader.spec.ts --project=ipad-webkit'
+```
+
+Each browser test gets its own library copy and server, managed by
+[fixtures.ts](../browser-test/tests/fixtures.ts). Use
+`test.use({ account: 'reader' })` for a reader account or
+`test.use({ seed: 'pagination' })` for pagination scenarios.
 
 ## Code map
 
 | Area | Start here |
 | --- | --- |
+| HTML layout, login/setup pages and reader shell | [internal/web/templates/](../internal/web/templates/) |
 | App shell and route registration | [src/main.ts](src/main.ts) |
 | Route lifecycle and history policy | [src/router.ts](src/router.ts), [src/history-state.ts](src/history-state.ts) |
 | Page markup and behavior | [src/views/](src/views/) |
@@ -40,64 +44,62 @@ practical constraint.
 | API client, response types and catalog notifications | [src/api.ts](src/api.ts), [src/types.ts](src/types.ts), [src/catalog-events.ts](src/catalog-events.ts) |
 | Form and list widgets | [src/components/](src/components/) |
 | Dialogs, action menus, floating panels and notifications | [src/modal.ts](src/modal.ts), [src/menu.ts](src/menu.ts), [src/popover.ts](src/popover.ts), [src/toast.ts](src/toast.ts) |
-| Reader entry points | [src/reader/index.ts](src/reader/index.ts) (Foliate), [src/reader/pdf-index.ts](src/reader/pdf-index.ts) (PDF.js) |
+| Reader entry points | [src/reader/index.ts](src/reader/index.ts) (Foliate), [src/reader/pdf-index.ts](src/reader/pdf-index.ts) (PDF.js), [src/reader/djvu-index.ts](src/reader/djvu-index.ts) (DjVuTang) |
+| PDF/DjVu page navigation and zoom | [src/reader/paged-reader.ts](src/reader/paged-reader.ts); each reader owns its raster and text layer |
 | PDF fallback fonts | [fonts/](fonts/README.md) |
-| Reader lifecycle and position | [src/reader/lifecycle.ts](src/reader/lifecycle.ts), [src/reader/position-sync.ts](src/reader/position-sync.ts), [src/reader/position-saver.ts](src/reader/position-saver.ts) |
+| Reader chrome, lifecycle and position | [src/reader/chrome.ts](src/reader/chrome.ts), [src/reader/lifecycle.ts](src/reader/lifecycle.ts), [src/reader/position-sync.ts](src/reader/position-sync.ts), [src/reader/position-saver.ts](src/reader/position-saver.ts) |
 | Screen pagination | [src/reader/foliate-pagination.ts](src/reader/foliate-pagination.ts), [src/reader/pagination-cache.ts](src/reader/pagination-cache.ts), [src/reader/foliate-resources.ts](src/reader/foliate-resources.ts) |
 | Highlights and notes | [src/components/annotation-editor.ts](src/components/annotation-editor.ts) (shared editor), [src/reader/annotations.ts](src/reader/annotations.ts) (reader UI), [src/reader/annotation-surface.ts](src/reader/annotation-surface.ts) (engine interface) |
 | Styles and icons | [src/styles/](src/styles/), [src/icons.ts](src/icons.ts) |
 
-A new app page keeps its skeleton and mount function together under `views/`,
-with a route in `main.ts`. The router covers authenticated app pages; login, setup,
-readers, downloads and API endpoints stay outside it.
+A new app page keeps its skeleton and mount function under `views/`, with a
+route in `main.ts`. The router covers authenticated app pages; readers and the
+server-rendered login and setup pages stay outside it.
 
 ## State and lifetimes
 
-The router gives each mounted view its own root. Scope DOM queries to that root
-and keep transient state inside the mount. Module-level state is for deliberate
-sharing or persistence across mounts. Prefer returning a cleanup function or
-controller synchronously while data loads in the background.
+Scope DOM queries and transient state to the mounted view's root. Module-level
+state is for deliberate sharing or persistence across mounts. Prefer returning
+cleanup or a controller synchronously while data loads in the background.
 
-Views, panels and dialogs own their controls, global listeners, timers and
-floating UI. Release these when replacing or closing the owner. Cancel obsolete
-reads and ignore late results; removing DOM alone does not stop asynchronous
-work.
+Views, panels and dialogs own their listeners, timers, subscriptions and
+floating UI. Release them on unmount or close; cancel obsolete reads and ignore
+late results.
 
-Opening a book retains the library view so Back restores its loaded pages,
-position, focus and selection. While suspended, that view must not affect the
-visible page or URL. `history-state.ts` decides when to retain or resume it;
-[views/return-position.ts](src/views/return-position.ts) handles its position.
+Opening book details retains the catalog instance so Back restores loaded
+pages, scroll, focus and selection. A suspended view must not affect the visible
+page or URL. `history-state.ts` owns this policy;
+[views/return-position.ts](src/views/return-position.ts) handles position.
 
 ## Data boundaries
 
-- Use the typed endpoint functions in `api.ts`, which centralize authentication
-  and errors. Pass an owner's `AbortSignal` to reads that can outlive it.
-- `BookSummary` is the list projection; `Book` adds detail fields. Fetch the
-  single-book endpoint when a workflow needs the full record.
-- Use `catalog-events.ts` to notify other views after each confirmed catalog
-  mutation, including completion after its initiating UI closes.
-- Account and reader preferences share one settings record. Save only changed
-  fields to avoid overwriting another surface's choices.
-- Simple autosaved settings share page-lifetime values in `settings/state.ts`.
-  Mounted controls subscribe to those values and release subscriptions on unmount.
-- Use `textContent` or `escapeHtml()` for external text. Insert HTML only from
-  trusted renderers or server-sanitized fields. Display book descriptions from
-  `description_html`; `description_source` belongs to editing.
+- Use typed endpoints in `api.ts` for authentication and error handling. Pass
+  the owner's `AbortSignal` to reads that can outlive it.
+- `BookSummary` is the list projection; fetch a full `Book` when a workflow needs
+  detail fields.
+- Account and reader settings share one record: save only changed fields to
+  avoid overwriting another surface's choices.
+- Shared autosave values in `settings/state.ts` survive closing Settings;
+  controls subscribe on mount and unsubscribe on unmount.
+- Use `textContent` or `escapeHtml()` for external text. Render descriptions
+  from the server-sanitized `description_html`; use `description_source` for
+  editing. Other HTML must come from a trusted renderer.
 
 ## Catalog refresh
 
-The library patches edits unrelated to its filter or sort; other changes refresh
-the browsed range while preserving position and selection. See
-[library-view.ts](src/views/library-view.ts) for loading and pagination, and
-[BookListDependencies](../internal/db/book_list_dependencies.go) for query dependencies.
+Publish successful mutations through `catalog-events.ts`, including those that
+finish after their editor closes. The [library view](src/views/library-view.ts)
+patches edits unrelated to the active filter or sort; other edits refresh the
+loaded range while preserving scroll and selection. Query dependencies come
+from [BookListDependencies](../internal/db/book_list_dependencies.go).
 
 ## UI conventions
 
-- Reuse the existing widgets, floating UI, icons and CSS variables in `:root`.
-  Keep styles grouped by feature, with responsive overrides beside that feature.
+- Reuse existing widgets, floating UI, icons and CSS variables in `:root`.
+  Group styles by feature, with responsive overrides beside that feature.
 - Update the smallest practical DOM region to preserve drafts, focus and layout.
-  Keep loaded content visible during refresh; use `loading-indicator.ts` for
-  global progress and local loading states for individual panels.
+  Keep content visible during refresh; use `loading-indicator.ts` for global
+  progress and local loading states for individual panels.
 - Keep validation and recoverable errors beside the relevant control or content.
-  Use a toast when an action has no stable place for feedback. Reserve modals
-  for explicit user workflows.
+  Use a toast when no stable place for feedback exists, and modals for explicit
+  user workflows.

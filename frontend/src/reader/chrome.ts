@@ -23,7 +23,7 @@ export function toggleReaderChrome(page: HTMLElement): void {
 }
 
 export function focusReaderSurface(page: HTMLElement): void {
-    page.querySelector<HTMLElement>('.reader-epub-stage, .reader-pdf-stage')?.focus({
+    page.querySelector<HTMLElement>('.reader-epub-stage, .reader-paged-stage')?.focus({
         preventScroll: true,
     });
 }
@@ -65,7 +65,7 @@ export function closeReader(page: HTMLElement, beforeClose?: () => Promise<boole
 }
 
 export function showReaderError(page: HTMLElement, message: string): void {
-    const stage = page.querySelector<HTMLElement>('.reader-epub-stage, .reader-pdf-stage');
+    const stage = page.querySelector<HTMLElement>('.reader-epub-stage, .reader-paged-stage');
     if (!stage) return;
     stage.innerHTML = '';
     const error = document.createElement('div');

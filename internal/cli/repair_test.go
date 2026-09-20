@@ -846,122 +846,127 @@ func TestCheckAndRepairCoverOriginals(t *testing.T) {
 }
 
 func TestRepairReextractsMissingCoverFromPrimaryAsset(t *testing.T) {
-	dataDir := t.TempDir()
-	initialized, err := ensureLibraryInitialized(t.Context(), dataDir)
-	if err != nil {
-		t.Fatalf("ensureLibraryInitialized: %v", err)
-	}
-	initialized.Close()
+	for _, srcPath := range coverSourceFiles(t) {
+		t.Run(filepath.Ext(srcPath), func(t *testing.T) {
+			dataDir := t.TempDir()
+			t.Chdir(dataDir)
+			initialized, err := ensureLibraryInitialized(t.Context(), dataDir)
+			if err != nil {
+				t.Fatalf("ensureLibraryInitialized: %v", err)
+			}
+			initialized.Close()
 
-	srcPath := filepath.Join(dataDir, "embedded-cover.epub")
-	writeMetaEPUBWithCover(t, srcPath, metaTinyPNG)
-	if err := runImport(context.Background(), dataDir, []string{srcPath}); err != nil {
-		t.Fatalf("runImport: %v", err)
-	}
+			if err := runImport(context.Background(), dataDir, []string{srcPath}); err != nil {
+				t.Fatalf("runImport: %v", err)
+			}
 
-	database, err := db.InitPath(filepath.Join(dataDir, "library.db"))
-	if err != nil {
-		t.Fatalf("db init: %v", err)
-	}
-	defer database.Close()
+			database, err := db.InitPath(filepath.Join(dataDir, "library.db"))
+			if err != nil {
+				t.Fatalf("db init: %v", err)
+			}
+			defer database.Close()
 
-	var bookID int64
-	var initialCoverVersion int
-	var initialMetadataRev int64
-	if err := database.Read(t.Context()).QueryRow("SELECT id, cover_version, metadata_rev FROM books LIMIT 1").Scan(&bookID, &initialCoverVersion, &initialMetadataRev); err != nil {
-		t.Fatalf("query book cover: %v", err)
-	}
-	if initialCoverVersion <= 0 {
-		t.Fatalf("initial cover_version = %d; want imported cover", initialCoverVersion)
-	}
+			var bookID int64
+			var initialCoverVersion int
+			var initialMetadataRev int64
+			if err := database.Read(t.Context()).QueryRow("SELECT id, cover_version, metadata_rev FROM books LIMIT 1").Scan(&bookID, &initialCoverVersion, &initialMetadataRev); err != nil {
+				t.Fatalf("query book cover: %v", err)
+			}
+			if initialCoverVersion <= 0 {
+				t.Fatalf("initial cover_version = %d; want imported cover", initialCoverVersion)
+			}
 
-	dataRoot := storage.NewRoot(dataDir)
-	coverAbs := dataRoot.Abs(covers.OriginalPath(bookID))
-	if got, err := os.ReadFile(coverAbs); err != nil {
-		t.Fatalf("read imported cover: %v", err)
-	} else if !bytes.Equal(got, metaTinyPNG) {
-		t.Fatalf("imported cover = %d bytes; want embedded PNG", len(got))
-	}
-	if err := os.Remove(coverAbs); err != nil {
-		t.Fatalf("remove imported cover: %v", err)
-	}
+			dataRoot := storage.NewRoot(dataDir)
+			coverAbs := dataRoot.Abs(covers.OriginalPath(bookID))
+			originalCover, err := os.ReadFile(coverAbs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(originalCover) == 0 {
+				t.Fatal("empty imported cover")
+			}
+			if err := os.Remove(coverAbs); err != nil {
+				t.Fatalf("remove imported cover: %v", err)
+			}
 
-	out, err := captureStdout(t, func() error {
-		return runCheck(t.Context(), dataDir, nil)
-	})
-	if !errors.Is(err, ErrIssuesFound) {
-		t.Fatalf("runCheck missing cover = %v; want ErrIssuesFound", err)
-	}
-	if !strings.Contains(out, "Missing cover originals (1):") {
-		t.Fatalf("check output = %q; want missing cover section", out)
-	}
+			out, err := captureStdout(t, func() error {
+				return runCheck(t.Context(), dataDir, nil)
+			})
+			if !errors.Is(err, ErrIssuesFound) {
+				t.Fatalf("runCheck missing cover = %v; want ErrIssuesFound", err)
+			}
+			if !strings.Contains(out, "Missing cover originals (1):") {
+				t.Fatalf("check output = %q; want missing cover section", out)
+			}
 
-	out, err = captureStdout(t, func() error {
-		return runRepair(context.Background(), dataDir, nil)
-	})
-	if err != nil {
-		t.Fatalf("runRepair: %v", err)
-	}
-	if !strings.Contains(out, fmt.Sprintf("%-32s 1", "Covers extracted:")) {
-		t.Fatalf("repair output = %q; want extracted cover count", out)
-	}
-	if got, err := os.ReadFile(coverAbs); err != nil {
-		t.Fatalf("read re-extracted cover: %v", err)
-	} else if !bytes.Equal(got, metaTinyPNG) {
-		t.Fatalf("re-extracted cover = %d bytes; want embedded PNG", len(got))
-	}
-	var coverVersion int
-	var metadataRev int64
-	if err := database.Read(t.Context()).QueryRow("SELECT cover_version, metadata_rev FROM books WHERE id = ?", bookID).Scan(&coverVersion, &metadataRev); err != nil {
-		t.Fatalf("query repaired cover_version: %v", err)
-	}
-	if coverVersion <= initialCoverVersion {
-		t.Fatalf("cover_version = %d; want > %d", coverVersion, initialCoverVersion)
-	}
-	if metadataRev <= initialMetadataRev {
-		t.Fatalf("metadata_rev = %d; want > %d", metadataRev, initialMetadataRev)
-	}
-	if err := runCheck(t.Context(), dataDir, nil); err != nil {
-		t.Fatalf("runCheck after cover re-extract: %v", err)
-	}
+			out, err = captureStdout(t, func() error {
+				return runRepair(context.Background(), ".", nil)
+			})
+			if err != nil {
+				t.Fatalf("runRepair: %v", err)
+			}
+			if !strings.Contains(out, fmt.Sprintf("%-32s 1", "Covers extracted:")) {
+				t.Fatalf("repair output = %q; want extracted cover count", out)
+			}
+			if got, err := os.ReadFile(coverAbs); err != nil {
+				t.Fatalf("read re-extracted cover: %v", err)
+			} else if !bytes.Equal(got, originalCover) {
+				t.Fatalf("re-extracted cover = %d bytes; want the imported cover", len(got))
+			}
+			var coverVersion int
+			var metadataRev int64
+			if err := database.Read(t.Context()).QueryRow("SELECT cover_version, metadata_rev FROM books WHERE id = ?", bookID).Scan(&coverVersion, &metadataRev); err != nil {
+				t.Fatalf("query repaired cover_version: %v", err)
+			}
+			if coverVersion <= initialCoverVersion {
+				t.Fatalf("cover_version = %d; want > %d", coverVersion, initialCoverVersion)
+			}
+			if metadataRev <= initialMetadataRev {
+				t.Fatalf("metadata_rev = %d; want > %d", metadataRev, initialMetadataRev)
+			}
+			if err := runCheck(t.Context(), dataDir, nil); err != nil {
+				t.Fatalf("runCheck after cover re-extract: %v", err)
+			}
 
-	if _, err := database.Write(t.Context()).Exec("UPDATE books SET manual_overrides = ? WHERE id = ?", bookmeta.MarshalOverrides(map[string]bool{"cover": true, "title": true}), bookID); err != nil {
-		t.Fatalf("set cover override: %v", err)
-	}
-	if err := os.Remove(coverAbs); err != nil {
-		t.Fatalf("remove re-extracted cover: %v", err)
-	}
-	out, err = captureStdout(t, func() error {
-		return runRepair(context.Background(), dataDir, nil)
-	})
-	if err != nil {
-		t.Fatalf("runRepair fallback: %v", err)
-	}
-	if !strings.Contains(out, fmt.Sprintf("%-32s 1", "Covers fallback:")) {
-		t.Fatalf("repair fallback output = %q; want fallback cover count", out)
-	}
-	if got, err := os.ReadFile(coverAbs); err != nil {
-		t.Fatalf("read fallback cover: %v", err)
-	} else if !bytes.Equal(got, metaTinyPNG) {
-		t.Fatalf("fallback cover = %d bytes; want embedded PNG", len(got))
-	}
-	var rawOverrides string
-	var fallbackMetadataRev int64
-	if err := database.Read(t.Context()).QueryRow("SELECT manual_overrides, metadata_rev FROM books WHERE id = ?", bookID).Scan(&rawOverrides, &fallbackMetadataRev); err != nil {
-		t.Fatalf("query fallback overrides: %v", err)
-	}
-	if fallbackMetadataRev <= metadataRev {
-		t.Fatalf("fallback metadata_rev = %d; want > %d", fallbackMetadataRev, metadataRev)
-	}
-	overrides := bookmeta.ParseOverrides(rawOverrides)
-	if overrides["cover"] {
-		t.Fatalf("manual_overrides = %q; cover override should be cleared after fallback recovery", rawOverrides)
-	}
-	if !overrides["title"] {
-		t.Fatalf("manual_overrides = %q; unrelated title override should remain", rawOverrides)
-	}
-	if err := runCheck(t.Context(), dataDir, nil); err != nil {
-		t.Fatalf("runCheck after fallback cover re-extract: %v", err)
+			if _, err := database.Write(t.Context()).Exec("UPDATE books SET manual_overrides = ? WHERE id = ?", bookmeta.MarshalOverrides(map[string]bool{"cover": true, "title": true}), bookID); err != nil {
+				t.Fatalf("set cover override: %v", err)
+			}
+			if err := os.Remove(coverAbs); err != nil {
+				t.Fatalf("remove re-extracted cover: %v", err)
+			}
+			out, err = captureStdout(t, func() error {
+				return runRepair(context.Background(), dataDir, nil)
+			})
+			if err != nil {
+				t.Fatalf("runRepair fallback: %v", err)
+			}
+			if !strings.Contains(out, fmt.Sprintf("%-32s 1", "Covers fallback:")) {
+				t.Fatalf("repair fallback output = %q; want fallback cover count", out)
+			}
+			if got, err := os.ReadFile(coverAbs); err != nil {
+				t.Fatalf("read fallback cover: %v", err)
+			} else if !bytes.Equal(got, originalCover) {
+				t.Fatalf("fallback cover = %d bytes; want the imported cover", len(got))
+			}
+			var rawOverrides string
+			var fallbackMetadataRev int64
+			if err := database.Read(t.Context()).QueryRow("SELECT manual_overrides, metadata_rev FROM books WHERE id = ?", bookID).Scan(&rawOverrides, &fallbackMetadataRev); err != nil {
+				t.Fatalf("query fallback overrides: %v", err)
+			}
+			if fallbackMetadataRev <= metadataRev {
+				t.Fatalf("fallback metadata_rev = %d; want > %d", fallbackMetadataRev, metadataRev)
+			}
+			overrides := bookmeta.ParseOverrides(rawOverrides)
+			if overrides["cover"] {
+				t.Fatalf("manual_overrides = %q; cover override should be cleared after fallback recovery", rawOverrides)
+			}
+			if !overrides["title"] {
+				t.Fatalf("manual_overrides = %q; unrelated title override should remain", rawOverrides)
+			}
+			if err := runCheck(t.Context(), dataDir, nil); err != nil {
+				t.Fatalf("runCheck after fallback cover re-extract: %v", err)
+			}
+		})
 	}
 }
 

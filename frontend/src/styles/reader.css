@@ -103,7 +103,7 @@ body.reader-shell .layout {
 .reader-panel-toggle,
 .reader-panel-close,
 .reader-close,
-.reader-pdf-tool {
+.reader-paged-tool {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -123,24 +123,24 @@ body.reader-shell .layout {
 .reader-panel-close:focus-visible,
 .reader-close:hover,
 .reader-close:focus-visible,
-.reader-pdf-tool:hover:not(:disabled),
-.reader-pdf-tool:focus-visible:not(:disabled) {
+.reader-paged-tool:hover:not(:disabled),
+.reader-paged-tool:focus-visible:not(:disabled) {
     background: var(--surface-hover);
     color: var(--text-main);
     outline: none;
 }
 
-.reader-pdf-tool {
+.reader-paged-tool {
     font: inherit;
     font-size: 1.2rem;
 }
 
-.reader-pdf-tool:disabled {
+.reader-paged-tool:disabled {
     cursor: default;
     opacity: 0.38;
 }
 
-.reader-pdf-fit {
+.reader-paged-fit {
     width: auto;
     min-width: 2.8rem;
     padding: 0 0.45rem;
@@ -573,7 +573,7 @@ body.reader-shell .layout {
     pointer-events: auto;
 }
 
-.reader-pdf-stage {
+.reader-paged-stage {
     position: relative;
     flex: 1 1 auto;
     min-height: 0;
@@ -584,11 +584,11 @@ body.reader-shell .layout {
     -webkit-overflow-scrolling: touch;
 }
 
-.reader-pdf-stage:focus-visible {
+.reader-paged-stage:focus-visible {
     box-shadow: inset 0 0 0 2px rgba(0, 102, 204, 0.18);
 }
 
-.reader-pdf-page {
+.reader-paged-page {
     position: relative;
     box-sizing: content-box;
     margin: 1rem auto;
@@ -597,21 +597,49 @@ body.reader-shell .layout {
     box-shadow: 0 1px 5px rgba(0, 0, 0, 0.22);
 }
 
-.reader-pdf-page[hidden] {
+.reader-paged-page[hidden] {
     display: none;
 }
 
-.reader-pdf-canvas {
+.reader-paged-canvas {
     position: absolute;
     inset: 0;
     display: block;
     background: #fff;
 }
 
+/* An emptied opaque canvas can still paint black at its previous CSS size. */
+.reader-paged-canvas[width="0"],
+.reader-paged-canvas[height="0"] {
+    visibility: hidden;
+}
+
 .reader-pdf-highlights {
     position: absolute;
     inset: 0;
     pointer-events: none;
+}
+
+.reader-djvu-text-layer {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    line-height: 1;
+}
+
+.reader-djvu-text-layer span {
+    position: absolute;
+    left: 0;
+    top: 0;
+    color: transparent;
+    font-family: sans-serif;
+    white-space: pre;
+    transform-origin: 0 0;
+    cursor: text;
+}
+
+.reader-djvu-text-layer ::selection {
+    background: rgba(0, 102, 204, 0.25);
 }
 
 .reader-pdf-highlights span {
@@ -781,12 +809,12 @@ body.reader-shell .layout {
     transition: opacity 0.18s ease;
 }
 
-.reader-page--pdf .reader-footer {
+.reader-page--paged .reader-footer {
     align-items: center;
     gap: 0.3rem;
 }
 
-.reader-pdf-turn {
+.reader-paged-turn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -803,19 +831,19 @@ body.reader-shell .layout {
     pointer-events: auto;
 }
 
-.reader-pdf-turn:hover:not(:disabled),
-.reader-pdf-turn:focus-visible:not(:disabled) {
+.reader-paged-turn:hover:not(:disabled),
+.reader-paged-turn:focus-visible:not(:disabled) {
     background: var(--surface-hover);
     color: var(--text-main);
     outline: none;
 }
 
-.reader-pdf-turn:disabled {
+.reader-paged-turn:disabled {
     cursor: default;
     opacity: 0.3;
 }
 
-.reader-pdf-page-picker {
+.reader-paged-page-picker {
     display: inline-flex;
     align-items: center;
     gap: 0.25rem;
@@ -830,7 +858,7 @@ body.reader-shell .layout {
     pointer-events: auto;
 }
 
-.reader-pdf-page-input {
+.reader-paged-page-input {
     box-sizing: border-box;
     width: 2.35rem;
     min-height: 1.65rem;
@@ -844,13 +872,13 @@ body.reader-shell .layout {
     text-align: center;
 }
 
-.reader-pdf-page-input:focus {
+.reader-paged-page-input:focus {
     background: var(--accent-soft);
     outline: none;
 }
 
-.reader-pdf-page-input::-webkit-inner-spin-button,
-.reader-pdf-page-input::-webkit-outer-spin-button {
+.reader-paged-page-input::-webkit-inner-spin-button,
+.reader-paged-page-input::-webkit-outer-spin-button {
     margin: 0;
     -webkit-appearance: none;
 }

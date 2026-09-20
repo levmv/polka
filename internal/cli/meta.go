@@ -1,11 +1,11 @@
 package cli
 
 import (
+	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -139,7 +139,7 @@ type metaKindleResourceCounts struct {
 	Other    int `json:"other,omitzero"`
 }
 
-func runMeta(_ string, args []string) error {
+func runMeta(ctx context.Context, args []string) error {
 	if len(args) > 0 && args[0] == "set" {
 		return runMetaSet(args[1:])
 	}
@@ -160,10 +160,18 @@ func runMeta(_ string, args []string) error {
 		return errors.New("meta --cover accepts exactly one input file")
 	}
 
+	extractor := format.NewExtractor()
+	defer extractor.Close()
 	reports := make([]metaFileReport, 0, fs.NArg())
 	hadErrors := false
 	for _, path := range fs.Args() {
-		report := inspectMetaFile(path, *coverPath, *force)
+		if err := context.Cause(ctx); err != nil {
+			return err
+		}
+		report := inspectMetaFile(ctx, extractor, path, *coverPath, *force)
+		if err := context.Cause(ctx); err != nil {
+			return err
+		}
 		if report.Error != "" || report.CoverError != "" {
 			hadErrors = true
 		}
@@ -185,7 +193,7 @@ func runMeta(_ string, args []string) error {
 	return nil
 }
 
-func inspectMetaFile(path, coverPath string, force bool) metaFileReport {
+func inspectMetaFile(ctx context.Context, extractor *format.Extractor, path, coverPath string, force bool) metaFileReport {
 	report := metaFileReport{Path: path}
 	f, err := os.Open(path)
 	if err != nil {
@@ -206,12 +214,17 @@ func inspectMetaFile(path, coverPath string, force bool) metaFileReport {
 	report.MediaType = metaMediaType(path, kind)
 	report.ConversionTargets = metaConversionTargets(kind)
 
-	meta, err := format.ExtractMetadata(f, stat.Size(), kind)
-	if err != nil {
-		report.Error = fmt.Sprintf("extract metadata: %v", err)
+	extracted, extractErr := extractor.Extract(ctx, f, stat.Size(), kind, format.ExtractOptions{
+		Metadata: true,
+		Cover:    coverPath != "",
+	})
+	if extractErr != nil {
+		report.Error = extractErr.Error()
+	}
+	if ctx.Err() != nil {
 		return report
 	}
-	report.Metadata = metadataForReport(meta)
+	report.Metadata = metadataForReport(extracted.Metadata)
 	report.Details = metaFormatDetails(path, f, stat.Size(), kind)
 	diagnosticKind := kind
 	if kindleKind := metaKindleInspectFormat(path, kind); kindleKind != format.FormatUnknown {
@@ -224,11 +237,14 @@ func inspectMetaFile(path, coverPath string, force bool) metaFileReport {
 		})
 	}
 	if coverPath != "" {
-		cover, err := extractMetaCover(f, stat.Size(), kind, coverPath, force)
-		if err != nil {
-			report.CoverError = err.Error()
-		} else {
-			report.Cover = cover
+		if len(extracted.Cover) > 0 {
+			if err := writeMetaCoverFile(coverPath, extracted.Cover, force); err != nil {
+				report.CoverError = fmt.Sprintf("write cover: %v", err)
+			} else {
+				report.Cover = &metaCoverReport{Path: coverPath, Extension: extracted.CoverExtension, Bytes: len(extracted.Cover)}
+			}
+		} else if extractErr == nil {
+			report.CoverError = "extract cover: no cover found"
 		}
 	}
 	return report
@@ -245,32 +261,6 @@ func metaMediaType(path string, kind format.Format) string {
 		return format.MediaTypeForExtension(ext)
 	}
 	return "application/octet-stream"
-}
-
-func extractMetaCover(r io.ReaderAt, size int64, kind format.Format, dstPath string, force bool) (*metaCoverReport, error) {
-	coverBytes, coverExt, err := format.ExtractCover(r, size, kind)
-	if err != nil {
-		return nil, fmt.Errorf("extract cover: %w", err)
-	}
-	if len(coverBytes) == 0 {
-		return nil, errors.New("extract cover: no cover found")
-	}
-	if err := writeMetaCoverFile(dstPath, coverBytes, force); err != nil {
-		return nil, fmt.Errorf("write cover: %w", err)
-	}
-	return &metaCoverReport{
-		Path:      dstPath,
-		Extension: normalizeMetaCoverExtension(coverExt),
-		Bytes:     len(coverBytes),
-	}, nil
-}
-
-func normalizeMetaCoverExtension(ext string) string {
-	ext = strings.TrimSpace(strings.ToLower(ext))
-	if ext == "" || strings.HasPrefix(ext, ".") {
-		return ext
-	}
-	return "." + ext
 }
 
 func writeMetaCoverFile(dstPath string, data []byte, overwrite bool) error {
@@ -507,7 +497,9 @@ func printMetaReports(reports []metaFileReport) {
 		fmt.Println(report.Path)
 		if report.Error != "" {
 			fmt.Printf("  error: %s\n", report.Error)
-			continue
+			if report.Format == "" {
+				continue
+			}
 		}
 		fmt.Printf("  format: %s (%s)\n", report.Format, report.FormatLabel)
 		fmt.Printf("  media_type: %s\n", report.MediaType)

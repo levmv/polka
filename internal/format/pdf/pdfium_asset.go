@@ -1,4 +1,4 @@
-package pdfcover
+package pdf
 
 import _ "embed"
 

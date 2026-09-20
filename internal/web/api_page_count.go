@@ -13,7 +13,7 @@ import (
 
 	"github.com/levmv/polka/internal/db"
 	"github.com/levmv/polka/internal/format"
-	"github.com/levmv/polka/internal/pdfcover"
+	"github.com/levmv/polka/internal/format/pdf"
 )
 
 type pageCountResultDTO struct {
@@ -115,7 +115,7 @@ func (s *Server) measurePageCount(ctx context.Context, asset db.PageCountAsset) 
 		}
 		renderer := s.pageCountRenderer
 		if renderer == nil {
-			renderer = pdfcover.NewRenderer()
+			renderer = pdf.NewRenderer()
 			defer renderer.Close()
 		}
 		return renderer.CountPages(ctx, source, info.Size())

@@ -22,7 +22,7 @@ func TestBookFormatAliases(t *testing.T) {
 		{".fb2.zip", FormatFB2, "application/zip", ReaderFoliate, FB2ContainerZip},
 		{".fbz", FormatFB2, "application/zip", ReaderFoliate, FB2ContainerZip},
 		{".fb2.gz", FormatFB2, "application/gzip", ReaderFoliate, FB2ContainerGzip},
-		{".djv", FormatDJVU, "image/vnd.djvu", "", ""},
+		{".djv", FormatDJVU, "image/vnd.djvu", ReaderDJVU, ""},
 		{".bin", FormatUnknown, "application/octet-stream", "", ""},
 	} {
 		t.Run(tt.ext, func(t *testing.T) {
@@ -134,6 +134,39 @@ func TestBookExtension(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := BookExtension(tt.name); got != tt.want {
 				t.Fatalf("BookExtension(%q) = %q; want %q", tt.name, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDetectFormatDJVU(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		formType string
+		want     Format
+	}{
+		{name: "single.djvu", formType: "DJVU", want: FormatDJVU},
+		{name: "multi.djv", formType: "DJVM", want: FormatDJVU},
+		{name: "shared.djvu", formType: "DJVI", want: FormatUnknown},
+		{name: "thumbs.djvu", formType: "THUM", want: FormatUnknown},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			data := testfixture.MinimalDJVU(tt.formType)
+			r := bytes.NewReader(data)
+			if got := DetectFormat(tt.name, r, r.Size()); got != tt.want {
+				t.Fatalf("DetectFormat = %v; want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDetectFormatDJVURejectsExtensionOnlyFiles(t *testing.T) {
+	for _, name := range []string{"scan.djvu", "scan.djv"} {
+		t.Run(name, func(t *testing.T) {
+			data := []byte("not a djvu")
+			r := bytes.NewReader(data)
+			if got := DetectFormat(name, r, r.Size()); got != FormatUnknown {
+				t.Fatalf("DetectFormat = %v; want FormatUnknown", got)
 			}
 		})
 	}

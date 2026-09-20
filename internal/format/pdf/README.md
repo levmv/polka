@@ -21,7 +21,7 @@ make pdfium-wasm
 To force regeneration:
 
 ```sh
-go run ./internal/pdfcover/wasmtool prepare -force
+go run ./internal/format/pdf/wasmtool prepare -force
 ```
 
 ## Updating
@@ -33,4 +33,4 @@ go run ./internal/pdfcover/wasmtool prepare -force
 3. Check both wazero compiler and interpreter modes, including cancellation,
    timeouts, and worker recovery.
 4. Review exports, resource use, and
-   [third-party notices](../../ThirdPartyNotices.txt).
+   [third-party notices](../../../ThirdPartyNotices.txt).

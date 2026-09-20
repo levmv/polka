@@ -19,3 +19,19 @@ fixture contains third-party artwork.
 
 The 442-byte lossless WebP is a synthetic 75×100 cover fixture shared by the
 `covers` and `format` tests.
+
+`reader.djvu` contains three project-owned 600×800 pages: text, simple geometric
+shapes, OCR text and an outline. The first and last pages use JB2; the middle
+page uses IW44 color. Generated from a tiny Helvetica PDF using Poppler and
+DjVuLibre (`cjb2`, `c44`, `djvm`, `djvused`); it contains no book content.
+The server and browser tests share this fixture.
+
+`blank-first.djvu` contains two white pages with a few scan specks followed by
+a black rectangle, generated with `cjb2` and `djvm` for cover selection tests.
+
+`metadata.djvu` is a 659-byte project-owned fixture with three identical 8×8
+bitonal frames. Created with DjVuLibre (`cjb2`, `djvm`, `djvused`), it has shared
+ANTz fields (`Creator: Scanner software`, `Language: eng`, `Year: 1843`) and
+last-page ANTz containing `Title: Annotated DjVu` and XMP. XMP supplies the author
+Ada Lovelace and an alternative title. It checks complete annotation discovery,
+XMP fallback and metadata/cover independence without real book content.

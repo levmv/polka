@@ -312,8 +312,11 @@ reorganize managed files by hand.
 
 ```bash
 polka meta book.epub
+polka meta book.djvu --cover cover.jpg
 polka convert --to epub in.fb2 out.epub
 ```
+
+`meta --cover` saves the book's cover image.
 
 Library administration is also available for headless servers and scripts:
 

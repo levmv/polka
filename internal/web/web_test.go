@@ -960,7 +960,7 @@ func TestReaderRoutesServeReadablePrimaryAssets(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("read page status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
 	}
-	if body := w.Body.String(); !strings.Contains(body, `data-reader-url="/read/assets/2?v=`) || !strings.Contains(body, `reader-pdf-stage`) || !strings.Contains(body, `data-pdf-page-input`) || !strings.Contains(body, `/static/pdf-reader.js`) {
+	if body := w.Body.String(); !strings.Contains(body, `data-reader-url="/read/assets/2?v=`) || !strings.Contains(body, `reader-paged-stage`) || !strings.Contains(body, `data-page-input`) || !strings.Contains(body, `/static/pdf-reader.js`) {
 		t.Fatalf("read page did not render the PDF.js reader shell: %s", body)
 	}
 	if csp := w.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "script-src 'self'") || !strings.Contains(csp, "object-src 'none'") {

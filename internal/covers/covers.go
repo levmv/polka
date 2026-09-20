@@ -26,7 +26,6 @@ import (
 	"golang.org/x/image/draw"
 
 	"github.com/levmv/polka/internal/imagecodec"
-	"github.com/levmv/polka/internal/storage"
 )
 
 const ContentTypeJPEG = "image/jpeg"
@@ -40,6 +39,8 @@ const (
 	CacheVersion = "v2"
 
 	MaxCoverPixels = 80_000_000
+	// CoverPageLimit bounds the search past blank opening pages in PDF and DjVu.
+	CoverPageLimit = 3
 )
 
 type Options struct {
@@ -71,6 +72,26 @@ func DefaultOptions() Options {
 		ThumbMaxHeight:   540,
 		JPEGQuality:      88,
 	}
+}
+
+// IsBlankPage accepts nearly white paper with only isolated scan specks.
+// Keep even sparse or pale content rather than guessing whether it is a cover.
+func IsBlankPage(img image.Image) bool {
+	bounds := img.Bounds()
+	remaining := int64(bounds.Dx()) * int64(bounds.Dy()) / 50_000
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			r, g, b, a := img.At(x, y).RGBA()
+			// Composite transparent pixels onto white paper.
+			if min(r, g, b)+0xffff-a < 245*257 {
+				remaining--
+				if remaining < 0 {
+					return false
+				}
+			}
+		}
+	}
+	return true
 }
 
 // OriginalPath and CachePath are relative to the app data dir (not the books
@@ -127,7 +148,7 @@ func CachePath(bookID int64, variant Variant) string {
 // next read regenerates them from the (newly replaced) original. Best-effort: a
 // leftover stale variant is harmless because reads regenerate any cache older
 // than the original's mtime.
-func RemoveDerived(root storage.Root, bookID int64) {
+func RemoveDerived(root interface{ Resolve(string) (string, error) }, bookID int64) {
 	for _, variant := range []Variant{VariantDisplay, VariantThumb} {
 		cachePath, err := root.Resolve(CachePath(bookID, variant))
 		if err != nil {

@@ -10,8 +10,8 @@ import (
 	"strings"
 
 	"github.com/levmv/polka/internal/db"
+	"github.com/levmv/polka/internal/format"
 	"github.com/levmv/polka/internal/importer"
-	"github.com/levmv/polka/internal/pdfcover"
 	"github.com/levmv/polka/internal/storage"
 )
 
@@ -99,9 +99,9 @@ func (s *Server) handleAPIAdminStorageImportRun(w http.ResponseWriter, r *http.R
 	}
 	defer releaseImport()
 
-	renderer := pdfcover.NewRenderer()
-	defer renderer.Close()
-	result, err := s.importFolder(r.Context(), path, root, renderer, importer.Options{
+	extractor := format.NewExtractor()
+	defer extractor.Close()
+	result, err := s.importFolder(r.Context(), path, root, extractor, importer.Options{
 		PathTemplate: template,
 		CoverRoot:    s.dataRoot(),
 	})
@@ -228,7 +228,7 @@ func (p *FolderImportPreviewDTO) addError(path, rootPath string, err error) {
 	p.Errors = appendBoundedError(p.Errors, rootPath, path, err)
 }
 
-func (s *Server) importFolder(ctx context.Context, rootPath string, root storage.Root, renderer *pdfcover.Renderer, opts importer.Options) (FolderImportResultDTO, error) {
+func (s *Server) importFolder(ctx context.Context, rootPath string, root storage.Root, extractor *format.Extractor, opts importer.Options) (FolderImportResultDTO, error) {
 	out := FolderImportResultDTO{Path: rootPath}
 	err := walkFolderImport(rootPath, func(path string, d fs.DirEntry) error {
 		if err := context.Cause(ctx); err != nil {
@@ -243,7 +243,7 @@ func (s *Server) importFolder(ctx context.Context, rootPath string, root storage
 			if ok {
 				out.CalibreBooks++
 				out.Files += len(sources)
-				group, err := importer.ImportGroup(ctx, s.db, root, sources, renderer, opts)
+				group, err := importer.ImportGroup(ctx, s.db, root, sources, extractor, opts)
 				if err != nil {
 					if cause := context.Cause(ctx); cause != nil {
 						return cause
@@ -270,7 +270,7 @@ func (s *Server) importFolder(ctx context.Context, rootPath string, root storage
 			return nil
 		}
 		out.Files++
-		res, err := importer.ImportFile(ctx, s.db, root, path, renderer, opts)
+		res, err := importer.ImportFile(ctx, s.db, root, path, extractor, opts)
 		if err != nil {
 			if cause := context.Cause(ctx); cause != nil {
 				return cause

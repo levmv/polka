@@ -336,6 +336,8 @@ type coverRepairResult struct {
 }
 
 func repairCovers(ctx context.Context, database *db.DB, booksRoot, coverRoot storage.Root, books []db.BookCoverRow, verifiedAssetHashes map[int64]struct{}) (coverRepairResult, error) {
+	extractor := format.NewExtractor()
+	defer extractor.Close()
 	recoverable := newRecoverableCoverIndex(ctx, database.Read(ctx), coverRoot)
 	summary := coverRepairResult{}
 
@@ -389,7 +391,7 @@ func repairCovers(ctx context.Context, database *db.DB, booksRoot, coverRoot sto
 			continue
 		}
 
-		extracted, fallback, err := restoreCoverFromPrimaryAsset(ctx, database, booksRoot, coverRoot, book, verifiedAssetHashes)
+		extracted, fallback, err := restoreCoverFromPrimaryAsset(ctx, database, booksRoot, coverRoot, book, verifiedAssetHashes, extractor)
 		if err != nil {
 			if cause := context.Cause(ctx); cause != nil {
 				return summary, cause
@@ -479,7 +481,7 @@ func printRepairSummary(items []repairSummaryItem) {
 	}
 }
 
-func restoreCoverFromPrimaryAsset(ctx context.Context, database *db.DB, booksRoot, coverRoot storage.Root, w db.BookCoverRow, verifiedAssetHashes map[int64]struct{}) (extracted bool, fallback bool, err error) {
+func restoreCoverFromPrimaryAsset(ctx context.Context, database *db.DB, booksRoot, coverRoot storage.Root, w db.BookCoverRow, verifiedAssetHashes map[int64]struct{}, extractor *format.Extractor) (extracted bool, fallback bool, err error) {
 	asset, ok, err := primaryAssetForCoverRecovery(database.Read(ctx), w.ID)
 	if err != nil {
 		return false, false, err
@@ -508,7 +510,8 @@ func restoreCoverFromPrimaryAsset(ctx context.Context, database *db.DB, booksRoo
 	if err := validateCoverRecoveryAssetBytes(ctx, asset, assetAbs, stat.Size(), hashAlreadyVerified); err != nil {
 		return false, false, err
 	}
-	coverBytes, _, err := format.ExtractCover(f, stat.Size(), asset.Format)
+	extractedData, err := extractor.Extract(ctx, f, stat.Size(), asset.Format, format.ExtractOptions{Cover: true})
+	coverBytes := extractedData.Cover
 	if err != nil {
 		return false, false, fmt.Errorf("%d (%s): %w", asset.ID, asset.StoragePath, err)
 	}
@@ -877,8 +880,13 @@ func isStagedCoverFileName(name string) bool {
 }
 
 func removeOrphanCoverOriginals(ctx context.Context, root storage.Root, expected map[string]bool) (int, error) {
+	// expected contains absolute paths from Root.Resolve, even with --data=./library.
+	dir, err := root.Resolve("covers")
+	if err != nil {
+		return 0, err
+	}
 	removed := 0
-	err := filepath.Walk(root.Abs("covers"), func(path string, info os.FileInfo, err error) error {
+	err = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if cause := context.Cause(ctx); cause != nil {
 			return cause
 		}

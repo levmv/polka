@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	manifestPath = "internal/pdfcover/pdfium-wasm.json"
+	manifestPath = "internal/format/pdf/pdfium-wasm.json"
 	goPDFiumPath = "github.com/klippa-app/go-pdfium"
 )
 

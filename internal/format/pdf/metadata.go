@@ -1,4 +1,4 @@
-package format
+package pdf
 
 import (
 	"bufio"
@@ -6,10 +6,8 @@ import (
 	"compress/flate"
 	"compress/zlib"
 	"encoding/binary"
-	"encoding/xml"
 	"io"
 	"iter"
-	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf16"
@@ -18,18 +16,12 @@ import (
 	"github.com/levmv/polka/internal/bookmeta"
 )
 
-// ExtractPDFMetadata reads Title, Author and the native page count.
-// Unsupported or unreadable values remain empty; see ExtractPDFMetadataReader.
-func ExtractPDFMetadata(b []byte) *Metadata {
-	return ExtractPDFMetadataReader(bytes.NewReader(b), int64(len(b)))
-}
-
-// ExtractPDFMetadataReader resolves current Info, XMP and Pages objects through
+// ExtractMetadata resolves current Info, XMP and Pages objects through
 // ordinary xref tables. If that structure is unavailable, a scan with bounded
 // buffers recovers metadata from uncompressed objects. Page-count fallback to
 // PDFium belongs to the caller.
-func ExtractPDFMetadataReader(r io.ReaderAt, size int64) *Metadata {
-	meta := &Metadata{}
+func ExtractMetadata(r io.ReaderAt, size int64) *bookmeta.Metadata {
+	meta := &bookmeta.Metadata{}
 	if r == nil || size <= 0 {
 		return meta
 	}
@@ -52,12 +44,12 @@ func ExtractPDFMetadataReader(r io.ReaderAt, size int64) *Metadata {
 	}
 
 	if meta.Title == "" || len(meta.Authors) == 0 {
-		pdfFillMissingMetadata(meta, metadataFromPDFXMP(pdfXMPPacketReader(r, size)))
+		pdfFillMissingMetadata(meta, bookmeta.ParseXMP(pdfXMPPacketReader(r, size)))
 	}
 	return meta
 }
 
-func pdfFillMissingMetadata(meta, fallback *Metadata) {
+func pdfFillMissingMetadata(meta, fallback *bookmeta.Metadata) {
 	if fallback == nil {
 		return
 	}
@@ -69,7 +61,7 @@ func pdfFillMissingMetadata(meta, fallback *Metadata) {
 	}
 }
 
-func pdfFillInfoMetadata(meta *Metadata, readString func(string) (string, bool)) {
+func pdfFillInfoMetadata(meta *bookmeta.Metadata, readString func(string) (string, bool)) {
 	if title, ok := readString("Title"); ok {
 		meta.Title = title
 	}
@@ -343,7 +335,7 @@ func decodePDFString(b []byte) string {
 	default:
 		decoded = decodePDFDocEncoding(b)
 	}
-	return decodeLegacyHexWrappedText(decoded)
+	return bookmeta.DecodeLegacyHexWrappedText(decoded)
 }
 
 func decodePDFUTF16(b []byte, order binary.ByteOrder) string {
@@ -456,115 +448,7 @@ func pdfDocEncodingRune(c byte) rune {
 	}
 }
 
-const (
-	pdfDCNamespace  = "http://purl.org/dc/elements/1.1/"
-	pdfRDFNamespace = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
-
-	maxPDFMetadataStream = 4 << 20
-)
-
-func metadataFromPDFXMP(packet []byte) *Metadata {
-	if len(packet) == 0 {
-		return nil
-	}
-
-	decoder := xml.NewDecoder(bytes.NewReader(packet))
-	var prop string
-	propDepth := 0
-	liDepth := 0
-	var direct strings.Builder
-	var li strings.Builder
-	var titles []string
-	var creators []string
-
-	for {
-		token, err := decoder.Token()
-		if err != nil {
-			break
-		}
-
-		switch t := token.(type) {
-		case xml.StartElement:
-			if propDepth > 0 {
-				propDepth++
-				if liDepth > 0 {
-					liDepth++
-				} else if t.Name.Local == "li" && (t.Name.Space == pdfRDFNamespace || t.Name.Space == "") {
-					liDepth = 1
-					li.Reset()
-				}
-				continue
-			}
-			if t.Name.Space != pdfDCNamespace {
-				continue
-			}
-			switch t.Name.Local {
-			case "title", "creator":
-				prop = t.Name.Local
-				propDepth = 1
-				direct.Reset()
-			}
-		case xml.CharData:
-			if propDepth == 0 {
-				continue
-			}
-			if liDepth > 0 {
-				li.Write([]byte(t))
-			} else {
-				direct.Write([]byte(t))
-			}
-		case xml.EndElement:
-			if propDepth == 0 {
-				continue
-			}
-			if liDepth > 0 {
-				liDepth--
-				if liDepth == 0 {
-					switch prop {
-					case "title":
-						titles = appendPDFXMPText(titles, li.String())
-					case "creator":
-						creators = appendPDFXMPText(creators, li.String())
-					}
-					li.Reset()
-				}
-			}
-			propDepth--
-			if propDepth == 0 {
-				switch prop {
-				case "title":
-					titles = appendPDFXMPText(titles, direct.String())
-				case "creator":
-					creators = appendPDFXMPText(creators, direct.String())
-				}
-				prop = ""
-			}
-		}
-	}
-
-	meta := &Metadata{}
-	if len(titles) > 0 {
-		meta.Title = titles[0]
-	}
-	for _, creator := range creators {
-		meta.Authors = append(meta.Authors, bookmeta.AuthorMeta{Name: creator})
-	}
-	if meta.Title == "" && len(meta.Authors) == 0 {
-		return nil
-	}
-	return meta
-}
-
-func appendPDFXMPText(values []string, text string) []string {
-	text = decodeLegacyHexWrappedText(strings.TrimSpace(text))
-	if text == "" {
-		return values
-	}
-	if slices.Contains(values, text) {
-		return values
-	}
-	return append(values, text)
-}
+const maxPDFMetadataStream = 4 << 20
 
 func pdfXMPPacketReader(r io.ReaderAt, size int64) []byte {
 	for _, localName := range []string{"xmpmeta", "RDF"} {
@@ -853,4 +737,10 @@ func isPDFWhitespace(b byte) bool {
 		return true
 	}
 	return false
+}
+
+func Is(r io.ReaderAt) bool {
+	var head [5]byte
+	n, _ := r.ReadAt(head[:], 0)
+	return n == len(head) && string(head[:]) == "%PDF-"
 }

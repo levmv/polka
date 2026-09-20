@@ -44,16 +44,16 @@ test('PDF reader behavior', async ({ page, browserName, browserErrors }) => {
   file.name = file.name.toUpperCase();
   const bookId = await importTestBook(page, file);
   const reader = page.locator('.reader-page');
-  const stage = page.locator('.reader-pdf-stage');
+  const stage = page.locator('.reader-paged-stage');
 
   await test.step('saves and restores the page while zoom stays local', async () => {
     await page.goto(`/read/${bookId}`);
     await expect(reader).toHaveAttribute('data-reader-format', 'pdf');
     await expect.poll(async () => stage.getAttribute('data-reader-ready')).toBe('true');
-    await expect(page.locator('[data-pdf-canvas]')).toBeVisible();
-    await expect(page.locator('[data-pdf-text-layer]')).toContainText('First PDF page');
-    await expect(page.locator('[data-pdf-page-input]')).toHaveValue('1');
-    await expect(page.locator('[data-pdf-page-total]')).toHaveText('3');
+    await expect(page.locator('[data-page-canvas]')).toBeVisible();
+    await expect(page.locator('[data-page-text-layer]')).toContainText('First PDF page');
+    await expect(page.locator('[data-page-input]')).toHaveValue('1');
+    await expect(page.locator('[data-page-total]')).toHaveText('3');
 
     if (browserName === 'chromium') {
       const fonts = await page.evaluate(() =>
@@ -73,8 +73,8 @@ test('PDF reader behavior', async ({ page, browserName, browserErrors }) => {
     }
 
     await page.getByRole('button', { name: 'Next page' }).click();
-    await expect(page.locator('[data-pdf-page-input]')).toHaveValue('2');
-    await expect(page.locator('[data-pdf-text-layer]')).toContainText('Second PDF page');
+    await expect(page.locator('[data-page-input]')).toHaveValue('2');
+    await expect(page.locator('[data-page-text-layer]')).toContainText('Second PDF page');
     await expect.poll(() => activityCheckpoints).toBeGreaterThan(0);
 
     const assetId = Number(await reader.getAttribute('data-reader-asset-id'));
@@ -91,10 +91,10 @@ test('PDF reader behavior', async ({ page, browserName, browserErrors }) => {
       .toEqual({ page: 2 });
     await reader.evaluate((element) => element.classList.remove('reader-chrome-hidden'));
     await page.getByRole('button', { name: 'Zoom in' }).click();
-    await expect(reader).toHaveAttribute('data-reader-pdf-zoom', '1.200');
+    await expect(reader).toHaveAttribute('data-reader-zoom', '1.200');
     await expect(page.getByRole('button', { name: 'Fit page' })).toHaveText('120%');
-    await expect(page.locator('[data-pdf-page]')).toHaveAttribute('data-pdf-rendered-page', '2');
-    await expect(page.locator('[data-pdf-text-layer]')).toContainText('Second PDF page');
+    await expect(page.locator('[data-page-surface]')).toHaveAttribute('data-rendered-page', '2');
+    await expect(page.locator('[data-page-text-layer]')).toContainText('Second PDF page');
 
     await reader.evaluate((element) => element.classList.remove('reader-chrome-hidden'));
     await stage.click();
@@ -104,13 +104,13 @@ test('PDF reader behavior', async ({ page, browserName, browserErrors }) => {
 
     await page.reload();
     await expect.poll(async () => stage.getAttribute('data-reader-ready')).toBe('true');
-    await expect(page.locator('[data-pdf-page-input]')).toHaveValue('2');
-    await expect(page.locator('[data-pdf-text-layer]')).toContainText('Second PDF page');
-    await expect(reader).toHaveAttribute('data-reader-pdf-zoom', '1.200');
+    await expect(page.locator('[data-page-input]')).toHaveValue('2');
+    await expect(page.locator('[data-page-text-layer]')).toContainText('Second PDF page');
+    await expect(reader).toHaveAttribute('data-reader-zoom', '1.200');
     await expect(page.getByRole('button', { name: 'Fit page' })).toHaveText('120%');
     await page.getByRole('button', { name: 'Zoom in' }).click();
-    await expect(reader).toHaveAttribute('data-reader-pdf-zoom', '1.440');
-    await expect(page.locator('[data-pdf-page]')).toHaveAttribute('data-pdf-rendered-page', '2');
+    await expect(reader).toHaveAttribute('data-reader-zoom', '1.440');
+    await expect(page.locator('[data-page-surface]')).toHaveAttribute('data-rendered-page', '2');
   });
 
   await test.step('resumes a remote move backwards while keeping the local zoom', async () => {
@@ -124,22 +124,22 @@ test('PDF reader behavior', async ({ page, browserName, browserErrors }) => {
     });
     expect(response.ok()).toBe(true);
     await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
-    await expect(page.locator('[data-pdf-page]')).toHaveAttribute('data-pdf-rendered-page', '1');
-    await expect(reader).toHaveAttribute('data-reader-pdf-zoom', '1.440');
+    await expect(page.locator('[data-page-surface]')).toHaveAttribute('data-rendered-page', '1');
+    await expect(reader).toHaveAttribute('data-reader-zoom', '1.440');
   });
 
   await test.step('keeps rapid page turns consistent', async () => {
     await page.getByRole('button', { name: 'Fit page' }).click();
-    await expect(reader).toHaveAttribute('data-reader-pdf-zoom', '1.000');
+    await expect(reader).toHaveAttribute('data-reader-zoom', '1.000');
     await page.getByRole('button', { name: 'Zoom in' }).click();
     await page.getByRole('button', { name: 'Zoom in' }).click();
-    await expect(reader).toHaveAttribute('data-reader-pdf-zoom', '1.440');
+    await expect(reader).toHaveAttribute('data-reader-zoom', '1.440');
     await page.getByRole('button', { name: 'Next page' }).click();
     await page.getByRole('button', { name: 'Previous page' }).click();
     await page.getByRole('button', { name: 'Next page' }).click();
     await page.getByRole('button', { name: 'Previous page' }).click();
-    await expect(page.locator('[data-pdf-page]')).toHaveAttribute('data-pdf-rendered-page', '1');
-    await expect(page.locator('[data-pdf-text-layer]')).toContainText('First PDF page');
+    await expect(page.locator('[data-page-surface]')).toHaveAttribute('data-rendered-page', '1');
+    await expect(page.locator('[data-page-text-layer]')).toContainText('First PDF page');
   });
 
   await test.step('navigates document contents', async () => {
@@ -152,10 +152,10 @@ test('PDF reader behavior', async ({ page, browserName, browserErrors }) => {
     await expect(tocPanel.locator('.reader-toc-item')).toHaveText(['Opening', 'Final PDF page']);
     await tocPanel.getByRole('button', { name: 'Final PDF page' }).click();
     await expect(tocPanel).toBeHidden();
-    await expect(page.locator('[data-pdf-page]')).toHaveAttribute('data-pdf-rendered-page', '3');
-    await expect(page.locator('[data-pdf-text-layer]')).toContainText('Third PDF page');
+    await expect(page.locator('[data-page-surface]')).toHaveAttribute('data-rendered-page', '3');
+    await expect(page.locator('[data-page-text-layer]')).toContainText('Third PDF page');
     await page.keyboard.press('Home');
-    await expect(page.locator('[data-pdf-page]')).toHaveAttribute('data-pdf-rendered-page', '1');
+    await expect(page.locator('[data-page-surface]')).toHaveAttribute('data-rendered-page', '1');
   });
 
   await test.step('replaces searches and highlights the selected text', async () => {
@@ -176,8 +176,8 @@ test('PDF reader behavior', async ({ page, browserName, browserErrors }) => {
     await expect(searchResult).toContainText('Bottom PDF target');
     await expect(searchPanel.locator('.reader-search-status')).toHaveText('1 result');
     await searchResult.click();
-    await expect(page.locator('[data-pdf-page]')).toHaveAttribute('data-pdf-rendered-page', '3');
-    await expect(page.locator('[data-pdf-text-layer]')).toContainText('Bottom PDF target');
+    await expect(page.locator('[data-page-surface]')).toHaveAttribute('data-rendered-page', '3');
+    await expect(page.locator('[data-page-text-layer]')).toContainText('Bottom PDF target');
     const highlight = page.locator('[data-pdf-search-highlights] .reader-pdf-search-highlight');
     await expect(highlight).toBeVisible();
     const scrollOffset = async () => stage.evaluate((element) => element.scrollTop);
@@ -221,7 +221,7 @@ test('PDF highlights retain their page and geometry through zoom, navigation and
   );
   await page.goto(`/read/${bookId}`);
   const root = page.locator('.reader-page');
-  await expect(page.locator('.reader-pdf-stage')).toHaveAttribute('data-reader-ready', 'true');
+  await expect(page.locator('.reader-paged-stage')).toHaveAttribute('data-reader-ready', 'true');
   const assetId = Number(await root.getAttribute('data-reader-asset-id'));
   const highlights = page.locator('.reader-pdf-highlights span');
   const editor = page.getByRole('dialog', { name: 'Highlight note' });
@@ -230,7 +230,7 @@ test('PDF highlights retain their page and geometry through zoom, navigation and
   // edge with a two-pixel tolerance, on ordinary and rotated pages alike.
   const alignmentError = () =>
     page.evaluate(() => {
-      const text = [...document.querySelectorAll('[data-pdf-text-layer] span')].filter((element) =>
+      const text = [...document.querySelectorAll('[data-page-text-layer] span')].filter((element) =>
         ['First PDF page', 'Second PDF page', 'Another line'].includes(element.textContent ?? ''),
       );
       const highlights = [...document.querySelectorAll('.reader-pdf-highlights span')];
@@ -250,10 +250,10 @@ test('PDF highlights retain their page and geometry through zoom, navigation and
   for (const [index, label] of ['First PDF page', 'Second PDF page'].entries()) {
     if (index > 0) {
       await page.getByRole('button', { name: 'Next page' }).click();
-      await expect(page.locator('[data-pdf-page]')).toHaveAttribute('data-pdf-rendered-page', '2');
+      await expect(page.locator('[data-page-surface]')).toHaveAttribute('data-rendered-page', '2');
       await expect(highlights).toHaveCount(0);
     }
-    const quote = await page.locator('[data-pdf-text-layer]').evaluate((element, label) => {
+    const quote = await page.locator('[data-page-text-layer]').evaluate((element, label) => {
       const span = [...element.querySelectorAll('span')].find((span) => span.textContent === label);
       const last = [...element.querySelectorAll('span')].find(
         (span) => span.textContent === 'Another line',
@@ -303,11 +303,11 @@ test('PDF highlights retain their page and geometry through zoom, navigation and
   // The panel must navigate to the annotation's own page and open its note.
   await page.getByRole('button', { name: 'Highlights', exact: true }).click();
   await page.locator(`[data-reader-annotation-id="${firstID}"].reader-annotations-item`).click();
-  await expect(page.locator('[data-pdf-page]')).toHaveAttribute('data-pdf-rendered-page', '1');
+  await expect(page.locator('[data-page-surface]')).toHaveAttribute('data-rendered-page', '1');
   await expect(editor.getByRole('textbox', { name: 'Note' })).toHaveValue('Keep this passage');
   await editor.getByRole('button', { name: 'Done' }).click();
   await page.getByRole('button', { name: 'Next page' }).click();
-  await expect(page.locator('[data-pdf-page]')).toHaveAttribute('data-pdf-rendered-page', '2');
+  await expect(page.locator('[data-page-surface]')).toHaveAttribute('data-rendered-page', '2');
   await page.locator('.reader-close').click();
   await expect(page).toHaveURL(new RegExp(`/book/${bookId}$`));
   // Let the book page finish loading before the next full navigation.
@@ -316,8 +316,8 @@ test('PDF highlights retain their page and geometry through zoom, navigation and
 
   // Reopening a passage overrides the saved page and restores its rectangles.
   await page.goto(`/read/asset/${assetId}#annotation=${firstID}`);
-  await expect(page.locator('.reader-pdf-stage')).toHaveAttribute('data-reader-ready', 'true');
-  await expect(page.locator('[data-pdf-page-input]')).toHaveValue('1');
+  await expect(page.locator('.reader-paged-stage')).toHaveAttribute('data-reader-ready', 'true');
+  await expect(page.locator('[data-page-input]')).toHaveValue('1');
   await expect.poll(alignmentError).toBeLessThan(2);
   const bounds = await highlights.first().boundingBox();
   if (!bounds) throw new Error('missing highlight after reopening');

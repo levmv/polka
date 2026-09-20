@@ -4,8 +4,35 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"testing"
 )
+
+// MinimalPDF contains one page with a black rectangle and an Info dictionary.
+func MinimalPDF() []byte {
+	const content = "0 0 0 rg 20 20 50 100 re f\n"
+	objects := []string{
+		"<< /Type /Catalog /Pages 2 0 R >>",
+		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 144 216] /Resources << >> /Contents 4 0 R >>",
+		fmt.Sprintf("<< /Length %d >>\nstream\n%sendstream", len(content), content),
+		"<< /Title (Rendered PDF) /Author (Ada Lovelace) >>",
+	}
+	var buf bytes.Buffer
+	buf.WriteString("%PDF-1.4\n")
+	offsets := make([]int, len(objects)+1)
+	for i, object := range objects {
+		offsets[i+1] = buf.Len()
+		fmt.Fprintf(&buf, "%d 0 obj\n%s\nendobj\n", i+1, object)
+	}
+	xref := buf.Len()
+	fmt.Fprintf(&buf, "xref\n0 %d\n0000000000 65535 f \n", len(offsets))
+	for _, offset := range offsets[1:] {
+		fmt.Fprintf(&buf, "%010d 00000 n \n", offset)
+	}
+	fmt.Fprintf(&buf, "trailer\n<< /Size %d /Root 1 0 R /Info 5 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(offsets), xref)
+	return buf.Bytes()
+}
 
 // EPUB packages a literal OPF at OEBPS/content.opf and optional archive entries.
 // It supplies only ZIP/container boilerplate; callers own the book contents.

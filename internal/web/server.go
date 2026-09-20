@@ -14,11 +14,11 @@ import (
 
 	"github.com/levmv/polka/internal/bootstrap"
 	"github.com/levmv/polka/internal/db"
+	"github.com/levmv/polka/internal/format/pdf"
 	"github.com/levmv/polka/internal/fsprofile"
 	"github.com/levmv/polka/internal/ingest"
 	"github.com/levmv/polka/internal/metalookup"
 	"github.com/levmv/polka/internal/opds"
-	"github.com/levmv/polka/internal/pdfcover"
 	"github.com/levmv/polka/internal/storage"
 	"github.com/levmv/polka/internal/workslot"
 	"github.com/levmv/polka/internal/writeback"
@@ -46,7 +46,7 @@ type Server struct {
 	publicImageClient  *http.Client
 	passwordAuthSlots  chan struct{}
 	conversionSlots    chan struct{}
-	pageCountRenderer  *pdfcover.Renderer
+	pageCountRenderer  *pdf.Renderer
 	pageCountCooldown  map[int64]pageCountRetry // Access requires the storage slot.
 	// Per-process HMAC key for ephemeral cover-search preview/apply tokens.
 	// A restart invalidates outstanding search result tokens by design.
@@ -174,7 +174,7 @@ func Serve(ctx context.Context, cfg Config) error {
 	if err != nil {
 		return err
 	}
-	s.pageCountRenderer = pdfcover.NewRenderer()
+	s.pageCountRenderer = pdf.NewRenderer()
 	defer s.pageCountRenderer.Close()
 	if err := s.configureIngest(ingestConfig); err != nil {
 		return err
@@ -209,9 +209,8 @@ func Serve(ctx context.Context, cfg Config) error {
 	s.requestBaseContext = requests.Context()
 	handler := requests.Wrap(opdsProgressionMiddleware(s.authMiddleware(mux)))
 
-	// Without a frontend build, only static/placeholder.txt is embedded.
 	// A missing or empty app.js means the frontend assets are unavailable.
-	bundle, err := staticFS.ReadFile("static/app.js")
+	bundle, err := staticFS.ReadFile("static/generated/app.js")
 	if err != nil || len(bundle) == 0 {
 		log.Println("WARNING: frontend bundle not built — run `make build`")
 	}
@@ -559,10 +558,8 @@ func (s *Server) routes() (*http.ServeMux, error) {
 	s.route(mux, "GET /read/assets/{id}", db.RoleReader, s.handleReadAsset)
 	s.route(mux, "GET /covers/{id}", db.RoleReader, s.handleCover)
 
-	// Static assets. staticFS embeds files under "static/", so serve from the
-	// "static" subtree — otherwise StripPrefix("/static/") would look for files
-	// at the FS root and 404.
-	staticSub, err := fs.Sub(staticFS, "static")
+	// Keep public URLs independent of the build output directory.
+	staticSub, err := fs.Sub(staticFS, "static/generated")
 	if err != nil {
 		return nil, fmt.Errorf("static assets: %w", err)
 	}

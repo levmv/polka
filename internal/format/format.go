@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/levmv/polka/internal/format/djvu"
+	"github.com/levmv/polka/internal/format/pdf"
 )
 
 type Format int
@@ -46,6 +49,7 @@ type ReaderKind string
 const (
 	ReaderNone    ReaderKind = ""
 	ReaderPDF     ReaderKind = "pdf"
+	ReaderDJVU    ReaderKind = "djvu"
 	ReaderFoliate ReaderKind = "foliate"
 )
 
@@ -199,7 +203,8 @@ var bookFormats = []bookFormat{
 			".djvu": "image/vnd.djvu",
 			".djv":  "image/vnd.djvu",
 		},
-		Verify: isDJVU,
+		Reader: ReaderDJVU,
+		Verify: djvu.Is,
 	},
 	{
 		Format:     FormatTXT,
@@ -506,7 +511,7 @@ func DetectFormat(p string, r io.ReaderAt, size int64) Format {
 			return kind
 		}
 	case FormatPDF:
-		if isPDF(r) {
+		if pdf.Is(r) {
 			return FormatPDF
 		}
 	case FormatFB2:
@@ -537,12 +542,6 @@ func DetectFormat(p string, r io.ReaderAt, size int64) Format {
 	}
 
 	return FormatUnknown
-}
-
-func isPDF(r io.ReaderAt) bool {
-	var head [5]byte
-	n, _ := r.ReadAt(head[:], 0)
-	return n == len(head) && string(head[:]) == "%PDF-"
 }
 
 // IsEPUBContainerFormat reports whether a format is physically an EPUB ZIP

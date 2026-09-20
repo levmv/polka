@@ -3,7 +3,7 @@ ADDR  ?= 0.0.0.0:8080
 ADMIN_USER ?= admin
 ADMIN_PASS ?= devpass
 POLKA_VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-GOFMT_FILES = $(shell go list -f '{{range .GoFiles}}{{$$.Dir}}/{{.}} {{end}}{{range .CgoFiles}}{{$$.Dir}}/{{.}} {{end}}{{range .TestGoFiles}}{{$$.Dir}}/{{.}} {{end}}{{range .XTestGoFiles}}{{$$.Dir}}/{{.}} {{end}}{{range .IgnoredGoFiles}}{{$$.Dir}}/{{.}} {{end}}' ./...)
+GOFMT_FILES = $$(go list -f '{{range .GoFiles}}{{$$.Dir}}/{{.}} {{end}}{{range .CgoFiles}}{{$$.Dir}}/{{.}} {{end}}{{range .TestGoFiles}}{{$$.Dir}}/{{.}} {{end}}{{range .XTestGoFiles}}{{$$.Dir}}/{{.}} {{end}}{{range .IgnoredGoFiles}}{{$$.Dir}}/{{.}} {{end}}' ./...)
 PUBLIC_SEED_INPUT ?= browser-test/fixtures
 LOCAL_SEED_INPUT ?= local/corpus/dev-seed
 SEED_INPUT ?= $(if $(wildcard $(LOCAL_SEED_INPUT)),$(LOCAL_SEED_INPUT),$(PUBLIC_SEED_INPUT))
@@ -30,18 +30,18 @@ frontend: node-deps
 	npm run build
 
 test: node-deps pdfium-wasm
-	@gofmt -w $(GOFMT_FILES)
 	npm run lint:fix
 	npm run typecheck
 	npm run test:unit
 	npm run test:browser-list
 	npm run build
+	@gofmt -w $(GOFMT_FILES)
 	CGO_ENABLED=0 go vet -tags nodynamic ./...
 	CGO_ENABLED=0 go test -tags nodynamic ./...
 
-# Derivation instructions and provenance live in internal/pdfcover/README.md.
+# Derivation instructions and provenance live in internal/format/pdf/README.md.
 pdfium-wasm:
-	GOOS= GOARCH= go run ./internal/pdfcover/wasmtool prepare
+	GOOS= GOARCH= go run ./internal/format/pdf/wasmtool prepare
 
 build: pdfium-wasm
 	$(MAKE) frontend

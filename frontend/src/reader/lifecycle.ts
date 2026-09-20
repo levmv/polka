@@ -74,8 +74,8 @@ export function wireReaderLifecycle(
     };
 
     observeReading(stage, false);
-    // Foliate scrolling can change the stored location. A PDF scroll only pans
-    // the current page; its explicit page changes call markUserNavigation.
+    // Foliate scrolling can change the stored location. PDF/DjVu scrolling only
+    // pans the current page; explicit page changes call markUserNavigation.
     if (onNavigate) {
         for (const type of ['wheel', 'touchmove']) {
             page.addEventListener(

@@ -19,7 +19,7 @@ type Locator struct {
 	CFI      string `json:"cfi,omitzero"`
 	Path     string `json:"path,omitzero"`
 	Fragment string `json:"fragment,omitzero"` // URI fragment without #, retained for external readers.
-	Page     int    `json:"page,omitzero"`     // One-based PDF page number.
+	Page     int    `json:"page,omitzero"`     // One-based fixed-layout page number.
 	Rects    []Rect `json:"rects,omitempty"`
 }
 

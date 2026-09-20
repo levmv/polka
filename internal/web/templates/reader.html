@@ -1,13 +1,13 @@
 {{template "layout" .}}
 
 {{define "content"}}
-<div class="reader-page{{if .IsPDF}} reader-page--pdf{{end}}" data-reader-asset-id="{{.AssetID}}" data-reader-format="{{.TransportFormat}}" data-reader-url="{{.ReadURL}}"{{with .FallbackURL}} data-reader-fallback-url="{{.}}"{{end}}>
+<div class="reader-page{{if .IsPaged}} reader-page--paged{{end}}" data-reader-asset-id="{{.AssetID}}" data-reader-format="{{.TransportFormat}}" data-reader-url="{{.ReadURL}}"{{with .FallbackURL}} data-reader-fallback-url="{{.}}"{{end}}>
     <header class="reader-header">
         <div class="reader-actions" aria-label="Reader tools">
-            {{if .IsPDF}}
-            <button class="reader-pdf-tool" type="button" data-pdf-zoom-out aria-label="Zoom out" title="Zoom out">−</button>
-            <button class="reader-pdf-tool reader-pdf-fit" type="button" data-pdf-zoom-fit aria-label="Fit page" title="Fit page">Fit</button>
-            <button class="reader-pdf-tool" type="button" data-pdf-zoom-in aria-label="Zoom in" title="Zoom in">+</button>
+            {{if .IsPaged}}
+            <button class="reader-paged-tool" type="button" data-page-zoom-out aria-label="Zoom out" title="Zoom out">−</button>
+            <button class="reader-paged-tool reader-paged-fit" type="button" data-page-zoom-fit aria-label="Fit page" title="Fit page">Fit</button>
+            <button class="reader-paged-tool" type="button" data-page-zoom-in aria-label="Zoom in" title="Zoom in">+</button>
             {{end}}
             {{if .UsesFoliate}}
             <button class="reader-panel-toggle reader-display-toggle" type="button" data-reader-display-toggle aria-label="Display settings" title="Display settings">
@@ -23,23 +23,23 @@
         </a>
     </header>
 
-    {{if .IsPDF}}
-        <section class="reader-pdf-stage" data-pdf-stage aria-label="PDF reader" tabindex="0">
-            <div class="reader-loading" data-reader-loading>Opening PDF...</div>
-            <div class="reader-pdf-page" data-pdf-page hidden>
-                <canvas class="reader-pdf-canvas" data-pdf-canvas></canvas>
-                <div class="reader-pdf-text-layer textLayer" data-pdf-text-layer></div>
+    {{if .IsPaged}}
+        <section class="reader-paged-stage" data-page-stage aria-label="{{if .IsPDF}}PDF{{else}}DjVu{{end}} reader" tabindex="0">
+            <div class="reader-loading" data-reader-loading>Opening {{if .IsPDF}}PDF{{else}}DjVu{{end}}...</div>
+            <div class="reader-paged-page" data-page-surface hidden>
+                <canvas class="reader-paged-canvas" data-page-canvas></canvas>
+                <div class="{{if .IsPDF}}reader-pdf-text-layer textLayer{{else}}reader-djvu-text-layer{{end}}" data-page-text-layer></div>
             </div>
         </section>
-        <footer class="reader-footer reader-pdf-footer">
-            <button class="reader-pdf-turn" type="button" data-pdf-previous aria-label="Previous page" title="Previous page" disabled>‹</button>
-            <label class="reader-pdf-page-picker">
+        <footer class="reader-footer reader-paged-footer">
+            <button class="reader-paged-turn" type="button" data-page-previous aria-label="Previous page" title="Previous page" disabled>‹</button>
+            <label class="reader-paged-page-picker">
                 <span class="sr-only">Page</span>
-                <input class="reader-pdf-page-input" type="number" min="1" value="1" inputmode="numeric" data-pdf-page-input aria-label="Page number">
+                <input class="reader-paged-page-input" type="number" min="1" value="1" inputmode="numeric" data-page-input aria-label="Page number">
                 <span aria-hidden="true">/</span>
-                <span data-pdf-page-total>…</span>
+                <span data-page-total>…</span>
             </label>
-            <button class="reader-pdf-turn" type="button" data-pdf-next aria-label="Next page" title="Next page" disabled>›</button>
+            <button class="reader-paged-turn" type="button" data-page-next aria-label="Next page" title="Next page" disabled>›</button>
             <span class="sr-only" data-reader-progress aria-live="polite"></span>
         </footer>
     {{else if .UsesFoliate}}
@@ -58,6 +58,8 @@
 </div>
 {{if .IsPDF}}
 <script src="/static/pdf-reader.js"></script>
+{{else if .IsDJVU}}
+<script type="module" src="/static/djvu-reader.js"></script>
 {{else if .UsesFoliate}}
 <script src="/static/reader.js"></script>
 {{end}}

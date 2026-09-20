@@ -34,8 +34,8 @@ jobs:
       - name: Cache PDFium module
         uses: actions/cache@v6
         with:
-          path: internal/pdfcover/generated/pdfium-cover.wasm
-          key: pdfium-wasm-${{ hashFiles('internal/pdfcover/pdfium-wasm.json') }}
+          path: internal/format/pdf/generated/pdfium-cover.wasm
+          key: pdfium-wasm-${{ hashFiles('internal/format/pdf/pdfium-wasm.json') }}
 
       - name: Validate tag
         shell: bash

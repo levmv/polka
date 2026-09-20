@@ -28,12 +28,9 @@ type readerPageData struct {
 	ReadURL         string
 	FallbackURL     string
 	IsPDF           bool
-	// UsesFoliate is true for formats rendered in-browser by foliate-js (EPUB,
-	// KEPUB, FB2, MOBI/KF8, CBZ, and CBR/CB7 normalized to CBZ). They share the
-	// same reader stage, flow toggle, and state plumbing; only the format name
-	// differs. PDF uses a separate fixed-layout surface and browser bundle so
-	// other readers never load PDF.js.
-	UsesFoliate bool
+	IsDJVU          bool
+	IsPaged         bool
+	UsesFoliate     bool
 }
 
 type readerPageAsset struct {
@@ -120,11 +117,19 @@ func renderReaderPage(w http.ResponseWriter, asset readerPageAsset) {
 		ReadURL:         readerAssetURL(asset.AssetID, asset.Format, asset.CurrentSHA256),
 		FallbackURL:     readerFallbackURL(asset.AssetID, asset.Format, asset.CurrentSHA256),
 		IsPDF:           reader == format.ReaderPDF,
+		IsDJVU:          reader == format.ReaderDJVU,
+		IsPaged:         reader == format.ReaderPDF || reader == format.ReaderDJVU,
 		UsesFoliate:     reader == format.ReaderFoliate,
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Content-Security-Policy", readerContentSecurityPolicy)
+	csp := readerContentSecurityPolicy
+	if data.IsDJVU {
+		// DjVuTang compiles its WASM on the main thread before passing it to
+		// the worker. Keep dynamic JavaScript evaluation disabled.
+		csp = strings.Replace(csp, "script-src 'self'", "script-src 'self' 'wasm-unsafe-eval'", 1)
+	}
+	w.Header().Set("Content-Security-Policy", csp)
 	// The shell is cheap and carries the current content-versioned asset URLs.
 	// Revalidate it so a cached page cannot keep pointing at an older book body.
 	w.Header().Set("Cache-Control", "private, no-cache")

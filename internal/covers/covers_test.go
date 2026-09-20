@@ -14,6 +14,33 @@ import (
 	"github.com/levmv/polka/internal/testfixture"
 )
 
+func TestBlankPage(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		paper, ink color.Color
+		marks      int
+		blank      bool
+	}{
+		{"white", color.White, color.Black, 0, true},
+		{"scan specks", color.White, color.Black, 6, true},
+		{"small inscription", color.White, color.Black, 30, false},
+		{"pale inscription", color.White, color.Gray{Y: 230}, 30, false},
+		{"colored page", color.RGBA{255, 245, 200, 255}, color.Black, 0, false},
+		{"transparent paper", color.Transparent, color.Black, 0, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			img := image.NewRGBA(image.Rect(0, 0, 1000, 1000))
+			draw.Draw(img, img.Bounds(), &image.Uniform{C: tc.paper}, image.Point{}, draw.Src)
+			for x := range tc.marks {
+				img.Set(x, 999, tc.ink)
+			}
+			if got := IsBlankPage(img); got != tc.blank {
+				t.Fatalf("blank = %v; want %v", got, tc.blank)
+			}
+		})
+	}
+}
+
 func TestAVIFCoverValidationAndProcessing(t *testing.T) {
 	src := testfixture.AVIF()
 	info, err := Validate(src)

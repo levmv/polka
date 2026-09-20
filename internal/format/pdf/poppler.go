@@ -1,4 +1,4 @@
-package pdfcover
+package pdf
 
 import (
 	"bytes"
@@ -69,13 +69,13 @@ func detectPoppler(command externalCommand, lookPath func(string) (string, error
 	}, nil
 }
 
-func (r *Renderer) renderPoppler(ctx context.Context, pdf io.Reader, size int64, dpi int) ([]byte, error) {
+func (r *Renderer) renderPoppler(ctx context.Context, pdf io.Reader, size int64, dpi, page int) ([]byte, error) {
 	var stdout, stderr limitedBuffer
 	stdout.limit = maxRenderedCoverBytes
 	stderr.limit = maxDiagnosticBytes
 	args := []string{
-		"-f", "1",
-		"-l", "1",
+		"-f", strconv.Itoa(page),
+		"-l", strconv.Itoa(page),
 		"-singlefile",
 		"-r", strconv.Itoa(dpi),
 		"-jpeg",
@@ -84,14 +84,14 @@ func (r *Renderer) renderPoppler(ctx context.Context, pdf io.Reader, size int64,
 	}
 	err := r.command(ctx, r.backend.Executable, args, io.LimitReader(pdf, size), &stdout, &stderr)
 	if ctx.Err() != nil {
-		return nil, operationContextError(ctx, "render PDF page 1 with pdftoppm", r.operationTimeout)
+		return nil, operationContextError(ctx, "render PDF cover with pdftoppm", r.operationTimeout)
 	}
 	if err != nil {
 		diagnostic := oneLineDiagnostic(stderr.Bytes())
 		if diagnostic == "" {
-			return nil, fmt.Errorf("render PDF page 1 with pdftoppm: %w", err)
+			return nil, fmt.Errorf("render PDF page %d with pdftoppm: %w", page, err)
 		}
-		return nil, fmt.Errorf("render PDF page 1 with pdftoppm: %w: %s", err, diagnostic)
+		return nil, fmt.Errorf("render PDF page %d with pdftoppm: %w: %s", page, err, diagnostic)
 	}
 	if stdout.exceeded {
 		return nil, fmt.Errorf("pdftoppm output exceeds %d bytes", maxRenderedCoverBytes)

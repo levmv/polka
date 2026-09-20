@@ -11,8 +11,8 @@ import (
 	"strings"
 
 	"github.com/levmv/polka/internal/db"
+	"github.com/levmv/polka/internal/format"
 	"github.com/levmv/polka/internal/importer"
-	"github.com/levmv/polka/internal/pdfcover"
 	"github.com/levmv/polka/internal/storage"
 )
 
@@ -36,8 +36,8 @@ func (s *Server) handleAPIImport(w http.ResponseWriter, r *http.Request) {
 	}
 	defer os.Remove(source.Path)
 
-	renderer := pdfcover.NewRenderer()
-	defer renderer.Close()
+	extractor := format.NewExtractor()
+	defer extractor.Close()
 
 	root := s.managedRoot()
 	catalogHasBooks, err := db.HasAnyAsset(s.db.Read(r.Context()))
@@ -61,7 +61,7 @@ func (s *Server) handleAPIImport(w http.ResponseWriter, r *http.Request) {
 	}
 	defer releaseImport()
 
-	res, err := importer.Import(r.Context(), s.db, root, source, renderer, importer.Options{PathTemplate: template, CoverRoot: s.dataRoot()})
+	res, err := importer.Import(r.Context(), s.db, root, source, extractor, importer.Options{PathTemplate: template, CoverRoot: s.dataRoot()})
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Import failed: %v", err), http.StatusBadRequest)
 		return

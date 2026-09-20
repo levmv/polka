@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/levmv/polka/internal/covers"
 	"github.com/levmv/polka/internal/testfixture"
 )
 
@@ -52,7 +53,7 @@ func TestRunMetaJSONEPUB(t *testing.T) {
 	writeEPUB(t, src, "Meta Book", "Jane Doe", "Doe, Jane")
 
 	out, err := captureStdout(t, func() error {
-		return runMeta("", []string{"--json", src})
+		return runMeta(t.Context(), []string{"--json", src})
 	})
 	if err != nil {
 		t.Fatalf("runMeta: %v", err)
@@ -88,7 +89,7 @@ func TestRunMetaJSONUnknownKnownExtensionUsesOctetStream(t *testing.T) {
 	}
 
 	out, err := captureStdout(t, func() error {
-		return runMeta("", []string{"--json", src})
+		return runMeta(t.Context(), []string{"--json", src})
 	})
 	if err != nil {
 		t.Fatalf("runMeta: %v", err)
@@ -113,7 +114,7 @@ func TestRunMetaJSONIncludesFormatDetails(t *testing.T) {
 	writeMetaFB2(t, src, "FB2 Meta")
 
 	out, err := captureStdout(t, func() error {
-		return runMeta("", []string{"--json", src})
+		return runMeta(t.Context(), []string{"--json", src})
 	})
 	if err != nil {
 		t.Fatalf("runMeta: %v", err)
@@ -153,7 +154,7 @@ func TestRunMetaReportsToleratedFormatWarnings(t *testing.T) {
 	}
 
 	out, err := captureStdout(t, func() error {
-		return runMeta("", []string{"--json", epubPath, fb2Path, kindlePath})
+		return runMeta(t.Context(), []string{"--json", epubPath, fb2Path, kindlePath})
 	})
 	if err != nil {
 		t.Fatalf("runMeta JSON: %v", err)
@@ -186,7 +187,7 @@ func TestRunMetaReportsToleratedFormatWarnings(t *testing.T) {
 	}
 
 	human, err := captureStdout(t, func() error {
-		return runMeta("", []string{fb2Path})
+		return runMeta(t.Context(), []string{fb2Path})
 	})
 	if err != nil {
 		t.Fatalf("runMeta human: %v", err)
@@ -213,7 +214,7 @@ func TestRunMetaJSONNormalizesExtractedLanguage(t *testing.T) {
 	}
 
 	out, err := captureStdout(t, func() error {
-		return runMeta("", []string{"--json", src})
+		return runMeta(t.Context(), []string{"--json", src})
 	})
 	if err != nil {
 		t.Fatalf("runMeta: %v", err)
@@ -237,7 +238,7 @@ func TestRunMetaJSONFB2ZipKeepsContainerMediaType(t *testing.T) {
 	writeMetaFB2Zip(t, src, "Zipped FB2")
 
 	out, err := captureStdout(t, func() error {
-		return runMeta("", []string{"--json", src})
+		return runMeta(t.Context(), []string{"--json", src})
 	})
 	if err != nil {
 		t.Fatalf("runMeta: %v", err)
@@ -264,7 +265,7 @@ func TestRunMetaJSONIncludesFB2ContainerDetails(t *testing.T) {
 	writeMetaFB2Gzip(t, gzipPath, "Gzipped FB2")
 
 	out, err := captureStdout(t, func() error {
-		return runMeta("", []string{"--json", zipPath, gzipPath})
+		return runMeta(t.Context(), []string{"--json", zipPath, gzipPath})
 	})
 	if err != nil {
 		t.Fatalf("runMeta: %v", err)
@@ -298,7 +299,7 @@ func TestRunMetaJSONIncludesCBZPageCount(t *testing.T) {
 	})
 
 	out, err := captureStdout(t, func() error {
-		return runMeta("", []string{"--json", src})
+		return runMeta(t.Context(), []string{"--json", src})
 	})
 	if err != nil {
 		t.Fatalf("runMeta: %v", err)
@@ -337,7 +338,7 @@ func TestRunMetaJSONIncludesArchivePageCount(t *testing.T) {
 			}
 
 			out, err := captureStdout(t, func() error {
-				return runMeta("", []string{"--json", src})
+				return runMeta(t.Context(), []string{"--json", src})
 			})
 			if err != nil {
 				t.Fatalf("runMeta: %v", err)
@@ -369,7 +370,7 @@ func TestRunMetaJSONIncludesPalmDBSubtype(t *testing.T) {
 	}
 
 	out, err := captureStdout(t, func() error {
-		return runMeta("", []string{"--json", src})
+		return runMeta(t.Context(), []string{"--json", src})
 	})
 	if err != nil {
 		t.Fatalf("runMeta: %v", err)
@@ -405,7 +406,7 @@ func TestRunMetaJSONIncludesKindleDetailsForUnknownPalmDBByExtension(t *testing.
 	}
 
 	out, err := captureStdout(t, func() error {
-		return runMeta("", []string{"--json", src})
+		return runMeta(t.Context(), []string{"--json", src})
 	})
 	if err != nil {
 		t.Fatalf("runMeta: %v", err)
@@ -445,7 +446,7 @@ func TestRunMetaJSONIncludesAZW4PDFDetail(t *testing.T) {
 	}
 
 	out, err := captureStdout(t, func() error {
-		return runMeta("", []string{"--json", withPDF, withoutPDF})
+		return runMeta(t.Context(), []string{"--json", withPDF, withoutPDF})
 	})
 	if err != nil {
 		t.Fatalf("runMeta: %v", err)
@@ -479,7 +480,7 @@ func TestRunMetaSetEPUBOverlaysPassedFields(t *testing.T) {
 	writeEPUB(t, src, "Old Title", "Jane Doe", "Doe, Jane")
 
 	out, err := captureStdout(t, func() error {
-		return runMeta("", []string{
+		return runMeta(t.Context(), []string{
 			"set", src,
 			"--title", "New Title",
 			"--authors", "Alice Example; Bob Co",
@@ -500,7 +501,7 @@ func TestRunMetaSetEPUBOverlaysPassedFields(t *testing.T) {
 		t.Fatalf("meta set output = %q; want update line", out)
 	}
 
-	report := inspectMetaFile(src, "", false)
+	report := inspectMetaFile(t.Context(), nil, src, "", false)
 	if report.Error != "" {
 		t.Fatalf("inspect rewritten file: %s", report.Error)
 	}
@@ -530,14 +531,14 @@ func TestRunMetaSetExplicitEmptyClearsFields(t *testing.T) {
 	src := filepath.Join(dir, "book.fb2")
 	writeMetaFB2(t, src, "FB2 Meta")
 
-	if err := runMeta("", []string{"set", src, "--series", "Roadside", "--series-index", "4", "--tags", "one, two"}); err != nil {
+	if err := runMeta(t.Context(), []string{"set", src, "--series", "Roadside", "--series-index", "4", "--tags", "one, two"}); err != nil {
 		t.Fatalf("runMeta set seed fields: %v", err)
 	}
-	if err := runMeta("", []string{"set", src, "--authors", "", "--series", "", "--series-index", "", "--tags", ""}); err != nil {
+	if err := runMeta(t.Context(), []string{"set", src, "--authors", "", "--series", "", "--series-index", "", "--tags", ""}); err != nil {
 		t.Fatalf("runMeta set clear fields: %v", err)
 	}
 
-	report := inspectMetaFile(src, "", false)
+	report := inspectMetaFile(t.Context(), nil, src, "", false)
 	if report.Error != "" {
 		t.Fatalf("inspect rewritten file: %s", report.Error)
 	}
@@ -558,7 +559,7 @@ func TestRunMetaSetRejectsUnsupportedFormat(t *testing.T) {
 		t.Fatalf("write text source: %v", err)
 	}
 
-	err := runMeta("", []string{"set", src, "--title", "New Title"})
+	err := runMeta(t.Context(), []string{"set", src, "--title", "New Title"})
 	if err == nil || !strings.Contains(err.Error(), "unsupported metadata write-back format: txt") {
 		t.Fatalf("runMeta set error = %v; want unsupported txt", err)
 	}
@@ -579,7 +580,7 @@ func TestRunMetaPrintsAZW4PDFDetail(t *testing.T) {
 	}
 
 	out, err := captureStdout(t, func() error {
-		return runMeta("", []string{src})
+		return runMeta(t.Context(), []string{src})
 	})
 	if err != nil {
 		t.Fatalf("runMeta: %v", err)
@@ -593,38 +594,89 @@ func TestRunMetaPrintsAZW4PDFDetail(t *testing.T) {
 }
 
 func TestRunMetaWritesCover(t *testing.T) {
-	dir := t.TempDir()
-	src := filepath.Join(dir, "cover.epub")
-	writeMetaEPUBWithCover(t, src, metaTinyPNG)
-	dst := filepath.Join(dir, "cover.bin")
+	for _, src := range coverSourceFiles(t) {
+		t.Run(filepath.Ext(src), func(t *testing.T) {
+			dst := filepath.Join(t.TempDir(), "cover.bin")
 
-	out, err := captureStdout(t, func() error {
-		return runMeta("", []string{"--json", "--cover", dst, src})
-	})
+			out, err := captureStdout(t, func() error {
+				return runMeta(t.Context(), []string{"--json", "--cover", dst, src})
+			})
+			if err != nil {
+				t.Fatalf("runMeta: %v", err)
+			}
+
+			got, err := os.ReadFile(dst)
+			if err != nil {
+				t.Fatalf("read cover output: %v", err)
+			}
+			if filepath.Ext(src) == ".epub" && !bytes.Equal(got, metaTinyPNG) {
+				t.Fatalf("cover output mismatch: got %d bytes; want %d", len(got), len(metaTinyPNG))
+			}
+
+			var reports []metaFileReport
+			if err := json.Unmarshal([]byte(out), &reports); err != nil {
+				t.Fatalf("unmarshal meta JSON: %v\n%s", err, out)
+			}
+			if len(reports) != 1 {
+				t.Fatalf("reports len = %d; want 1", len(reports))
+			}
+			if reports[0].CoverError != "" {
+				t.Fatalf("cover error = %q; want none", reports[0].CoverError)
+			}
+			ext := ".jpg"
+			if filepath.Ext(src) == ".epub" {
+				ext = ".png"
+			}
+			if _, err := covers.Validate(got); err != nil {
+				t.Fatal(err)
+			}
+			if reports[0].Cover == nil || reports[0].Cover.Path != dst || reports[0].Cover.Extension != ext || reports[0].Cover.Bytes != len(got) {
+				t.Fatalf("cover report = %+v; want %s %s %d bytes", reports[0].Cover, dst, ext, len(got))
+			}
+		})
+	}
+}
+
+func TestRunMetaPreservesPartialDJVUResults(t *testing.T) {
+	original, err := os.ReadFile("../testfixture/metadata.djvu")
 	if err != nil {
-		t.Fatalf("runMeta: %v", err)
+		t.Fatal(err)
 	}
-
-	got, err := os.ReadFile(dst)
-	if err != nil {
-		t.Fatalf("read cover output: %v", err)
-	}
-	if !bytes.Equal(got, metaTinyPNG) {
-		t.Fatalf("cover output mismatch: got %d bytes; want %d", len(got), len(metaTinyPNG))
-	}
-
-	var reports []metaFileReport
-	if err := json.Unmarshal([]byte(out), &reports); err != nil {
-		t.Fatalf("unmarshal meta JSON: %v\n%s", err, out)
-	}
-	if len(reports) != 1 {
-		t.Fatalf("reports len = %d; want 1", len(reports))
-	}
-	if reports[0].CoverError != "" {
-		t.Fatalf("cover error = %q; want none", reports[0].CoverError)
-	}
-	if reports[0].Cover == nil || reports[0].Cover.Path != dst || reports[0].Cover.Extension != ".png" || reports[0].Cover.Bytes != len(metaTinyPNG) {
-		t.Fatalf("cover report = %+v; want %s .png %d bytes", reports[0].Cover, dst, len(metaTinyPNG))
+	for _, chunk := range []string{"ANTz", "Sjbz"} {
+		t.Run(chunk, func(t *testing.T) {
+			data := bytes.Clone(original)
+			offset := bytes.Index(data, []byte(chunk))
+			clear(data[offset+8 : offset+8+int(binary.BigEndian.Uint32(data[offset+4:offset+8]))])
+			dir := t.TempDir()
+			path, cover := filepath.Join(dir, "book.djvu"), filepath.Join(dir, "cover.jpg")
+			if err := os.WriteFile(path, data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			output, err := captureStdout(t, func() error {
+				return runMeta(t.Context(), []string{"--json", "--cover", cover, path})
+			})
+			if !errors.Is(err, errMetaFileErrors) {
+				t.Fatalf("inspection error = %v", err)
+			}
+			var reports []metaFileReport
+			if err := json.Unmarshal([]byte(output), &reports); err != nil {
+				t.Fatal(err)
+			}
+			if len(reports) != 1 || reports[0].Error == "" {
+				t.Fatalf("missing extraction error: %+v", reports)
+			}
+			if chunk == "ANTz" {
+				data, err := os.ReadFile(cover)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := covers.Validate(data); err != nil {
+					t.Fatal(err)
+				}
+			} else if reports[0].Metadata == nil || reports[0].Metadata.Title != "Annotated DjVu" {
+				t.Fatalf("lost readable metadata: %+v", reports[0])
+			}
+		})
 	}
 }
 
@@ -635,7 +687,7 @@ func TestRunMetaCoverMissingIsFileError(t *testing.T) {
 	dst := filepath.Join(dir, "cover.png")
 
 	out, err := captureStdout(t, func() error {
-		return runMeta("", []string{"--cover", dst, src})
+		return runMeta(t.Context(), []string{"--cover", dst, src})
 	})
 	if !errors.Is(err, errMetaFileErrors) {
 		t.Fatalf("runMeta error = %v; want errMetaFileErrors", err)
@@ -660,7 +712,7 @@ func TestRunMetaContinuesAfterFileError(t *testing.T) {
 	}
 
 	out, err := captureStdout(t, func() error {
-		return runMeta("", []string{missingPath, okPath})
+		return runMeta(t.Context(), []string{missingPath, okPath})
 	})
 	if !errors.Is(err, errMetaFileErrors) {
 		t.Fatalf("runMeta error = %v; want errMetaFileErrors", err)
@@ -671,6 +723,29 @@ func TestRunMetaContinuesAfterFileError(t *testing.T) {
 	if !strings.Contains(out, okPath+"\n  format: txt (TXT)") {
 		t.Fatalf("valid file was not inspected after error:\n%s", out)
 	}
+}
+
+func coverSourceFiles(t *testing.T) []string {
+	t.Helper()
+	dir := t.TempDir()
+	epub := filepath.Join(dir, "book.epub")
+	writeMetaEPUBWithCover(t, epub, metaTinyPNG)
+	djvu, err := os.ReadFile("../testfixture/metadata.djvu")
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths := []string{epub}
+	for _, file := range []struct {
+		name string
+		data []byte
+	}{{"book.pdf", testfixture.MinimalPDF()}, {"book.djvu", djvu}} {
+		path := filepath.Join(dir, file.name)
+		if err := os.WriteFile(path, file.data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		paths = append(paths, path)
+	}
+	return paths
 }
 
 func writeMetaEPUBWithCover(t *testing.T, path string, cover []byte) {
@@ -837,7 +912,7 @@ func TestRunMetaJSONDistinguishesEmptyMetadataFromFailure(t *testing.T) {
 	}
 
 	out, err := captureStdout(t, func() error {
-		return runMeta("", []string{"--json", src})
+		return runMeta(t.Context(), []string{"--json", src})
 	})
 	if err != nil {
 		t.Fatalf("runMeta: %v", err)
@@ -847,7 +922,7 @@ func TestRunMetaJSONDistinguishesEmptyMetadataFromFailure(t *testing.T) {
 	}
 
 	missing, err := captureStdout(t, func() error {
-		return runMeta("", []string{"--json", filepath.Join(dir, "absent.txt")})
+		return runMeta(t.Context(), []string{"--json", filepath.Join(dir, "absent.txt")})
 	})
 	if err == nil {
 		t.Fatal("runMeta on a missing file: want error")

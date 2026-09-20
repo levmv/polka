@@ -251,25 +251,6 @@ func TestFB2EagerCountMatchesOnDemand(t *testing.T) {
 	}
 }
 
-func TestDjVuPagesExcludeSharedResources(t *testing.T) {
-	for _, tt := range []struct {
-		name string
-		raw  []byte
-		want int
-	}{
-		{"single", testDJVUForm("DJVU", testDJVUChunk("INFO", []byte{0})), 1},
-		{"bundled", testDJVUForm("DJVM", testDJVUFormChunk("DJVI", testDJVUChunk("Djbz", []byte{1})), testDJVUFormChunk("DJVU"), testDJVUFormChunk("DJVU")), 2},
-		{"indirect", testDJVUForm("DJVM", testDJVUChunk("DIRM", []byte{0, 0, 3})), 0},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := CountPages(t.Context(), bytes.NewReader(tt.raw), int64(len(tt.raw)), FormatDJVU)
-			if err != nil || got != tt.want {
-				t.Fatalf("pages = %d, %v; want %d", got, err, tt.want)
-			}
-		})
-	}
-}
-
 func TestRTFCountExcludesMetadataAndBinaryDestinations(t *testing.T) {
 	body := strings.Repeat(`A paragraph of text.\par `, 100)
 	var base int

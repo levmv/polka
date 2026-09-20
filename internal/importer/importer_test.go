@@ -325,29 +325,6 @@ func testMOBIUint32(value uint32) []byte {
 	return buf
 }
 
-func testDJVUWithAnnotation(formType, annotation string) []byte {
-	return append([]byte("AT&T"), testDJVUFormChunk(formType, testDJVUChunk("ANTa", []byte(annotation)))...)
-}
-
-func testDJVUFormChunk(formType string, chunks ...[]byte) []byte {
-	payload := []byte(formType)
-	for _, chunk := range chunks {
-		payload = append(payload, chunk...)
-	}
-	return testDJVUChunk("FORM", payload)
-}
-
-func testDJVUChunk(id string, payload []byte) []byte {
-	out := make([]byte, 8, 8+len(payload)+1)
-	copy(out[:4], id)
-	binary.BigEndian.PutUint32(out[4:8], uint32(len(payload)))
-	out = append(out, payload...)
-	if len(payload)%2 != 0 {
-		out = append(out, 0)
-	}
-	return out
-}
-
 func testCHMBytesWithTitle(title string) []byte {
 	const (
 		headerSize      = 0x60
@@ -491,12 +468,17 @@ func TestResolveKEPUBUsesEPUBMetadata(t *testing.T) {
 }
 
 func TestResolveDJVUUsesFilenameFallbacks(t *testing.T) {
+	readable, err := os.ReadFile("../testfixture/reader.djvu")
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, tt := range []struct {
-		name string
-		data []byte
+		name  string
+		data  []byte
+		cover bool
 	}{
 		{name: "Scanned Book.djvu", data: testfixture.MinimalDJVU("DJVU")},
-		{name: "Multipage Scan.djv", data: testfixture.MinimalDJVU("DJVM")},
+		{name: "Multipage Scan.djv", data: readable, cover: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -512,11 +494,11 @@ func TestResolveDJVUUsesFilenameFallbacks(t *testing.T) {
 			if plan.Format != format.FormatDJVU {
 				t.Fatalf("Format = %v; want FormatDJVU", plan.Format)
 			}
-			if plan.CanRead {
-				t.Fatalf("CanRead = true; want false until DJVU reader exists")
+			if !plan.CanRead {
+				t.Fatal("DjVu should be readable")
 			}
-			if len(plan.Warnings) != 0 {
-				t.Fatalf("Warnings = %+v; want none for recognized DJVU", plan.Warnings)
+			if (len(plan.CoverBytes) > 0) != tt.cover || (len(plan.Warnings) == 0) != tt.cover {
+				t.Fatalf("cover bytes=%d, warnings=%v; want cover=%v", len(plan.CoverBytes), plan.Warnings, tt.cover)
 			}
 			wantTitle := strings.TrimSuffix(tt.name, format.BookExtension(tt.name))
 			if plan.Title != wantTitle {
@@ -526,39 +508,81 @@ func TestResolveDJVUUsesFilenameFallbacks(t *testing.T) {
 	}
 }
 
-func TestResolveDJVUMetadata(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "Fallback Name.djvu")
-	data := testDJVUWithAnnotation("DJVU", `(metadata
-  (title "Annotated DJVU")
-  (author "DjVu Author")
-  (language "en")
-)`)
-	if err := os.WriteFile(path, data, 0o644); err != nil {
-		t.Fatalf("write source: %v", err)
-	}
-
-	plan, err := Resolve(context.Background(), Source{Path: path}, nil)
+func TestResolveDJVUMetadataAndCover(t *testing.T) {
+	original, err := os.ReadFile("../testfixture/metadata.djvu")
 	if err != nil {
-		t.Fatalf("Resolve: %v", err)
+		t.Fatal(err)
 	}
-	if plan.Format != format.FormatDJVU {
-		t.Fatalf("Format = %v; want FormatDJVU", plan.Format)
-	}
-	if plan.Title != "Annotated DJVU" {
-		t.Fatalf("Title = %q; want embedded DJVU title", plan.Title)
-	}
-	if len(plan.Authors) != 1 || plan.Authors[0].Name != "DjVu Author" {
-		t.Fatalf("Authors = %+v; want embedded DJVU author", plan.Authors)
-	}
-	if plan.Metadata.Language != "en" {
-		t.Fatalf("Language = %q; want en", plan.Metadata.Language)
-	}
-	if plan.CanRead {
-		t.Fatalf("CanRead = true; want false until DJVU reader exists")
-	}
-	if len(plan.Warnings) != 0 {
-		t.Fatalf("Warnings = %+v; want none for DJVU metadata", plan.Warnings)
+	sidecarCover := testCBZPNG(t, color.NRGBA{R: 90, G: 30, B: 60, A: 255})
+	extractor := format.NewExtractor()
+	defer extractor.Close()
+	for _, tt := range []struct {
+		name        string
+		cover       bool
+		opf         string
+		brokenImage bool
+	}{
+		{name: "embedded metadata and rendered cover"},
+		{name: "sidecar cover and embedded metadata", cover: true},
+		{name: "complete OPF and rendered cover", opf: "<dc:title>Sidecar</dc:title><dc:creator>Curator</dc:creator>"},
+		{name: "complete sidecars", cover: true, opf: "<dc:title>Sidecar</dc:title><dc:creator>Curator</dc:creator>"},
+		{name: "partial OPF and sidecar cover", cover: true, opf: "<dc:title>Sidecar</dc:title>"},
+		{name: "image failure preserves metadata", brokenImage: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			data := bytes.Clone(original)
+			// Sidecars must bypass damaged embedded data without warnings.
+			if strings.Contains(tt.opf, "creator") {
+				off := bytes.Index(data, []byte("ANTz"))
+				clear(data[off+8 : off+8+int(binary.BigEndian.Uint32(data[off+4:off+8]))])
+			}
+			if tt.cover || tt.brokenImage {
+				off := bytes.Index(data, []byte("Sjbz"))
+				clear(data[off+8 : off+8+int(binary.BigEndian.Uint32(data[off+4:off+8]))])
+			}
+			dir := t.TempDir()
+			path := filepath.Join(dir, "Book.djvu")
+			if err := os.WriteFile(path, data, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if tt.cover {
+				if err := os.WriteFile(filepath.Join(dir, "cover.png"), sidecarCover, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tt.opf != "" {
+				opf := `<package xmlns="http://www.idpf.org/2007/opf"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/">` + tt.opf + `</metadata></package>`
+				if err := os.WriteFile(filepath.Join(dir, "metadata.opf"), []byte(opf), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			plan, err := Resolve(t.Context(), Source{Path: path}, extractor)
+			if err != nil {
+				t.Fatal(err)
+			}
+			title, author := "Annotated DjVu", "Ada Lovelace"
+			if tt.opf != "" {
+				title = "Sidecar"
+			}
+			if strings.Contains(tt.opf, "creator") {
+				author = "Curator"
+			}
+			if plan.Title != title || len(plan.Authors) != 1 || plan.Authors[0].Name != author || plan.PageCount != 3 {
+				t.Fatalf("title=%q, authors=%v, pages=%d", plan.Title, plan.Authors, plan.PageCount)
+			}
+			if tt.brokenImage {
+				if len(plan.CoverBytes) != 0 || len(plan.Warnings) != 1 || !strings.Contains(plan.Warnings[0].Error(), "render DjVu cover") {
+					t.Fatalf("cover bytes=%d, warnings=%v; want only a cover rendering warning", len(plan.CoverBytes), plan.Warnings)
+				}
+				return
+			}
+			if len(plan.Warnings) != 0 {
+				t.Fatalf("unexpected warnings: %v", plan.Warnings)
+			}
+			if len(plan.CoverBytes) == 0 || tt.cover && !bytes.Equal(plan.CoverBytes, sidecarCover) {
+				t.Fatal("missing or replaced sidecar cover")
+			}
+		})
 	}
 }
 

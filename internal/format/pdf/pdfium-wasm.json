@@ -27,7 +27,7 @@
     ]
   },
   "output": {
-    "path": "internal/pdfcover/generated/pdfium-cover.wasm",
+    "path": "internal/format/pdf/generated/pdfium-cover.wasm",
     "bytes": 4607809,
     "sha256": "45184a2075300994f73d64b6df7f296d0818282bbb8fee13a369255ef3a54a69"
   },

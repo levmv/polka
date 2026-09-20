@@ -16,7 +16,7 @@ func TestModuleCache(t *testing.T) {
 	module := append(testImportModule(t, "env.callback"), testModule(t, "keep")[8:]...)
 	spec := manifest{Schema: 1, Imports: []string{"env.callback"}, Exports: []string{"keep"}}
 	spec.GoPDFium.Version = "v1.0.0"
-	spec.Output.Path = "internal/pdfcover/generated/pdfium-cover.wasm"
+	spec.Output.Path = "internal/format/pdf/generated/pdfium-cover.wasm"
 	spec.Output.Bytes = len(module)
 	spec.Output.SHA256 = fmt.Sprintf("%x", sha256.Sum256(module))
 	manifestJSON, err := json.Marshal(spec)

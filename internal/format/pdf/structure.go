@@ -1,9 +1,11 @@
-package format
+package pdf
 
 import (
 	"bytes"
 	"io"
 	"strconv"
+
+	"github.com/levmv/polka/internal/bookmeta"
 )
 
 const (
@@ -36,6 +38,15 @@ type pdfDictionary map[string][]byte
 type pdfObject struct {
 	dict         pdfDictionary
 	streamOffset int64 // Start of stream data in the file; zero for a plain dictionary.
+}
+
+// ReadyPageCount reads the current page tree without starting PDFium.
+// Unsupported structures return zero.
+func ReadyPageCount(r io.ReaderAt, size int64) int {
+	if structure := openPDFStructure(r, size); structure != nil {
+		return structure.pageCount()
+	}
+	return 0
 }
 
 func openPDFStructure(r io.ReaderAt, size int64) *pdfStructure {
@@ -234,7 +245,7 @@ func (p *pdfStructure) pageCount() int {
 // Once xref identifies the current objects, keep all recovery within them.
 // A whole-file scan could restore deleted Info fields or pick up another
 // object's XMP, such as metadata attached to an embedded illustration.
-func (p *pdfStructure) fillMetadata(meta *Metadata) {
+func (p *pdfStructure) fillMetadata(meta *bookmeta.Metadata) {
 	info, ok := p.resolveObject(p.trailer["Info"], maxPDFObjectWindow)
 	if !ok {
 		// Retry large Info dictionaries without enlarging every object read.
@@ -248,7 +259,7 @@ func (p *pdfStructure) fillMetadata(meta *Metadata) {
 	if meta.Title == "" || len(meta.Authors) == 0 {
 		if object, ok := p.resolveObject(p.catalog["Metadata"], maxPDFObjectWindow); ok {
 			packet := pdfMetadataStreamPacket(p.r, p.size, object)
-			pdfFillMissingMetadata(meta, metadataFromPDFXMP(packet))
+			pdfFillMissingMetadata(meta, bookmeta.ParseXMP(packet))
 		}
 	}
 }

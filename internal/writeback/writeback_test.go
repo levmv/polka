@@ -205,9 +205,9 @@ func TestRunWritesDirtyEPUBCover(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read rewritten epub: %v", err)
 	}
-	cover, ext, err := format.ExtractCover(bytes.NewReader(rewritten), int64(len(rewritten)), format.FormatEPUB)
+	cover, ext, err := format.ExtractEPUBCover(bytes.NewReader(rewritten), int64(len(rewritten)))
 	if err != nil {
-		t.Fatalf("ExtractCover: %v", err)
+		t.Fatalf("ExtractEPUBCover: %v", err)
 	}
 	if ext != ".png" || !bytes.Equal(cover, storedCover) {
 		t.Fatalf("rewritten cover = ext %q, %d bytes; want stored PNG", ext, len(cover))

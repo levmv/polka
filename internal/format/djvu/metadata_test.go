@@ -1,45 +1,12 @@
-package format
+package djvu
 
 import (
 	"bytes"
 	"encoding/binary"
+	"os"
+	"slices"
 	"testing"
-
-	"github.com/levmv/polka/internal/testfixture"
 )
-
-func TestDetectFormatDJVU(t *testing.T) {
-	for _, tt := range []struct {
-		name     string
-		formType string
-		want     Format
-	}{
-		{name: "single.djvu", formType: "DJVU", want: FormatDJVU},
-		{name: "multi.djv", formType: "DJVM", want: FormatDJVU},
-		{name: "shared.djvu", formType: "DJVI", want: FormatUnknown},
-		{name: "thumbs.djvu", formType: "THUM", want: FormatUnknown},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			data := testfixture.MinimalDJVU(tt.formType)
-			r := bytes.NewReader(data)
-			if got := DetectFormat(tt.name, r, r.Size()); got != tt.want {
-				t.Fatalf("DetectFormat = %v; want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestDetectFormatDJVURejectsExtensionOnlyFiles(t *testing.T) {
-	for _, name := range []string{"scan.djvu", "scan.djv"} {
-		t.Run(name, func(t *testing.T) {
-			data := []byte("not a djvu")
-			r := bytes.NewReader(data)
-			if got := DetectFormat(name, r, r.Size()); got != FormatUnknown {
-				t.Fatalf("DetectFormat = %v; want FormatUnknown", got)
-			}
-		})
-	}
-}
 
 func TestExtractDJVUMetadata(t *testing.T) {
 	data := testDJVUForm("DJVU",
@@ -56,9 +23,9 @@ func TestExtractDJVUMetadata(t *testing.T) {
 		testDJVUChunk("ANTa", []byte(`(metadata (title "Later Page Title"))`)),
 	)
 	r := bytes.NewReader(data)
-	meta, err := ExtractDJVUMetadata(r, r.Size())
+	meta, err := ExtractMetadata(t.Context(), r, r.Size())
 	if err != nil {
-		t.Fatalf("ExtractDJVUMetadata: %v", err)
+		t.Fatalf("ExtractMetadata: %v", err)
 	}
 	if meta.Title != `DjVu "Quoted" Title` {
 		t.Fatalf("Title = %q; want quoted title", meta.Title)
@@ -70,7 +37,7 @@ func TestExtractDJVUMetadata(t *testing.T) {
 		t.Fatalf("Metadata = %+v; want publisher/language/date", meta)
 	}
 	wantTags := []string{"Math", "Engines", "Scans"}
-	if !equalStrings(meta.Tags, wantTags) {
+	if !slices.Equal(meta.Tags, wantTags) {
 		t.Fatalf("Tags = %+v; want %+v", meta.Tags, wantTags)
 	}
 	if meta.Identifier != "isbn:978-0-306-40615-7" {
@@ -78,16 +45,21 @@ func TestExtractDJVUMetadata(t *testing.T) {
 	}
 }
 
-func TestExtractDJVUMetadataFromNestedMultipageForm(t *testing.T) {
-	page := testDJVUFormChunk("DJVU", testDJVUChunk("ANTa", []byte(`(metadata (title "Nested Page Title"))`)))
-	data := testDJVUForm("DJVM", page)
-	r := bytes.NewReader(data)
-	meta, err := ExtractDJVUMetadata(r, r.Size())
+func TestExtractDJVUMetadataSharedANTzAndLateXMP(t *testing.T) {
+	data, err := os.ReadFile("../../testfixture/metadata.djvu")
 	if err != nil {
-		t.Fatalf("ExtractDJVUMetadata: %v", err)
+		t.Fatal(err)
 	}
-	if meta.Title != "Nested Page Title" {
-		t.Fatalf("Title = %q; want nested page title", meta.Title)
+	r := bytes.NewReader(data)
+	meta, err := ExtractMetadata(t.Context(), r, r.Size())
+	if err != nil {
+		t.Fatalf("ExtractMetadata: %v", err)
+	}
+	if meta.Title != "Annotated DjVu" || meta.Language != "en" || meta.Date != "1843" || meta.PageCount != 3 {
+		t.Fatalf("shared and last-page metadata: %+v", meta)
+	}
+	if len(meta.Authors) != 1 || meta.Authors[0].Name != "Ada Lovelace" || meta.Authors[0].SortName != "Lovelace, Ada" {
+		t.Fatalf("Authors = %+v; want XMP author, ignoring scanner Creator", meta.Authors)
 	}
 }
 
@@ -112,4 +84,23 @@ func testDJVUChunk(id string, payload []byte) []byte {
 		out = append(out, 0)
 	}
 	return out
+}
+
+func TestDjVuPagesExcludeSharedResources(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		raw  []byte
+		want int
+	}{
+		{"single", testDJVUForm("DJVU", testDJVUChunk("INFO", []byte{0})), 1},
+		{"bundled", testDJVUForm("DJVM", testDJVUFormChunk("DJVI", testDJVUChunk("Djbz", []byte{1})), testDJVUFormChunk("DJVU"), testDJVUFormChunk("DJVU")), 2},
+		{"indirect", testDJVUForm("DJVM", testDJVUChunk("DIRM", []byte{0, 0, 3})), 0},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := CountPages(bytes.NewReader(tt.raw), int64(len(tt.raw)))
+			if err != nil || got != tt.want {
+				t.Fatalf("pages = %d, %v; want %d", got, err, tt.want)
+			}
+		})
+	}
 }

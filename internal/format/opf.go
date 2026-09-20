@@ -523,8 +523,8 @@ func metadataFromOPF(opf opfDoc) *Metadata {
 	}
 
 	meta.Tags = opfTags(opf.Metadata.Subject)
-	meta.Title = decodeLegacyHexWrappedText(meta.Title)
-	meta.SortTitle = decodeLegacyHexWrappedText(meta.SortTitle)
+	meta.Title = bookmeta.DecodeLegacyHexWrappedText(meta.Title)
+	meta.SortTitle = bookmeta.DecodeLegacyHexWrappedText(meta.SortTitle)
 
 	return meta
 }

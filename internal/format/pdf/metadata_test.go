@@ -1,4 +1,4 @@
-package format
+package pdf
 
 import (
 	"bytes"
@@ -7,6 +7,8 @@ import (
 	"io"
 	"strings"
 	"testing"
+
+	"github.com/levmv/polka/internal/bookmeta"
 	"unicode/utf16"
 )
 
@@ -97,7 +99,7 @@ endobj`),
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			meta := ExtractPDFMetadata(tt.input)
+			meta := metadataFromBytes(tt.input)
 			if meta.Title != tt.wantTitle {
 				t.Fatalf("Title = %q; want %q", meta.Title, tt.wantTitle)
 			}
@@ -127,7 +129,7 @@ startxref
 0
 %%EOF`)...)
 
-	meta := ExtractPDFMetadata(input)
+	meta := metadataFromBytes(input)
 
 	if meta.Title != "Document Title" {
 		t.Fatalf("Title = %q; want Info object title", meta.Title)
@@ -165,7 +167,7 @@ endobj`,
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			meta := ExtractPDFMetadata([]byte(info + tt.xref + `
+			meta := metadataFromBytes([]byte(info + tt.xref + `
 startxref
 0
 %%EOF`))
@@ -200,7 +202,7 @@ endstream`)
 	// Both lookup paths should recover the packet despite its incorrect Length.
 	for name, data := range map[string][]byte{"classic xref": indexed, "scan fallback": indexed[:bytes.Index(indexed, []byte("xref\n"))]} {
 		t.Run(name, func(t *testing.T) {
-			meta := ExtractPDFMetadata(data)
+			meta := metadataFromBytes(data)
 			if meta.Title != "PDF XMP Only" {
 				t.Fatalf("Title = %q; want XMP title", meta.Title)
 			}
@@ -212,7 +214,7 @@ endstream`)
 }
 
 func TestExtractPDFMetadataInfoBeatsXMP(t *testing.T) {
-	meta := ExtractPDFMetadata([]byte(`%PDF-1.4
+	meta := metadataFromBytes([]byte(`%PDF-1.4
 2 0 obj
 << /Title (Info Title) /Author (Info Author) >>
 endobj
@@ -260,7 +262,7 @@ func TestExtractPDFMetadataFlateXMPFallback(t *testing.T) {
 	)
 	for name, data := range map[string][]byte{"classic xref": indexed, "scan fallback": indexed[:bytes.Index(indexed, []byte("xref\n"))]} {
 		t.Run(name, func(t *testing.T) {
-			meta := ExtractPDFMetadata(data)
+			meta := metadataFromBytes(data)
 			if meta.Title != "PDF XMP Flate" {
 				t.Fatalf("Title = %q; want Flate XMP title", meta.Title)
 			}
@@ -290,10 +292,7 @@ func TestExtractPDFMetadataKeepsSourceReadsBounded(t *testing.T) {
 		},
 	}
 
-	meta, err := ExtractMetadata(reader, sourceSize, FormatPDF)
-	if err != nil {
-		t.Fatalf("ExtractMetadata: %v", err)
-	}
+	meta := ExtractMetadata(reader, sourceSize)
 	if meta.Title != "Bounded PDF" || len(meta.Authors) != 1 || meta.Authors[0].Name != "Range Reader" {
 		t.Fatalf("metadata = %+v; want bounded Info title and XMP author", meta)
 	}
@@ -306,7 +305,7 @@ func TestExtractPDFMetadataKeepsSourceReadsBounded(t *testing.T) {
 	data := []byte("%PDF-1.4\n" + strings.Repeat("<< /Type /Page /Resources << /Font << /F1 1 0 R >> >> >>\n", 20000))
 	reader = &sparsePDFReader{size: int64(len(data)), segments: []sparsePDFSegment{{data: data}}}
 	reader.readLimit = 8*reader.size + maxPDFInfoObjectBytes
-	meta = ExtractPDFMetadataReader(reader, reader.size)
+	meta = ExtractMetadata(reader, reader.size)
 	if meta.Title != "" || len(meta.Authors) != 0 {
 		t.Fatalf("metadata from page dictionaries = %+v; want none", meta)
 	}
@@ -347,10 +346,10 @@ func TestPDFStructureUsesCurrentObjects(t *testing.T) {
 		{"incremental save", "Revised", "XMP Author", updated.Bytes(), 2},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			meta := ExtractPDFMetadata(tt.pdf)
-			pages, err := ReadyPageCount(bytes.NewReader(tt.pdf), int64(len(tt.pdf)), FormatPDF)
-			if err != nil || pages != tt.pages || meta.PageCount != tt.pages || meta.Title != tt.title || len(meta.Authors) != 1 || meta.Authors[0].Name != tt.author {
-				t.Fatalf("metadata = %+v; count = %d, %v; want current title %q and %d pages", meta, pages, err, tt.title, tt.pages)
+			meta := metadataFromBytes(tt.pdf)
+			pages := ReadyPageCount(bytes.NewReader(tt.pdf), int64(len(tt.pdf)))
+			if pages != tt.pages || meta.PageCount != tt.pages || meta.Title != tt.title || len(meta.Authors) != 1 || meta.Authors[0].Name != tt.author {
+				t.Fatalf("metadata = %+v; count = %d; want current title %q and %d pages", meta, pages, tt.title, tt.pages)
 			}
 		})
 	}
@@ -361,9 +360,9 @@ func TestPDFStructureUsesCurrentObjects(t *testing.T) {
 	hybrid := bytes.Replace(base, []byte("/Size 8"), []byte("/XRefStm 42 /Size 8"), 1)
 	for name, data := range map[string][]byte{"freed tree": freed, "hybrid xref": hybrid} {
 		t.Run(name, func(t *testing.T) {
-			pages, err := ReadyPageCount(bytes.NewReader(data), int64(len(data)), FormatPDF)
-			if err != nil || pages != 0 {
-				t.Fatalf("count = %d, %v; want PDFium fallback", pages, err)
+			pages := ReadyPageCount(bytes.NewReader(data), int64(len(data)))
+			if pages != 0 {
+				t.Fatalf("count = %d; want PDFium fallback", pages)
 			}
 		})
 	}
@@ -459,4 +458,8 @@ func zlibCompressPDFTestData(data []byte) []byte {
 		panic(err)
 	}
 	return buf.Bytes()
+}
+
+func metadataFromBytes(data []byte) *bookmeta.Metadata {
+	return ExtractMetadata(bytes.NewReader(data), int64(len(data)))
 }

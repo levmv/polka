@@ -33,7 +33,7 @@ export default defineConfig({
     {
       // Linux WebKit catches engine differences; it does not replace real iPad testing.
       name: 'ipad-webkit',
-      testMatch: /(responsive|pdf-reader|reader-pagination|book-annotations)\.spec\.ts/,
+      testMatch: /(responsive|pdf-reader|djvu-reader|reader-pagination|book-annotations)\.spec\.ts/,
       use: { ...devices['iPad Mini'] },
     },
   ],

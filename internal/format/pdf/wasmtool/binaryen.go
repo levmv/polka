@@ -30,7 +30,7 @@ func verifyBinaryen(script string, spec binaryenSpec) error {
 }
 
 func prepareBinaryen(root string, spec binaryenSpec) (string, error) {
-	dir := filepath.Join(root, "internal/pdfcover/generated", "binaryen-"+spec.Version)
+	dir := filepath.Join(root, "internal/format/pdf/generated", "binaryen-"+spec.Version)
 	script := filepath.Join(dir, "wasm-opt.cjs")
 	if err := verifyBinaryen(script, spec); err == nil {
 		return script, nil
