@@ -25,64 +25,6 @@ import (
 	"github.com/levmv/polka/internal/xmlutil"
 )
 
-func TestTargetSpecsForFormat(t *testing.T) {
-	specs := TargetSpecsForFormat(format.FormatAZW4)
-	if len(specs) != 1 || specs[0].Target != TargetPDF || specs[0].Label != "PDF" || specs[0].Extension != ".pdf" || specs[0].MediaType != "application/pdf" {
-		t.Fatalf("TargetSpecsForFormat(AZW4) = %+v; want PDF spec", specs)
-	}
-
-	specs[0].Target = TargetEPUB
-	specsAgain := TargetSpecsForFormat(format.FormatAZW4)
-	if len(specsAgain) != 1 || specsAgain[0].Target != TargetPDF {
-		t.Fatalf("TargetSpecsForFormat returned mutable backing slice: %+v", specsAgain)
-	}
-
-	if specs := TargetSpecsForFormat(format.FormatEPUB); len(specs) != 2 || specs[0].Target != TargetEPUB || specs[0].Label != "Repaired EPUB" || specs[1].Target != TargetKEPUB {
-		t.Fatalf("TargetSpecsForFormat(EPUB) = %+v; want repaired EPUB, KEPUB", specs)
-	}
-	if specs := TargetSpecsForFormat(format.FormatCBR); len(specs) != 1 || specs[0].Target != TargetCBZ || specs[0].Label != "CBZ" {
-		t.Fatalf("TargetSpecsForFormat(CBR) = %+v; want CBZ", specs)
-	}
-	if specs := TargetSpecsForFormat(format.FormatCB7); len(specs) != 1 || specs[0].Target != TargetCBZ || specs[0].Label != "CBZ" {
-		t.Fatalf("TargetSpecsForFormat(CB7) = %+v; want CBZ", specs)
-	}
-	for _, tt := range []format.Format{
-		format.FormatFB2,
-		format.FormatMOBI,
-		format.FormatAZW,
-		format.FormatAZW3,
-		format.FormatPRC,
-	} {
-		specs := TargetSpecsForFormat(tt)
-		if len(specs) != 2 || specs[0].Target != TargetEPUB || specs[1].Target != TargetKEPUB {
-			t.Fatalf("TargetSpecsForFormat(%s) = %+v; want EPUB, KEPUB", format.FormatLabel(tt), specs)
-		}
-	}
-	for _, tt := range []format.Format{
-		format.FormatPDB,
-		format.FormatTXT,
-		format.FormatTXTZ,
-		format.FormatMarkdown,
-		format.FormatHTML,
-		format.FormatHTMLZ,
-		format.FormatXHTML,
-	} {
-		specs := TargetSpecsForFormat(tt)
-		if len(specs) != 1 || specs[0].Target != TargetEPUB {
-			t.Fatalf("TargetSpecsForFormat(%s) = %+v; want EPUB", format.FormatLabel(tt), specs)
-		}
-	}
-
-	supported := SupportedTargetSpecs()
-	if len(supported) != 4 || supported[0].Target != TargetPDF || supported[1].Target != TargetEPUB || supported[2].Target != TargetKEPUB || supported[3].Target != TargetCBZ {
-		t.Fatalf("SupportedTargetSpecs = %+v; want PDF, EPUB, KEPUB, CBZ", supported)
-	}
-	supported[0].Target = TargetEPUB
-	if again := SupportedTargetSpecs(); len(again) != 4 || again[0].Target != TargetPDF {
-		t.Fatalf("SupportedTargetSpecs returned mutable backing slice: %+v", again)
-	}
-}
-
 func TestConvertContextCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

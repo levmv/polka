@@ -260,7 +260,8 @@ func kindleTextCompressionSupportError(info *KindleInspection) error {
 }
 
 func kindleCDETypeSupportError(info *KindleInspection) error {
-	if info.CDEType != "" && info.CDEType != "EBOK" {
+	// Personal documents use the same supported MOBI6/KF8 structures as ebooks.
+	if info.CDEType != "" && info.CDEType != "EBOK" && info.CDEType != "PDOC" {
 		return fmt.Errorf("%w: cdetype %s", ErrUnsupportedKindleSource, info.CDEType)
 	}
 	return nil

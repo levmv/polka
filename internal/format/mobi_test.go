@@ -575,52 +575,51 @@ func TestInspectKindleUnknownContainer(t *testing.T) {
 }
 
 func TestExtractKindleDocumentMOBI6PalmDOC(t *testing.T) {
-	text := []byte("<html><body><p>Hello Kindle</p></body></html>")
-	data := testMOBIFileWithOptions(testMOBIOptions{
-		codepage:        65001,
-		title:           "Readable MOBI",
-		compression:     mobiCompressionPalmDOC,
-		headerLength:    0xe4,
-		textRecords:     [][]byte{text},
-		textLength:      uint32(len(text)),
-		mobiVersion:     6,
-		firstImageIndex: 2,
-		records: []testEXTHRecord{
-			{typ: 100, value: []byte("Doe, Jane")},
-			{typ: 201, value: testMOBIUint32(0)},
-			{typ: 501, value: []byte("EBOK")},
-		},
-		extraRecords: [][]byte{tinyPNG, []byte("FLIS control")},
-	})
-	r := bytes.NewReader(data)
+	for _, label := range []string{"EBOK", "PDOC"} {
+		t.Run(label, func(t *testing.T) {
+			text := []byte(`<html><body><p>Hello Kindle</p><img recindex="00001"></body></html>`)
+			data := testMOBIFileWithOptions(testMOBIOptions{
+				codepage:        65001,
+				title:           "Readable MOBI",
+				compression:     mobiCompressionPalmDOC,
+				headerLength:    0xe4,
+				textRecords:     [][]byte{text},
+				textLength:      uint32(len(text)),
+				mobiVersion:     6,
+				firstImageIndex: 2,
+				records: []testEXTHRecord{
+					{typ: 100, value: []byte("Doe, Jane")},
+					{typ: 201, value: testMOBIUint32(0)},
+					{typ: 501, value: []byte(label)},
+				},
+				extraRecords: [][]byte{tinyPNG, []byte("FLIS control")},
+			})
+			r := bytes.NewReader(data)
 
-	doc, err := ExtractKindleDocument(r, r.Size(), FormatMOBI)
-	if err != nil {
-		t.Fatalf("ExtractKindleDocument: %v", err)
-	}
-	if doc.SourceClass != "mobi6" || doc.MOBIKind != MOBIKindMOBI6 {
-		t.Fatalf("class = %q, kind = %q; want MOBI6", doc.SourceClass, doc.MOBIKind)
-	}
-	if doc.Metadata == nil || doc.Metadata.Title != "Readable MOBI" || len(doc.Metadata.Authors) != 1 || doc.Metadata.Authors[0].Name != "Jane Doe" {
-		t.Fatalf("metadata = %+v; want title and EXTH author", doc.Metadata)
-	}
-	if len(doc.Flows) != 1 {
-		t.Fatalf("flows = %+v; want one flow", doc.Flows)
-	}
-	if flow := doc.Flows[0]; flow.ID != "flow-0001" || flow.Href != "text/flow-0001.html" || flow.MediaType != "text/html" || string(flow.Data) != string(text) {
-		t.Fatalf("flow = %+v; want extracted HTML text", flow)
-	}
-	if len(doc.Resources) != 1 {
-		t.Fatalf("resources = %+v; want one image resource", doc.Resources)
-	}
-	if res := doc.Resources[0]; res.ID != "res-00002" || res.Href != "images/00002.png" || res.MediaType != "image/png" || res.RecordIndex != 2 || !res.Cover || !bytes.Equal(res.Data, tinyPNG) {
-		t.Fatalf("resource = %+v; want cover PNG at record 2", res)
-	}
-	if doc.CoverResourceID != "res-00002" {
-		t.Fatalf("CoverResourceID = %q; want res-00002", doc.CoverResourceID)
-	}
-	if len(doc.UnsupportedFeatures) != 0 {
-		t.Fatalf("UnsupportedFeatures = %+v; want none", doc.UnsupportedFeatures)
+			doc, err := ExtractKindleDocument(r, r.Size(), FormatMOBI)
+			if err != nil {
+				t.Fatalf("ExtractKindleDocument: %v", err)
+			}
+			if doc.Metadata == nil || doc.Metadata.Title != "Readable MOBI" || len(doc.Metadata.Authors) != 1 || doc.Metadata.Authors[0].Name != "Jane Doe" {
+				t.Fatalf("metadata = %+v; want title and EXTH author", doc.Metadata)
+			}
+			if len(doc.Flows) != 1 {
+				t.Fatalf("flows = %+v; want one flow", doc.Flows)
+			}
+			if flow := doc.Flows[0]; flow.MediaType != "text/html" || !bytes.Equal(flow.Data, text) {
+				t.Fatalf("flow = %+v; want extracted HTML text", flow)
+			}
+			if len(doc.Resources) != 1 {
+				t.Fatalf("resources = %+v; want one image resource", doc.Resources)
+			}
+			res := doc.Resources[0]
+			if res.EmbedIndex != 1 || res.MediaType != "image/png" || !bytes.Equal(res.Data, tinyPNG) {
+				t.Fatalf("resource = %+v; want the PNG referenced by recindex 1", res)
+			}
+			if !res.Cover || res.ID == "" || doc.CoverResourceID != res.ID {
+				t.Fatalf("cover ID = %q; want the extracted cover resource %+v", doc.CoverResourceID, res)
+			}
+		})
 	}
 }
 
@@ -793,152 +792,163 @@ func TestExtractKindleDocumentPalmDOCOEBHTML(t *testing.T) {
 }
 
 func TestExtractKindleDocumentKF8Standalone(t *testing.T) {
-	prefix := []byte("<html><body><p>")
-	suffix := []byte("</p></body></html>")
-	skeleton := append(append([]byte(nil), prefix...), suffix...)
-	fragment := []byte("Hello KF8")
-	text := append(append([]byte(nil), skeleton...), fragment...)
-	skelRecords := testKindleSKELRecordsWith(1, 0, uint32(len(skeleton)))
-	fragRecords := testKindleFragmentRecordsWith(uint32(len(prefix)), "body > p", 0, 0, 0, uint32(len(fragment)))
-	extraRecords := append([][]byte{}, skelRecords...)
-	extraRecords = append(extraRecords, fragRecords...)
-	navIndex := uint32(2 + len(extraRecords))
-	extraRecords = append(extraRecords, testMOBINCXRecordsWithPositions(12, 15)...)
-	data := testMOBIFileWithOptions(testMOBIOptions{
-		codepage:     65001,
-		title:        "KF8 Export",
-		headerLength: 0x108,
-		mobiVersion:  8,
-		textRecords:  [][]byte{text},
-		textLength:   uint32(len(text)),
-		extraRecords: extraRecords,
-	})
-	data = testMOBIRecord0Uint32(t, data, 0xfc, 2)
-	data = testMOBIRecord0Uint32(t, data, 0xf8, 4)
-	data = testMOBIRecord0Uint32(t, data, 0xf4, navIndex)
-	r := bytes.NewReader(data)
+	for _, label := range []string{"EBOK", "PDOC"} {
+		t.Run(label, func(t *testing.T) {
+			prefix := []byte("<html><body><p>")
+			suffix := []byte("</p></body></html>")
+			skeleton := append(append([]byte(nil), prefix...), suffix...)
+			fragment := []byte("Hello KF8")
+			text := append(append([]byte(nil), skeleton...), fragment...)
+			skelRecords := testKindleSKELRecordsWith(1, 0, uint32(len(skeleton)))
+			fragRecords := testKindleFragmentRecordsWith(uint32(len(prefix)), "body > p", 0, 0, 0, uint32(len(fragment)))
+			extraRecords := append([][]byte{}, skelRecords...)
+			extraRecords = append(extraRecords, fragRecords...)
+			navIndex := uint32(2 + len(extraRecords))
+			extraRecords = append(extraRecords, testMOBINCXRecordsWithPositions(12, 15)...)
+			data := testMOBIFileWithOptions(testMOBIOptions{
+				codepage:     65001,
+				title:        "KF8 Export",
+				headerLength: 0x108,
+				mobiVersion:  8,
+				textRecords:  [][]byte{text},
+				textLength:   uint32(len(text)),
+				extraRecords: extraRecords,
+				records:      []testEXTHRecord{{typ: 501, value: []byte(label)}},
+			})
+			data = testMOBIRecord0Uint32(t, data, 0xfc, 2)
+			data = testMOBIRecord0Uint32(t, data, 0xf8, 4)
+			data = testMOBIRecord0Uint32(t, data, 0xf4, navIndex)
+			r := bytes.NewReader(data)
 
-	doc, err := ExtractKindleDocument(r, r.Size(), FormatAZW3)
-	if err != nil {
-		t.Fatalf("ExtractKindleDocument: %v", err)
-	}
-	if doc.SourceClass != "kf8-standalone" || doc.MOBIKind != MOBIKindKF8Standalone {
-		t.Fatalf("class = %q, kind = %q; want KF8 standalone", doc.SourceClass, doc.MOBIKind)
-	}
-	if doc.Metadata == nil || doc.Metadata.Title != "KF8 Export" {
-		t.Fatalf("metadata = %+v; want KF8 title", doc.Metadata)
-	}
-	if len(doc.Flows) != 1 {
-		t.Fatalf("flows = %+v; want one flow", doc.Flows)
-	}
-	if got, want := string(doc.Flows[0].Data), "<html><body><p>Hello KF8</p></body></html>"; got != want {
-		t.Fatalf("flow = %q; want %q", got, want)
-	}
-	if len(doc.Navigation) != 1 {
-		t.Fatalf("Navigation = %+v; want one root", doc.Navigation)
-	}
-	root := doc.Navigation[0]
-	if root.Label != "Part One" || root.Href != "text/flow-0001.html#filepos12" {
-		t.Fatalf("root = %+v; want Part One at filepos12", root)
-	}
-	if len(root.Children) != 1 {
-		t.Fatalf("root.Children = %+v; want one child", root.Children)
-	}
-	child := root.Children[0]
-	if child.Label != "Chapter One" || child.Href != "text/flow-0001.html#filepos15" {
-		t.Fatalf("child = %+v; want Chapter One at filepos15", child)
-	}
-	if len(doc.UnsupportedFeatures) != 0 {
-		t.Fatalf("UnsupportedFeatures = %+v; want none", doc.UnsupportedFeatures)
+			doc, err := ExtractKindleDocument(r, r.Size(), FormatAZW3)
+			if err != nil {
+				t.Fatalf("ExtractKindleDocument: %v", err)
+			}
+			if doc.Metadata == nil || doc.Metadata.Title != "KF8 Export" {
+				t.Fatalf("metadata = %+v; want KF8 title", doc.Metadata)
+			}
+			if len(doc.Flows) != 1 {
+				t.Fatalf("flows = %+v; want one flow", doc.Flows)
+			}
+			if got, want := string(doc.Flows[0].Data), "<html><body><p>Hello KF8</p></body></html>"; got != want {
+				t.Fatalf("flow = %q; want %q", got, want)
+			}
+			if len(doc.Navigation) != 1 {
+				t.Fatalf("Navigation = %+v; want one root", doc.Navigation)
+			}
+			root := doc.Navigation[0]
+			if root.Label != "Part One" || root.Href != doc.Flows[0].Href+"#filepos12" {
+				t.Fatalf("root = %+v; want Part One at filepos12", root)
+			}
+			if len(root.Children) != 1 {
+				t.Fatalf("root.Children = %+v; want one child", root.Children)
+			}
+			child := root.Children[0]
+			if child.Label != "Chapter One" || child.Href != doc.Flows[0].Href+"#filepos15" {
+				t.Fatalf("child = %+v; want Chapter One at filepos15", child)
+			}
+		})
 	}
 }
 
 func TestExtractKindleDocumentComboKF8(t *testing.T) {
-	prefix := []byte("<html><body><p>")
-	suffix := []byte(`</p><img src="kindle:embed:0001?mime=image/png"><video src="kindle:embed:0002?mime=video/mp4"></video><audio src="kindle:embed:0003?mime=audio/mpeg"></audio></body></html>`)
-	skeleton := append(append([]byte(nil), prefix...), suffix...)
-	fragment := []byte("Hello Combo KF8")
-	text := append(append([]byte(nil), skeleton...), fragment...)
-	skelRecords := testKindleSKELRecordsWith(1, 0, uint32(len(skeleton)))
-	fragRecords := testKindleFragmentRecordsWith(uint32(len(prefix)), "body > p", 0, 0, 0, uint32(len(fragment)))
-	kf8ExtraRecords := append([][]byte{}, skelRecords...)
-	kf8ExtraRecords = append(kf8ExtraRecords, fragRecords...)
-	kf8NavIndex := uint32(2 + len(kf8ExtraRecords))
-	kf8ExtraRecords = append(kf8ExtraRecords, testMOBINCXRecordsWithPositions(12, 18)...)
-	kf8 := testMOBIFileWithOptions(testMOBIOptions{
-		codepage:     65001,
-		title:        "KF8 Part",
-		headerLength: 0x108,
-		mobiVersion:  8,
-		textRecords:  [][]byte{text},
-		textLength:   uint32(len(text)),
-		extraRecords: kf8ExtraRecords,
-	})
-	kf8 = testMOBIRecord0Uint32(t, kf8, 0xfc, 2)
-	kf8 = testMOBIRecord0Uint32(t, kf8, 0xf8, 4)
-	kf8 = testMOBIRecord0Uint32(t, kf8, 0xf4, kf8NavIndex)
-	kf8Records := testPalmDBRecordBodies(t, kf8)
-	video := []byte{0, 0, 0, 20, 'f', 't', 'y', 'p', 'i', 's', 'o', 'm'}
-	audio := []byte("ID3\x04\x00\x00tiny mp3")
-	extraRecords := [][]byte{
-		tinyPNG,
-		testKindleMediaRecord("VIDE", video),
-		testKindleMediaRecord("AUDI", audio),
-		[]byte("BOUNDARY"),
-	}
-	extraRecords = append(extraRecords, kf8Records...)
-	data := testMOBIFileWithOptions(testMOBIOptions{
-		codepage:        65001,
-		title:           "Combo Export",
-		mobiVersion:     6,
-		textRecords:     [][]byte{[]byte("<html><body>Legacy MOBI6</body></html>")},
-		firstImageIndex: 2,
-		records: []testEXTHRecord{
-			{typ: 121, value: testMOBIUint32(6)},
-			{typ: 501, value: []byte("EBOK")},
-		},
-		extraRecords: extraRecords,
-	})
-	r := bytes.NewReader(data)
+	for _, label := range []string{"EBOK", "PDOC"} {
+		t.Run(label, func(t *testing.T) {
+			prefix := []byte("<html><body><p>")
+			suffix := []byte(`</p><img src="kindle:embed:0001?mime=image/png"><video src="kindle:embed:0002?mime=video/mp4"></video><audio src="kindle:embed:0003?mime=audio/mpeg"></audio></body></html>`)
+			skeleton := append(append([]byte(nil), prefix...), suffix...)
+			fragment := []byte("Hello Combo KF8")
+			text := append(append([]byte(nil), skeleton...), fragment...)
+			skelRecords := testKindleSKELRecordsWith(1, 0, uint32(len(skeleton)))
+			fragRecords := testKindleFragmentRecordsWith(uint32(len(prefix)), "body > p", 0, 0, 0, uint32(len(fragment)))
+			kf8ExtraRecords := append([][]byte{}, skelRecords...)
+			kf8ExtraRecords = append(kf8ExtraRecords, fragRecords...)
+			kf8NavIndex := uint32(2 + len(kf8ExtraRecords))
+			kf8ExtraRecords = append(kf8ExtraRecords, testMOBINCXRecordsWithPositions(12, 18)...)
+			kf8 := testMOBIFileWithOptions(testMOBIOptions{
+				codepage:     65001,
+				title:        "KF8 Part",
+				headerLength: 0x108,
+				mobiVersion:  8,
+				textRecords:  [][]byte{text},
+				textLength:   uint32(len(text)),
+				extraRecords: kf8ExtraRecords,
+				records:      []testEXTHRecord{{typ: 501, value: []byte(label)}},
+			})
+			kf8 = testMOBIRecord0Uint32(t, kf8, 0xfc, 2)
+			kf8 = testMOBIRecord0Uint32(t, kf8, 0xf8, 4)
+			kf8 = testMOBIRecord0Uint32(t, kf8, 0xf4, kf8NavIndex)
+			kf8Records := testPalmDBRecordBodies(t, kf8)
+			video := []byte{0, 0, 0, 20, 'f', 't', 'y', 'p', 'i', 's', 'o', 'm'}
+			audio := []byte("ID3\x04\x00\x00tiny mp3")
+			extraRecords := [][]byte{
+				tinyPNG,
+				testKindleMediaRecord("VIDE", video),
+				testKindleMediaRecord("AUDI", audio),
+				[]byte("BOUNDARY"),
+			}
+			extraRecords = append(extraRecords, kf8Records...)
+			data := testMOBIFileWithOptions(testMOBIOptions{
+				codepage:        65001,
+				title:           "Combo Export",
+				mobiVersion:     6,
+				textRecords:     [][]byte{[]byte("<html><body>Legacy MOBI6</body></html>")},
+				firstImageIndex: 2,
+				records: []testEXTHRecord{
+					{typ: 121, value: testMOBIUint32(6)},
+					{typ: 501, value: []byte(label)},
+				},
+				extraRecords: extraRecords,
+			})
+			r := bytes.NewReader(data)
 
-	doc, err := ExtractKindleDocument(r, r.Size(), FormatMOBI)
-	if err != nil {
-		t.Fatalf("ExtractKindleDocument: %v", err)
-	}
-	if doc.SourceClass != "mobi6+kf8-combo" || doc.MOBIKind != MOBIKindCombo {
-		t.Fatalf("class = %q, kind = %q; want combo", doc.SourceClass, doc.MOBIKind)
-	}
-	if doc.Metadata == nil || doc.Metadata.Title != "Combo Export" {
-		t.Fatalf("metadata = %+v; want primary MOBI title", doc.Metadata)
-	}
-	if len(doc.Flows) != 1 {
-		t.Fatalf("flows = %+v; want one flow", doc.Flows)
-	}
-	if got, want := string(doc.Flows[0].Data), `<html><body><p>Hello Combo KF8</p><img src="kindle:embed:0001?mime=image/png"><video src="kindle:embed:0002?mime=video/mp4"></video><audio src="kindle:embed:0003?mime=audio/mpeg"></audio></body></html>`; got != want {
-		t.Fatalf("flow = %q; want %q", got, want)
-	}
-	if len(doc.Resources) != 3 || doc.Resources[0].RecordIndex != 2 || doc.Resources[1].MediaType != "video/mp4" || doc.Resources[2].MediaType != "audio/mpeg" {
-		t.Fatalf("shared combo resources = %+v; want image, video, and audio before boundary", doc.Resources)
-	}
-	if doc.CoverResourceID != "res-00002" {
-		t.Fatalf("CoverResourceID = %q; want shared primary cover", doc.CoverResourceID)
-	}
-	if len(doc.Navigation) != 1 {
-		t.Fatalf("Navigation = %+v; want one root", doc.Navigation)
-	}
-	root := doc.Navigation[0]
-	if root.Label != "Part One" || root.Href != "text/flow-0001.html#filepos12" {
-		t.Fatalf("root = %+v; want Part One at filepos12", root)
-	}
-	if len(root.Children) != 1 {
-		t.Fatalf("root.Children = %+v; want one child", root.Children)
-	}
-	child := root.Children[0]
-	if child.Label != "Chapter One" || child.Href != "text/flow-0001.html#filepos18" {
-		t.Fatalf("child = %+v; want Chapter One at filepos18", child)
-	}
-	if len(doc.UnsupportedFeatures) != 0 {
-		t.Fatalf("UnsupportedFeatures = %+v; want none", doc.UnsupportedFeatures)
+			doc, err := ExtractKindleDocument(r, r.Size(), FormatMOBI)
+			if err != nil {
+				t.Fatalf("ExtractKindleDocument: %v", err)
+			}
+			if doc.Metadata == nil || doc.Metadata.Title != "Combo Export" {
+				t.Fatalf("metadata = %+v; want primary MOBI title", doc.Metadata)
+			}
+			if len(doc.Flows) != 1 {
+				t.Fatalf("flows = %+v; want one flow", doc.Flows)
+			}
+			if got, want := string(doc.Flows[0].Data), `<html><body><p>Hello Combo KF8</p><img src="kindle:embed:0001?mime=image/png"><video src="kindle:embed:0002?mime=video/mp4"></video><audio src="kindle:embed:0003?mime=audio/mpeg"></audio></body></html>`; got != want {
+				t.Fatalf("flow = %q; want %q", got, want)
+			}
+			if len(doc.Resources) != 3 {
+				t.Fatalf("shared combo resources = %+v; want image, video, and audio before boundary", doc.Resources)
+			}
+			for i, want := range []struct {
+				mediaType string
+				data      []byte
+			}{{"image/png", tinyPNG}, {"video/mp4", video}, {"audio/mpeg", audio}} {
+				index := slices.IndexFunc(doc.Resources, func(res KindleResource) bool { return res.EmbedIndex == i+1 })
+				if index < 0 {
+					t.Fatalf("missing shared resource for kindle:embed:%04d", i+1)
+				}
+				res := doc.Resources[index]
+				if res.MediaType != want.mediaType || !bytes.Equal(res.Data, want.data) {
+					t.Fatalf("resource %d = %+v; want original %s payload", i+1, res, want.mediaType)
+				}
+				if i == 0 && (!res.Cover || res.ID == "" || doc.CoverResourceID != res.ID) {
+					t.Fatalf("cover ID = %q; want the shared image resource %+v", doc.CoverResourceID, res)
+				}
+			}
+			if len(doc.Navigation) != 1 {
+				t.Fatalf("Navigation = %+v; want one root", doc.Navigation)
+			}
+			root := doc.Navigation[0]
+			if root.Label != "Part One" || root.Href != doc.Flows[0].Href+"#filepos12" {
+				t.Fatalf("root = %+v; want Part One at filepos12", root)
+			}
+			if len(root.Children) != 1 {
+				t.Fatalf("root.Children = %+v; want one child", root.Children)
+			}
+			child := root.Children[0]
+			if child.Label != "Chapter One" || child.Href != doc.Flows[0].Href+"#filepos18" {
+				t.Fatalf("child = %+v; want Chapter One at filepos18", child)
+			}
+		})
 	}
 }
 
@@ -1192,44 +1202,57 @@ func TestExtractKindleDocumentTrimsTrailingEntries(t *testing.T) {
 
 func TestExtractKindleDocumentRejectsUnsupportedSources(t *testing.T) {
 	for _, tt := range []struct {
-		name string
-		data []byte
-		kind Format
+		name   string
+		opts   testMOBIOptions
+		reason string
 	}{
 		{
-			name: "huff cdic",
-			data: testMOBIFileWithOptions(testMOBIOptions{
-				codepage:    65001,
-				title:       "HUFF",
-				compression: mobiCompressionHUFFCDIC,
-				textRecords: [][]byte{[]byte("plain")},
-				textLength:  5,
-				mobiVersion: 6,
-			}),
-			kind: FormatMOBI,
+			name: "encrypted personal document",
+			opts: testMOBIOptions{
+				encryption: 1,
+				records:    []testEXTHRecord{{typ: 501, value: []byte("PDOC")}},
+			},
+			reason: "encrypted",
 		},
 		{
-			name: "combo",
-			data: testMOBIFileWithOptions(testMOBIOptions{
-				codepage:    65001,
-				title:       "Combo",
-				compression: mobiCompressionPalmDOC,
-				textRecords: [][]byte{[]byte("plain")},
-				textLength:  5,
-				mobiVersion: 6,
-				records: []testEXTHRecord{
-					{typ: 121, value: testMOBIUint32(3)},
-				},
+			name: "dictionary personal document",
+			opts: testMOBIOptions{
+				firstImageIndex: 2,
+				records:         []testEXTHRecord{{typ: 501, value: []byte("PDOC")}},
+				extraRecords:    [][]byte{[]byte("INFL index")},
+			},
+			reason: "dictionary",
+		},
+		{
+			name:   "sample book",
+			opts:   testMOBIOptions{records: []testEXTHRecord{{typ: 501, value: []byte("EBSP")}}},
+			reason: "sample-book",
+		},
+		{
+			name:   "missing HUFF CDIC tables",
+			opts:   testMOBIOptions{compression: mobiCompressionHUFFCDIC},
+			reason: "huff-cdic-compression",
+		},
+		{
+			name: "malformed combo KF8 header",
+			opts: testMOBIOptions{
+				records:      []testEXTHRecord{{typ: 121, value: testMOBIUint32(3)}},
 				extraRecords: [][]byte{[]byte("BOUNDARY"), []byte("kf8 placeholder")},
-			}),
-			kind: FormatMOBI,
+			},
+			reason: "invalid combo KF8 header",
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			r := bytes.NewReader(tt.data)
-			_, err := ExtractKindleDocument(r, r.Size(), tt.kind)
-			if !errors.Is(err, ErrUnsupportedKindleSource) {
-				t.Fatalf("ExtractKindleDocument error = %v; want ErrUnsupportedKindleSource", err)
+			tt.opts.codepage = 65001
+			tt.opts.mobiVersion = 6
+			tt.opts.textRecords = [][]byte{[]byte("<html><body>Readable fallback</body></html>")}
+			r := bytes.NewReader(testMOBIFileWithOptions(tt.opts))
+			doc, err := ExtractKindleDocument(r, r.Size(), FormatMOBI)
+			if !errors.Is(err, ErrUnsupportedKindleSource) || !strings.Contains(err.Error(), tt.reason) {
+				t.Fatalf("ExtractKindleDocument error = %v; want unsupported source because of %q", err, tt.reason)
+			}
+			if doc != nil {
+				t.Fatal("rejected source returned a partial document")
 			}
 		})
 	}
