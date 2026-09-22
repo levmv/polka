@@ -84,7 +84,7 @@ export interface FoliateAnnotation {
 }
 
 export interface FoliateRendererElement extends HTMLElement {
-    // Background-only hook supplied by frontend/foliate-build.mjs.
+    // Background measurement hooks supplied by our Foliate fork.
     loadDocument?: (
         frame: HTMLIFrameElement,
         source: string,
@@ -122,6 +122,7 @@ export interface FoliateViewElement extends HTMLElement {
         matchCase?: boolean;
         matchDiacritics?: boolean;
         matchWholeWords?: boolean;
+        draw?: (rects: unknown[]) => SVGElement;
     }) => AsyncGenerator<FoliateSearchYield>;
     clearSearch?: () => void;
     addAnnotation?: (
@@ -179,10 +180,7 @@ export interface ReaderDisplayPalette {
     text: string;
 }
 
-// foliate-js 1.0.1 exposes no search-marker renderer and uses Overlayer.outline
-// only for transient search annotations. Keep this adapter beside the pinned
-// engine integration instead of patching the installed dependency.
-Overlayer.outline = (rects: unknown[]): SVGElement => {
+export function drawFoliateSearchMarker(rects: unknown[]): SVGElement {
     const marker = Overlayer.highlight(rects, {
         color: rootCSSVariable('--reader-search-highlight-fill', 'rgba(255, 196, 0, 0.38)'),
     });
@@ -195,7 +193,7 @@ Overlayer.outline = (rects: unknown[]): SVGElement => {
     marker.setAttribute('stroke-width', '1');
     for (const rect of marker.querySelectorAll('rect')) rect.setAttribute('rx', '2');
     return marker;
-};
+}
 
 export function createFoliateView(stage: HTMLElement): FoliateViewElement {
     const view = document.createElement('foliate-view') as FoliateViewElement;
@@ -441,28 +439,6 @@ function foliateZIPEntryMap(entries: ZipEntry[]): Map<string, ZipEntry> {
     }
     for (const [alias, entry] of aliases) exact.set(alias, entry);
     return exact;
-}
-
-export function suppressTransientFoliateRenderErrors(): void {
-    // foliate-js 1.0.1 starts observing the paginator before a newly created
-    // section iframe necessarily has a body. A queued ResizeObserver callback
-    // can therefore render against that short-lived empty document. The iframe
-    // load callback still performs the real render, so suppress only these two
-    // exact upstream exceptions and keep reporting every other reader error.
-    const handler = (event: ErrorEvent) => {
-        if (!String(event.filename || '').includes('/static/reader.js')) return;
-        const message = event.message || '';
-        const missingStyleTarget =
-            message.includes("Cannot destructure property 'style'") && message.includes('null');
-        const missingComputedStyleTarget =
-            message.includes('getComputedStyle') && message.includes('Element');
-        if (!missingStyleTarget && !missingComputedStyleTarget) return;
-        const stack = String(event.error?.stack || '');
-        if (stack && !stack.includes('ResizeObserver')) return;
-        event.preventDefault();
-        event.stopImmediatePropagation();
-    };
-    window.addEventListener('error', handler, true);
 }
 
 // foliate-js detects FB2/MOBI/etc. by filename, but the asset URL is served by

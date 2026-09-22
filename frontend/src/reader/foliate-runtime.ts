@@ -15,7 +15,6 @@ import {
     fetchFoliateBookFile,
     openFoliateBookFile,
     readerDisplayPalette,
-    suppressTransientFoliateRenderErrors,
     waitForRendererContents,
     wireCurrentFoliateDocuments,
     wireFoliateDocumentStyling,
@@ -71,9 +70,6 @@ async function initFoliateReader(
         return DEFAULT_READER_PREFERENCES satisfies ReaderPreferences;
     });
 
-    // The Foliate paginator can briefly render an empty iframe document on any
-    // section change. Keep its narrow upstream-race guard for this reader page.
-    suppressTransientFoliateRenderErrors();
     const preferences = normalizeReaderPreferences(await preferencesPromise);
     page.dataset.readerFlow = preferences.reader_flow;
     page.dataset.readerStyle = preferences.reader_style;

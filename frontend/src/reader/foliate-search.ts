@@ -1,5 +1,10 @@
 import { focusReaderSurface, revealChrome, shouldIgnoreReaderShortcut } from './chrome';
-import type { FoliateSearchResult, FoliateSearchYield, FoliateViewElement } from './foliate-engine';
+import {
+    drawFoliateSearchMarker,
+    type FoliateSearchResult,
+    type FoliateSearchYield,
+    type FoliateViewElement,
+} from './foliate-engine';
 import {
     appendExcerpt,
     createSearchPanel,
@@ -183,6 +188,7 @@ async function runSearch(
             matchCase: false,
             matchDiacritics: false,
             matchWholeWords: false,
+            draw: drawFoliateSearchMarker,
         })) {
             if (sequence !== state.sequence) break;
             if (item === 'done') {

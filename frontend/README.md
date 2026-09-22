@@ -6,8 +6,8 @@ from [static/](static/) are copied there during the build. The app, Foliate
 reader, PDF.js reader and DjVu reader have separate bundles. Keep each engine
 in its own reader bundle and shared UI independent of the engines.
 
-Foliate source patches live in [foliate-build.mjs](foliate-build.mjs); review
-them when upgrading Foliate.
+[foliate-build.mjs](foliate-build.mjs) excludes Foliate's PDF adapter because
+PDF books use Polka's separate PDF.js reader.
 
 ## Development
 
