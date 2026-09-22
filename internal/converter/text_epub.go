@@ -775,8 +775,9 @@ type epubAsset struct {
 }
 
 type epubNavItem struct {
-	Title string
-	Href  string
+	Title    string
+	Href     string
+	Children []epubNavItem
 }
 
 func writeSimpleEPUBWithNav(ctx context.Context, w io.Writer, body string, meta epubMetadata, nav []epubNavItem, assets ...epubAsset) error {
@@ -951,14 +952,30 @@ func epubContentOPF(meta epubMetadata, assets []epubAsset) string {
 
 func epubNavXHTML(meta epubMetadata, nav []epubNavItem) string {
 	var items strings.Builder
-	for _, item := range nav {
-		title := strings.TrimSpace(item.Title)
-		href := strings.TrimSpace(item.Href)
-		if title == "" || href == "" {
-			continue
+	var writeItems func([]epubNavItem)
+	writeItems = func(nav []epubNavItem) {
+		for _, item := range nav {
+			title := strings.TrimSpace(item.Title)
+			href := strings.TrimSpace(item.Href)
+			if title == "" {
+				writeItems(item.Children)
+				continue
+			}
+			items.WriteString("        <li>")
+			if href == "" {
+				fmt.Fprintf(&items, `<span>%s</span>`, html.EscapeString(title))
+			} else {
+				fmt.Fprintf(&items, `<a href="%s">%s</a>`, html.EscapeString(href), html.EscapeString(title))
+			}
+			if len(item.Children) > 0 {
+				items.WriteString("<ol>\n")
+				writeItems(item.Children)
+				items.WriteString("</ol>")
+			}
+			items.WriteString("</li>\n")
 		}
-		fmt.Fprintf(&items, `        <li><a href="%s">%s</a></li>`+"\n", html.EscapeString(href), html.EscapeString(title))
 	}
+	writeItems(nav)
 	if items.Len() == 0 {
 		items.WriteString(`        <li><a href="text.xhtml">Text</a></li>` + "\n")
 	}

@@ -146,6 +146,10 @@ func (s *Server) handleDownloadAs(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Conversion exceeds resource limits", http.StatusRequestEntityTooLarge)
 			return
 		}
+		if errors.Is(err, converter.ErrUnsupportedContent) {
+			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+			return
+		}
 		if errors.Is(err, format.ErrAZW4PDFNotFound) {
 			http.Error(w, "Asset cannot be converted to "+string(target), http.StatusUnprocessableEntity)
 			return

@@ -124,7 +124,12 @@ test.describe('Catalog', () => {
     const detailRes = await page.request.get(`/api/books/${encodeURIComponent(bookId)}`);
     expect(detailRes.ok()).toBe(true);
     const detail = (await detailRes.json()) as {
-      assets: Array<{ id: number; can_read: boolean; is_primary: boolean }>;
+      assets: Array<{
+        id: number;
+        can_read: boolean;
+        is_primary: boolean;
+        download_as?: Array<{ target: string; label: string }>;
+      }>;
     };
     const readableAsset =
       detail.assets.find((asset) => asset.is_primary && asset.can_read) ??
@@ -152,16 +157,34 @@ test.describe('Catalog', () => {
     await expect(page.locator('.detail-title')).not.toBeFocused();
 
     const downloadLink = page.locator('.detail-actions a.action-btn[href^="/download/"]');
-    await expect(downloadLink.first()).toBeVisible();
+    await expect(downloadLink.first()).toHaveAttribute('href', `/download/${readableAsset.id}`);
     await page
       .locator('.detail-download-group', { hasText: 'EPUB' })
       .locator('.detail-download-menu')
       .click();
     const downloads = page.locator('.floating-menu:not([hidden])');
-    for (const label of ['Download EPUB', 'Download Repaired EPUB', 'Download KEPUB']) {
-      await expect(downloads.getByRole('menuitem', { name: label, exact: true })).toBeVisible();
+    await expect(
+      downloads.getByRole('menuitem', { name: 'Download EPUB', exact: true }),
+    ).toBeVisible();
+    const conversions = readableAsset.download_as ?? [];
+    expect(conversions.length).toBeGreaterThan(0);
+    for (const option of conversions) {
+      await expect(
+        downloads.getByRole('menuitem', { name: `Download ${option.label}`, exact: true }),
+      ).toBeVisible();
     }
-    await page.keyboard.press('Escape');
+    // Exercise the shared download action once. Conversion fidelity belongs to
+    // converter tests; the UI must keep working as the available targets grow.
+    const option = conversions[0];
+    const downloadPromise = page.waitForEvent('download');
+    await downloads
+      .getByRole('menuitem', { name: `Download ${option.label}`, exact: true })
+      .click();
+    const download = await downloadPromise;
+    expect(new URL(download.url()).pathname).toBe(
+      `/download/${readableAsset.id}/as/${option.target}`,
+    );
+    expect(await download.failure()).toBeNull();
 
     await expect(page.locator('.detail-authors a').first()).toBeVisible();
 

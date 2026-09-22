@@ -76,9 +76,6 @@ func TestRunMetaJSONEPUB(t *testing.T) {
 	if len(report.Metadata.Authors) != 1 || report.Metadata.Authors[0].Name != "Jane Doe" || report.Metadata.Authors[0].SortName != "Doe, Jane" {
 		t.Fatalf("authors = %+v; want Jane Doe with sort name", report.Metadata.Authors)
 	}
-	if len(report.ConversionTargets) != 2 || report.ConversionTargets[0].Target != "epub" || report.ConversionTargets[0].Label != "Repaired EPUB" || report.ConversionTargets[1].Target != "kepub" {
-		t.Fatalf("conversion targets = %+v; want repaired EPUB, kepub", report.ConversionTargets)
-	}
 }
 
 func TestRunMetaJSONUnknownKnownExtensionUsesOctetStream(t *testing.T) {

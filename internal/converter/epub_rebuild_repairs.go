@@ -302,7 +302,7 @@ func removeLegacyPageMapPointer(ctx context.Context, zr *zip.Reader, opfPath str
 				pageMapPath = cleanEPUBHref(opfPath, item.Href)
 			}
 		}
-		if containsKEPUBToken(item.Properties, "nav") && strings.EqualFold(strings.TrimSpace(item.MediaType), "application/xhtml+xml") {
+		if containsToken(item.Properties, "nav") && strings.EqualFold(strings.TrimSpace(item.MediaType), "application/xhtml+xml") {
 			navMatches++
 			navPath = cleanEPUBHref(opfPath, item.Href)
 		}
@@ -374,7 +374,7 @@ func classifyRebuildContent(opfPath string, raw []byte) (map[string]bool, string
 			continue
 		}
 		documents[candidate] = true
-		if !containsKEPUBToken(item.Properties, "nav") {
+		if !containsToken(item.Properties, "nav") {
 			continue
 		}
 		navPath = candidate
@@ -445,7 +445,7 @@ func rebuildXHTMLHasPageList(raw []byte) bool {
 				continue
 			}
 			for _, attr := range token.Attr {
-				if attr.Name.Space == rebuildEPUBNamespace && attr.Name.Local == "type" && containsKEPUBToken(attr.Value, "page-list") {
+				if attr.Name.Space == rebuildEPUBNamespace && attr.Name.Local == "type" && containsToken(attr.Value, "page-list") {
 					pageListDepth = 1
 					break
 				}
@@ -816,7 +816,7 @@ func rebuildRedundantEPUB3BodyRole(node rebuildXMLNode) bool {
 		return false
 	}
 	for _, attr := range node.Attrs {
-		if attr.Name.Space == rebuildEPUBNamespace && attr.Name.Local == "type" && containsKEPUBToken(attr.Value, semantic) {
+		if attr.Name.Space == rebuildEPUBNamespace && attr.Name.Local == "type" && containsToken(attr.Value, semantic) {
 			return true
 		}
 	}

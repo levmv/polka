@@ -596,18 +596,15 @@ func epubRelativeAssetHref(fromHref, toHref string) string {
 
 func kindleEPUBNav(items []format.KindleNavItem) []epubNavItem {
 	var nav []epubNavItem
-	var walk func([]format.KindleNavItem)
-	walk = func(items []format.KindleNavItem) {
-		for _, item := range items {
-			title := strings.TrimSpace(item.Label)
-			href := kindleEPUBHref(item.Href)
-			if title != "" && href != "" {
-				nav = append(nav, epubNavItem{Title: title, Href: href})
-			}
-			walk(item.Children)
+	for _, item := range items {
+		children := kindleEPUBNav(item.Children)
+		title := strings.TrimSpace(item.Label)
+		if title == "" {
+			nav = append(nav, children...)
+		} else {
+			nav = append(nav, epubNavItem{Title: title, Href: kindleEPUBHref(item.Href), Children: children})
 		}
 	}
-	walk(items)
 	return nav
 }
 

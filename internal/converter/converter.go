@@ -19,6 +19,7 @@ const (
 	TargetPDF   Target = "pdf"
 	TargetEPUB  Target = "epub"
 	TargetKEPUB Target = "kepub"
+	TargetMOBI6 Target = "mobi6"
 	TargetCBZ   Target = "cbz"
 )
 
@@ -33,6 +34,7 @@ var supportedTargetSpecs = []TargetSpec{
 	{Target: TargetPDF, Label: "PDF", Extension: ".pdf", MediaType: "application/pdf"},
 	{Target: TargetEPUB, Label: "EPUB", Extension: ".epub", MediaType: "application/epub+zip"},
 	{Target: TargetKEPUB, Label: "KEPUB", Extension: ".kepub.epub", MediaType: "application/epub+zip"},
+	{Target: TargetMOBI6, Label: "MOBI6", Extension: ".mobi", MediaType: "application/x-mobipocket-ebook"},
 	{Target: TargetCBZ, Label: "CBZ", Extension: ".cbz", MediaType: "application/vnd.comicbook+zip"},
 }
 
@@ -45,11 +47,11 @@ var repairedEPUBTargetSpec = TargetSpec{
 
 var targetSpecsBySourceFormat = map[format.Format][]TargetSpec{
 	format.FormatAZW4:     {targetSpec(TargetPDF)},
-	format.FormatEPUB:     {repairedEPUBTargetSpec, targetSpec(TargetKEPUB)},
+	format.FormatEPUB:     {repairedEPUBTargetSpec, targetSpec(TargetKEPUB), targetSpec(TargetMOBI6)},
 	format.FormatFB2:      {targetSpec(TargetEPUB), targetSpec(TargetKEPUB)},
 	format.FormatMOBI:     {targetSpec(TargetEPUB), targetSpec(TargetKEPUB)},
 	format.FormatAZW:      {targetSpec(TargetEPUB), targetSpec(TargetKEPUB)},
-	format.FormatAZW3:     {targetSpec(TargetEPUB), targetSpec(TargetKEPUB)},
+	format.FormatAZW3:     {targetSpec(TargetEPUB), targetSpec(TargetKEPUB), targetSpec(TargetMOBI6)},
 	format.FormatPRC:      {targetSpec(TargetEPUB), targetSpec(TargetKEPUB)},
 	format.FormatPDB:      {targetSpec(TargetEPUB)},
 	format.FormatTXT:      {targetSpec(TargetEPUB), targetSpec(TargetKEPUB)},
@@ -149,7 +151,15 @@ func convertContextWithLimits(ctx context.Context, w io.Writer, src io.ReaderAt,
 		if from == format.FormatEPUB {
 			return convertEPUBToKEPUB(ctx, w, src, size)
 		}
-		return convertSourceViaEPUBToKEPUB(ctx, w, src, from, size, opts, limits.outputBytes)
+		return convertSourceViaEPUB(ctx, w, src, from, size, opts, limits.outputBytes, convertEPUBToKEPUB)
+	case TargetMOBI6:
+		convert := func(ctx context.Context, w io.Writer, src io.ReaderAt, size int64) error {
+			return convertEPUBToMOBI6(ctx, w, src, size, opts)
+		}
+		if from == format.FormatEPUB {
+			return convert(ctx, w, src, size)
+		}
+		return convertSourceViaEPUB(ctx, w, src, from, size, opts, limits.outputBytes, convert)
 	case TargetCBZ:
 		if from == format.FormatCBR {
 			return convertCBRToCBZ(ctx, w, src, size)
@@ -176,7 +186,7 @@ func convertSourceToEPUB(ctx context.Context, w io.Writer, src io.ReaderAt, from
 	return convertTextSourceToEPUB(ctx, w, src, from, size, opts)
 }
 
-func convertSourceViaEPUBToKEPUB(ctx context.Context, w io.Writer, src io.ReaderAt, from format.Format, size int64, opts ConversionOptions, maxIntermediateBytes int64) error {
+func convertSourceViaEPUB(ctx context.Context, w io.Writer, src io.ReaderAt, from format.Format, size int64, opts ConversionOptions, maxIntermediateBytes int64, convert func(context.Context, io.Writer, io.ReaderAt, int64) error) error {
 	tmp, err := os.CreateTemp("", "polka-conversion-*.epub")
 	if err != nil {
 		return fmt.Errorf("create intermediate EPUB: %w", err)
@@ -204,8 +214,8 @@ func convertSourceViaEPUBToKEPUB(ctx context.Context, w io.Writer, src io.Reader
 	if err != nil {
 		return fmt.Errorf("stat intermediate EPUB: %w", err)
 	}
-	if err := convertEPUBToKEPUB(ctx, w, intermediate, stat.Size()); err != nil {
-		return fmt.Errorf("convert intermediate EPUB to KEPUB: %w", err)
+	if err := convert(ctx, w, intermediate, stat.Size()); err != nil {
+		return fmt.Errorf("convert intermediate EPUB: %w", err)
 	}
 	return nil
 }

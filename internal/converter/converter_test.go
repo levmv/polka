@@ -137,7 +137,7 @@ func TestConversionAggregateBudgets(t *testing.T) {
 		limits.resources = 6
 		var out bytes.Buffer
 		err := convertContextWithLimits(context.Background(), &out, bytes.NewReader(src), format.FormatFB2, int64(len(src)), TargetKEPUB, ConversionOptions{}, limits)
-		if !errors.Is(err, ErrResourceLimit) || !strings.Contains(err.Error(), "intermediate EPUB to KEPUB") {
+		if !errors.Is(err, ErrResourceLimit) || !strings.Contains(err.Error(), "convert intermediate EPUB") {
 			t.Fatalf("composed conversion error = %v; want shared resource-count failure in KEPUB stage", err)
 		}
 	})
@@ -2563,7 +2563,7 @@ func testKEPUBSpanSnapshots(t *testing.T, raw []byte) []testKEPUBSpanSnapshot {
 	var spans []testKEPUBSpanSnapshot
 	var walk func(*nethtml.Node)
 	walk = func(n *nethtml.Node) {
-		if n.Type == nethtml.ElementNode && strings.EqualFold(n.Data, "span") && containsKEPUBToken(attrValue(n, "class"), kepubSpanClass) {
+		if n.Type == nethtml.ElementNode && strings.EqualFold(n.Data, "span") && containsToken(attrValue(n, "class"), kepubSpanClass) {
 			spans = append(spans, testKEPUBSpanSnapshot{ID: attrValue(n, "id"), Text: testHTMLText(n)})
 		}
 		for child := n.FirstChild; child != nil; child = child.NextSibling {
@@ -2961,6 +2961,8 @@ func TestConvertKindleDocumentToEPUB(t *testing.T) {
 		}},
 	}
 	// KF8 assembly can concatenate complete HTML documents into one text flow.
+	secondOffset := len(doc.Flows[0].Data) + len("<html><head><title>Hidden document title</title></head><body>")
+	doc.Navigation[0].Children = []format.KindleNavItem{{Label: "Second chapter", Href: fmt.Sprintf("text/flow-0001.html#filepos%d", secondOffset)}}
 	doc.Flows[0].Data = append(doc.Flows[0].Data, []byte(`<html><head><title>Hidden document title</title></head><body><p>Second chapter.</p></body></html>`)...)
 
 	var out bytes.Buffer
@@ -2977,7 +2979,7 @@ func TestConvertKindleDocumentToEPUB(t *testing.T) {
 		`<img src="images/flow-0003.svg" alt="svg"/>`,
 		`<video src="media/00003.mp4" controls="controls" title="Test video">Video fallback</video>`,
 		`<audio src="media/00004.mp3" controls="controls" title="Test audio">Audio fallback</audio>`,
-		`<p>Second chapter.</p>`,
+		fmt.Sprintf(`<p id="filepos%d">Second chapter.</p>`, secondOffset),
 	} {
 		if !strings.Contains(xhtml, want) {
 			t.Fatalf("text.xhtml missing %q:\n%s", want, xhtml)
@@ -2987,8 +2989,25 @@ func TestConvertKindleDocumentToEPUB(t *testing.T) {
 		t.Fatalf("text.xhtml exposed document metadata as reading text:\n%s", xhtml)
 	}
 	nav := zipEntry(t, out.Bytes(), "OEBPS/nav.xhtml")
-	if !strings.Contains(nav, `<a href="text.xhtml#filepos12">Chapter</a>`) {
-		t.Fatalf("nav.xhtml missing Kindle navigation item:\n%s", nav)
+	type navEntry struct {
+		Link struct {
+			Label string `xml:",chardata"`
+			Href  string `xml:"href,attr"`
+		} `xml:"a"`
+		Children []navEntry `xml:"ol>li"`
+	}
+	var contents struct {
+		Entries []navEntry `xml:"body>nav>ol>li"`
+	}
+	if err := xml.Unmarshal([]byte(nav), &contents); err != nil {
+		t.Fatal(err)
+	}
+	if len(contents.Entries) != 1 || contents.Entries[0].Link.Href != "text.xhtml#filepos12" || len(contents.Entries[0].Children) != 1 {
+		t.Fatalf("nav.xhtml lost Kindle navigation hierarchy:\n%s", nav)
+	}
+	child := contents.Entries[0].Children[0].Link
+	if child.Label != "Second chapter" || child.Href != fmt.Sprintf("text.xhtml#filepos%d", secondOffset) {
+		t.Fatalf("incorrect subsection destination: %+v", child)
 	}
 	opf := zipEntry(t, out.Bytes(), "OEBPS/content.opf")
 	for _, want := range []string{

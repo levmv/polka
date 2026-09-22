@@ -412,7 +412,7 @@ func kepubEnsureOPFProperty(tag, property string) string {
 		if !strings.EqualFold(attr.Name, "properties") {
 			continue
 		}
-		if containsKEPUBToken(attr.Value, property) {
+		if containsToken(attr.Value, property) {
 			return tag
 		}
 		value := strings.TrimSpace(attr.Value)
@@ -592,7 +592,7 @@ func ensureKEPUBStyle(head *html.Node, id, css string) {
 		if child.Type != html.ElementNode || !strings.EqualFold(child.Data, "style") {
 			continue
 		}
-		if attrValue(child, "id") == id || containsKEPUBToken(attrValue(child, "class"), id) {
+		if attrValue(child, "id") == id || containsToken(attrValue(child, "class"), id) {
 			return
 		}
 	}
@@ -866,7 +866,7 @@ func isKEPUBBlockElement(tag string) bool {
 
 func hasKEPUBSpanMarker(n *html.Node) bool {
 	if n.Type == html.ElementNode && strings.EqualFold(n.Data, "span") {
-		if containsKEPUBToken(attrValue(n, "class"), kepubSpanClass) || isKEPUBSpanID(attrValue(n, "id")) {
+		if containsToken(attrValue(n, "class"), kepubSpanClass) || isKEPUBSpanID(attrValue(n, "id")) {
 			return true
 		}
 	}
@@ -906,7 +906,7 @@ func attrValue(n *html.Node, key string) string {
 	return ""
 }
 
-func containsKEPUBToken(value, token string) bool {
+func containsToken(value, token string) bool {
 	for field := range strings.FieldsSeq(value) {
 		if field == token {
 			return true

@@ -25,6 +25,10 @@ var ErrInputTooLarge = errors.New("conversion input exceeds size limit")
 // output would consume too much process memory, CPU, or temporary storage.
 var ErrResourceLimit = errors.New("conversion resource limit exceeded")
 
+// ErrUnsupportedContent means a source feature cannot be represented safely in
+// the target. Callers should report a conversion refusal, not a server failure.
+var ErrUnsupportedContent = errors.New("unsupported content for target format")
+
 type conversionLimits struct {
 	decodedBytes int64
 	resources    int
