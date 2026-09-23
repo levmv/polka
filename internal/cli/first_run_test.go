@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/levmv/polka/internal/bootstrap"
 	"github.com/levmv/polka/internal/db"
 	"github.com/levmv/polka/internal/ingest"
 	"github.com/levmv/polka/internal/storage"
@@ -73,9 +72,6 @@ func TestStorageRootSetCreatesLibraryOnFirstRun(t *testing.T) {
 	}
 	if info, err := os.Stat(libraryDir); err != nil || !info.IsDir() {
 		t.Fatalf("managed books root stat = %v/%v; want directory", info, err)
-	}
-	if _, err := os.Stat(filepath.Join(dataDir, "books")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("default books dir exists after storage root set first-run; err=%v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dataDir, "ingest")); err != nil {
 		t.Fatalf("default ingest dir missing: %v", err)
@@ -201,9 +197,9 @@ func TestIngestProcessesConfiguredDropFolder(t *testing.T) {
 	libraryDir := filepath.Join(base, "managed-books")
 	ingestDir := filepath.Join(base, "drop")
 
-	database, err := ensureLibraryWithoutBooksRoot(t.Context(), dataDir)
+	database, err := ensureLibrary(t.Context(), dataDir)
 	if err != nil {
-		t.Fatalf("ensureLibraryWithoutBooksRoot: %v", err)
+		t.Fatalf("ensureLibrary: %v", err)
 	}
 	if _, err := storage.SaveRoot(database.Write(t.Context()), dataDir, libraryDir); err != nil {
 		t.Fatalf("SaveRoot: %v", err)
@@ -260,8 +256,8 @@ func TestMaintenanceCommandsDoNotCreateLibrary(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			dataDir := filepath.Join(t.TempDir(), "missing")
 			err := tt.run(dataDir)
-			if !errors.Is(err, bootstrap.ErrLibraryNotFound) {
-				t.Fatalf("%s error = %v; want ErrLibraryNotFound", tt.name, err)
+			if !errors.Is(err, errLibraryNotFound) {
+				t.Fatalf("%s error = %v; want errLibraryNotFound", tt.name, err)
 			}
 			if _, statErr := os.Stat(dataDir); !errors.Is(statErr, os.ErrNotExist) {
 				t.Fatalf("%s touched data dir; stat = %v", tt.name, statErr)

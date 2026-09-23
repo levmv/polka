@@ -129,7 +129,7 @@ func runImportPath(ctx context.Context, dataDir, srcPath string, opts importComm
 	if opts.dryRun {
 		database, err = openDatabase(dataDir)
 	} else {
-		database, err = ensureLibraryInitialized(ctx, dataDir)
+		database, err = ensureLibrary(ctx, dataDir)
 	}
 	if err != nil {
 		return err

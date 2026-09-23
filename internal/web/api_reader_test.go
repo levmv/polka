@@ -19,7 +19,7 @@ func TestAPIReaderPositionLifecycle(t *testing.T) {
 	alice := mustUser(t, database, "alice", db.RoleMember)
 	bob := mustUser(t, database, "bob", db.RoleMember)
 
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 
 	position := func(userID int64) ReaderPositionDTO {
@@ -101,7 +101,7 @@ func TestAPIReaderAutoFinishCanBeUndone(t *testing.T) {
 	database, dir := setupTestDB(t)
 	defer database.Close()
 	user := mustUser(t, database, "reader", db.RoleReader)
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 
 	w := httptest.NewRecorder()
@@ -142,7 +142,7 @@ func TestAPIReaderPositionErrors(t *testing.T) {
 	defer database.Close()
 
 	user := mustUser(t, database, "reader", db.RoleMember)
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 
 	progress := 1.5
@@ -203,7 +203,7 @@ func TestAPIAnnotationsLifecycle(t *testing.T) {
 	alice := mustUser(t, database, "alice", db.RoleMember)
 	bob := mustUser(t, database, "bob", db.RoleMember)
 
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 
 	listFor := func(userID int64) []AnnotationDTO {
@@ -339,7 +339,7 @@ func TestAPIBookAnnotationsIncludeAllFilesAndRespectAccess(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 	paths := []string{
 		"/api/books/1/annotations",
@@ -398,7 +398,7 @@ func TestAPIContinueReading(t *testing.T) {
 			VALUES (?, 1, 'reading', 100)
 		`, user.ID, user.ID)
 
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 
 	w := httptest.NewRecorder()

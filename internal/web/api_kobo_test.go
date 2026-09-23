@@ -21,7 +21,7 @@ func TestAPIKoboConnectionLifecycleAndIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 
 	w := httptest.NewRecorder()

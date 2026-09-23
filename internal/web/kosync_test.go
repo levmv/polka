@@ -27,7 +27,7 @@ func TestKOReaderSyncRoutes(t *testing.T) {
 	aliceToken := mustAppToken(t, database, alice.ID)
 	bobToken := mustAppToken(t, database, bob.ID)
 
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 
 	w := serveKOReader(t, handler, "GET", "/kosync/users/auth", aliceToken, nil)
@@ -140,7 +140,7 @@ func TestKOReaderDocumentAccess(t *testing.T) {
 			}
 			const document = "11111111111111111111111111111111"
 			mustExec(t, database, "INSERT INTO koreader_hashes(asset_id, hash) SELECT id, unhex(?) FROM assets", document)
-			handler := testRoutes(t, newTestServer(database, dir))
+			handler := testRoutes(t, newTestServer(t, database, dir))
 			base := "/kosync/syncs/progress"
 			for _, tc := range []struct {
 				scope string
@@ -184,7 +184,7 @@ func TestKOReaderExternalPositionFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := testRoutes(t, newTestServer(database, dir))
+	handler := testRoutes(t, newTestServer(t, database, dir))
 	assertProgress := func(want koReaderProgressDTO) {
 		t.Helper()
 		w := serveKOReader(t, handler, http.MethodGet, "/kosync/syncs/progress/"+input.DocumentHash, password, nil)
@@ -230,7 +230,7 @@ func TestKOReaderSharedPosition(t *testing.T) {
 	}
 	sha := storage.Sum(epub)
 	mustExec(t, database, "UPDATE assets SET format='epub', current_hash=? WHERE id=1", sha[:])
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 	download := func() string {
 		t.Helper()

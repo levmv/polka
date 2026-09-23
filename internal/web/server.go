@@ -14,7 +14,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/levmv/polka/internal/bootstrap"
 	"github.com/levmv/polka/internal/db"
 	"github.com/levmv/polka/internal/format/pdf"
 	"github.com/levmv/polka/internal/fsprofile"
@@ -27,15 +26,18 @@ import (
 )
 
 type Server struct {
-	readerContent      readerContentCache
-	db                 *db.DB
-	dataDir            string
-	storageRoot        storage.Root
-	ingester           *ingest.Service
-	ingestCancel       context.CancelFunc
-	ingestDone         <-chan struct{}
-	ingestMu           sync.Mutex
-	writebacker        *writeback.Service
+	readerContent readerContentCache
+	db            *db.DB
+	dataDir       string
+	storageRoot   storage.Root
+	ingester      *ingest.Service
+	ingestCancel  context.CancelFunc
+	ingestDone    <-chan struct{}
+	ingestMu      sync.Mutex
+	writebacker   *writeback.Service
+	// storageQueue holds each DB-first storage mutation through its filesystem
+	// maintenance, so import, relayout, cover writes and write-back cannot race
+	// through an intermediate DB/disk state.
 	storageQueue       *workslot.Queue
 	background         *taskGroup
 	requestBaseContext context.Context
@@ -114,19 +116,11 @@ func koboConnectionID(ctx context.Context) int64 {
 
 // Serve runs the HTTP server and background workers until ctx is canceled or
 // serving fails. It returns the shutdown error or the context cause.
-func Serve(ctx context.Context, cfg Config) error {
+// The caller owns the initialized database and closes it after Serve returns.
+func Serve(ctx context.Context, database *db.DB, cfg Config) error {
 	if err := context.Cause(ctx); err != nil {
 		return err
 	}
-	database, err := bootstrap.EnsureLibrary(ctx, cfg.DataDir)
-	if err != nil {
-		return err
-	}
-	// Teardown order is load-bearing: request shutdown below joins handlers,
-	// then later defers join ingest and background work before releasing the
-	// writer lease and closing the database.
-	defer database.Close()
-
 	if err := bootstrapAdmin(ctx, database, cfg.AdminUser, cfg.AdminPassword); err != nil {
 		return err
 	}
@@ -134,9 +128,12 @@ func Serve(ctx context.Context, cfg Config) error {
 	if err != nil {
 		return err
 	}
+	// Request shutdown below joins handlers, then defers join ingest and
+	// background work before releasing the writer lease. The caller can close
+	// the database after Serve returns.
 	defer lease.Release(context.Background())
 
-	root, err := openServeBooksRoot(ctx, database, cfg.DataDir)
+	root, err := storage.OpenRoot(database.Read(ctx), cfg.DataDir)
 	if err != nil {
 		return err
 	}
@@ -153,9 +150,7 @@ func Serve(ctx context.Context, cfg Config) error {
 	// Build the metadata registry and outbound cover client once, not per
 	// request: a long-lived http.Client keeps connections alive, so reviewing
 	// several metadata candidates (each a lazy Open Library description fetch) or
-	// downloading covers reuses the connection instead of re-handshaking. The
-	// per-request fallbacks in metadataRegistry()/handleAPICoverURL remain for
-	// tests that construct a Server directly.
+	// downloading covers reuses the connection instead of re-handshaking.
 	s := &Server{
 		db:                database,
 		dataDir:           cfg.DataDir,
@@ -297,33 +292,6 @@ func Serve(ctx context.Context, cfg Config) error {
 	return context.Cause(ctx)
 }
 
-func openServeBooksRoot(ctx context.Context, database *db.DB, dataDir string) (storage.Root, error) {
-	configured, err := storage.RootConfigured(database.Read(ctx))
-	if err != nil {
-		return storage.Root{}, err
-	}
-	if configured {
-		// A configured missing root is usually a dropped drive or mount. Do not
-		// create it during startup; let reads degrade and write guards report it.
-		return storage.OpenRoot(database.Read(ctx), dataDir)
-	}
-	root, err := storage.SaveRoot(database.Write(ctx), dataDir, "")
-	if err != nil {
-		return storage.Root{}, err
-	}
-	if err := storage.EnsureLayout(root); err != nil {
-		return storage.Root{}, err
-	}
-	return root, nil
-}
-
-func (s *Server) managedRoot() storage.Root {
-	if s.storageRoot.Path != "" {
-		return s.storageRoot
-	}
-	return storage.NewRoot(s.dataDir)
-}
-
 // dataRoot resolves app-owned artifacts kept next to the database: cover
 // originals (covers/) and the derived cover cache (cache/covers/). Unlike the
 // books root it is always local and present, so cover writes never guard on a
@@ -332,24 +300,13 @@ func (s *Server) dataRoot() storage.Root {
 	return storage.NewRoot(s.dataDir)
 }
 
-// acquireStorageWorkSlot serializes a DB-first storage mutation as one unit,
-// including its transaction and post-commit filesystem maintenance. Holding the
-// process-wide slot across both phases prevents imports, relayout, cover writes,
-// and write-back from racing through an intermediate DB/disk state.
-func (s *Server) acquireStorageWorkSlot(ctx context.Context) (func(), error) {
-	if s.storageQueue == nil {
-		return func() {}, nil
-	}
-	return s.storageQueue.Acquire(ctx)
-}
-
 func (s *Server) configureIngest(cfg ingest.Config) error {
 	var next *ingest.Service
 	if cfg.Enabled {
 		if err := ingest.EnsureLayout(cfg.Path); err != nil {
 			return err
 		}
-		next = ingest.NewService(s.db, s.managedRoot(), cfg.Path, ingest.Options{
+		next = ingest.NewService(s.db, s.storageRoot, cfg.Path, ingest.Options{
 			DeleteSources: cfg.DeleteSources,
 			ImportQueue:   s.storageQueue,
 			CoverRoot:     s.dataRoot(),

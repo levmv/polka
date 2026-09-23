@@ -1,14 +1,12 @@
 package web
 
 import (
-	"context"
 	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/levmv/polka/internal/db"
-	"github.com/levmv/polka/internal/workslot"
 )
 
 func TestAPIMe(t *testing.T) {
@@ -17,7 +15,7 @@ func TestAPIMe(t *testing.T) {
 
 	u := mustUser(t, database, "alice", db.RoleMember)
 
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	sid, err := s.sessions.issue(t.Context(), u.ID)
 	if err != nil {
 		t.Fatalf("issue session: %v", err)
@@ -52,7 +50,7 @@ func TestLogoutRequiresSameOriginPost(t *testing.T) {
 	defer database.Close()
 
 	u := mustUser(t, database, "alice", db.RoleMember)
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 
 	sid, err := s.sessions.issue(t.Context(), u.ID)
@@ -94,16 +92,6 @@ func TestLogoutRequiresSameOriginPost(t *testing.T) {
 
 func testRoutes(t *testing.T, s *Server) http.Handler {
 	t.Helper()
-	if s.storageQueue == nil {
-		s.storageQueue = workslot.New()
-	}
-	if s.background == nil {
-		s.background = newTaskGroup(context.Background())
-		t.Cleanup(s.background.Stop)
-	}
-	if s.sessions == nil {
-		s.sessions = newSessionStore(s.db)
-	}
 	mux, err := s.routes()
 	if err != nil {
 		t.Fatalf("routes: %v", err)

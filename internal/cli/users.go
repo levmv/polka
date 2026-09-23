@@ -96,7 +96,7 @@ func runUserAdd(ctx context.Context, dataDir string, args []string) error {
 		return err
 	}
 
-	database, err := ensureLibraryInitialized(ctx, dataDir)
+	database, err := ensureLibrary(ctx, dataDir)
 	if err != nil {
 		return err
 	}

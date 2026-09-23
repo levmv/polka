@@ -19,9 +19,12 @@ import (
 	"github.com/levmv/polka/internal/converter"
 	"github.com/levmv/polka/internal/db"
 	"github.com/levmv/polka/internal/format"
+	"github.com/levmv/polka/internal/format/pdf"
 	"github.com/levmv/polka/internal/koreader"
+	"github.com/levmv/polka/internal/metalookup"
 	"github.com/levmv/polka/internal/storage"
 	"github.com/levmv/polka/internal/testfixture"
+	"github.com/levmv/polka/internal/workslot"
 )
 
 var testReaderCurrentHash = bytes.Repeat([]byte{0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef}, 2)
@@ -88,14 +91,28 @@ func mustUpdateSearchIndex(t *testing.T, database *db.DB, bookIDs ...int64) {
 	}
 }
 
-func newTestServer(database *db.DB, dataDir string) *Server {
-	return &Server{
+func newTestServer(t *testing.T, database *db.DB, dataDir string) *Server {
+	t.Helper()
+	s := &Server{
 		db:                database,
 		dataDir:           dataDir,
+		storageRoot:       storage.NewRoot(dataDir),
+		storageQueue:      workslot.New(),
+		background:        newTaskGroup(context.Background()),
 		sessions:          newSessionStore(database),
+		metadata:          metalookup.NewCachedRegistry(nil),
+		coverClient:       defaultRemoteCoverClient(),
+		coverSearchClient: defaultCoverSearchClient(),
+		publicImageClient: defaultPublicImageClient(),
+		coverSearchKey:    newCoverSearchKey(),
+		pageCountRenderer: pdf.NewRenderer(),
 		passwordAuthSlots: make(chan struct{}, maxConcurrentPasswordAuth),
 		conversionSlots:   make(chan struct{}, maxConcurrentConversions),
 	}
+	t.Cleanup(s.publicImageClient.CloseIdleConnections)
+	t.Cleanup(func() { s.pageCountRenderer.Close() })
+	t.Cleanup(s.background.Stop)
+	return s
 }
 
 func mustUser(t *testing.T, database *db.DB, username, role string) *db.User {
@@ -128,10 +145,7 @@ func TestAPISearch(t *testing.T) {
 	database, dir := setupTestDB(t)
 	defer database.Close()
 
-	s := &Server{
-		db:      database,
-		dataDir: dir,
-	}
+	s := newTestServer(t, database, dir)
 
 	req := httptest.NewRequest("GET", "/api/books?q=Hobbit", nil)
 	w := httptest.NewRecorder()
@@ -184,10 +198,7 @@ func TestAPISearchTagAndSpecialChars(t *testing.T) {
 
 	mustUpdateSearchIndex(t, database, 1)
 
-	s := &Server{
-		db:      database,
-		dataDir: dir,
-	}
+	s := newTestServer(t, database, dir)
 
 	req := httptest.NewRequest("GET", "/api/books?q=fantasy", nil)
 	w := httptest.NewRecorder()
@@ -213,10 +224,7 @@ func TestAPIBookSequenceLibraryContext(t *testing.T) {
 	database, dir := setupTestDB(t)
 	defer database.Close()
 
-	s := &Server{
-		db:      database,
-		dataDir: dir,
-	}
+	s := newTestServer(t, database, dir)
 
 	req := httptest.NewRequest("GET", "/api/books/2/sequence?from=library&sort=title&before=1&after=1", nil)
 	req.SetPathValue("id", "2")
@@ -258,10 +266,7 @@ func TestDownloadHandler(t *testing.T) {
 		t.Fatalf("write fb2.zip fixture: %v", err)
 	}
 
-	s := &Server{
-		db:      database,
-		dataDir: dir,
-	}
+	s := newTestServer(t, database, dir)
 
 	t.Run("first download while writer is held", func(t *testing.T) {
 		tx, err := database.BeginWrite(t.Context())
@@ -379,7 +384,7 @@ func TestDownloadAsAZW4PDF(t *testing.T) {
 	}
 
 	user := mustUser(t, database, "reader", db.RoleReader)
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 
 	req := httptest.NewRequest("GET", "/download/2/as/pdf", nil)
@@ -421,7 +426,7 @@ func TestDownloadAsRejectsUnsupportedConversion(t *testing.T) {
 	}
 
 	user := mustUser(t, database, "reader", db.RoleReader)
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 
 	req := httptest.NewRequest("GET", "/download/2/as/pdf", nil)
@@ -457,7 +462,7 @@ func TestDownloadAsCBRToCBZ(t *testing.T) {
 	}
 
 	user := mustUser(t, database, "cbr-reader", db.RoleReader)
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 	req := httptest.NewRequest("GET", "/download/2/as/cbz", nil)
 	addSessionCookie(t, s, req, user.ID)
@@ -496,7 +501,7 @@ func TestDownloadAsMissingPDFDoesNotSendAttachment(t *testing.T) {
 	}
 
 	user := mustUser(t, database, "reader", db.RoleReader)
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 	req := httptest.NewRequest("GET", "/download/2/as/pdf", nil)
 	addSessionCookie(t, s, req, user.ID)
@@ -534,7 +539,7 @@ func TestDownloadAsTXTToEPUB(t *testing.T) {
 	}
 
 	user := mustUser(t, database, "reader", db.RoleReader)
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 
 	req := httptest.NewRequest("GET", "/download/2/as/epub", nil)
@@ -580,7 +585,7 @@ func TestDownloadAsOversizedTXTReturns413(t *testing.T) {
 	}
 
 	user := mustUser(t, database, "reader", db.RoleReader)
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 
 	req := httptest.NewRequest("GET", "/download/2/as/epub", nil)
@@ -621,7 +626,7 @@ func TestDownloadAsEPUBToKEPUB(t *testing.T) {
 	}
 
 	user := mustUser(t, database, "reader", db.RoleReader)
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 
 	convertedVersion := conversionCacheVersion(testReaderCurrentHash)
@@ -696,7 +701,7 @@ func TestDownloadAsEPUBToRepairedEPUB(t *testing.T) {
 	}
 
 	user := mustUser(t, database, "repair-reader", db.RoleReader)
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 	req := httptest.NewRequest("GET", "/download/2/as/epub", nil)
 	addSessionCookie(t, s, req, user.ID)
@@ -756,7 +761,7 @@ func TestDownloadAsConversionFailureDoesNotCommitAttachment(t *testing.T) {
 	}
 
 	user := mustUser(t, database, "reader", db.RoleReader)
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 	req := httptest.NewRequest("GET", "/download/2/as/kepub", nil)
 	addSessionCookie(t, s, req, user.ID)
@@ -944,7 +949,7 @@ func TestReaderRoutesServeReadablePrimaryAssets(t *testing.T) {
 
 	user := mustUser(t, database, "reader", db.RoleMember)
 
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 
 	req := httptest.NewRequest("GET", "/read/165", nil)
@@ -1296,7 +1301,7 @@ func TestReaderRoutesRequireReadableStoredFormat(t *testing.T) {
 
 	user := mustUser(t, database, "stale-reader", db.RoleMember)
 
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 
 	req := httptest.NewRequest("GET", "/read/172", nil)
@@ -1349,7 +1354,7 @@ func TestReadZippedFB2AssetRejectsAmbiguousArchive(t *testing.T) {
 
 	user := mustUser(t, database, "reader", db.RoleMember)
 
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 
 	book, err := s.bookDetailDTO(t.Context(), db.FullVisibilityScope(), user.ID, 156, false)

@@ -5,7 +5,7 @@ go 1.27.1
 require (
 	github.com/bodgit/sevenzip v1.6.5
 	github.com/gen2brain/avif v0.6.0
-	github.com/klippa-app/go-pdfium v1.20.0
+	github.com/klippa-app/go-pdfium v1.20.3
 	github.com/levmv/chardet v0.1.0
 	github.com/nwaples/rardecode/v2 v2.4.1
 	github.com/tetratelabs/wazero v1.12.0
@@ -15,7 +15,7 @@ require (
 	golang.org/x/sys v0.48.0
 	golang.org/x/term v0.46.0
 	golang.org/x/text v0.42.0
-	modernc.org/sqlite v1.58.0
+	modernc.org/sqlite v1.59.0
 )
 
 require (
@@ -36,7 +36,7 @@ require (
 	github.com/stangelandcl/ppmd v0.1.1 // indirect
 	github.com/ulikunitz/xz v0.5.16 // indirect
 	go4.org v0.0.0-20260112195520-a5071408f32f // indirect
-	modernc.org/libc v1.75.6 // indirect
+	modernc.org/libc v1.75.7 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 )

@@ -35,50 +35,34 @@ func SanitizeHTML(input string) string {
 	var buf strings.Builder
 	var walk func(*html.Node)
 
-	// to track if we are inside a blocked tag to drop its content
-	blockedDepth := 0
-
 	walk = func(n *html.Node) {
 		if n.Type == html.ElementNode && blockedTags[n.Data] {
-			blockedDepth++
+			return
 		}
 
-		if blockedDepth == 0 {
-			if n.Type == html.TextNode {
-				buf.WriteString(html.EscapeString(n.Data))
-			} else if n.Type == html.ElementNode {
-				if allowedTags[n.Data] {
-					buf.WriteString("<" + n.Data)
-					if n.Data == "a" {
-						for _, a := range n.Attr {
-							if a.Key == "href" {
-								val := strings.TrimSpace(a.Val)
-								if strings.HasPrefix(val, "http://") || strings.HasPrefix(val, "https://") || strings.HasPrefix(val, "mailto:") {
-									buf.WriteString(` href="` + html.EscapeString(val) + `" rel="noopener noreferrer"`)
-								}
-							}
+		if n.Type == html.TextNode {
+			buf.WriteString(html.EscapeString(n.Data))
+		} else if n.Type == html.ElementNode && allowedTags[n.Data] {
+			buf.WriteString("<" + n.Data)
+			if n.Data == "a" {
+				for _, a := range n.Attr {
+					if a.Key == "href" {
+						val := strings.TrimSpace(a.Val)
+						if strings.HasPrefix(val, "http://") || strings.HasPrefix(val, "https://") || strings.HasPrefix(val, "mailto:") {
+							buf.WriteString(` href="` + html.EscapeString(val) + `" rel="noopener noreferrer"`)
 						}
 					}
-					buf.WriteString(">")
 				}
 			}
+			buf.WriteString(">")
 		}
 
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
 			walk(c)
 		}
 
-		if blockedDepth == 0 {
-			if n.Type == html.ElementNode && allowedTags[n.Data] {
-				// Avoid closing tags for void elements if html.Parse makes them. br is void.
-				if n.Data != "br" {
-					buf.WriteString("</" + n.Data + ">")
-				}
-			}
-		}
-
-		if n.Type == html.ElementNode && blockedTags[n.Data] {
-			blockedDepth--
+		if n.Type == html.ElementNode && allowedTags[n.Data] && n.Data != "br" {
+			buf.WriteString("</" + n.Data + ">")
 		}
 	}
 

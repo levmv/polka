@@ -76,7 +76,7 @@ func (s *Server) handleAPIAdminStorageImportRun(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	root := s.managedRoot()
+	root := s.storageRoot
 	catalogHasBooks, err := db.HasAnyAsset(s.db.Read(r.Context()))
 	if err != nil {
 		serverError(w, r, err)
@@ -91,7 +91,7 @@ func (s *Server) handleAPIAdminStorageImportRun(w http.ResponseWriter, r *http.R
 		serverError(w, r, err)
 		return
 	}
-	releaseImport, err := s.acquireStorageWorkSlot(r.Context())
+	releaseImport, err := s.storageQueue.Acquire(r.Context())
 	if err != nil {
 		serverError(w, r, err)
 		return
@@ -147,7 +147,7 @@ func (s *Server) validateFolderImportPath(raw string) (string, error) {
 		path string
 	}{
 		{name: "data dir", path: s.dataDir},
-		{name: "books folder", path: s.managedRoot().Path},
+		{name: "books folder", path: s.storageRoot.Path},
 	} {
 		reservedPath, err := realPathIfPossible(reserved.path)
 		if err != nil {

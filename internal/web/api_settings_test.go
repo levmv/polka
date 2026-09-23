@@ -16,7 +16,7 @@ func TestAPIUserSettingsLifecycle(t *testing.T) {
 	alice := mustUser(t, database, "alice", db.RoleMember)
 	bob := mustUser(t, database, "bob", db.RoleMember)
 
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 
 	w := httptest.NewRecorder()
@@ -101,7 +101,7 @@ func TestAPIUserSettingsErrors(t *testing.T) {
 	defer database.Close()
 
 	user := mustUser(t, database, "reader", db.RoleMember)
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 
 	for _, patch := range []userSettingsRequest{

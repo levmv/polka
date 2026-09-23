@@ -69,7 +69,7 @@ func TestKoboSharedReadingPosition(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 	base := "/kobo/" + connection.Token
 	serve := func(method, path, body, cursor string) *httptest.ResponseRecorder {
@@ -229,7 +229,7 @@ func TestKoboNativeLibraryRoutesAndRevocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 	basePath := "/kobo/" + url.PathEscape(connection.Token)
 
@@ -393,7 +393,7 @@ func TestKoboPathDoesNotFallBackToBrowserSession(t *testing.T) {
 	database, dir := setupTestDB(t)
 	defer database.Close()
 	user := mustUser(t, database, "cookie-kobo", db.RoleMember)
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 	req := httptest.NewRequest(http.MethodGet, "/kobo/not-a-token/v1/library/sync", nil)
 	addSessionCookie(t, s, req, user.ID)
@@ -483,7 +483,7 @@ func TestKoboContentRequiresCurrentUserScope(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 	path := "/kobo/" + url.PathEscape(connection.Token) + "/v1/library/2/metadata"
 	w := httptest.NewRecorder()

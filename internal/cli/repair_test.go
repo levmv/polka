@@ -26,9 +26,9 @@ import (
 func TestRepairReconciliation(t *testing.T) {
 	dataDir := t.TempDir()
 
-	initialized, err := ensureLibraryInitialized(t.Context(), dataDir)
+	initialized, err := ensureLibrary(t.Context(), dataDir)
 	if err != nil {
-		t.Fatalf("ensureLibraryInitialized: %v", err)
+		t.Fatalf("ensureLibrary: %v", err)
 	}
 	initialized.Close()
 
@@ -357,9 +357,9 @@ func TestRepairRemovesOrphanWritebackTemp(t *testing.T) {
 func setupImportedRepairEPUB(t *testing.T, title, author string) (string, *db.DB, storage.Root, int64, string) {
 	t.Helper()
 	dataDir := t.TempDir()
-	initialized, err := ensureLibraryInitialized(t.Context(), dataDir)
+	initialized, err := ensureLibrary(t.Context(), dataDir)
 	if err != nil {
-		t.Fatalf("ensureLibraryInitialized: %v", err)
+		t.Fatalf("ensureLibrary: %v", err)
 	}
 	initialized.Close()
 	srcPath := filepath.Join(dataDir, "source.epub")
@@ -435,9 +435,9 @@ func assertAssetWritebackState(t *testing.T, database *db.DB, assetID int64, has
 
 func TestCheckReportsInvalidStoragePath(t *testing.T) {
 	dataDir := t.TempDir()
-	initialized, err := ensureLibraryInitialized(t.Context(), dataDir)
+	initialized, err := ensureLibrary(t.Context(), dataDir)
 	if err != nil {
-		t.Fatalf("ensureLibraryInitialized: %v", err)
+		t.Fatalf("ensureLibrary: %v", err)
 	}
 	initialized.Close()
 
@@ -466,9 +466,9 @@ func TestCheckReportsInvalidStoragePath(t *testing.T) {
 
 func TestCheckReportsUnavailableStorage(t *testing.T) {
 	dataDir := t.TempDir()
-	initialized, err := ensureLibraryInitialized(t.Context(), dataDir)
+	initialized, err := ensureLibrary(t.Context(), dataDir)
 	if err != nil {
-		t.Fatalf("ensureLibraryInitialized: %v", err)
+		t.Fatalf("ensureLibrary: %v", err)
 	}
 	initialized.Close()
 	srcPath := filepath.Join(dataDir, "unavailable.epub")
@@ -512,9 +512,9 @@ func TestCheckReportsUnavailableStorage(t *testing.T) {
 
 func TestRepairRefusesUnavailableStorage(t *testing.T) {
 	dataDir := t.TempDir()
-	initialized, err := ensureLibraryInitialized(t.Context(), dataDir)
+	initialized, err := ensureLibrary(t.Context(), dataDir)
 	if err != nil {
-		t.Fatalf("ensureLibraryInitialized: %v", err)
+		t.Fatalf("ensureLibrary: %v", err)
 	}
 	initialized.Close()
 	srcPath := filepath.Join(dataDir, "repair-unavailable.epub")
@@ -549,9 +549,9 @@ func TestRepairRefusesUnavailableStorage(t *testing.T) {
 
 func TestCheckReportsRootStagingFiles(t *testing.T) {
 	dataDir := t.TempDir()
-	initialized, err := ensureLibraryInitialized(t.Context(), dataDir)
+	initialized, err := ensureLibrary(t.Context(), dataDir)
 	if err != nil {
-		t.Fatalf("ensureLibraryInitialized: %v", err)
+		t.Fatalf("ensureLibrary: %v", err)
 	}
 	initialized.Close()
 	srcPath := filepath.Join(dataDir, "staging-check.epub")
@@ -595,9 +595,9 @@ func TestCheckCollectsIOErrorsAndContinues(t *testing.T) {
 		t.Skip("chmod-based unreadable file test is Unix-specific")
 	}
 	dataDir := t.TempDir()
-	initialized, err := ensureLibraryInitialized(t.Context(), dataDir)
+	initialized, err := ensureLibrary(t.Context(), dataDir)
 	if err != nil {
-		t.Fatalf("ensureLibraryInitialized: %v", err)
+		t.Fatalf("ensureLibrary: %v", err)
 	}
 	initialized.Close()
 	first := filepath.Join(dataDir, "io-first.epub")
@@ -665,9 +665,9 @@ func TestCheckCollectsIOErrorsAndContinues(t *testing.T) {
 
 func TestRepairRecoversCommittedStagedAsset(t *testing.T) {
 	dataDir := t.TempDir()
-	initialized, err := ensureLibraryInitialized(t.Context(), dataDir)
+	initialized, err := ensureLibrary(t.Context(), dataDir)
 	if err != nil {
-		t.Fatalf("ensureLibraryInitialized: %v", err)
+		t.Fatalf("ensureLibrary: %v", err)
 	}
 	initialized.Close()
 
@@ -723,9 +723,9 @@ func TestRepairRecoversCommittedStagedAsset(t *testing.T) {
 
 func TestCheckAndRepairCoverOriginals(t *testing.T) {
 	dataDir := t.TempDir()
-	initialized, err := ensureLibraryInitialized(t.Context(), dataDir)
+	initialized, err := ensureLibrary(t.Context(), dataDir)
 	if err != nil {
-		t.Fatalf("ensureLibraryInitialized: %v", err)
+		t.Fatalf("ensureLibrary: %v", err)
 	}
 	initialized.Close()
 
@@ -849,9 +849,9 @@ func TestRepairReextractsMissingCoverFromPrimaryAsset(t *testing.T) {
 		t.Run(filepath.Ext(srcPath), func(t *testing.T) {
 			dataDir := t.TempDir()
 			t.Chdir(dataDir)
-			initialized, err := ensureLibraryInitialized(t.Context(), dataDir)
+			initialized, err := ensureLibrary(t.Context(), dataDir)
 			if err != nil {
-				t.Fatalf("ensureLibraryInitialized: %v", err)
+				t.Fatalf("ensureLibrary: %v", err)
 			}
 			initialized.Close()
 
@@ -971,9 +971,9 @@ func TestRepairReextractsMissingCoverFromPrimaryAsset(t *testing.T) {
 
 func TestRepairRecoversRootStagedAsset(t *testing.T) {
 	dataDir := t.TempDir()
-	initialized, err := ensureLibraryInitialized(t.Context(), dataDir)
+	initialized, err := ensureLibrary(t.Context(), dataDir)
 	if err != nil {
-		t.Fatalf("ensureLibraryInitialized: %v", err)
+		t.Fatalf("ensureLibrary: %v", err)
 	}
 	initialized.Close()
 
@@ -1104,9 +1104,9 @@ func TestRepairLeavesUnverifiedAssetFilesUntouched(t *testing.T) {
 
 func TestRepairRecoversTaglessOrphanByHash(t *testing.T) {
 	dataDir := t.TempDir()
-	initialized, err := ensureLibraryInitialized(t.Context(), dataDir)
+	initialized, err := ensureLibrary(t.Context(), dataDir)
 	if err != nil {
-		t.Fatalf("ensureLibraryInitialized: %v", err)
+		t.Fatalf("ensureLibrary: %v", err)
 	}
 	initialized.Close()
 
@@ -1171,9 +1171,9 @@ func TestRepairRecoversTaglessOrphanByHash(t *testing.T) {
 
 func TestDuplicateImportRestoresMissingManagedFile(t *testing.T) {
 	dataDir := t.TempDir()
-	initialized, err := ensureLibraryInitialized(t.Context(), dataDir)
+	initialized, err := ensureLibrary(t.Context(), dataDir)
 	if err != nil {
-		t.Fatalf("ensureLibraryInitialized: %v", err)
+		t.Fatalf("ensureLibrary: %v", err)
 	}
 	initialized.Close()
 
@@ -1217,9 +1217,9 @@ func TestDuplicateImportRestoresMissingManagedFile(t *testing.T) {
 
 func TestCheckAndRepairRejectChangedBytes(t *testing.T) {
 	dataDir := t.TempDir()
-	initialized, err := ensureLibraryInitialized(t.Context(), dataDir)
+	initialized, err := ensureLibrary(t.Context(), dataDir)
 	if err != nil {
-		t.Fatalf("ensureLibraryInitialized: %v", err)
+		t.Fatalf("ensureLibrary: %v", err)
 	}
 	initialized.Close()
 
@@ -1278,9 +1278,9 @@ func TestCheckAndRepairRejectChangedBytes(t *testing.T) {
 
 func TestCheckAndRepairReaderCapability(t *testing.T) {
 	dataDir := t.TempDir()
-	initialized, err := ensureLibraryInitialized(t.Context(), dataDir)
+	initialized, err := ensureLibrary(t.Context(), dataDir)
 	if err != nil {
-		t.Fatalf("ensureLibraryInitialized: %v", err)
+		t.Fatalf("ensureLibrary: %v", err)
 	}
 	initialized.Close()
 

@@ -49,12 +49,8 @@ func TestAPIMetadataCandidates(t *testing.T) {
 	u := mustUser(t, database, "alice", db.RoleMember)
 
 	provider := &fakeMetadataProvider{}
-	s := &Server{
-		db:       database,
-		dataDir:  dir,
-		sessions: newSessionStore(database),
-		metadata: metalookup.Registry{"fake": provider},
-	}
+	s := newTestServer(t, database, dir)
+	s.metadata = metalookup.Registry{"fake": provider}
 
 	req := httptest.NewRequest("GET", "/api/books/1/metadata-candidates?provider=fake", nil)
 	addSessionCookie(t, s, req, u.ID)
@@ -106,14 +102,10 @@ func TestAPIMetadataProviderFailuresAreIsolated(t *testing.T) {
 	defer database.Close()
 	u := mustUser(t, database, "alice", db.RoleMember)
 
-	s := &Server{
-		db:       database,
-		dataDir:  dir,
-		sessions: newSessionStore(database),
-		metadata: metalookup.Registry{
-			"bad":  &fakeMetadataProvider{err: errors.New("provider down")},
-			"fake": &fakeMetadataProvider{},
-		},
+	s := newTestServer(t, database, dir)
+	s.metadata = metalookup.Registry{
+		"bad":  &fakeMetadataProvider{err: errors.New("provider down")},
+		"fake": &fakeMetadataProvider{},
 	}
 	handler := testRoutes(t, s)
 
@@ -157,13 +149,9 @@ func TestAPIMetadataDescription(t *testing.T) {
 	u := mustUser(t, database, "alice", db.RoleMember)
 
 	desc := &fakeDescProvider{desc: "Lazy fetched description."}
-	s := &Server{
-		db:       database,
-		dataDir:  dir,
-		sessions: newSessionStore(database),
-		// "plain" has no DescriptionFetcher capability.
-		metadata: metalookup.Registry{"fakedesc": desc, "plain": &fakeMetadataProvider{}},
-	}
+	s := newTestServer(t, database, dir)
+	// "plain" has no DescriptionFetcher capability.
+	s.metadata = metalookup.Registry{"fakedesc": desc, "plain": &fakeMetadataProvider{}}
 	handler := testRoutes(t, s)
 	get := func(query string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest("GET", "/api/metadata/description"+query, nil)
@@ -213,12 +201,8 @@ func TestAPIMetadataCandidatesRejectsUnknownProvider(t *testing.T) {
 	defer database.Close()
 	u := mustUser(t, database, "alice", db.RoleMember)
 
-	s := &Server{
-		db:       database,
-		dataDir:  dir,
-		sessions: newSessionStore(database),
-		metadata: metalookup.Registry{},
-	}
+	s := newTestServer(t, database, dir)
+	s.metadata = metalookup.Registry{}
 
 	req := httptest.NewRequest("GET", "/api/books/1/metadata-candidates?provider=missing", nil)
 	addSessionCookie(t, s, req, u.ID)

@@ -13,7 +13,6 @@ import (
 
 	"github.com/levmv/polka/internal/db"
 	"github.com/levmv/polka/internal/storage"
-	"github.com/levmv/polka/internal/workslot"
 	"github.com/levmv/polka/internal/writeback"
 )
 
@@ -54,13 +53,8 @@ func TestMixedStorageMutationBurstStaysConsistent(t *testing.T) {
 		WHERE id = 1
 	`, fileHash[:], fileHash[:], len(fb2), len(fb2))
 
-	queue := workslot.New()
-	s := &Server{
-		db:           database,
-		dataDir:      dataDir,
-		storageQueue: queue,
-		sessions:     newSessionStore(database),
-	}
+	s := newTestServer(t, database, dataDir)
+	queue := s.storageQueue
 	handler := testRoutes(t, s)
 	sid, err := s.sessions.issue(t.Context(), admin.ID)
 	if err != nil {

@@ -79,7 +79,7 @@ func EPUBImageResource(data []byte, name string) ([]byte, string, string, bool) 
 	if mediaType, ext, ok := EPUBImageTypeFromBytes(data); ok {
 		return data, mediaType, ext, true
 	}
-	if svg, ok := epubSafeSVGResource(data, name); ok {
+	if svg, ok := epubSVGResource(data, name); ok {
 		return svg, "image/svg+xml", ".svg", true
 	}
 	return nil, "", "", false

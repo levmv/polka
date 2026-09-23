@@ -579,7 +579,7 @@ func htmlText(raw string) string {
 		switch z.Next() {
 		case html.ErrorToken:
 			return strings.Join(strings.Fields(text.String()), " ")
-		case html.StartTagToken, html.EndTagToken:
+		case html.StartTagToken, html.EndTagToken, html.SelfClosingTagToken:
 			tag, _ := z.TagName()
 			if opdsBlockTag(string(tag)) {
 				text.WriteByte(' ')

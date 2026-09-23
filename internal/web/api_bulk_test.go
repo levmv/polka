@@ -35,7 +35,7 @@ func insertBook(t *testing.T, database *db.DB, id int64, title string) {
 
 func callBulkEdit(t *testing.T, database *db.DB, dataDir string, body map[string]any) *httptest.ResponseRecorder {
 	t.Helper()
-	srv := &Server{db: database, dataDir: dataDir}
+	srv := newTestServer(t, database, dataDir)
 	raw, _ := json.Marshal(body)
 	req := httptest.NewRequest("PATCH", "/api/books/bulk", bytes.NewBuffer(raw))
 	rr := httptest.NewRecorder()
@@ -95,7 +95,7 @@ func bookMetadataRev(t *testing.T, database *db.DB, id int64) int {
 func TestConcurrentBulkTagAdditionsPreserveBothChanges(t *testing.T) {
 	database := newBulkTestServer(t)
 	insertBook(t, database, 1, "One")
-	s := &Server{db: database, dataDir: t.TempDir()}
+	s := newTestServer(t, database, t.TempDir())
 	synctest.Test(t, func(t *testing.T) {
 		s.storageQueue = workslot.New()
 		release, err := s.storageQueue.Acquire(t.Context())
@@ -143,7 +143,7 @@ func TestBulkEditTagsAdd(t *testing.T) {
 	rr := callBulkEdit(t, database, dataDir, map[string]any{
 		"ids": []int64{1, 2},
 		"operations": []map[string]any{
-			{"type": "tags", "mode": "add", "values": []string{"sci-fi", "classic"}},
+			{"type": "tags", "mode": "add", "values": []string{" sci-fi, classic ", "SCI-FI", "classic", " "}},
 		},
 	})
 	if rr.Code != http.StatusOK {
@@ -185,7 +185,7 @@ func TestBulkEditTagsAddNoOpIsUnchanged(t *testing.T) {
 	rr := callBulkEdit(t, database, dataDir, map[string]any{
 		"ids": []int64{1},
 		"operations": []map[string]any{
-			{"type": "tags", "mode": "add", "values": []string{"Sci-Fi"}},
+			{"type": "tags", "mode": "add", "values": []string{" Sci-Fi, classic "}},
 		},
 	})
 	if rr.Code != http.StatusOK {
@@ -205,7 +205,7 @@ func TestBulkEditTagsAddNoOpIsUnchanged(t *testing.T) {
 	}
 }
 
-func TestBulkEditTagsRemoveAndClear(t *testing.T) {
+func TestBulkEditTagsReplaceRemoveAndClear(t *testing.T) {
 	database := newBulkTestServer(t)
 	dataDir := t.TempDir()
 	insertBook(t, database, 1, "One")
@@ -216,7 +216,8 @@ func TestBulkEditTagsRemoveAndClear(t *testing.T) {
 	callBulkEdit(t, database, dataDir, map[string]any{
 		"ids": []int64{1},
 		"operations": []map[string]any{
-			{"type": "tags", "mode": "remove", "values": []string{"pulp"}},
+			{"type": "tags", "mode": "replace", "values": []string{" sci-fi, classic ", "pulp", "CLASSIC"}},
+			{"type": "tags", "mode": "remove", "values": []string{" PULP, absent "}},
 		},
 	})
 	if got := bookTags(t, database, 1); got != "sci-fi, classic" {
@@ -245,7 +246,7 @@ func TestBulkEditSeriesAssignByOrder(t *testing.T) {
 		"ids": []int64{1, 2, 3},
 		"operations": []map[string]any{
 			{
-				"type": "series", "mode": "set", "name": "Dune",
+				"type": "series", "mode": "set", "name": " Dune ",
 				"index": map[string]any{"mode": "assign", "start": 1, "step": 1},
 			},
 		},
@@ -282,7 +283,7 @@ func TestBulkEditAuthorsSet(t *testing.T) {
 	rr := callBulkEdit(t, database, dataDir, map[string]any{
 		"ids": []int64{1, 2},
 		"operations": []map[string]any{
-			{"type": "authors", "mode": "set", "authors": "Ursula K. Le Guin"},
+			{"type": "authors", "mode": "set", "authors": " ; Ursula K. Le Guin ; "},
 		},
 	})
 	if rr.Code != http.StatusOK {
@@ -322,7 +323,7 @@ func TestBulkTrashMovesSelectedToTrash(t *testing.T) {
 	member := mustUser(t, database, "member", db.RoleMember)
 	reader := mustUser(t, database, "reader", db.RoleReader)
 
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 
 	trash := func(userID int64, ids ...int64) *httptest.ResponseRecorder {
@@ -398,7 +399,7 @@ func TestBulkShelfAddAndRemove(t *testing.T) {
 		t.Fatalf("create shelf: %v", err)
 	}
 
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 
 	call := func(userID int64, op string, ids ...int64) *httptest.ResponseRecorder {
@@ -448,6 +449,7 @@ func TestBulkEditRejectsBadRequests(t *testing.T) {
 		{"ids": []string{}, "operations": []map[string]any{{"type": "tags", "mode": "clear"}}},
 		{"ids": []int64{1}, "operations": []map[string]any{}},
 		{"ids": []int64{1}, "operations": []map[string]any{{"type": "tags", "mode": "add", "values": []string{}}}},
+		{"ids": []int64{1}, "operations": []map[string]any{{"type": "tags", "mode": "add", "values": []string{" , ", " "}}}},
 		{"ids": []int64{1}, "operations": []map[string]any{{"type": "series", "mode": "set", "name": "  "}}},
 		{"ids": []int64{1}, "operations": []map[string]any{{"type": "authors", "mode": "set", "authors": "  "}}},
 		{"ids": []int64{1}, "operations": []map[string]any{{"type": "bogus"}}},

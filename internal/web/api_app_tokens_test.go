@@ -18,7 +18,7 @@ func TestAPIAppTokensLifecycle(t *testing.T) {
 	alice := mustUser(t, database, "alice", db.RoleMember)
 	bob := mustUser(t, database, "bob", db.RoleMember)
 
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 
 	w := httptest.NewRecorder()
@@ -102,7 +102,7 @@ func TestAPIAppTokensErrors(t *testing.T) {
 	defer database.Close()
 
 	user := mustUser(t, database, "alice", db.RoleMember)
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 
 	w := httptest.NewRecorder()

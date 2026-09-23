@@ -15,13 +15,13 @@ func TestPinnedReaderNeverLabelsReplacementAsOpenedContent(t *testing.T) {
 	database, dir := setupTestDB(t)
 	defer database.Close()
 	user := mustUser(t, database, "pinned-reader", db.RoleReader)
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 	asset, err := s.assetFile(t.Context(), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	path, err := s.managedRoot().Resolve(asset.StoragePath)
+	path, err := s.storageRoot.Resolve(asset.StoragePath)
 	if err != nil {
 		t.Fatal(err)
 	}

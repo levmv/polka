@@ -11,7 +11,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/levmv/polka/internal/bootstrap"
 	"github.com/levmv/polka/internal/db"
 	"github.com/levmv/polka/internal/importer"
 	"github.com/levmv/polka/internal/storage"
@@ -85,8 +84,8 @@ func TestImportDryRunRequiresExistingLibrary(t *testing.T) {
 	writeEPUB(t, src, "Dry Run", "Ada Writer", "Writer, Ada")
 
 	err := runImport(context.Background(), dataDir, []string{"--dry-run", src})
-	if !errors.Is(err, bootstrap.ErrLibraryNotFound) {
-		t.Fatalf("runImport --dry-run error = %v; want ErrLibraryNotFound", err)
+	if !errors.Is(err, errLibraryNotFound) {
+		t.Fatalf("runImport --dry-run error = %v; want errLibraryNotFound", err)
 	}
 	if _, statErr := os.Stat(dataDir); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("dry-run touched data dir; stat = %v", statErr)

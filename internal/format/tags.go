@@ -19,14 +19,8 @@ func splitTagFields(value string, isSeparator tagSeparatorFunc, clean tagCleanFu
 }
 
 func uniqueTagList(values []string, isSeparator tagSeparatorFunc, clean tagCleanFunc) []string {
-	return appendUniqueTagList(nil, values, isSeparator, clean)
-}
-
-func appendUniqueTagList(tags []string, values []string, isSeparator tagSeparatorFunc, clean tagCleanFunc) []string {
-	seen := make(map[string]bool, len(tags))
-	for _, tag := range tags {
-		seen[strings.ToLower(tag)] = true
-	}
+	var tags []string
+	seen := make(map[string]bool)
 	for _, value := range values {
 		for _, tag := range splitTagFields(value, isSeparator, clean) {
 			key := strings.ToLower(tag)
@@ -50,8 +44,4 @@ func semicolonNewlineTabSeparator(r rune) bool {
 
 func commaSemicolonNewlineSeparator(r rune) bool {
 	return r == ',' || r == ';' || r == '\n' || r == '\r'
-}
-
-func commaSemicolonSeparator(r rune) bool {
-	return r == ',' || r == ';'
 }

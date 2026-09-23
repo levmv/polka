@@ -192,14 +192,14 @@ func (s *Server) handleAPICleanupDuplicateMerge(w http.ResponseWriter, r *http.R
 		}()
 	}
 
-	releaseStorageSlot, err := s.acquireStorageWorkSlot(r.Context())
+	releaseStorageSlot, err := s.storageQueue.Acquire(r.Context())
 	if err != nil {
 		serverError(w, r, err)
 		return
 	}
 	defer releaseStorageSlot()
 
-	mutation, err := relayout.MutateBooks(r.Context(), s.db, s.managedRoot(), func(tx *db.Tx) (relayout.Changed, error) {
+	mutation, err := relayout.MutateBooks(r.Context(), s.db, s.storageRoot, func(tx *db.Tx) (relayout.Changed, error) {
 		var err error
 		result, err = db.MergeDuplicateBooks(tx, scope, db.DuplicateMergeRequest{
 			SurvivorID:  req.SurvivorID,

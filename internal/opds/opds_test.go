@@ -45,42 +45,6 @@ func TestNavigationFeed(t *testing.T) {
 	}
 }
 
-func TestNavigationFeedSanitizesInvalidXMLChars(t *testing.T) {
-	now := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
-	body, err := Navigation(now, NavigationMeta{
-		ID:         "urn:polka:opds:root",
-		Title:      "dirty\x00 catalog",
-		SelfHref:   "https://polka.example/opds",
-		StartHref:  "https://polka.example/opds",
-		SearchHref: "https://polka.example/opds/osd",
-	}, []NavEntry{
-		{
-			ID:       "urn:polka:opds:bad",
-			Title:    "Bad\x01 title",
-			Summary:  "Bad\x0b summary",
-			Href:     "https://polka.example/opds/bad",
-			LinkType: AcquisitionFeedType,
-		},
-	})
-	if err != nil {
-		t.Fatalf("Navigation: %v", err)
-	}
-	assertXML(t, body)
-	assertNoXMLReplacement(t, body)
-
-	s := string(body)
-	for _, want := range []string{
-		`<title>dirty catalog</title>`,
-		`<title>Bad title</title>`,
-		`Bad summary`,
-		`title="Bad title"`,
-	} {
-		if !strings.Contains(s, want) {
-			t.Fatalf("feed missing sanitized %q:\n%s", want, s)
-		}
-	}
-}
-
 func TestAcquisitionFeedEscapesPublicationData(t *testing.T) {
 	now := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
 	body, err := Acquisition(
@@ -154,64 +118,6 @@ func TestAcquisitionFeedEscapesPublicationData(t *testing.T) {
 	}
 }
 
-func TestAcquisitionFeedSanitizesInvalidXMLChars(t *testing.T) {
-	now := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
-	body, err := Acquisition(
-		now,
-		AcquisitionMeta{
-			ID:           "urn:polka:opds:books",
-			Title:        "All books",
-			SelfHref:     "https://polka.example/opds/books",
-			StartHref:    "https://polka.example/opds",
-			SearchHref:   "https://polka.example/opds/osd",
-			TotalResults: 1,
-			ItemsPerPage: 1,
-			StartIndex:   1,
-		},
-		[]Publication{
-			{
-				ID:            "urn:polka:book:w_dirty",
-				Title:         "Dirty\x00 Title",
-				Updated:       now,
-				Authors:       []string{"Ada\x01 Lovelace", string([]byte{'B', 0xff, 'a', 'd'})},
-				Summary:       "Summary\x0b text",
-				Categories:    []string{"math\x00", "hist\x01ory"},
-				Publisher:     "Pub\x00lisher",
-				PublishedDate: "2026\x01-01",
-				Language:      "e\x00n",
-				Identifiers:   []string{"isbn:12\x003"},
-				Links: []Link{
-					{Rel: AcquisitionRel, Href: "https://polka.example/download/a_dirty", Type: "application/epub+zip", Title: "EP\x00UB"},
-				},
-			},
-		},
-	)
-	if err != nil {
-		t.Fatalf("Acquisition: %v", err)
-	}
-	assertXML(t, body)
-	assertNoXMLReplacement(t, body)
-
-	s := string(body)
-	for _, want := range []string{
-		`<title>Dirty Title</title>`,
-		`<name>Ada Lovelace</name>`,
-		`<name>Bad</name>`,
-		`Summary text`,
-		`term="math"`,
-		`term="history"`,
-		`<dc:publisher>Publisher</dc:publisher>`,
-		`<dc:issued>2026-01</dc:issued>`,
-		`<dc:language>en</dc:language>`,
-		`<dc:identifier>isbn:123</dc:identifier>`,
-		`title="EPUB"`,
-	} {
-		if !strings.Contains(s, want) {
-			t.Fatalf("feed missing sanitized %q:\n%s", want, s)
-		}
-	}
-}
-
 func TestOpenSearchDescription(t *testing.T) {
 	body, err := OpenSearchDescription("https://polka.example/opds/search?q={searchTerms}")
 	if err != nil {
@@ -229,25 +135,6 @@ func TestOpenSearchDescription(t *testing.T) {
 		if !strings.Contains(s, want) {
 			t.Fatalf("OSD missing %q:\n%s", want, s)
 		}
-	}
-}
-
-func TestOpenSearchDescriptionSanitizesInvalidXMLChars(t *testing.T) {
-	body, err := OpenSearchDescription("https://polka.example/opds/search?q={searchTerms}\x00")
-	if err != nil {
-		t.Fatalf("OpenSearchDescription: %v", err)
-	}
-	assertXML(t, body)
-	assertNoXMLReplacement(t, body)
-	if !strings.Contains(string(body), `template="https://polka.example/opds/search?q={searchTerms}"`) {
-		t.Fatalf("OSD template was not sanitized:\n%s", string(body))
-	}
-}
-
-func assertNoXMLReplacement(t *testing.T, body []byte) {
-	t.Helper()
-	if strings.Contains(string(body), "\ufffd") {
-		t.Fatalf("XML contains replacement character instead of removing invalid input:\n%s", string(body))
 	}
 }
 

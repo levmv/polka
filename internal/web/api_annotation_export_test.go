@@ -27,7 +27,7 @@ func TestAPIWebAnnotationExportPreservesTextIdentityAndScope(t *testing.T) {
 	if _, err := database.CreateAnnotation(t.Context(), bob.ID, 1, input); err != nil {
 		t.Fatal(err)
 	}
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 	download := func(userID int64) *httptest.ResponseRecorder {
 		t.Helper()
@@ -151,7 +151,7 @@ func TestAPIAnnotationExportIsStandaloneEscapedAndUserScoped(t *testing.T) {
 		UPDATE user_annotations SET created_at = ?, updated_at = ? WHERE id = ?
 	`, created, created+3600, ann.ID)
 
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 
 	w := httptest.NewRecorder()

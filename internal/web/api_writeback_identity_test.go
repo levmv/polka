@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/levmv/polka/internal/bootstrap"
 	"github.com/levmv/polka/internal/db"
 	"github.com/levmv/polka/internal/format"
 	"github.com/levmv/polka/internal/importer"
@@ -61,7 +60,7 @@ func TestRestoreWritebackAcknowledgementMatchesRestoredBytes(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := os.Remove(s.managedRoot().Abs(row.StoragePath)); err != nil {
+			if err := os.Remove(s.storageRoot.Abs(row.StoragePath)); err != nil {
 				t.Fatal(err)
 			}
 			source := original
@@ -94,13 +93,15 @@ func TestRestoreWritebackAcknowledgementMatchesRestoredBytes(t *testing.T) {
 func writebackIdentityServer(t *testing.T) (*Server, http.Handler, int64) {
 	t.Helper()
 	dir := t.TempDir()
-	database, err := bootstrap.EnsureLibrary(t.Context(), dir)
+	database, err := db.InitPath(filepath.Join(dir, "library.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { database.Close() })
 	user := mustUser(t, database, "admin", db.RoleAdmin)
-	s := &Server{db: database, dataDir: dir, storageRoot: storage.NewRoot(filepath.Join(dir, "books"))}
+	s := newTestServer(t, database, dir)
+	s.storageRoot = storage.NewRoot(filepath.Join(dir, "books"))
+	ensureTestStorageLayout(t, s.storageRoot.Path)
 	return s, testRoutes(t, s), user.ID
 }
 
@@ -111,7 +112,7 @@ func addWritebackIdentityBook(t *testing.T, s *Server, name string) (importer.Re
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	result, err := importer.ImportFile(context.Background(), s.db, s.managedRoot(), path, nil, importer.Options{CoverRoot: s.dataRoot()})
+	result, err := importer.ImportFile(context.Background(), s.db, s.storageRoot, path, nil, importer.Options{CoverRoot: s.dataRoot()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +134,7 @@ func readWritebackIdentityAsset(t *testing.T, s *Server, assetID int64) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := os.ReadFile(s.managedRoot().Abs(row.StoragePath))
+	data, err := os.ReadFile(s.storageRoot.Abs(row.StoragePath))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +146,7 @@ func runIdentityAutoWriteback(t *testing.T, s *Server, wantPlanned int) {
 	if err := writeback.SaveMode(s.db.Write(t.Context()), writeback.ModeAuto); err != nil {
 		t.Fatal(err)
 	}
-	service := writeback.NewService(s.db, s.managedRoot(), writeback.ServiceOptions{CoverRoot: s.dataRoot(), WorkQueue: s.storageQueue})
+	service := writeback.NewService(s.db, s.storageRoot, writeback.ServiceOptions{CoverRoot: s.dataRoot(), WorkQueue: s.storageQueue})
 	summary, err := service.RunOnce(context.Background())
 	if err != nil || summary.Planned != wantPlanned || summary.Failed != 0 || summary.Written+summary.Unchanged != wantPlanned {
 		t.Fatalf("auto writeback = %+v, %v; want %d completed", summary, err, wantPlanned)

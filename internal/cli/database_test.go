@@ -1,4 +1,4 @@
-package bootstrap
+package cli
 
 import (
 	"errors"
@@ -14,7 +14,7 @@ import (
 
 func TestEnsureDefaultsRollsBackFailedInitialization(t *testing.T) {
 	dataDir := t.TempDir()
-	database, err := db.InitPath(DatabasePath(dataDir))
+	database, err := db.InitPath(databasePath(dataDir))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +30,7 @@ func TestEnsureDefaultsRollsBackFailedInitialization(t *testing.T) {
 	`); err != nil {
 		t.Fatal(err)
 	}
-	if err := ensureDefaults(t.Context(), database, dataDir, true); err == nil {
+	if err := ensureLibraryDefaults(t.Context(), database, dataDir); err == nil {
 		t.Fatal("initialization succeeded despite failed settings write")
 	}
 	var count int
@@ -43,7 +43,7 @@ func TestEnsureDefaultsRollsBackFailedInitialization(t *testing.T) {
 	if _, err := database.Write(t.Context()).Exec("DROP TRIGGER reject_ingest_path"); err != nil {
 		t.Fatal(err)
 	}
-	if err := ensureDefaults(t.Context(), database, dataDir, true); err != nil {
+	if err := ensureLibraryDefaults(t.Context(), database, dataDir); err != nil {
 		t.Fatalf("retry initialization: %v", err)
 	}
 	if err := storage.RequireLayout(storage.NewRoot(filepath.Join(dataDir, "books"))); err != nil {
@@ -55,7 +55,7 @@ func TestEnsureDefaultsRollsBackFailedInitialization(t *testing.T) {
 	if _, err := ingest.SaveConfig(database.Write(t.Context()), dataDir, want); err != nil {
 		t.Fatal(err)
 	}
-	if err := ensureDefaults(t.Context(), database, dataDir, true); err != nil {
+	if err := ensureLibraryDefaults(t.Context(), database, dataDir); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := ingest.OpenConfig(database.Read(t.Context()), dataDir); err != nil || got != want {
@@ -66,13 +66,13 @@ func TestEnsureDefaultsRollsBackFailedInitialization(t *testing.T) {
 func TestEnsureLibraryCreatesDefaultLayout(t *testing.T) {
 	dataDir := filepath.Join(t.TempDir(), "library")
 
-	database, err := EnsureLibrary(t.Context(), dataDir)
+	database, err := ensureLibrary(t.Context(), dataDir)
 	if err != nil {
-		t.Fatalf("EnsureLibrary: %v", err)
+		t.Fatalf("ensureLibrary: %v", err)
 	}
 	defer database.Close()
 
-	if _, err := os.Stat(DatabasePath(dataDir)); err != nil {
+	if _, err := os.Stat(databasePath(dataDir)); err != nil {
 		t.Fatalf("database file missing: %v", err)
 	}
 	root, err := storage.OpenRoot(database.Read(t.Context()), dataDir)
@@ -104,15 +104,15 @@ func TestEnsureLibraryCreatesDefaultLayout(t *testing.T) {
 	}
 }
 
-func TestOpenExistingMissingLibraryDoesNotCreateDataDir(t *testing.T) {
+func TestOpenDatabaseMissingLibraryDoesNotCreateDataDir(t *testing.T) {
 	dataDir := filepath.Join(t.TempDir(), "missing")
 
-	_, err := OpenExisting(dataDir)
-	if !errors.Is(err, ErrLibraryNotFound) {
-		t.Fatalf("OpenExisting = %v; want ErrLibraryNotFound", err)
+	_, err := openDatabase(dataDir)
+	if !errors.Is(err, errLibraryNotFound) {
+		t.Fatalf("openDatabase = %v; want errLibraryNotFound", err)
 	}
 	if _, statErr := os.Stat(dataDir); !errors.Is(statErr, os.ErrNotExist) {
-		t.Fatalf("OpenExisting touched data dir; stat = %v", statErr)
+		t.Fatalf("openDatabase touched data dir; stat = %v", statErr)
 	}
 }
 
@@ -123,14 +123,14 @@ func TestEnsureLibraryUsesOwnerOnlyDefaultsWithoutChmoddingExistingDirectory(t *
 
 	t.Run("new data directory", func(t *testing.T) {
 		dataDir := filepath.Join(t.TempDir(), "library")
-		database, err := EnsureLibraryWithoutBooksRoot(t.Context(), dataDir)
+		database, err := ensureLibrary(t.Context(), dataDir)
 		if err != nil {
-			t.Fatalf("EnsureLibrary: %v", err)
+			t.Fatalf("ensureLibrary: %v", err)
 		}
 		defer database.Close()
 
 		assertPermissions(t, dataDir, 0o700)
-		assertPermissions(t, DatabasePath(dataDir), 0o600)
+		assertPermissions(t, databasePath(dataDir), 0o600)
 	})
 
 	t.Run("existing data directory", func(t *testing.T) {
@@ -138,14 +138,14 @@ func TestEnsureLibraryUsesOwnerOnlyDefaultsWithoutChmoddingExistingDirectory(t *
 		if err := os.Mkdir(dataDir, 0o755); err != nil {
 			t.Fatalf("mkdir: %v", err)
 		}
-		database, err := EnsureLibraryWithoutBooksRoot(t.Context(), dataDir)
+		database, err := ensureLibrary(t.Context(), dataDir)
 		if err != nil {
-			t.Fatalf("EnsureLibrary: %v", err)
+			t.Fatalf("ensureLibrary: %v", err)
 		}
 		defer database.Close()
 
 		assertPermissions(t, dataDir, 0o755)
-		assertPermissions(t, DatabasePath(dataDir), 0o600)
+		assertPermissions(t, databasePath(dataDir), 0o600)
 	})
 }
 
@@ -157,5 +157,36 @@ func assertPermissions(t *testing.T, path string, want os.FileMode) {
 	}
 	if got := info.Mode().Perm(); got != want {
 		t.Fatalf("permissions for %s = %04o, want %04o", path, got, want)
+	}
+}
+
+func TestEnsureLibraryDefaultsDoesNotCreateConfiguredMissingRoot(t *testing.T) {
+	dataDir := t.TempDir()
+	database, err := db.InitPath(filepath.Join(dataDir, "library.db"))
+	if err != nil {
+		t.Fatalf("db.InitPath: %v", err)
+	}
+	defer database.Close()
+
+	configuredRoot, err := storage.SaveRoot(database.Write(t.Context()), dataDir, "configured-books")
+	if err != nil {
+		t.Fatalf("SaveRoot: %v", err)
+	}
+	if _, err := os.Stat(configuredRoot.Path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("precondition stat configured books root = %v; want not exist", err)
+	}
+
+	if err := ensureLibraryDefaults(t.Context(), database, dataDir); err != nil {
+		t.Fatalf("ensureLibraryDefaults: %v", err)
+	}
+	root, err := storage.OpenRoot(database.Read(t.Context()), dataDir)
+	if err != nil {
+		t.Fatalf("OpenRoot: %v", err)
+	}
+	if root.Path != configuredRoot.Path {
+		t.Fatalf("root.Path = %q; want %q", root.Path, configuredRoot.Path)
+	}
+	if _, err := os.Stat(configuredRoot.Path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("configured missing root was created; stat err = %v", err)
 	}
 }

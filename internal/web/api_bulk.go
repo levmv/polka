@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/levmv/polka/internal/bookmeta"
@@ -94,7 +95,7 @@ func (s *Server) handleAPIBulkEdit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no operations provided", http.StatusBadRequest)
 		return
 	}
-	if err := validateBulkOperations(req.Operations); err != nil {
+	if err := prepareBulkOperations(req.Operations); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -105,7 +106,7 @@ func (s *Server) handleAPIBulkEdit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	releaseStorageSlot, err := s.acquireStorageWorkSlot(r.Context())
+	releaseStorageSlot, err := s.storageQueue.Acquire(r.Context())
 	if err != nil {
 		serverError(w, r, err)
 		return
@@ -114,7 +115,7 @@ func (s *Server) handleAPIBulkEdit(w http.ResponseWriter, r *http.Request) {
 
 	selected := 0
 	var changedIDs []int64
-	mutation, err := relayout.MutateBooks(r.Context(), s.db, s.managedRoot(), func(tx *db.Tx) (relayout.Changed, error) {
+	mutation, err := relayout.MutateBooks(r.Context(), s.db, s.storageRoot, func(tx *db.Tx) (relayout.Changed, error) {
 		// Read current values inside the write transaction so concurrent edits
 		// cannot overwrite each other.
 		rows, err := db.BooksForBulkEdit(tx, scope, ids)
@@ -266,7 +267,7 @@ func (s *Server) handleAPIBulkTrash(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, bulkTrashResponse{Trashed: len(trashed), IDs: trashed})
 }
 
-// resolveBulkPlan applies the operations to one book's current state and returns
+// resolveBulkPlan applies prepared operations to one book's current state and returns
 // the columns to write plus whether anything actually changed. curAuthors is the
 // book's current authors formatted with bookmeta.FormatAuthorList, so an author op
 // compares like-for-like. pos is the book's zero-based position in the visible
@@ -284,14 +285,14 @@ func resolveBulkPlan(row db.BulkEditRow, curAuthors string, ops []bulkOperation,
 		case "tags":
 			newTags = bookmeta.ApplyTagMode(newTags, bookmeta.TagMode(op.Mode), op.Values)
 		case "authors":
-			newAuthors = bookmeta.FormatAuthorList(bookmeta.ParseAuthorList(op.Authors))
+			newAuthors = op.Authors
 		case "series":
 			switch op.Mode {
 			case "clear":
 				newSeries = sql.NullString{}
 				newIndex = sql.NullFloat64{}
 			case "set":
-				newSeries = sql.NullString{String: strings.TrimSpace(op.Name), Valid: true}
+				newSeries = sql.NullString{String: op.Name, Valid: true}
 				if op.Index != nil {
 					switch op.Index.Mode {
 					case "clear":
@@ -309,7 +310,7 @@ func resolveBulkPlan(row db.BulkEditRow, curAuthors string, ops []bulkOperation,
 		}
 	}
 
-	tagsChanged := bookmeta.FormatTagList(newTags) != bookmeta.FormatTagList(curTags)
+	tagsChanged := !slices.Equal(newTags, curTags)
 	seriesChanged := seriesString(newSeries) != seriesString(row.Series)
 	authorsChanged := newAuthors != curAuthors
 
@@ -374,15 +375,17 @@ func formatAuthorRows(rows []db.AuthorRow) string {
 	return bookmeta.FormatAuthorList(names)
 }
 
-// validateBulkOperations rejects malformed operations before any DB work so a bad
-// request fails cleanly rather than silently no-op'ing per book.
-func validateBulkOperations(ops []bulkOperation) error {
-	for _, op := range ops {
+// prepareBulkOperations validates and normalizes operations in place before any
+// DB work, so every book uses the same prepared values.
+func prepareBulkOperations(ops []bulkOperation) error {
+	for i := range ops {
+		op := &ops[i]
 		switch op.Type {
 		case "tags":
+			op.Values = bookmeta.ParseTagList(strings.Join(op.Values, ","))
 			switch bookmeta.TagMode(op.Mode) {
 			case bookmeta.TagAdd, bookmeta.TagRemove:
-				if len(bookmeta.ParseTagList(strings.Join(op.Values, ","))) == 0 {
+				if len(op.Values) == 0 {
 					return fmt.Errorf("tags %s requires at least one tag", op.Mode)
 				}
 			case bookmeta.TagReplace, bookmeta.TagClear:
@@ -393,16 +396,19 @@ func validateBulkOperations(ops []bulkOperation) error {
 		case "authors":
 			switch op.Mode {
 			case "set":
-				if len(bookmeta.ParseAuthorList(op.Authors)) == 0 {
+				authors := bookmeta.ParseAuthorList(op.Authors)
+				if len(authors) == 0 {
 					return fmt.Errorf("authors set requires at least one author")
 				}
+				op.Authors = bookmeta.FormatAuthorList(authors)
 			default:
 				return fmt.Errorf("unknown authors mode %q", op.Mode)
 			}
 		case "series":
 			switch op.Mode {
 			case "set":
-				if strings.TrimSpace(op.Name) == "" {
+				op.Name = strings.TrimSpace(op.Name)
+				if op.Name == "" {
 					return fmt.Errorf("series set requires a name")
 				}
 				if op.Index != nil {

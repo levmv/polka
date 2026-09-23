@@ -15,7 +15,7 @@ func TestShelfRequestCancellationWhileWriterIsHeld(t *testing.T) {
 	database, dir := setupTestDB(t)
 	defer database.Close()
 	user := mustUser(t, database, "writer-cancel", db.RoleAdmin)
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()

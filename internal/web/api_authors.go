@@ -135,14 +135,14 @@ func (s *Server) handleAPIAuthorRename(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	releaseStorageSlot, err := s.acquireStorageWorkSlot(r.Context())
+	releaseStorageSlot, err := s.storageQueue.Acquire(r.Context())
 	if err != nil {
 		serverError(w, r, err)
 		return
 	}
 	defer releaseStorageSlot()
 
-	res, err := relayout.RenameAuthor(r.Context(), s.db, s.managedRoot(), req.Old, req.New)
+	res, err := relayout.RenameAuthor(r.Context(), s.db, s.storageRoot, req.Old, req.New)
 	if writeAuthorOpError(w, r, err) {
 		return
 	}
@@ -170,14 +170,14 @@ func (s *Server) handleAPIAuthorSortName(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	releaseStorageSlot, err := s.acquireStorageWorkSlot(r.Context())
+	releaseStorageSlot, err := s.storageQueue.Acquire(r.Context())
 	if err != nil {
 		serverError(w, r, err)
 		return
 	}
 	defer releaseStorageSlot()
 
-	res, err := relayout.SetAuthorSortName(r.Context(), s.db, s.managedRoot(), req.Name, req.SortName)
+	res, err := relayout.SetAuthorSortName(r.Context(), s.db, s.storageRoot, req.Name, req.SortName)
 	if writeAuthorOpError(w, r, err) {
 		return
 	}

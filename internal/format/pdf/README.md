@@ -3,7 +3,8 @@
 Polka embeds `generated/pdfium-cover.wasm`, a reduced version of go-pdfium's
 published module, for PDF cover fallback and page counting.
 [`pdfium-wasm.json`](pdfium-wasm.json) pins the versions, hashes, imports, and
-exports. JPEG encoding uses Go to avoid an extra pixel copy inside WASM.
+exports. JPEG encoding stays in Go: in-module encoding did not improve cover
+performance in the corpus comparison.
 
 ## Build
 

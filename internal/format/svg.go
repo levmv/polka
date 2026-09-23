@@ -2,15 +2,16 @@ package format
 
 import (
 	"bytes"
+	"encoding/xml"
+	"io"
 	"path"
 	"strings"
 	"unicode/utf8"
 )
 
-// Saved-web SVGs often carry external SVG DTDs and duplicate glyph IDs. EPUB 3
-// readers may display them, but EPUBCheck rejects them, so generated EPUBs keep
-// only SVG resources that this small sanitizer can make package-valid.
-func epubSafeSVGResource(data []byte, name string) ([]byte, bool) {
+// Glyph-based SVGs can repeat the same path thousands of times. Compact these
+// definitions to reduce image size, preserving content we cannot safely simplify.
+func epubSVGResource(data []byte, name string) ([]byte, bool) {
 	if !isSVGImageResource(data, name) || !utf8.Valid(data) {
 		return nil, false
 	}
@@ -18,15 +19,7 @@ func epubSafeSVGResource(data []byte, name string) ([]byte, bool) {
 	if strings.Contains(strings.ToLower(src), "<script") {
 		return nil, false
 	}
-	src, ok := stripSVGDoctype(src)
-	if !ok {
-		return nil, false
-	}
-	src = dropDuplicateSVGIDDefinitions(src)
-	if svgHasDuplicateIDs(src) {
-		return nil, false
-	}
-	return []byte(src), true
+	return compactSVGPaths([]byte(stripSVGDoctype(src))), true
 }
 
 func isSVGImageResource(data []byte, name string) bool {
@@ -42,145 +35,129 @@ func isSVGImageResource(data []byte, name string) bool {
 		(bytes.HasPrefix(lower, []byte("<?xml")) && bytes.Contains(lower, []byte("<svg")))
 }
 
-func stripSVGDoctype(src string) (string, bool) {
+// Remove only a declaration in the prolog, preserving internal subsets that
+// may define entities or attribute defaults used by the image.
+func stripSVGDoctype(src string) string {
+	dec := xml.NewDecoder(strings.NewReader(src))
 	for {
-		idx := strings.Index(strings.ToLower(src), "<!doctype")
-		if idx < 0 {
-			return src, true
+		start := int(dec.InputOffset())
+		token, err := dec.Token()
+		if err != nil {
+			return src
 		}
-		end := svgDoctypeEnd(src, idx+len("<!doctype"))
-		if end < 0 {
-			return "", false
-		}
-		src = src[:idx] + src[end:]
-	}
-}
-
-func svgDoctypeEnd(src string, start int) int {
-	var quote byte
-	brackets := 0
-	for i := start; i < len(src); i++ {
-		c := src[i]
-		if quote != 0 {
-			if c == quote {
-				quote = 0
-			}
-			continue
-		}
-		switch c {
-		case '\'', '"':
-			quote = c
-		case '[':
-			brackets++
-		case ']':
-			if brackets > 0 {
-				brackets--
-			}
-		case '>':
-			if brackets == 0 {
-				return i + 1
-			}
-		}
-	}
-	return -1
-}
-
-func dropDuplicateSVGIDDefinitions(src string) string {
-	var out strings.Builder
-	lines := strings.SplitAfter(src, "\n")
-	seen := make(map[string]bool)
-	inDefs := false
-	for _, line := range lines {
-		trimmed := strings.ToLower(strings.TrimSpace(line))
-		if strings.HasPrefix(trimmed, "<defs") {
-			inDefs = true
-		}
-		if inDefs {
-			if id, ok := firstXMLIDAttr(line); ok {
-				if seen[id] {
-					if strings.Contains(trimmed, "</defs") {
-						inDefs = false
-					}
-					continue
+		switch t := token.(type) {
+		case xml.StartElement:
+			return src
+		case xml.Directive:
+			if strings.HasPrefix(strings.ToUpper(string(t)), "DOCTYPE") {
+				if bytes.Contains(t, []byte("[")) {
+					return src
 				}
-				seen[id] = true
+				return src[:start] + src[int(dec.InputOffset()):]
 			}
 		}
-		out.WriteString(line)
-		if strings.Contains(trimmed, "</defs") {
-			inDefs = false
-		}
 	}
-	return out.String()
 }
 
-func svgHasDuplicateIDs(src string) bool {
-	seen := make(map[string]bool)
+// compactSVGPaths removes only byte-identical leaf paths with the same ID
+// directly inside the same defs element. All other bytes stay untouched.
+// Styles, animation, foreign content or ambiguous IDs disable this optional
+// optimization for the whole document; parsing is not an admission check.
+func compactSVGPaths(data []byte) []byte {
+	type element struct {
+		name  string
+		start int
+		id    string
+		empty bool
+	}
+	type definition struct {
+		start, end int
+		defs       int
+	}
+	dec := xml.NewDecoder(bytes.NewReader(data))
+	var stack []element
+	seen := make(map[string]definition)
+	var cuts []definition
+	removed := 0
+	rootSeen := false
 	for {
-		id, next, ok := nextXMLIDAttr(src)
-		if !ok {
-			return false
+		start := int(dec.InputOffset())
+		token, err := dec.Token()
+		if err == io.EOF {
+			break
 		}
-		if seen[id] {
-			return true
+		if err != nil {
+			return data
 		}
-		seen[id] = true
-		src = src[next:]
+		switch t := token.(type) {
+		case xml.StartElement:
+			if t.Name.Space != "http://www.w3.org/2000/svg" || strings.HasPrefix(t.Name.Local, "animate") {
+				return data
+			}
+			switch t.Name.Local {
+			case "style", "script", "set", "discard", "foreignObject":
+				return data
+			}
+			if len(stack) == 0 {
+				if rootSeen || t.Name.Local != "svg" {
+					return data
+				}
+				rootSeen = true
+			} else {
+				stack[len(stack)-1].empty = false
+			}
+			el := element{name: t.Name.Local, start: start, empty: true}
+			for _, attr := range t.Attr {
+				if attr.Name.Local == "style" || strings.HasPrefix(attr.Name.Local, "on") {
+					return data
+				}
+				if attr.Name.Local == "id" {
+					if attr.Name.Space != "" || el.id != "" {
+						return data
+					}
+					el.id = attr.Value
+				}
+			}
+			stack = append(stack, el)
+		case xml.EndElement:
+			el := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			if el.id == "" {
+				continue
+			}
+			def := definition{start: el.start, end: int(dec.InputOffset()), defs: -1}
+			if el.empty && el.name == "path" && len(stack) > 0 && stack[len(stack)-1].name == "defs" {
+				def.defs = stack[len(stack)-1].start
+			}
+			if first, exists := seen[el.id]; exists {
+				if first.defs < 0 || first.defs != def.defs || !bytes.Equal(data[first.start:first.end], data[def.start:def.end]) {
+					return data
+				}
+				cuts = append(cuts, def)
+				removed += def.end - def.start
+			} else {
+				seen[el.id] = def
+			}
+		case xml.CharData, xml.Comment:
+			if len(stack) > 0 {
+				stack[len(stack)-1].empty = false
+			}
+		case xml.ProcInst:
+			if t.Target != "xml" || len(stack) > 0 {
+				return data
+			}
+		case xml.Directive:
+			return data
+		}
 	}
-}
-
-func firstXMLIDAttr(src string) (string, bool) {
-	id, _, ok := nextXMLIDAttr(src)
-	return id, ok
-}
-
-func nextXMLIDAttr(src string) (string, int, bool) {
-	lower := strings.ToLower(src)
-	offset := 0
-	for {
-		idx := strings.Index(lower[offset:], "id")
-		if idx < 0 {
-			return "", 0, false
-		}
-		idx += offset
-		if idx > 0 && isXMLNameByte(lower[idx-1]) {
-			offset = idx + len("id")
-			continue
-		}
-		pos := idx + len("id")
-		if pos < len(lower) && isXMLNameByte(lower[pos]) {
-			offset = pos
-			continue
-		}
-		for pos < len(src) && isXMLSpace(src[pos]) {
-			pos++
-		}
-		if pos >= len(src) || src[pos] != '=' {
-			offset = pos
-			continue
-		}
-		pos++
-		for pos < len(src) && isXMLSpace(src[pos]) {
-			pos++
-		}
-		if pos >= len(src) || (src[pos] != '"' && src[pos] != '\'') {
-			offset = pos
-			continue
-		}
-		quote := src[pos]
-		valueStart := pos + 1
-		valueEnd := strings.IndexByte(src[valueStart:], quote)
-		if valueEnd < 0 {
-			return "", 0, false
-		}
-		valueEnd += valueStart
-		return src[valueStart:valueEnd], valueEnd + 1, true
+	if len(cuts) == 0 {
+		return data
 	}
-}
-
-func isXMLNameByte(b byte) bool {
-	return b == ':' || b == '_' || b == '-' || b == '.' ||
-		(b >= '0' && b <= '9') ||
-		(b >= 'a' && b <= 'z') ||
-		(b >= 'A' && b <= 'Z')
+	out := make([]byte, 0, len(data)-removed)
+	last := 0
+	for _, cut := range cuts {
+		out = append(out, data[last:cut.start]...)
+		last = cut.end
+	}
+	return append(out, data[last:]...)
 }

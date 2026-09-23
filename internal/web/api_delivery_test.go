@@ -18,7 +18,6 @@ import (
 
 	"github.com/levmv/polka/internal/db"
 	"github.com/levmv/polka/internal/delivery"
-	"github.com/levmv/polka/internal/workslot"
 )
 
 func TestAPIDeliveryDevicesLifecycle(t *testing.T) {
@@ -27,7 +26,7 @@ func TestAPIDeliveryDevicesLifecycle(t *testing.T) {
 
 	alice := mustUser(t, database, "alice", db.RoleReader)
 	bob := mustUser(t, database, "bob", db.RoleReader)
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 
 	w := httptest.NewRecorder()
@@ -88,7 +87,7 @@ func TestAPIAdminEmailSaveRejectsInvalidNumericSettings(t *testing.T) {
 	defer database.Close()
 
 	admin := mustUser(t, database, "admin", db.RoleAdmin)
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 
 	tests := []struct {
@@ -130,7 +129,7 @@ func TestAPISendOptionsPlansKindleEPUB(t *testing.T) {
 	mustExec(t, database, "UPDATE assets SET format = 'epub', current_size = 1024, is_primary = 1 WHERE id = 1")
 
 	enableSending(t, database)
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 
 	w := httptest.NewRecorder()
@@ -186,7 +185,7 @@ func TestAPISendOptionsChoicesUsePersistedFormat(t *testing.T) {
 	`)
 
 	enableSending(t, database)
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 
 	w := httptest.NewRecorder()
@@ -239,7 +238,7 @@ func TestPrepareDeliveryCopyCopiesNativeAssetToTemp(t *testing.T) {
 	database, dir := setupTestDB(t)
 	defer database.Close()
 
-	s := &Server{db: database, dataDir: dir}
+	s := newTestServer(t, database, dir)
 	job := db.DeliveryJob{
 		AssetID:  sql.NullInt64{Int64: 1, Valid: true},
 		Filename: "The Hobbit.epub",
@@ -284,8 +283,8 @@ func TestPrepareDeliveryCopyWaitsForStorageMutationBeforeReportingMissing(t *tes
 	database, dir := setupTestDB(t)
 	defer database.Close()
 
-	queue := workslot.New()
-	s := &Server{db: database, dataDir: dir, storageQueue: queue}
+	s := newTestServer(t, database, dir)
+	queue := s.storageQueue
 	job := db.DeliveryJob{
 		AssetID:  sql.NullInt64{Int64: 1, Valid: true},
 		Filename: "The Hobbit.epub",
@@ -348,8 +347,7 @@ func TestRunDeliveryJobLifecycle(t *testing.T) {
 				}
 			}
 			job := createQueuedDeliveryJob(t, database, user.ID, target)
-			s := newTestServer(database, dir)
-			s.storageQueue = workslot.New()
+			s := newTestServer(t, database, dir)
 			handler := testRoutes(t, s)
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
@@ -460,7 +458,8 @@ func TestRunDeliveryJobHidesUnexpectedTransportErrorAndCleansTempCopy(t *testing
 			return fmt.Errorf("transport failed")
 		},
 	}
-	s := &Server{db: database, dataDir: dir, deliveryTransport: transport}
+	s := newTestServer(t, database, dir)
+	s.deliveryTransport = transport
 
 	if err := s.runDeliveryJob(context.Background(), job.ID); err != nil {
 		t.Fatalf("runDeliveryJob: %v", err)
@@ -492,7 +491,8 @@ func TestRunDeliveryJobStoresTransportUserMessage(t *testing.T) {
 			return testUserMessageError{message: "SMTP authentication failed", detail: "535 bad credentials"}
 		},
 	}
-	s := &Server{db: database, dataDir: dir, deliveryTransport: transport}
+	s := newTestServer(t, database, dir)
+	s.deliveryTransport = transport
 
 	if err := s.runDeliveryJob(context.Background(), job.ID); err != nil {
 		t.Fatalf("runDeliveryJob: %v", err)
@@ -518,7 +518,8 @@ func TestRunDeliveryJobFinalSizeGuardSkipsTransport(t *testing.T) {
 	user := mustUser(t, database, "sender", db.RoleReader)
 	job := createQueuedDeliveryJob(t, database, user.ID, sql.NullString{})
 	transport := &stubDeliveryTransport{}
-	s := &Server{db: database, dataDir: dir, deliveryTransport: transport}
+	s := newTestServer(t, database, dir)
+	s.deliveryTransport = transport
 
 	if err := s.runDeliveryJob(context.Background(), job.ID); err != nil {
 		t.Fatalf("runDeliveryJob: %v", err)
@@ -559,12 +560,9 @@ func TestDeliveryWorkerDrainsDurableQueueSerially(t *testing.T) {
 		}
 		return nil
 	}}
-	s := &Server{
-		db:                database,
-		dataDir:           dir,
-		deliveryWake:      make(chan struct{}, 1),
-		deliveryTransport: transport,
-	}
+	s := newTestServer(t, database, dir)
+	s.deliveryWake = make(chan struct{}, 1)
+	s.deliveryTransport = transport
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
@@ -627,7 +625,7 @@ func TestSendingSwitchGatesDeliveryAPI(t *testing.T) {
 
 	admin := mustUser(t, database, "admin", db.RoleAdmin)
 	seedDeliveryEmailSettings(t, database, 25)
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 
 	w := httptest.NewRecorder()
@@ -682,7 +680,7 @@ func TestAPIAdminEmailRequiresAdmin(t *testing.T) {
 	defer database.Close()
 
 	reader := mustUser(t, database, "reader", db.RoleReader)
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 
 	w := httptest.NewRecorder()

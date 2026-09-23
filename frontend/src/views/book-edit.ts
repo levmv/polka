@@ -238,9 +238,6 @@ function openLoadedEditModal(
             }
         },
     });
-    if (listContext) {
-        root.dataset.bookListContext = JSON.stringify(listContext);
-    }
     const form = document.getElementById(`edit-book-form-${uiID}`) as HTMLFormElement;
     let datePickerPopover: ReturnType<typeof attachFlexibleDatePicker> | null = null;
     let closed = false;

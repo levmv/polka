@@ -121,7 +121,7 @@ func (s *Server) openPositionSource(ctx context.Context, assetID int64) (*os.Fil
 	if f := format.FormatFromKey(formatKey); f != format.FormatEPUB && f != format.FormatKEPUB {
 		return nil, 0, nil
 	}
-	path, err := s.managedRoot().Resolve(storagePath)
+	path, err := s.storageRoot.Resolve(storagePath)
 	if err != nil {
 		return nil, 0, nil
 	}

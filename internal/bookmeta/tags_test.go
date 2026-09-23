@@ -2,6 +2,7 @@ package bookmeta
 
 import (
 	"reflect"
+	"slices"
 	"testing"
 )
 
@@ -35,10 +36,10 @@ func TestApplyTagMode(t *testing.T) {
 		want    []string
 	}{
 		{
-			name:    "add preserves order and spelling while splitting and deduplicating",
+			name:    "add preserves order and spelling while matching case-insensitively",
 			current: []string{"Sci-Fi", "b"},
 			mode:    TagAdd,
-			values:  []string{"sci-fi", "c, NewTag"},
+			values:  []string{"sci-fi", "c", "NewTag"},
 			want:    []string{"Sci-Fi", "b", "c", "NewTag"},
 		},
 		{
@@ -65,10 +66,18 @@ func TestApplyTagMode(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			current := slices.Clone(tt.current)
+			values := slices.Clone(tt.values)
 			got := ApplyTagMode(tt.current, tt.mode, tt.values)
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("ApplyTagMode(%#v, %q, %#v) = %#v, want %#v",
 					tt.current, tt.mode, tt.values, got, tt.want)
+			}
+			if len(got) > 0 {
+				got[0] = "changed result"
+			}
+			if !slices.Equal(tt.current, current) || !slices.Equal(tt.values, values) {
+				t.Error("applying a mode and editing its result must preserve both inputs")
 			}
 		})
 	}

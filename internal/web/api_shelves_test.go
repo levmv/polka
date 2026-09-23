@@ -17,7 +17,7 @@ func TestAPIShelvesManualAndQuery(t *testing.T) {
 
 	u := mustUser(t, database, "alice", "admin")
 
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 
 	createBody := bytes.NewBufferString(`{"name":"Favorites","kind":"manual"}`)
@@ -123,7 +123,7 @@ func TestAPIShelfUpdateQueryAndVisibility(t *testing.T) {
 		t.Fatalf("create private shelf: %v", err)
 	}
 
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 
 	w := httptest.NewRecorder()
@@ -210,7 +210,7 @@ func TestReaderCannotMutateSharedShelfOrAddOutOfScopeBook(t *testing.T) {
 		t.Fatalf("create private shelf: %v", err)
 	}
 
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 
 	for _, tc := range []struct {
@@ -256,7 +256,7 @@ func TestAPIShelvesSharedCreationAndScopedVisibility(t *testing.T) {
 	admin := mustUser(t, database, "admin", db.RoleAdmin)
 	reader := mustUser(t, database, "reader", db.RoleReader)
 
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 
 	w := httptest.NewRecorder()

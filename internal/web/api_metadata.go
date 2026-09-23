@@ -45,7 +45,7 @@ func (s *Server) handleAPIMetadataCandidates(w http.ResponseWriter, r *http.Requ
 	}
 
 	providerID := r.URL.Query().Get("provider")
-	provider, ok := s.metadataRegistry().Get(providerID)
+	provider, ok := s.metadata.Get(providerID)
 	if !ok {
 		http.Error(w, "Unknown metadata provider", http.StatusBadRequest)
 		return
@@ -75,7 +75,7 @@ func (s *Server) handleAPIMetadataDescription(w http.ResponseWriter, r *http.Req
 		http.Error(w, "ref is required", http.StatusBadRequest)
 		return
 	}
-	provider, ok := s.metadataRegistry().Get(r.URL.Query().Get("provider"))
+	provider, ok := s.metadata.Get(r.URL.Query().Get("provider"))
 	if !ok {
 		http.Error(w, "Unknown metadata provider", http.StatusBadRequest)
 		return
@@ -92,13 +92,6 @@ func (s *Server) handleAPIMetadataDescription(w http.ResponseWriter, r *http.Req
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"description": description})
-}
-
-func (s *Server) metadataRegistry() metalookup.Registry {
-	if s.metadata != nil {
-		return s.metadata
-	}
-	return metalookup.NewRegistry(nil)
 }
 
 func (s *Server) metadataQueryForBook(ctx context.Context, bookID int64) (metalookup.Query, error) {

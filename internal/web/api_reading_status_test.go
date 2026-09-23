@@ -14,7 +14,7 @@ func TestAPIReadingStatusManualLifecycleAndBookDetail(t *testing.T) {
 	defer database.Close()
 	alice := mustUser(t, database, "alice", db.RoleReader)
 	bob := mustUser(t, database, "bob", db.RoleReader)
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 
 	w := httptest.NewRecorder()

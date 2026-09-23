@@ -39,7 +39,7 @@ func (s *Server) handleAPIImport(w http.ResponseWriter, r *http.Request) {
 	extractor := format.NewExtractor()
 	defer extractor.Close()
 
-	root := s.managedRoot()
+	root := s.storageRoot
 	catalogHasBooks, err := db.HasAnyAsset(s.db.Read(r.Context()))
 	if err != nil {
 		serverError(w, r, err)
@@ -54,7 +54,7 @@ func (s *Server) handleAPIImport(w http.ResponseWriter, r *http.Request) {
 		serverError(w, r, err)
 		return
 	}
-	releaseImport, err := s.acquireStorageWorkSlot(r.Context())
+	releaseImport, err := s.storageQueue.Acquire(r.Context())
 	if err != nil {
 		serverError(w, r, err)
 		return

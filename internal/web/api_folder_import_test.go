@@ -49,7 +49,7 @@ func TestAPIAdminStorageImportFolderPreview(t *testing.T) {
 	writeFile(t, filepath.Join(calibreDir, "calibre.epub"), calibreBytes)
 	writeFile(t, filepath.Join(calibreDir, "calibre-copy.epub"), calibreBytes)
 
-	s := &Server{db: database, dataDir: dataDir, sessions: newSessionStore(database)}
+	s := newTestServer(t, database, dataDir)
 	w := httptest.NewRecorder()
 	testRoutes(t, s).ServeHTTP(w, jsonRequest(t, s, admin.ID, http.MethodPost, "/api/admin/storage/import/preview", folderImportRequest{Path: sourceDir}))
 	if w.Code != http.StatusOK {
@@ -74,7 +74,7 @@ func TestAPIAdminStorageImportFolderRejectsDataDirOverlap(t *testing.T) {
 		t.Fatalf("mkdir source: %v", err)
 	}
 
-	s := &Server{db: database, dataDir: dataDir, sessions: newSessionStore(database)}
+	s := newTestServer(t, database, dataDir)
 	w := httptest.NewRecorder()
 	testRoutes(t, s).ServeHTTP(w, jsonRequest(t, s, admin.ID, http.MethodPost, "/api/admin/storage/import/preview", folderImportRequest{Path: sourceDir}))
 	if w.Code != http.StatusBadRequest {
@@ -94,7 +94,7 @@ func TestAPIAdminStorageImportFolderPreviewFollowsRootSymlink(t *testing.T) {
 	}
 
 	admin := mustUser(t, database, "admin", db.RoleAdmin)
-	s := &Server{db: database, dataDir: dataDir, sessions: newSessionStore(database)}
+	s := newTestServer(t, database, dataDir)
 	w := httptest.NewRecorder()
 	testRoutes(t, s).ServeHTTP(w, jsonRequest(t, s, admin.ID, http.MethodPost, "/api/admin/storage/import/preview", folderImportRequest{Path: link}))
 	if w.Code != http.StatusOK {
@@ -126,7 +126,7 @@ func TestAPIAdminStorageImportFolderRunGroupsSelectedCalibreDirectory(t *testing
 	writeFile(t, firstPath, testEPUB(t, "First Import", "One Writer", "Writer, One"))
 	writeFile(t, secondPath, []byte("second format"))
 
-	s := &Server{db: database, dataDir: dataDir, sessions: newSessionStore(database)}
+	s := newTestServer(t, database, dataDir)
 	w := httptest.NewRecorder()
 	testRoutes(t, s).ServeHTTP(w, jsonRequest(t, s, admin.ID, http.MethodPost, "/api/admin/storage/import", folderImportRequest{Path: sourceDir}))
 	if w.Code != http.StatusOK {

@@ -20,7 +20,7 @@ func TestAPISeriesRoutes(t *testing.T) {
 		INSERT INTO assets (id, book_id, storage_path, filename, extension, is_primary, original_hash, current_hash) VALUES (3, 3, 'Herbert/Dune_Messiah/asset_3.epub', 'asset_3.epub', '.epub', 1, randomblob(16), randomblob(16));
 	`)
 
-	s := &Server{db: database, dataDir: dir}
+	s := newTestServer(t, database, dir)
 
 	w := httptest.NewRecorder()
 	s.handleAPISeries(w, httptest.NewRequest(http.MethodGet, "/api/series?limit=1", nil))

@@ -10,9 +10,9 @@ import (
 
 func TestShelfCLISharedManualShelf(t *testing.T) {
 	dataDir := t.TempDir()
-	initialized, err := ensureLibraryInitialized(t.Context(), dataDir)
+	initialized, err := ensureLibrary(t.Context(), dataDir)
 	if err != nil {
-		t.Fatalf("ensureLibraryInitialized: %v", err)
+		t.Fatalf("ensureLibrary: %v", err)
 	}
 	initialized.Close()
 

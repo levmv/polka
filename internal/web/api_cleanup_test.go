@@ -71,7 +71,7 @@ func TestCleanupDuplicateMergeUsesMutationSequencerAndStagesCover(t *testing.T) 
 		t.Fatalf("write cover: %v", err)
 	}
 
-	s := &Server{db: database, dataDir: dataDir, sessions: newSessionStore(database)}
+	s := newTestServer(t, database, dataDir)
 	handler := testRoutes(t, s)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, jsonRequest(t, s, member.ID, http.MethodPost, "/api/cleanup/duplicates/merge", map[string]any{

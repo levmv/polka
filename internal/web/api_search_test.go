@@ -14,7 +14,7 @@ func TestAPISearchValidate(t *testing.T) {
 	defer database.Close()
 
 	reader := mustUser(t, database, "reader", db.RoleReader)
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 
 	req := jsonRequest(t, s, reader.ID, http.MethodPost, "/api/search/validate", map[string]string{

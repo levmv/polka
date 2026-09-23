@@ -163,21 +163,14 @@ function requestDeadline(callerSignal: AbortSignal | null | undefined): RequestD
     };
 }
 
-function requestMethod(input: RequestInfo | URL, init?: RequestInit): string {
-    if (init?.method) return init.method.toUpperCase();
-    if (typeof Request !== 'undefined' && input instanceof Request) {
-        return input.method.toUpperCase();
-    }
-    return 'GET';
-}
-
 async function requestResult<T>(
-    input: RequestInfo | URL,
+    input: string,
     init: APIRequestInit | undefined,
     consume: (response: Response) => Promise<T>,
 ): Promise<T> {
     const { retryable = false, ...requestInit } = init ?? {};
-    const canRetry = retryable || ['GET', 'HEAD'].includes(requestMethod(input, requestInit));
+    const method = (requestInit.method || 'GET').toUpperCase();
+    const canRetry = retryable || method === 'GET' || method === 'HEAD';
     const attempts = canRetry ? REQUEST_ATTEMPTS : 1;
 
     for (let attempt = 0; attempt < attempts; attempt++) {
@@ -192,7 +185,7 @@ async function requestResult<T>(
 }
 
 async function requestAttempt<T>(
-    input: RequestInfo | URL,
+    input: string,
     init: RequestInit | undefined,
     consume: (response: Response) => Promise<T>,
     withDeadline: boolean,
@@ -244,7 +237,7 @@ async function responseError(res: Response, fallback: string): Promise<Error> {
 }
 
 async function apiFetch(
-    input: RequestInfo | URL,
+    input: string,
     fallback: string | ((res: Response) => string),
     init?: APIRequestInit,
 ): Promise<Response> {
@@ -260,7 +253,7 @@ async function apiFetch(
 }
 
 async function fetchJSON<T>(
-    input: RequestInfo | URL,
+    input: string,
     fallback: string | ((res: Response) => string),
     init?: APIRequestInit,
 ): Promise<T> {

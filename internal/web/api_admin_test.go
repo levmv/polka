@@ -54,7 +54,8 @@ func TestAPIAdminStorageStatus(t *testing.T) {
 		t.Fatalf("write queued: %v", err)
 	}
 
-	s := &Server{db: database, dataDir: dataDir, storageRoot: root, sessions: newSessionStore(database)}
+	s := newTestServer(t, database, dataDir)
+	s.storageRoot = root
 	handler := testRoutes(t, s)
 
 	w := httptest.NewRecorder()
@@ -123,7 +124,8 @@ func TestAPIAdminStorageUpdateIncomingFolder(t *testing.T) {
 		t.Fatalf("SavePath: %v", err)
 	}
 
-	s := &Server{db: database, dataDir: dataDir, storageRoot: root, sessions: newSessionStore(database)}
+	s := newTestServer(t, database, dataDir)
+	s.storageRoot = root
 	t.Cleanup(s.stopIngester)
 	handler := testRoutes(t, s)
 
@@ -193,7 +195,7 @@ func TestAPIAdminStorageDoesNotSaveUnusableIncomingFolder(t *testing.T) {
 	requestedPath := filepath.Join(blocker, "incoming")
 	deleteSources := true
 
-	s := &Server{db: database, dataDir: dataDir, sessions: newSessionStore(database)}
+	s := newTestServer(t, database, dataDir)
 	handler := testRoutes(t, s)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, jsonRequest(t, s, admin.ID, http.MethodPatch, "/api/admin/storage", adminStorageUpdateRequest{
@@ -225,7 +227,8 @@ func TestAPIAdminStorageUpdateWritebackAuto(t *testing.T) {
 		t.Fatalf("SaveRoot: %v", err)
 	}
 
-	s := &Server{db: database, dataDir: dataDir, storageRoot: root, sessions: newSessionStore(database)}
+	s := newTestServer(t, database, dataDir)
+	s.storageRoot = root
 	handler := testRoutes(t, s)
 	mode := "auto"
 	w := httptest.NewRecorder()

@@ -17,16 +17,3 @@ func TestUniqueTagList(t *testing.T) {
 		t.Fatalf("uniqueTagList = %#v; want %#v", got, want)
 	}
 }
-
-func TestAppendUniqueTagList(t *testing.T) {
-	got := appendUniqueTagList(
-		[]string{"Existing"},
-		[]string{"existing; New"},
-		commaSemicolonSeparator,
-		strings.TrimSpace,
-	)
-	want := []string{"Existing", "New"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("appendUniqueTagList = %#v; want %#v", got, want)
-	}
-}

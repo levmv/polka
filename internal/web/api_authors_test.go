@@ -13,7 +13,7 @@ import (
 func TestAPIAuthorListPagination(t *testing.T) {
 	database, dir := setupTestDB(t)
 	defer database.Close()
-	s := &Server{db: database, dataDir: dir}
+	s := newTestServer(t, database, dir)
 
 	w := httptest.NewRecorder()
 	s.handleAPIAuthorList(w, httptest.NewRequest(http.MethodGet, "/api/authors/list?limit=1", nil))
@@ -60,7 +60,7 @@ func TestAPIAuthorInfo(t *testing.T) {
 	defer database.Close()
 
 	u := mustUser(t, database, "alice", db.RoleMember)
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 
 	get := func(query string) *httptest.ResponseRecorder {
@@ -100,7 +100,7 @@ func TestAPIAuthorMutationMissingAuthor(t *testing.T) {
 	defer database.Close()
 
 	admin := mustUser(t, database, "admin", db.RoleAdmin)
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 
 	for _, tc := range []struct {
@@ -133,7 +133,7 @@ func TestMemberIgnoresStaleShelfScope(t *testing.T) {
 	mustExec(t, database, `UPDATE users SET content_scope = 'shelves' WHERE id = ?`, member.ID)
 	mustExec(t, database, `INSERT INTO user_scope_shelves (user_id, shelf_id) VALUES (?, ?)`, member.ID, scopeShelf.ID)
 
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 
 	req := jsonRequest(t, s, member.ID, http.MethodGet, "/api/authors/info?name=Frank+Herbert", nil)

@@ -13,7 +13,7 @@ func TestReaderRoutePolicy(t *testing.T) {
 	defer database.Close()
 
 	reader := mustUser(t, database, "reader", db.RoleReader)
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 
 	for _, tc := range []struct {

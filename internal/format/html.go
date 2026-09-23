@@ -250,7 +250,7 @@ func htmlCoverHref(raw []byte) string {
 
 func imageFromDataURI(href string) ([]byte, string, error) {
 	href = strings.TrimSpace(href)
-	if !strings.HasPrefix(strings.ToLower(href), "data:") {
+	if len(href) < 5 || !strings.EqualFold(href[:5], "data:") {
 		return nil, "", nil
 	}
 	meta, encoded, ok := strings.Cut(href[5:], ",")

@@ -1,6 +1,9 @@
 package bookmeta
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
 
 // Tags are stored in the books.tags column as a single comma-list string (import
 // writes strings.Join(tags, ", ")). These helpers are the pure, tested transform
@@ -46,8 +49,9 @@ func FormatTagList(tags []string) string {
 }
 
 // ApplyTagMode returns the tag list after applying mode with values to current.
-// Both inputs are normalized like ParseTagList (values may themselves contain
-// commas, so a raw dialog input is accepted as-is). Matching is case-insensitive.
+// Both inputs must contain trimmed, non-empty tags without case-insensitive
+// duplicates. The result does not share its backing array with either input.
+// Matching is case-insensitive.
 //
 //   - add: append each value not already present, keeping existing order/casing
 //     and the value's typed casing for genuinely new tags.
@@ -59,14 +63,14 @@ func ApplyTagMode(current []string, mode TagMode, values []string) []string {
 	case TagClear:
 		return nil
 	case TagReplace:
-		return normalizeTagValues(values)
+		return slices.Clone(values)
 	case TagRemove:
 		drop := make(map[string]struct{})
-		for _, v := range normalizeTagValues(values) {
+		for _, v := range values {
 			drop[strings.ToLower(v)] = struct{}{}
 		}
 		var out []string
-		for _, t := range normalizeTagValues(current) {
+		for _, t := range current {
 			if _, ok := drop[strings.ToLower(t)]; ok {
 				continue
 			}
@@ -74,12 +78,12 @@ func ApplyTagMode(current []string, mode TagMode, values []string) []string {
 		}
 		return out
 	case TagAdd:
-		out := normalizeTagValues(current)
+		out := slices.Clone(current)
 		have := make(map[string]struct{}, len(out))
 		for _, t := range out {
 			have[strings.ToLower(t)] = struct{}{}
 		}
-		for _, v := range normalizeTagValues(values) {
+		for _, v := range values {
 			key := strings.ToLower(v)
 			if _, ok := have[key]; ok {
 				continue
@@ -89,12 +93,6 @@ func ApplyTagMode(current []string, mode TagMode, values []string) []string {
 		}
 		return out
 	default:
-		return normalizeTagValues(current)
+		return slices.Clone(current)
 	}
-}
-
-// normalizeTagValues turns a slice of raw tag strings (each possibly a comma
-// list) into a clean tag list, reusing the stored-string parser.
-func normalizeTagValues(values []string) []string {
-	return ParseTagList(strings.Join(values, ","))
 }

@@ -103,7 +103,8 @@ func metadataFromAnnotations(raw annotations) bookmeta.Metadata {
 				meta.Date = bookmeta.NormalizeMetadataDate(value)
 			}
 		case "subject", "keywords":
-			meta.Tags = bookmeta.ApplyTagMode(meta.Tags, bookmeta.TagAdd, []string{strings.ReplaceAll(value, ";", ",")})
+			tags := bookmeta.ParseTagList(strings.ReplaceAll(value, ";", ","))
+			meta.Tags = bookmeta.ApplyTagMode(meta.Tags, bookmeta.TagAdd, tags)
 		case "isbn":
 			if meta.Identifier == "" {
 				if id := bookmeta.IdentifierFromOPF("isbn", value); id.Value != "" {

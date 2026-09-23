@@ -1,6 +1,6 @@
 {
   "name": "polka",
-  "image": "mcr.microsoft.com/devcontainers/go:1.27-trixie",
+  "image": "mcr.microsoft.com/devcontainers/go:2.3.1-1.27-trixie",
   "features": {
     "ghcr.io/devcontainers/features/node:1": {
       "version": "24"

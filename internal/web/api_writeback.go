@@ -61,7 +61,7 @@ func (s *Server) handleAPIBookWriteback(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	root := s.managedRoot()
+	root := s.storageRoot
 	if err := writeback.RequireWritableRoot(s.db.Read(r.Context()), root); err != nil {
 		serverError(w, r, err)
 		return
@@ -135,7 +135,7 @@ func (s *Server) handleAPIBulkWriteback(w http.ResponseWriter, r *http.Request) 
 	}
 	statusCode := http.StatusOK
 	if len(assetRows) > 0 {
-		root := s.managedRoot()
+		root := s.storageRoot
 		if err := writeback.RequireWritableRoot(s.db.Read(r.Context()), root); err != nil {
 			serverError(w, r, err)
 			return
@@ -169,7 +169,7 @@ func (s *Server) handleAPIAdminWritebackRetry(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if counts.Failed > 0 {
-		root := s.managedRoot()
+		root := s.storageRoot
 		if err := writeback.RequireWritableRoot(s.db.Read(r.Context()), root); err != nil {
 			serverError(w, r, err)
 			return

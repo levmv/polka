@@ -16,7 +16,7 @@ func TestAPIBookJumpsThresholdAndValidation(t *testing.T) {
 	defer database.Close()
 
 	user := mustUser(t, database, "jump-member", db.RoleMember)
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 
 	w := httptest.NewRecorder()

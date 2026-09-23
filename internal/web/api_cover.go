@@ -50,7 +50,7 @@ func validateCoverBytes(coverBytes []byte) (validatedCoverBytes, error) {
 // slot as write-back/import/relayout. A write-back therefore cannot observe a
 // new cover revision while the old original is still on disk.
 func (s *Server) storeCoverBytes(ctx context.Context, bookID int64, coverBytes validatedCoverBytes) error {
-	releaseStorageSlot, err := s.acquireStorageWorkSlot(ctx)
+	releaseStorageSlot, err := s.storageQueue.Acquire(ctx)
 	if err != nil {
 		return err
 	}
@@ -194,11 +194,7 @@ func (s *Server) fetchRemoteCover(r *http.Request, rawURL string) (validatedCove
 	}
 	req.Header.Set("User-Agent", remoteCoverUserAgent)
 
-	client := s.coverClient
-	if client == nil {
-		client = defaultRemoteCoverClient()
-	}
-	res, err := client.Do(req)
+	res, err := s.coverClient.Do(req)
 	if err != nil {
 		log.Printf("download remote cover %s: %v", u.Redacted(), err)
 		return nil, errors.New("Remote image unavailable")

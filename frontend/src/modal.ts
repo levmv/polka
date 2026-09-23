@@ -118,7 +118,7 @@ export function createModal(root: HTMLElement, options: ModalOptions = {}): Mana
         }
         backdropPointerDown = false;
         const target = event.target;
-        if (target instanceof Element && closestElement(target, '[data-modal-close]', root)) {
+        if (target instanceof Element && root.contains(target.closest('[data-modal-close]'))) {
             event.preventDefault();
             void attemptClose(state, 'close-button');
         }
@@ -605,25 +605,4 @@ function focusElement(target: HTMLElement, preventScroll: boolean): void {
     } catch (_err) {
         target.focus();
     }
-}
-
-type MatchableElement = Element & {
-    msMatchesSelector?: (selector: string) => boolean;
-    webkitMatchesSelector?: (selector: string) => boolean;
-};
-
-function closestElement(target: Element, selector: string, boundary: HTMLElement): Element | null {
-    let node: Element | null = target;
-    while (node) {
-        if (elementMatches(node, selector)) return node;
-        if (node === boundary) return null;
-        node = node.parentElement;
-    }
-    return null;
-}
-
-function elementMatches(element: Element, selector: string): boolean {
-    const item = element as MatchableElement;
-    const matches = item.matches || item.msMatchesSelector || item.webkitMatchesSelector;
-    return Boolean(matches?.call(element, selector));
 }

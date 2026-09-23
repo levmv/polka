@@ -14,7 +14,7 @@ func TestAPIReadingActivityBoundaries(t *testing.T) {
 	defer database.Close()
 	alice := mustUser(t, database, "alice", db.RoleReader)
 	bob := mustUser(t, database, "bob", db.RoleMember)
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 	const endpoint = "/api/reader/assets/1/activity"
 	request := readingActivityRequest{SessionID: "0123456789abcdef0123456789abcdef"}

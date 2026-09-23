@@ -2,7 +2,6 @@ package web
 
 import (
 	"bytes"
-	"context"
 	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
@@ -30,12 +29,11 @@ func TestBulkWritebackAdmissionStatus(t *testing.T) {
 			defer database.Close()
 			mustExec(t, database, "UPDATE assets SET format = 'epub' WHERE id = 1")
 
-			background := newTaskGroup(context.Background())
-			defer background.Stop()
+			s := newTestServer(t, database, dataDir)
+			defer s.background.Stop()
 			if tt.seal {
-				background.Seal()
+				s.background.Seal()
 			}
-			s := &Server{db: database, dataDir: dataDir, background: background}
 
 			body, err := json.Marshal(bulkWritebackRequest{IDs: []int64{tt.bookID}})
 			if err != nil {
@@ -62,7 +60,7 @@ func TestBulkWritebackAdmissionStatus(t *testing.T) {
 func TestBookWritebackDTOGating(t *testing.T) {
 	database, dataDir := setupTestDB(t)
 	defer database.Close()
-	s := &Server{db: database, dataDir: dataDir}
+	s := newTestServer(t, database, dataDir)
 
 	mustExec(t, database, "INSERT INTO books (id, title, sort_title) VALUES (3,'Book','Book')")
 	mustExec(t, database, "INSERT INTO assets (id, book_id, storage_path, filename, extension, format, original_hash, current_hash) "+

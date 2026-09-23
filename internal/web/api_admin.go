@@ -245,7 +245,7 @@ func (s *Server) booksStorageStatus(ctx context.Context) (BooksStorageDTO, error
 	if err != nil {
 		return BooksStorageDTO{}, err
 	}
-	root := s.managedRoot()
+	root := s.storageRoot
 	info := fsprofile.Detect(root.Path)
 	// Reachable stays honest for the dropped-NAS case: the mountpoint can exist as
 	// an empty directory while the catalog still has books. Reuse the write
@@ -300,7 +300,7 @@ func (s *Server) scanIncomingNow(ctx context.Context) (ingest.Summary, error) {
 	if ingester := s.currentIngester(); ingester != nil {
 		return ingester.ScanOnce(ctx, true)
 	}
-	svc, err := ingest.NewServiceFromSettings(ctx, s.db, s.dataDir, s.managedRoot(), ingest.Options{
+	svc, err := ingest.NewServiceFromSettings(ctx, s.db, s.dataDir, s.storageRoot, ingest.Options{
 		StableScans: 1,
 		ImportQueue: s.storageQueue,
 	})

@@ -67,7 +67,7 @@ func TestPreparedDownloadKeepsResultAndChecksAccess(t *testing.T) {
 	if err := os.WriteFile(source, []byte(`<html><body><p>Readable chapter</p><img src="missing.png" alt="Diagram"/><p>Ending</p></body></html>`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	t.Cleanup(func() { s.preparedDownloads.expire(time.Now().Add(preparedDownloadTTL)) })
 	handler := testRoutes(t, s)
 	request := func(userID int64, method, url string) *httptest.ResponseRecorder {

@@ -20,7 +20,7 @@ func okHandler(ran *bool) http.Handler {
 func TestAuthMiddleware(t *testing.T) {
 	database, dir := setupTestDB(t)
 	defer database.Close()
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 
 	check := func(name, path, cookie string, wantStatus int, wantNext bool) {
 		t.Helper()
@@ -83,7 +83,7 @@ func TestAuthMiddlewareBasicAuth(t *testing.T) {
 	defer database.Close()
 
 	u := mustUser(t, database, "alice", "admin")
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 
 	for _, path := range []string{"/opds", "/opds/books", "/download/1", "/covers/1"} {
 		t.Run(path, func(t *testing.T) {
@@ -129,7 +129,7 @@ func TestPasswordAuthenticationWaitsForSlotAndHonorsContext(t *testing.T) {
 	database, dir := setupTestDB(t)
 	defer database.Close()
 	_ = mustUser(t, database, "alice", "admin")
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 
 	slots := s.passwordAuthSlots
 	for range cap(slots) {
@@ -164,7 +164,7 @@ func TestAuthMiddlewareAppToken(t *testing.T) {
 		t.Fatalf("create token: %v", err)
 	}
 	token := created.Token
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 
 	// The token used as the Basic-auth password authenticates on a delivery path,
 	// even with an arbitrary username — the token is self-identifying.

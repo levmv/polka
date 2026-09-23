@@ -12,7 +12,6 @@ import (
 
 	"github.com/levmv/polka/internal/db"
 	"github.com/levmv/polka/internal/storage"
-	"github.com/levmv/polka/internal/workslot"
 )
 
 // TestTrashLifecycleHTTP exercises the full soft-delete → trash → restore →
@@ -25,7 +24,7 @@ func TestTrashLifecycleHTTP(t *testing.T) {
 	member := mustUser(t, database, "member", db.RoleMember)
 	admin := mustUser(t, database, "admin", db.RoleAdmin)
 
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 
 	do := func(userID int64, method string, target string) *httptest.ResponseRecorder {
@@ -93,7 +92,7 @@ func TestEmptyTrashHTTP(t *testing.T) {
 	member := mustUser(t, database, "member", db.RoleMember)
 	admin := mustUser(t, database, "admin", db.RoleAdmin)
 
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 	do := func(userID int64, method string, target string) *httptest.ResponseRecorder {
 		req := jsonRequest(t, s, userID, method, target, nil)
@@ -166,12 +165,8 @@ func TestPurgeUnavailableRootPreservesCatalog(t *testing.T) {
 				}
 			}
 
-			s := &Server{
-				db:          database,
-				dataDir:     dir,
-				storageRoot: storage.NewRoot(filepath.Join(dir, "missing-books")),
-				sessions:    newSessionStore(database),
-			}
+			s := newTestServer(t, database, dir)
+			s.storageRoot = storage.NewRoot(filepath.Join(dir, "missing-books"))
 			handler := testRoutes(t, s)
 			req := jsonRequest(t, s, admin.ID, http.MethodDelete, tt.target, nil)
 			w := httptest.NewRecorder()
@@ -205,8 +200,8 @@ func TestPurgeWaitsForStorageSlot(t *testing.T) {
 		t.Fatalf("soft delete: %v", err)
 	}
 
-	queue := workslot.New()
-	s := &Server{db: database, dataDir: dir, storageQueue: queue}
+	s := newTestServer(t, database, dir)
+	queue := s.storageQueue
 	releaseOtherMutation, err := queue.Acquire(context.Background())
 	if err != nil {
 		t.Fatalf("hold storage slot: %v", err)
@@ -262,7 +257,7 @@ func TestPurgeTreatsMissingAssetAsOrdinaryDrift(t *testing.T) {
 		t.Fatalf("remove asset fixture: %v", err)
 	}
 
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 	req := jsonRequest(t, s, admin.ID, http.MethodDelete, "/api/books/1/purge", nil)
 	w := httptest.NewRecorder()

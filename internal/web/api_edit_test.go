@@ -30,10 +30,7 @@ func TestAPIEditFields(t *testing.T) {
 	bookID := int64(174)
 	mustExec(t, database, "INSERT INTO books (id, title, sort_title) VALUES (?, 'Title', 'Title')", bookID)
 
-	srv := &Server{
-		db:      database,
-		dataDir: dataDir,
-	}
+	srv := newTestServer(t, database, dataDir)
 
 	lang := "en"
 	pub := "Penguin"
@@ -109,7 +106,7 @@ func TestAPIEditPatchMergesStaleFieldsAndClearsNulls(t *testing.T) {
 	mustExec(t, database, "INSERT INTO authors (id, name, sort_name) VALUES (1, 'Old Author', 'Author, Old')")
 	mustExec(t, database, "INSERT INTO book_authors (book_id, author_id, author_order) VALUES (?, 1, 0)", bookID)
 
-	srv := &Server{db: database, dataDir: dataDir}
+	srv := newTestServer(t, database, dataDir)
 	patch := func(body map[string]any) {
 		t.Helper()
 		raw, err := json.Marshal(body)
@@ -202,7 +199,7 @@ func TestAPIEditExplicitNullRecordsManualClear(t *testing.T) {
 	bookID := int64(149)
 	mustExec(t, database, "INSERT INTO books (id, title, sort_title) VALUES (?, 'Title', 'Title')", bookID)
 
-	srv := &Server{db: database, dataDir: dataDir}
+	srv := newTestServer(t, database, dataDir)
 	req := httptest.NewRequest(http.MethodPatch, "/api/books/"+strconv.FormatInt(bookID, 10), bytes.NewBufferString(`{"description":null}`))
 	rr := httptest.NewRecorder()
 	srv.handleAPIEditBook(rr, req, bookID)
@@ -234,7 +231,7 @@ func TestAPIEditRejectsNullTitle(t *testing.T) {
 	bookID := int64(159)
 	mustExec(t, database, "INSERT INTO books (id, title, sort_title) VALUES (?, 'Title', 'Title')", bookID)
 
-	srv := &Server{db: database, dataDir: dataDir}
+	srv := newTestServer(t, database, dataDir)
 	req := httptest.NewRequest(http.MethodPatch, "/api/books/"+strconv.FormatInt(bookID, 10), bytes.NewBufferString(`{"title":null}`))
 	rr := httptest.NewRecorder()
 	srv.handleAPIEditBook(rr, req, bookID)
@@ -287,7 +284,7 @@ func TestAPIEditSortTitleBehavior(t *testing.T) {
 			}
 			req := httptest.NewRequest(http.MethodPatch, "/api/books/"+strconv.FormatInt(bookID, 10), bytes.NewReader(reqBody))
 			rr := httptest.NewRecorder()
-			(&Server{db: database, dataDir: dataDir}).handleAPIEditBook(rr, req, bookID)
+			newTestServer(t, database, dataDir).handleAPIEditBook(rr, req, bookID)
 			if rr.Code != http.StatusOK {
 				t.Fatalf("status = %d; want 200: %s", rr.Code, rr.Body.String())
 			}
@@ -314,7 +311,7 @@ func TestAPIEditAuthorsKeepCommasInsideNames(t *testing.T) {
 	bookID := int64(110)
 	mustExec(t, database, "INSERT INTO books (id, title, sort_title) VALUES (?, 'Book', 'Book')", bookID)
 
-	srv := &Server{db: database, dataDir: dataDir}
+	srv := newTestServer(t, database, dataDir)
 	reqBody, _ := json.Marshal(map[string]any{
 		"title":   "Book",
 		"authors": "Le Guin, Ursula K.; New Coauthor & Research && Development",
@@ -443,7 +440,7 @@ func TestAPIEditRelayoutKeepsDBConsistent(t *testing.T) {
 	mustExec(t, database, "INSERT INTO authors (id, name, sort_name) VALUES (1, ?, ?)", authorName, authorSort)
 	mustExec(t, database, "INSERT INTO book_authors (book_id, author_id, author_order) VALUES (?, 1, 0)", bookID)
 
-	srv := &Server{db: database, dataDir: dataDir}
+	srv := newTestServer(t, database, dataDir)
 
 	newTitle := "Brand New Title"
 	reqBody, _ := json.Marshal(map[string]any{"title": newTitle})
@@ -494,7 +491,7 @@ func TestAPIEditMetadataOnlyDoesNotRequireStorage(t *testing.T) {
 	mustExec(t, database, "INSERT INTO authors (id, name, sort_name) VALUES (1, 'Jane Doe', ?)", bookmeta.AuthorSort("Jane Doe"))
 	mustExec(t, database, "INSERT INTO book_authors (book_id, author_id, author_order) VALUES (?, 1, 0)", bookID)
 
-	srv := &Server{db: database, dataDir: dataDir}
+	srv := newTestServer(t, database, dataDir)
 	reqBody, _ := json.Marshal(map[string]any{
 		"title":       "Stored Title",
 		"description": "Small note",

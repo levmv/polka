@@ -14,7 +14,7 @@ import (
 func TestSetupConcurrentRequestsCreateOneAdmin(t *testing.T) {
 	database, dir := setupTestDB(t)
 	defer database.Close()
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 	entered := make(chan struct{}, 2)
 	release := make(chan struct{})
@@ -91,7 +91,7 @@ func TestSetupCrossOriginProtection(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			database, dir := setupTestDB(t)
 			defer database.Close()
-			s := newTestServer(database, dir)
+			s := newTestServer(t, database, dir)
 			req := httptest.NewRequest(http.MethodPost, "https://polka.example/setup", strings.NewReader("username=admin&password=secret&confirm=secret"))
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 			req.Header.Set("Origin", tc.origin)
@@ -120,7 +120,7 @@ func TestAppPageContentSecurityPolicy(t *testing.T) {
 	const hostileUsername = `</script><script>alert(1)</script>`
 	mustExec(t, database, "UPDATE users SET username = ? WHERE id = ?", hostileUsername, user.ID)
 
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	req := jsonRequest(t, s, user.ID, http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
 

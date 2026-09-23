@@ -89,7 +89,7 @@ func NormalizeTarget(target string) Target {
 
 func CanConvert(from format.Format, target Target) bool {
 	target = NormalizeTarget(string(target))
-	for _, supported := range TargetSpecsForFormat(from) {
+	for _, supported := range targetSpecsBySourceFormat[from] {
 		if supported.Target == target {
 			return true
 		}

@@ -194,7 +194,7 @@ func htmlDataImageResolver(assets *[]epubAsset) htmlImageResolver {
 }
 
 func decodeHTMLDataImage(src string) ([]byte, string, string) {
-	if !strings.HasPrefix(strings.ToLower(src), "data:") {
+	if len(src) < 5 || !strings.EqualFold(src[:5], "data:") {
 		return nil, "", ""
 	}
 	meta, encoded, ok := strings.Cut(src[5:], ",")

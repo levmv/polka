@@ -13,7 +13,6 @@ import (
 
 	"github.com/levmv/polka/internal/db"
 	"github.com/levmv/polka/internal/format"
-	"github.com/levmv/polka/internal/format/pdf"
 )
 
 type pageCountResultDTO struct {
@@ -36,7 +35,7 @@ func (s *Server) handleAPIBookPageCount(w http.ResponseWriter, r *http.Request) 
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
-	release, err := s.acquireStorageWorkSlot(ctx)
+	release, err := s.storageQueue.Acquire(ctx)
 	if err != nil {
 		serverError(w, r, err)
 		return
@@ -91,7 +90,7 @@ func (s *Server) handleAPIBookPageCount(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) measurePageCount(ctx context.Context, asset db.PageCountAsset) (int, error) {
-	name, err := s.managedRoot().Resolve(asset.StoragePath)
+	name, err := s.storageRoot.Resolve(asset.StoragePath)
 	if err != nil {
 		return 0, err
 	}
@@ -113,12 +112,7 @@ func (s *Server) measurePageCount(ctx context.Context, asset db.PageCountAsset) 
 		if pages, _ := format.ReadyPageCount(source, info.Size(), asset.Format); pages > 0 {
 			return pages, nil
 		}
-		renderer := s.pageCountRenderer
-		if renderer == nil {
-			renderer = pdf.NewRenderer()
-			defer renderer.Close()
-		}
-		return renderer.CountPages(ctx, source, info.Size())
+		return s.pageCountRenderer.CountPages(ctx, source, info.Size())
 	}
 	return format.CountPages(ctx, source, info.Size(), asset.Format)
 }

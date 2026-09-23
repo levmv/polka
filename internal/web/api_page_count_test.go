@@ -13,7 +13,6 @@ import (
 
 	"github.com/levmv/polka/internal/db"
 	"github.com/levmv/polka/internal/storage"
-	"github.com/levmv/polka/internal/workslot"
 )
 
 func setupPageCountServer(t *testing.T) (*Server, string) {
@@ -27,7 +26,7 @@ func setupPageCountServer(t *testing.T) (*Server, string) {
 		t.Fatal(err)
 	}
 	mustExec(t, database, `UPDATE assets SET format='txt', is_primary=1, current_size=?, current_hash=? WHERE id=1`, len(raw), hash[:])
-	return &Server{db: database, dataDir: dataDir, storageQueue: workslot.New()}, name
+	return newTestServer(t, database, dataDir), name
 }
 
 func TestBookPageCountIsExplicitCachedAndScoped(t *testing.T) {

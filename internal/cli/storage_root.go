@@ -59,7 +59,7 @@ func runStorageRootSet(parent context.Context, dataDir string, args []string) (r
 		return err
 	}
 
-	database, err := ensureLibraryWithoutBooksRoot(parent, dataDir)
+	database, err := ensureLibrary(parent, dataDir)
 	if err != nil {
 		return err
 	}

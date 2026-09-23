@@ -1,11 +1,11 @@
 {
   "schema": 1,
   "go_pdfium": {
-    "version": "v1.20.0",
-    "commit": "6ff9abaa8b4119050917fc6e3bfba458e88a295d",
-    "pdfium_version": 8044,
-    "wasm_bytes": 5752581,
-    "wasm_sha256": "f651270c675cac90702b762f4b95d2b34e365cdb374065e40af016f4f0f304ea"
+    "version": "v1.20.3",
+    "commit": "175fb0632bbd179c848c2a2246a071b221bbdf70",
+    "pdfium_version": 8057,
+    "wasm_bytes": 5754023,
+    "wasm_sha256": "9b5bdb3ad4bb715420d7e478cc4255ab29d8fe808740c45b3b58e4a7617cb5a0"
   },
   "binaryen": {
     "version": "132",
@@ -28,8 +28,8 @@
   },
   "output": {
     "path": "internal/format/pdf/generated/pdfium-cover.wasm",
-    "bytes": 4607809,
-    "sha256": "45184a2075300994f73d64b6df7f296d0818282bbb8fee13a369255ef3a54a69"
+    "bytes": 4608465,
+    "sha256": "a9c426c90df4d741ffb795b04aff336a53d0b800a34a57f883ba35ee68023cf6"
   },
   "imports": [
     "env.FPDF_FILEACCESS_CB",

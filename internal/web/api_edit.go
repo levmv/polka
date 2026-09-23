@@ -279,14 +279,14 @@ func (s *Server) handleAPIEditBook(w http.ResponseWriter, r *http.Request, bookI
 		return
 	}
 
-	releaseStorageSlot, err := s.acquireStorageWorkSlot(r.Context())
+	releaseStorageSlot, err := s.storageQueue.Acquire(r.Context())
 	if err != nil {
 		serverError(w, r, err)
 		return
 	}
 	defer releaseStorageSlot()
 
-	mutation, err := relayout.MutateBooks(r.Context(), s.db, s.managedRoot(), func(tx *db.Tx) (relayout.Changed, error) {
+	mutation, err := relayout.MutateBooks(r.Context(), s.db, s.storageRoot, func(tx *db.Tx) (relayout.Changed, error) {
 		existing, err := loadBookEditState(tx, bookID)
 		if err != nil {
 			return relayout.Changed{}, err

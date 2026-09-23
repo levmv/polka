@@ -20,7 +20,7 @@ func runIngest(ctx context.Context, dataDir string, args []string) error {
 		return reportedErrorf("usage: polka ingest")
 	}
 
-	database, err := ensureLibraryInitialized(ctx, dataDir)
+	database, err := ensureLibrary(ctx, dataDir)
 	if err != nil {
 		return err
 	}

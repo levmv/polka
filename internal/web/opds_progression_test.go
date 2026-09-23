@@ -23,7 +23,7 @@ func TestOPDSFormatsKeepBookMetadataAndSeparatePositions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 	type publication struct {
 		ID        string      `xml:"id"`
@@ -81,7 +81,7 @@ func TestOPDSProgressionProtocolAndDiscovery(t *testing.T) {
 	defer database.Close()
 	user := mustUser(t, database, "opds-progress", db.RoleReader)
 	other := mustUser(t, database, "opds-other", db.RoleReader)
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 	request := func(uid int64, method string, payload any, etag string) *httptest.ResponseRecorder {
 		t.Helper()

@@ -279,7 +279,7 @@ func (s *Server) assetFile(ctx context.Context, assetID int64) (assetFileRow, er
 // openAssetSource opens a freshly loaded asset row in the current books root.
 // The caller owns the file and keeps any format/version checks at its boundary.
 func (s *Server) openAssetSource(asset assetFileRow) (*os.File, error) {
-	fullPath, err := s.managedRoot().Resolve(asset.StoragePath)
+	fullPath, err := s.storageRoot.Resolve(asset.StoragePath)
 	if err != nil {
 		return nil, err
 	}

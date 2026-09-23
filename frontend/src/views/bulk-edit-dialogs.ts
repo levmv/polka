@@ -50,24 +50,21 @@ export function formatTagList(tags: string[]): string {
     return tags.join(', ');
 }
 
-function normalizeTagValues(values: string[]): string[] {
-    return parseTagList(values.join(','));
-}
-
+// Inputs are parsed tag lists. The result is independent of both input arrays.
 export function applyTagMode(current: string[], mode: BulkTagMode, values: string[]): string[] {
     switch (mode) {
         case 'clear':
             return [];
         case 'replace':
-            return normalizeTagValues(values);
+            return values.slice();
         case 'remove': {
-            const drop = new Set(normalizeTagValues(values).map((v) => v.toLowerCase()));
-            return normalizeTagValues(current).filter((t) => !drop.has(t.toLowerCase()));
+            const drop = new Set(values.map((v) => v.toLowerCase()));
+            return current.filter((t) => !drop.has(t.toLowerCase()));
         }
         case 'add': {
-            const out = normalizeTagValues(current);
+            const out = current.slice();
             const have = new Set(out.map((t) => t.toLowerCase()));
-            for (const v of normalizeTagValues(values)) {
+            for (const v of values) {
                 const key = v.toLowerCase();
                 if (have.has(key)) continue;
                 have.add(key);
@@ -110,7 +107,6 @@ function createSegmented(options: { value: string; label: string }[], initial: s
         btn.className = 'bulk-segmented-btn';
         btn.textContent = opt.label;
         btn.setAttribute('role', 'radio');
-        btn.dataset.value = opt.value;
         btn.addEventListener('click', () => setValue(opt.value, true));
         buttons.set(opt.value, btn);
         el.appendChild(btn);

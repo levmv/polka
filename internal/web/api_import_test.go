@@ -30,7 +30,7 @@ func TestAPIImportUploadImportsAndDuplicates(t *testing.T) {
 	ensureTestStorageLayout(t, dataDir)
 
 	u := mustUser(t, database, "alice", db.RoleMember)
-	s := &Server{db: database, dataDir: dataDir, sessions: newSessionStore(database)}
+	s := newTestServer(t, database, dataDir)
 	sid, err := s.sessions.issue(t.Context(), u.ID)
 	if err != nil {
 		t.Fatalf("issue session: %v", err)
@@ -114,7 +114,7 @@ func TestAPIImportUploadRestoresTrashedDuplicate(t *testing.T) {
 	ensureTestStorageLayout(t, dataDir)
 
 	u := mustUser(t, database, "alice", db.RoleMember)
-	s := &Server{db: database, dataDir: dataDir, sessions: newSessionStore(database)}
+	s := newTestServer(t, database, dataDir)
 	sid, err := s.sessions.issue(t.Context(), u.ID)
 	if err != nil {
 		t.Fatalf("issue session: %v", err)
@@ -185,7 +185,7 @@ func TestAPIImportUploadAcceptsZippedFB2(t *testing.T) {
 	ensureTestStorageLayout(t, dataDir)
 
 	u := mustUser(t, database, "alice", db.RoleMember)
-	s := &Server{db: database, dataDir: dataDir, sessions: newSessionStore(database)}
+	s := newTestServer(t, database, dataDir)
 	sid, err := s.sessions.issue(t.Context(), u.ID)
 	if err != nil {
 		t.Fatalf("issue session: %v", err)
@@ -229,7 +229,7 @@ func TestAPIImportUploadRejectsInvalidRequests(t *testing.T) {
 	ensureTestStorageLayout(t, dataDir)
 
 	u := mustUser(t, database, "alice", db.RoleMember)
-	s := &Server{db: database, dataDir: dataDir, sessions: newSessionStore(database)}
+	s := newTestServer(t, database, dataDir)
 	sid, err := s.sessions.issue(t.Context(), u.ID)
 	if err != nil {
 		t.Fatalf("issue session: %v", err)
@@ -355,7 +355,8 @@ func TestAPIImportRequiresLayoutBeforeWrite(t *testing.T) {
 			u := mustUser(t, database, "alice", db.RoleMember)
 			root := tc.setup(t, dataDir, database)
 
-			s := &Server{db: database, dataDir: dataDir, storageRoot: root, sessions: newSessionStore(database)}
+			s := newTestServer(t, database, dataDir)
+			s.storageRoot = root
 			sid, err := s.sessions.issue(t.Context(), u.ID)
 			if err != nil {
 				t.Fatalf("issue session: %v", err)

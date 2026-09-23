@@ -194,7 +194,7 @@ func TestStaticBundleServedBeforeLogin(t *testing.T) {
 	database, dir := setupTestDB(t)
 	defer database.Close()
 
-	s := &Server{db: database, dataDir: dir}
+	s := newTestServer(t, database, dir)
 	mux, err := s.routes()
 	if err != nil {
 		t.Fatalf("routes: %v", err)

@@ -96,7 +96,7 @@ func (s *Server) handleAPITrashEmpty(w http.ResponseWriter, r *http.Request) {
 // root before deleting authoritative rows, commits every DB deletion together,
 // and sweeps orphan authors once via the matching DB purge primitive.
 func (s *Server) purgeTrashedBooks(ctx context.Context, requested []int64) (int, error) {
-	releaseStorageSlot, err := s.acquireStorageWorkSlot(ctx)
+	releaseStorageSlot, err := s.storageQueue.Acquire(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -110,7 +110,7 @@ func (s *Server) purgeTrashedBooks(ctx context.Context, requested []int64) (int,
 
 	var ids []int64
 	var assets []db.AssetRow
-	root := s.managedRoot()
+	root := s.storageRoot
 	err = s.db.Transact(ctx, func(tx *db.Tx) error {
 		ids, err = db.ListTrashedBookIDs(tx, requested...)
 		if err != nil {

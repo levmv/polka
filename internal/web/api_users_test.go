@@ -19,7 +19,7 @@ func TestAPIUsersAdminListAndCreate(t *testing.T) {
 	admin := mustUser(t, database, "admin", db.RoleAdmin)
 	member := mustUser(t, database, "bob", db.RoleMember)
 
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 
 	w := httptest.NewRecorder()
@@ -164,7 +164,7 @@ func TestAPIUserAccessCanUseAdminPrivateShelf(t *testing.T) {
 		t.Fatalf("seed private shelf: %v", err)
 	}
 
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 
 	w := httptest.NewRecorder()
@@ -211,7 +211,7 @@ func TestAPIUserPasswordSelfAndAdmin(t *testing.T) {
 	admin := mustUser(t, database, "admin", db.RoleAdmin)
 	member := mustUser(t, database, "bob", db.RoleMember)
 
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 
 	memberCurrentSession, err := s.sessions.issue(t.Context(), member.ID)
@@ -278,7 +278,7 @@ func TestAPIUserDeleteGuardsLastAdminAndRevokesSessions(t *testing.T) {
 	admin := mustUser(t, database, "admin", db.RoleAdmin)
 	member := mustUser(t, database, "bob", db.RoleMember)
 
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 
 	w := httptest.NewRecorder()

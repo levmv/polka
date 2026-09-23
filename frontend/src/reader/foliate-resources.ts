@@ -113,12 +113,6 @@ export async function waitForFonts(doc: Document, signal?: AbortSignal): Promise
     }
 }
 
-export async function waitForImages(doc: Document, signal?: AbortSignal): Promise<void> {
-    await Promise.all(
-        Array.from(doc.querySelectorAll('img'), (element) => waitForResource(element, signal)),
-    );
-}
-
 function waitForResource(element: Element, signal?: AbortSignal): Promise<void> {
     if (element.localName === 'img') {
         const image = element as HTMLImageElement;

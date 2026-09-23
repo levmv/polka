@@ -244,7 +244,7 @@ func (s *Server) openDeliverySource(ctx context.Context, assetID int64) (assetFi
 		return asset, src, err
 	}
 
-	releaseStorageSlot, slotErr := s.acquireStorageWorkSlot(ctx)
+	releaseStorageSlot, slotErr := s.storageQueue.Acquire(ctx)
 	if slotErr != nil {
 		return assetFileRow{}, nil, slotErr
 	}
@@ -260,7 +260,7 @@ func (s *Server) openDeliverySourceOnce(ctx context.Context, assetID int64) (ass
 	if err != nil {
 		return assetFileRow{}, nil, newDeliveryPrepError(deliveryMessagePrepareFailed, fmt.Errorf("resolve asset %d: %w", assetID, err))
 	}
-	fullPath, err := s.managedRoot().Resolve(asset.StoragePath)
+	fullPath, err := s.storageRoot.Resolve(asset.StoragePath)
 	if err != nil {
 		return assetFileRow{}, nil, newDeliveryPrepError(deliveryMessageFileMissing, fmt.Errorf("resolve storage path for asset %d: %w", assetID, err))
 	}

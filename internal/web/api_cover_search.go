@@ -30,8 +30,7 @@ const (
 )
 
 var (
-	coverSearchVQDPattern  = regexp.MustCompile(`vqd=["']([^"']+)["']`)
-	fallbackCoverSearchKey = newCoverSearchKey()
+	coverSearchVQDPattern = regexp.MustCompile(`vqd=["']([^"']+)["']`)
 	// SSRF guard for public cover-preview fetches. validatePublicImageIP already
 	// rejects the ranges covered by netip's predicates (loopback/private/
 	// link-local/unspecified/multicast); this list is only the remaining
@@ -60,7 +59,6 @@ type coverSearchResultDTO struct {
 type coverSearchTokenPayload struct {
 	SourceURL  string `json:"source_url"`
 	PreviewURL string `json:"preview_url"`
-	Source     string `json:"source"`
 	ExpiresAt  int64  `json:"exp"`
 }
 
@@ -114,7 +112,6 @@ func (s *Server) handleAPICoverSearch(w http.ResponseWriter, r *http.Request) {
 		payload := coverSearchTokenPayload{
 			SourceURL:  result.SourceURL,
 			PreviewURL: result.PreviewURL,
-			Source:     result.Source,
 			ExpiresAt:  time.Now().Add(coverSearchTokenTTL).Unix(),
 		}
 		token, err := s.signCoverSearchToken(payload)
@@ -330,11 +327,7 @@ func (s *Server) fetchCoverSearchURL(ctx context.Context, rawURL, referer string
 		req.Header.Set("Referer", referer)
 	}
 
-	client := s.coverSearchClient
-	if client == nil {
-		client = defaultCoverSearchClient()
-	}
-	res, err := client.Do(req)
+	res, err := s.coverSearchClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -369,11 +362,6 @@ func (s *Server) fetchPublicImage(ctx context.Context, rawURL string) (fetchedPu
 	if err != nil {
 		return fetchedPublicImage{}, err
 	}
-	client := s.publicImageClient
-	if client == nil {
-		client = defaultPublicImageClient()
-	}
-
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return fetchedPublicImage{}, err
@@ -381,7 +369,7 @@ func (s *Server) fetchPublicImage(ctx context.Context, rawURL string) (fetchedPu
 	req.Header.Set("User-Agent", remoteCoverUserAgent)
 	req.Header.Set("Accept", "image/*,*/*;q=0.5")
 
-	res, err := client.Do(req)
+	res, err := s.publicImageClient.Do(req)
 	if err != nil {
 		return fetchedPublicImage{}, err
 	}
@@ -553,20 +541,13 @@ func newCoverSearchKey() []byte {
 	return key
 }
 
-func (s *Server) coverSearchSigningKey() []byte {
-	if len(s.coverSearchKey) > 0 {
-		return s.coverSearchKey
-	}
-	return fallbackCoverSearchKey
-}
-
 func (s *Server) signCoverSearchToken(payload coverSearchTokenPayload) (string, error) {
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return "", err
 	}
 	encodedPayload := base64.RawURLEncoding.EncodeToString(data)
-	mac := hmac.New(sha256.New, s.coverSearchSigningKey())
+	mac := hmac.New(sha256.New, s.coverSearchKey)
 	mac.Write([]byte(encodedPayload))
 	signature := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 	return encodedPayload + "." + signature, nil
@@ -577,7 +558,7 @@ func (s *Server) verifyCoverSearchToken(token string) (coverSearchTokenPayload, 
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
 		return coverSearchTokenPayload{}, errors.New("Invalid cover token")
 	}
-	mac := hmac.New(sha256.New, s.coverSearchSigningKey())
+	mac := hmac.New(sha256.New, s.coverSearchKey)
 	mac.Write([]byte(parts[0]))
 	expected := mac.Sum(nil)
 	actual, err := base64.RawURLEncoding.DecodeString(parts[1])

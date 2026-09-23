@@ -22,7 +22,6 @@ import (
 	"github.com/levmv/polka/internal/bookmeta"
 	"github.com/levmv/polka/internal/covers"
 	"github.com/levmv/polka/internal/db"
-	"github.com/levmv/polka/internal/workslot"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -59,10 +58,7 @@ func TestCoverHandler(t *testing.T) {
 	database, dir := setupTestDB(t)
 	defer database.Close()
 
-	s := &Server{
-		db:      database,
-		dataDir: dir,
-	}
+	s := newTestServer(t, database, dir)
 	reader := mustUser(t, database, "cover-reader", db.RoleReader)
 	coverRequest := func(target string, bookID int64) *http.Request {
 		req := httptest.NewRequest(http.MethodGet, target, nil)
@@ -196,7 +192,7 @@ func TestCoverHandlerAllowsMemberTrashCoversOnly(t *testing.T) {
 		t.Fatalf("soft delete: %v", err)
 	}
 
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 
 	memberReq := jsonRequest(t, s, member.ID, http.MethodGet, "/covers/1", nil)
@@ -218,10 +214,7 @@ func TestAPICoverUpload(t *testing.T) {
 	database, dir := setupTestDB(t)
 	defer database.Close()
 
-	s := &Server{
-		db:      database,
-		dataDir: dir,
-	}
+	s := newTestServer(t, database, dir)
 	member := mustUser(t, database, "member", db.RoleMember)
 
 	uploadReq := func(bookID int64, filename string, contentType string, content []byte) *http.Request {
@@ -271,8 +264,8 @@ func TestStoreCoverWaitsForStorageSlotAndMergesCurrentOverrides(t *testing.T) {
 	database, dir := setupTestDB(t)
 	defer database.Close()
 
-	queue := workslot.New()
-	s := &Server{db: database, dataDir: dir, storageQueue: queue}
+	s := newTestServer(t, database, dir)
+	queue := s.storageQueue
 	releasePausedWriteback, err := queue.Acquire(context.Background())
 	if err != nil {
 		t.Fatalf("hold storage slot: %v", err)
@@ -341,10 +334,7 @@ func TestAPIGeneratedCoverPreviewDoesNotPersist(t *testing.T) {
 	database, dir := setupTestDB(t)
 	defer database.Close()
 
-	s := &Server{
-		db:      database,
-		dataDir: dir,
-	}
+	s := newTestServer(t, database, dir)
 	member := mustUser(t, database, "member", db.RoleMember)
 
 	req := httptest.NewRequest(
@@ -445,19 +435,16 @@ func TestAPICoverURL(t *testing.T) {
 	defer database.Close()
 
 	var requestedURL string
-	s := &Server{
-		db:      database,
-		dataDir: dir,
-		coverClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-			requestedURL = req.URL.String()
-			return &http.Response{
-				StatusCode: http.StatusOK,
-				Header:     make(http.Header),
-				Body:       io.NopCloser(bytes.NewReader(testPNG(t))),
-				Request:    req,
-			}, nil
-		})},
-	}
+	s := newTestServer(t, database, dir)
+	s.coverClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requestedURL = req.URL.String()
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(bytes.NewReader(testPNG(t))),
+			Request:    req,
+		}, nil
+	})}
 	member := mustUser(t, database, "member", db.RoleMember)
 
 	req := httptest.NewRequest(
@@ -690,7 +677,6 @@ func TestCoverSearchTokenValidation(t *testing.T) {
 	payload := coverSearchTokenPayload{
 		SourceURL:  "https://images.example/cover.jpg",
 		PreviewURL: "https://thumb.example/cover.jpg",
-		Source:     "example.test",
 		ExpiresAt:  time.Now().Add(time.Minute).Unix(),
 	}
 	token, err := s.signCoverSearchToken(payload)
@@ -765,25 +751,21 @@ func TestAPICoverSearchApply(t *testing.T) {
 	defer database.Close()
 
 	var requestedURL string
-	s := &Server{
-		db:             database,
-		dataDir:        dir,
-		coverSearchKey: bytes.Repeat([]byte{9}, 32),
-		publicImageClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-			requestedURL = req.URL.String()
-			return &http.Response{
-				StatusCode: http.StatusOK,
-				Header:     make(http.Header),
-				Body:       io.NopCloser(bytes.NewReader(testPNG(t))),
-				Request:    req,
-			}, nil
-		})},
-	}
+	s := newTestServer(t, database, dir)
+	s.coverSearchKey = bytes.Repeat([]byte{9}, 32)
+	s.publicImageClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requestedURL = req.URL.String()
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(bytes.NewReader(testPNG(t))),
+			Request:    req,
+		}, nil
+	})}
 	member := mustUser(t, database, "member-cover-search", db.RoleMember)
 	token, err := s.signCoverSearchToken(coverSearchTokenPayload{
 		SourceURL:  "https://images.example/cover.png",
 		PreviewURL: "https://thumb.example/cover.png",
-		Source:     "images.example",
 		ExpiresAt:  time.Now().Add(time.Minute).Unix(),
 	})
 	if err != nil {

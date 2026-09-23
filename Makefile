@@ -43,8 +43,7 @@ test: node-deps pdfium-wasm
 pdfium-wasm:
 	GOOS= GOARCH= go run ./internal/format/pdf/wasmtool prepare
 
-build: pdfium-wasm
-	$(MAKE) frontend
+build: pdfium-wasm frontend
 	CGO_ENABLED=0 go build -trimpath -tags nodynamic -ldflags "-s -w -X github.com/levmv/polka/internal/version.Version=$(POLKA_VERSION)" -o polka .
 
 browser-test: build

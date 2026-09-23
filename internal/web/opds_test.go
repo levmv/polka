@@ -20,7 +20,7 @@ func TestOPDSRequiresAuth(t *testing.T) {
 	defer database.Close()
 
 	_ = mustUser(t, database, "alice", db.RoleMember)
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 
 	w := httptest.NewRecorder()
 	testRoutes(t, s).ServeHTTP(w, httptest.NewRequest("GET", "/opds", nil))
@@ -38,7 +38,7 @@ func TestOPDSRootFeed(t *testing.T) {
 	defer database.Close()
 
 	_ = mustUser(t, database, "alice", db.RoleMember)
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 
 	req := httptest.NewRequest("GET", "/opds", nil)
 	req.SetBasicAuth("alice", "pw")
@@ -103,7 +103,7 @@ func TestOPDSShelves(t *testing.T) {
 		}
 	}
 
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 	get := func(path string) *httptest.ResponseRecorder {
 		t.Helper()
@@ -166,7 +166,7 @@ func TestOPDSRecentFeed(t *testing.T) {
 	defer database.Close()
 
 	_ = mustUser(t, database, "alice", db.RoleMember)
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 
 	req := httptest.NewRequest("GET", "/opds/recent", nil)
 	req.SetBasicAuth("alice", "pw")
@@ -193,7 +193,7 @@ func TestOPDSSeriesNav(t *testing.T) {
 	_ = mustUser(t, database, "alice", db.RoleMember)
 	mustExec(t, database, `UPDATE books SET series = 'Middle-earth' WHERE id = 1`)
 
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 
 	req := httptest.NewRequest("GET", "/opds/series", nil)
 	req.SetBasicAuth("alice", "pw")
@@ -232,7 +232,7 @@ func TestOPDSSeriesNavPaging(t *testing.T) {
 			id, name, name, name)
 
 	}
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 
 	fetch := func(target string) string {
 		req := httptest.NewRequest("GET", target, nil)
@@ -273,7 +273,7 @@ func TestOPDSTagsNav(t *testing.T) {
 	_ = mustUser(t, database, "alice", db.RoleMember)
 	mustExec(t, database, `UPDATE books SET tags = 'fantasy, classics' WHERE id = 1`)
 
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 
 	req := httptest.NewRequest("GET", "/opds/tags", nil)
 	req.SetBasicAuth("alice", "pw")
@@ -314,7 +314,7 @@ func TestOPDSBooksFeed(t *testing.T) {
 		WHERE id = 1
 	`)
 
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 
 	req := httptest.NewRequest("GET", "/opds/books", nil)
 	req.SetBasicAuth("alice", "pw")
@@ -373,7 +373,7 @@ func TestOPDSDeliveryAcceptsAppToken(t *testing.T) {
 		t.Fatalf("create app token: %v", err)
 	}
 	token := created.Token
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 	handler := testRoutes(t, s)
 
 	for _, tc := range []struct {
@@ -451,7 +451,7 @@ func TestOPDSPaginationBoundaries(t *testing.T) {
 			(5, 'Boundary Three', '');
 	`)
 
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 
 	type paginationCase struct {
 		path       string
@@ -657,7 +657,7 @@ func TestOPDSDownloadAcceptsBasicAuth(t *testing.T) {
 	defer database.Close()
 
 	_ = mustUser(t, database, "alice", db.RoleMember)
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 
 	req := httptest.NewRequest("GET", "/download/1", nil)
 	req.SetBasicAuth("alice", "pw")
@@ -677,7 +677,7 @@ func TestOPDSSearchFeed(t *testing.T) {
 	defer database.Close()
 
 	_ = mustUser(t, database, "alice", db.RoleMember)
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 
 	req := httptest.NewRequest("GET", "/opds/search?q=Hobbit", nil)
 	req.SetBasicAuth("alice", "pw")
@@ -726,7 +726,7 @@ func TestOPDSOpenSearchDescription(t *testing.T) {
 	defer database.Close()
 
 	_ = mustUser(t, database, "alice", db.RoleMember)
-	s := newTestServer(database, dir)
+	s := newTestServer(t, database, dir)
 
 	req := httptest.NewRequest("GET", "/opds/osd", nil)
 	req.SetBasicAuth("alice", "pw")

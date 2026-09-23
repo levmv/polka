@@ -1058,9 +1058,14 @@ func TestConvertHTMLZToEPUB(t *testing.T) {
 	}
 }
 
-func TestConvertHTMLZToEPUBCopiesSVGImageResource(t *testing.T) {
+func TestConvertHTMLZToEPUBIncludesSVGImageResource(t *testing.T) {
 	svg := []byte(`<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>`)
+<!DOCTYPE svg PUBLIC "-//W3C/DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10">
+<defs><path id="glyph"
+ d="M0 0L1 1"/><path id="glyph"
+ d="M0 0L1 1"/><path id="other" d="M2 2L3 3"/></defs><use href="#glyph"/>
+</svg>`)
 	src := testZip(t, map[string][]byte{
 		"index.html": []byte(`<!doctype html>
 <html>
@@ -1085,8 +1090,14 @@ func TestConvertHTMLZToEPUBCopiesSVGImageResource(t *testing.T) {
 	if !strings.Contains(opf, `<item id="img1" href="images/image1.svg" media-type="image/svg+xml"/>`) {
 		t.Fatalf("content.opf missing SVG manifest item:\n%s", opf)
 	}
-	if got := zipEntryBytes(t, out.Bytes(), "OEBPS/images/image1.svg"); !bytes.Equal(got, svg) {
-		t.Fatalf("HTMLZ SVG bytes = %d; want copied SVG", len(got))
+	wantSVG := `<?xml version="1.0" encoding="UTF-8"?>
+
+<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10">
+<defs><path id="glyph"
+ d="M0 0L1 1"/><path id="other" d="M2 2L3 3"/></defs><use href="#glyph"/>
+</svg>`
+	if got := zipEntry(t, out.Bytes(), "OEBPS/images/image1.svg"); got != wantSVG {
+		t.Fatalf("HTMLZ SVG content:\ngot  %s\nwant %s", got, wantSVG)
 	}
 }
 
@@ -1106,38 +1117,6 @@ func TestConvertHTMLZToEPUBOmitsAmbiguousImageResource(t *testing.T) {
 	}
 	if strings.Contains(zipEntry(t, out.Bytes(), "OEBPS/text.xhtml"), "<img") {
 		t.Fatal("converted document retained a reference to an unresolved ambiguous image")
-	}
-}
-
-func TestConvertHTMLZToEPUBSanitizesSVGImageResource(t *testing.T) {
-	svg := []byte(`<?xml version="1.0" standalone="no"?>
-<!DOCTYPE svg PUBLIC "-//W3C/DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
-<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10">
-<defs>
-<path id="glyph" d="M 0 0 L 1 1"/>
-<path id="glyph" d="M 0 0 L 1 1"/>
-</defs>
-<use href="#glyph"/>
-</svg>`)
-	src := testZip(t, map[string][]byte{
-		"index.html": []byte(`<!doctype html>
-<html>
-  <head><title>Sanitized SVG HTMLZ</title></head>
-  <body><p><img src="images/diagram.svg" alt="Diagram"></p></body>
-</html>`),
-		"images/diagram.svg": svg,
-	})
-	var out bytes.Buffer
-	if err := ConvertContext(context.Background(), &out, bytes.NewReader(src), format.FormatHTMLZ, int64(len(src)), TargetEPUB); err != nil {
-		t.Fatalf("Convert HTMLZ to EPUB: %v", err)
-	}
-
-	got := string(zipEntryBytes(t, out.Bytes(), "OEBPS/images/image1.svg"))
-	if strings.Contains(strings.ToLower(got), "<!doctype") {
-		t.Fatalf("SVG resource kept DOCTYPE:\n%s", got)
-	}
-	if count := strings.Count(got, `id="glyph"`); count != 1 {
-		t.Fatalf("SVG resource has %d glyph ids; want duplicate definitions removed:\n%s", count, got)
 	}
 }
 
