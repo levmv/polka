@@ -706,7 +706,7 @@ func TestConvertHTMLToEPUBPreservesSafeSemanticAttributes(t *testing.T) {
 	for _, want := range []string{
 		`<div class="chapter main" role="doc-chapter" dir="rtl" lang="fr">`,
 		`<h2 id="heading-1" class="title">Titre</h2>`,
-		`<p class="first child">Bonjour <a href="#note" class="noteref" role="doc-noteref">1</a></p>`,
+		`<p class="first child">Bonjour <a class="noteref" role="doc-noteref" href="#note">1</a></p>`,
 		`<img src="images/img1.png" alt="cover" class="cover-art"/>`,
 		`<p id="note" xml:lang="en-US">Note.</p>`,
 	} {

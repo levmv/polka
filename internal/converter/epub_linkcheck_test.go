@@ -125,6 +125,15 @@ func TestCheckEPUBInternalLinksDetectsBrokenReferences(t *testing.T) {
 			wantLoc: "OEBPS/styles/main.css",
 		},
 		{
+			name: "SVG paint reference in XML-escaped style text",
+			mutate: func(files map[string]string) {
+				files["OEBPS/text.xhtml"] = strings.Replace(files["OEBPS/text.xhtml"], `</body>`,
+					`<svg xmlns="http://www.w3.org/2000/svg"><style>.shape { fill: url(&quot;#missing-paint&quot;); }</style><path class="shape"/></svg></body>`, 1)
+			},
+			want:    "fragment #missing-paint has no matching id",
+			wantLoc: "OEBPS/text.xhtml",
+		},
+		{
 			name: "cover metadata references unknown id",
 			mutate: func(files map[string]string) {
 				files["OEBPS/content.opf"] = strings.Replace(files["OEBPS/content.opf"],

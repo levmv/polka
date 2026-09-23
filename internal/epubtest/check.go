@@ -13,8 +13,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-
-	"golang.org/x/net/html"
 )
 
 // Problem describes one internal reference in a generated EPUB that does
@@ -47,18 +45,21 @@ func (p Problem) String() string {
 // reference we can resolve against the package. Only elements our EPUB writers
 // emit need to be covered, but the table is easy to extend.
 var epubRefAttrs = map[string][]string{
-	"a":       {"href"},
-	"link":    {"href"},
-	"img":     {"src"},
-	"image":   {"href", "xlink:href"},
-	"use":     {"href", "xlink:href"},
-	"source":  {"src"},
-	"audio":   {"src"},
-	"video":   {"src"},
-	"iframe":  {"src"},
-	"object":  {"data"},
-	"embed":   {"src"},
-	"content": {"src"}, // NCX navigation
+	"a":        {"href"},
+	"link":     {"href"},
+	"img":      {"src"},
+	"image":    {"href", "xlink:href"},
+	"feimage":  {"href", "xlink:href"},
+	"textpath": {"href", "xlink:href"},
+	"use":      {"href", "xlink:href"},
+	"mglyph":   {"src"},
+	"source":   {"src"},
+	"audio":    {"src"},
+	"video":    {"src"},
+	"iframe":   {"src"},
+	"object":   {"data"},
+	"embed":    {"src"},
+	"content":  {"src"}, // NCX navigation
 }
 
 var epubCSSURLRefRE = regexp.MustCompile(`(?i)url\(\s*(?:'([^']*)'|"([^"]*)"|([^)'"\s]*))\s*\)`)
@@ -190,7 +191,10 @@ func CheckReader(r io.ReaderAt, size int64) ([]Problem, error) {
 		if err != nil {
 			return nil, err
 		}
-		ids, docRefs := scanXHTMLIDsAndRefs(data)
+		ids, docRefs, err := scanXHTMLIDsAndRefs(data)
+		if err != nil {
+			return nil, fmt.Errorf("parse %s: %w", docPath, err)
+		}
 		docIDs[docPath] = ids
 		for _, ref := range docRefs {
 			refs = append(refs, docRef{doc: docPath, ref: ref})
@@ -303,35 +307,59 @@ func epubExternalScheme(scheme string) bool {
 	return false
 }
 
-func scanXHTMLIDsAndRefs(data []byte) (ids map[string]bool, refs []string) {
+func scanXHTMLIDsAndRefs(data []byte) (ids map[string]bool, refs []string, err error) {
 	ids = map[string]bool{}
-	z := html.NewTokenizer(bytes.NewReader(data))
+	decoder := xml.NewDecoder(bytes.NewReader(data))
+	// Rebuilt EPUB 2 chapters may retain XHTML's named entities. Resolve the
+	// fixed vocabulary without fetching a document's external DTD.
+	decoder.Entity = xml.HTMLEntity
+	var style strings.Builder
+	inStyle := false
 	for {
-		switch z.Next() {
-		case html.ErrorToken:
-			return ids, refs
-		case html.StartTagToken, html.SelfClosingTagToken:
-			token := z.Token()
-			refAttrs := epubRefAttrs[strings.ToLower(token.Data)]
+		token, err := decoder.Token()
+		if err == io.EOF {
+			return ids, refs, nil
+		}
+		if err != nil {
+			return nil, nil, err
+		}
+		switch token := token.(type) {
+		case xml.StartElement:
+			name := strings.ToLower(token.Name.Local)
+			refAttrs := epubRefAttrs[name]
 			for _, attr := range token.Attr {
-				key := strings.ToLower(attr.Key)
-				if key == "style" {
-					refs = append(refs, extractCSSURLRefs([]byte(attr.Val))...)
+				key := strings.ToLower(attr.Name.Local)
+				if attr.Name.Space == "http://www.w3.org/1999/xlink" {
+					key = "xlink:" + key
 				}
-				if key == "id" || key == "xml:id" || (key == "name" && token.Data == "a") {
-					if v := strings.TrimSpace(attr.Val); v != "" {
+				switch key {
+				case "style", "fill", "stroke", "filter", "clip-path", "mask", "marker-start", "marker-mid", "marker-end":
+					refs = append(refs, extractCSSURLRefs([]byte(attr.Value))...)
+				}
+				if key == "id" || (key == "name" && name == "a") {
+					if v := strings.TrimSpace(attr.Value); v != "" {
 						ids[v] = true
 					}
 					continue
 				}
 				for _, want := range refAttrs {
 					if key == want {
-						refs = append(refs, attr.Val)
+						refs = append(refs, attr.Value)
 					}
 				}
 			}
-			if strings.EqualFold(token.Data, "style") && z.Next() == html.TextToken {
-				refs = append(refs, extractCSSURLRefs(z.Text())...)
+			if name == "style" {
+				inStyle = true
+				style.Reset()
+			}
+		case xml.CharData:
+			if inStyle {
+				style.Write(token)
+			}
+		case xml.EndElement:
+			if strings.EqualFold(token.Name.Local, "style") && inStyle {
+				refs = append(refs, extractCSSURLRefs([]byte(style.String()))...)
+				inStyle = false
 			}
 		}
 	}

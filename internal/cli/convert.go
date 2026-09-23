@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/levmv/polka/internal/converter"
@@ -22,7 +23,10 @@ func runConvert(ctx context.Context, _ string, args []string) error {
 
 	srcPath := fs.Arg(0)
 	dstPath := fs.Arg(1)
-	if err := converter.ConvertFile(ctx, srcPath, dstPath, converter.NormalizeTarget(*target), *force); err != nil {
+	opts := converter.ConversionOptions{OnWarning: func(message string) {
+		fmt.Fprintf(os.Stderr, "Warning: %s\n", message)
+	}}
+	if err := converter.ConvertFileWithOptions(ctx, srcPath, dstPath, converter.NormalizeTarget(*target), *force, opts); err != nil {
 		return err
 	}
 	fmt.Printf("Converted: %s\n", dstPath)

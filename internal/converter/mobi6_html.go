@@ -85,7 +85,13 @@ func (s *mobi6Source) render() (mobi6Book, error) {
 	for _, ref := range r.references {
 		pos, ok := r.anchors[ref.key]
 		if !ok {
-			return mobi6Book{}, fmt.Errorf("MOBI6 link target is missing: %s: %w", strings.ReplaceAll(ref.key, "\x00", "#"), ErrUnsupportedContent)
+			s.options.warn("MOBI6 link target is missing: %.200s", strings.ReplaceAll(ref.key, "\x00", "#"))
+			// Remove the complete attribute without shifting the byte offsets
+			// already used by other links and the navigation index.
+			for i := ref.at - len(`filepos="`); i < ref.at+len(`0000000000"`); i++ {
+				data[i] = ' '
+			}
+			continue
 		}
 		copy(data[ref.at:], fmt.Sprintf("%010d", pos))
 	}
@@ -96,21 +102,20 @@ func (s *mobi6Source) render() (mobi6Book, error) {
 			if item.Href != "" {
 				if pos, ok := r.anchors[item.Href]; ok {
 					nav = append(nav, mobi6Navigation{label: item.Label, offset: pos})
-				} else {
-					r.err = fmt.Errorf("MOBI6 navigation target is missing: %s: %w", strings.ReplaceAll(item.Href, "\x00", "#"), ErrUnsupportedContent)
 				}
 			}
 			visitNav(item.Children)
 		}
 	}
 	visitNav(s.nav)
-	if r.err != nil {
-		return mobi6Book{}, r.err
-	}
 	if !utf8.Valid(data) {
 		return mobi6Book{}, fmt.Errorf("MOBI6 text is not valid UTF-8")
 	}
-	return mobi6Book{text: data, images: s.images, cover: s.cover, meta: s.meta, nav: nav, start: r.anchors[s.start]}, nil
+	start, ok := r.anchors[s.start]
+	if !ok {
+		start = r.anchors[mobi6Key(s.documents[0].name, "")]
+	}
+	return mobi6Book{text: data, images: s.images, cover: s.cover, meta: s.meta, nav: nav, start: start}, nil
 }
 
 func (r *mobi6Renderer) write(s string) {
@@ -164,7 +169,7 @@ func (r *mobi6Renderer) node(n *html.Node, doc mobi6Document, inherited mobi6Sty
 	style := inherited
 	if n.Type == html.ElementNode {
 		var err error
-		style, err = mobi6ComputedStyle(n, doc.css, inherited, &r.styleWork)
+		style, err = mobi6ComputedStyle(n, doc.css, inherited, &r.styleWork, r.source.options)
 		if err != nil {
 			r.err = err
 			return
@@ -183,11 +188,19 @@ func (r *mobi6Renderer) node(n *html.Node, doc mobi6Document, inherited mobi6Sty
 		r.tocRendered = true
 	}
 	if tag == "svg" {
-		r.svg(n, doc)
+		if err := r.svg(n, doc); err != nil {
+			if fatalConversionError(err) {
+				r.err = err
+				return
+			}
+			r.source.options.warn("%s: %v; kept available text", doc.name, err)
+			r.text(htmlNodeText(n), style)
+		}
 		return
 	}
 	if tag == "audio" || tag == "video" || tag == "math" || tag == "object" || tag == "embed" || tag == "iframe" {
-		r.err = fmt.Errorf("MOBI6 cannot preserve <%s> content: %w", tag, ErrUnsupportedContent)
+		r.source.options.warn("%s: MOBI6 cannot preserve <%s>; kept available text", doc.name, tag)
+		r.text(htmlNodeText(n), style)
 		return
 	}
 	if tag == "img" {
@@ -206,22 +219,20 @@ func (r *mobi6Renderer) node(n *html.Node, doc mobi6Document, inherited mobi6Sty
 		if href != "" {
 			u, err := url.Parse(href)
 			if err != nil {
-				r.err = err
-				return
-			}
-			if u.Scheme != "" || u.Host != "" {
+				r.source.options.warn("Omitted invalid link %.200q", href)
+			} else if u.Scheme != "" || u.Host != "" {
 				if safe := safeHTMLLinkHref(href); safe != "" {
 					r.write(` href="` + html.EscapeString(safe) + `"`)
 				}
 			} else {
 				key, err := r.source.link(doc.name, href)
 				if err != nil {
-					r.err = err
-					return
+					r.source.options.warn("Omitted link: %v", err)
+				} else {
+					r.write(` filepos="`)
+					r.reference(key)
+					r.write(`"`)
 				}
-				r.write(` filepos="`)
-				r.reference(key)
-				r.write(`"`)
 			}
 		}
 		r.write(">")
@@ -328,12 +339,18 @@ func (r *mobi6Renderer) text(text string, style mobi6Style) {
 
 func (r *mobi6Renderer) image(base, href, alt string, node *html.Node) {
 	if href == "" {
-		r.err = fmt.Errorf("MOBI6 image has no source: %w", ErrUnsupportedContent)
+		r.source.options.warn("%s: image has no source", base)
+		r.write(html.EscapeString(alt))
 		return
 	}
 	id, err := r.source.image(base, href)
 	if err != nil {
-		r.err = err
+		if fatalConversionError(err) {
+			r.err = err
+			return
+		}
+		r.source.options.warn("%s: omitted image: %v", base, err)
+		r.write(html.EscapeString(alt))
 		return
 	}
 	r.write(fmt.Sprintf(`<img recindex="%05d" alt="%s"`, id+1, html.EscapeString(alt)))
@@ -345,7 +362,7 @@ func (r *mobi6Renderer) image(base, href, alt string, node *html.Node) {
 	r.write(">")
 }
 
-func (r *mobi6Renderer) svg(n *html.Node, doc mobi6Document) {
+func (r *mobi6Renderer) svg(n *html.Node, doc mobi6Document) error {
 	// A common EPUB cover is an SVG viewport containing just one raster image.
 	// Unwrap only that unambiguous case; actual vector artwork needs a rasterizer.
 	var img *html.Node
@@ -364,30 +381,30 @@ func (r *mobi6Renderer) svg(n *html.Node, doc mobi6Document) {
 		img = c
 		return nil
 	})
+	if fatalConversionError(err) {
+		return err
+	}
 	if err != nil || img == nil {
-		r.err = fmt.Errorf("MOBI6 requires rasterization of SVG content: %w", ErrUnsupportedContent)
-		return
+		return fmt.Errorf("MOBI6 requires rasterization of SVG content: %w", ErrUnsupportedContent)
 	}
 	// An offset or cropped viewport is artwork, not a transparent cover wrapper.
 	for _, key := range []string{"x", "y"} {
 		if value := attrValue(img, key); value != "" && value != "0" {
-			r.err = fmt.Errorf("MOBI6 requires rasterization of positioned SVG content: %w", ErrUnsupportedContent)
-			return
+			return fmt.Errorf("MOBI6 requires rasterization of positioned SVG content: %w", ErrUnsupportedContent)
 		}
 	}
 	if viewBox := attrValue(n, "viewBox"); viewBox != "" {
 		parts := strings.Fields(strings.ReplaceAll(viewBox, ",", " "))
 		if len(parts) != 4 || parts[0] != "0" || parts[1] != "0" || parts[2] != attrValue(img, "width") || parts[3] != attrValue(img, "height") {
-			r.err = fmt.Errorf("MOBI6 requires rasterization of cropped SVG content: %w", ErrUnsupportedContent)
-			return
+			return fmt.Errorf("MOBI6 requires rasterization of cropped SVG content: %w", ErrUnsupportedContent)
 		}
 	} else if attrValue(n, "width") == "" || attrValue(n, "height") == "" || attrValue(n, "width") != attrValue(img, "width") || attrValue(n, "height") != attrValue(img, "height") {
-		r.err = fmt.Errorf("MOBI6 requires rasterization of ambiguous SVG viewport: %w", ErrUnsupportedContent)
-		return
+		return fmt.Errorf("MOBI6 requires rasterization of ambiguous SVG viewport: %w", ErrUnsupportedContent)
 	}
 	href := attrValue(img, "href")
 	if href == "" {
 		href = attrValue(img, "xlink:href")
 	}
 	r.image(doc.name, href, "", img)
+	return nil
 }

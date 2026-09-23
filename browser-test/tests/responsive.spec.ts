@@ -1,8 +1,32 @@
 import { expect, test } from './fixtures';
-import { openReader } from './helpers';
+import { importTestBook, openReader } from './helpers';
 
 // Tablet layout and touch interactions run in Chromium and WebKit.
 test.describe('Responsive layout (iPad viewport)', () => {
+  test('Converted download reports missing content and offers the original', async ({ page }) => {
+    const bookId = await importTestBook(page, {
+      name: 'imperfect.html',
+      mimeType: 'text/html',
+      buffer: Buffer.from(
+        '<html><head><title>Imperfect book</title></head><body><p>A readable chapter.</p><img src="missing.png" alt="Diagram"/><p>The ending.</p></body></html>',
+      ),
+    });
+    await page.goto(`/book/${bookId}`);
+    await page.getByRole('button', { name: 'Download formats for HTML' }).click();
+    const converted = page.waitForEvent('download');
+    await page.getByRole('menuitem', { name: 'Download EPUB', exact: true }).click();
+    const download = await converted;
+    expect(await download.failure()).toBeNull();
+    expect(download.suggestedFilename()).toMatch(/\.epub$/);
+    const toast = page.locator('.toast-visible');
+    await expect(toast).toContainText('Some content could not be converted and may be missing.');
+    await expect(toast).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`/book/${bookId}$`));
+    const original = page.waitForEvent('download');
+    await toast.getByRole('button', { name: 'Download original' }).click();
+    expect((await original).suggestedFilename()).toMatch(/\.html$/);
+  });
+
   test('Drawer controls work across tablet breakpoints', async ({ page }) => {
     await page.goto('/?q=With%20Cover');
 

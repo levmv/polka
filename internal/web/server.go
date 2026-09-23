@@ -8,6 +8,8 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -46,6 +48,7 @@ type Server struct {
 	publicImageClient  *http.Client
 	passwordAuthSlots  chan struct{}
 	conversionSlots    chan struct{}
+	preparedDownloads  preparedDownloadStore
 	pageCountRenderer  *pdf.Renderer
 	pageCountCooldown  map[int64]pageCountRetry // Access requires the storage slot.
 	// Per-process HMAC key for ephemeral cover-search preview/apply tokens.
@@ -169,6 +172,13 @@ func Serve(ctx context.Context, cfg Config) error {
 		coverSearchClient: defaultCoverSearchClient(),
 		publicImageClient: defaultPublicImageClient(),
 		coverSearchKey:    newCoverSearchKey(),
+	}
+	if err := os.RemoveAll(filepath.Join(cfg.DataDir, "tmp", "conversion")); err != nil {
+		return fmt.Errorf("clean abandoned conversions: %w", err)
+	}
+	defer func() { s.preparedDownloads.expire(time.Now().Add(preparedDownloadTTL)) }()
+	if !background.Go(s.runPreparedDownloadCleanup) {
+		return fmt.Errorf("start converted download cleanup: server is stopping")
 	}
 	ingestConfig, err := ingest.OpenConfig(database.Read(ctx), cfg.DataDir)
 	if err != nil {
@@ -555,6 +565,8 @@ func (s *Server) routes() (*http.ServeMux, error) {
 	// Download & Covers routes
 	s.route(mux, "GET /download/{id}", db.RoleReader, s.handleDownload)
 	s.route(mux, "GET /download/{id}/as/{target}", db.RoleReader, s.handleDownloadAs)
+	s.route(mux, "POST /api/assets/{id}/download/{target}", db.RoleReader, s.handlePrepareDownload)
+	s.route(mux, "GET /download/prepared/{token}", db.RoleReader, s.handlePreparedDownload)
 	s.route(mux, "GET /read/assets/{id}", db.RoleReader, s.handleReadAsset)
 	s.route(mux, "GET /covers/{id}", db.RoleReader, s.handleCover)
 

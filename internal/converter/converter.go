@@ -70,6 +70,17 @@ type ConversionOptions struct {
 	Metadata *bookmeta.Metadata
 	// SourceName is a final fallback for generated output titles.
 	SourceName string
+	// OnWarning is called synchronously for each recoverable problem. The
+	// converter does not accumulate warnings, so callers can stream details or
+	// keep only a count even for a very damaged book.
+	// Ordinary markup repairs do not produce warnings.
+	OnWarning func(message string)
+}
+
+func (opts ConversionOptions) warn(message string, args ...any) {
+	if opts.OnWarning != nil {
+		opts.OnWarning(fmt.Sprintf(message, args...))
+	}
 }
 
 func NormalizeTarget(target string) Target {
@@ -221,6 +232,10 @@ func convertSourceViaEPUB(ctx context.Context, w io.Writer, src io.ReaderAt, fro
 }
 
 func ConvertFile(ctx context.Context, srcPath, dstPath string, target Target, overwrite bool) error {
+	return ConvertFileWithOptions(ctx, srcPath, dstPath, target, overwrite, ConversionOptions{})
+}
+
+func ConvertFileWithOptions(ctx context.Context, srcPath, dstPath string, target Target, overwrite bool, opts ConversionOptions) error {
 	if srcPath == "" {
 		return fmt.Errorf("source path is required")
 	}
@@ -237,9 +252,11 @@ func ConvertFile(ctx context.Context, srcPath, dstPath string, target Target, ov
 	}
 	defer src.Close()
 
-	convertOpts := ConversionOptions{SourceName: filepath.Base(srcPath)}
+	if opts.SourceName == "" {
+		opts.SourceName = filepath.Base(srcPath)
+	}
 	return writeOutput(dstPath, overwrite, func(w io.Writer) error {
-		return ConvertContextWithOptions(ctx, w, src, kind, size, target, convertOpts)
+		return ConvertContextWithOptions(ctx, w, src, kind, size, target, opts)
 	})
 }
 

@@ -2,7 +2,6 @@ package converter
 
 import (
 	"bytes"
-	"errors"
 	"image"
 	"image/color"
 	"image/png"
@@ -44,7 +43,7 @@ func mobi6TestEPUB(t *testing.T, ncx bool, edit func(map[string][]byte)) []byte 
 	spine := `<spine>`
 	if ncx {
 		// Classic EPUB covers often use a full-image SVG viewport. It must
-		// preserve the raster in place, while cropped artwork is refused below.
+		// preserve the raster in place; cropped artwork gets a warning below.
 		files["OEBPS/one.xhtml"] = bytes.Replace(files["OEBPS/one.xhtml"], []byte(`<img src="red.png"/>`), []byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 12"><image href="red.png" width="20" height="12"/></svg>`), 1)
 		delete(files, "OEBPS/nav.xhtml")
 		files["OEBPS/toc.ncx"] = []byte(`<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/"><navMap><navPoint><navLabel><text>First</text></navLabel><content src="one.xhtml#same"/></navPoint><navPoint><navLabel><text>Second</text></navLabel><content src="two.xhtml#same"/><navPoint><navLabel><text>Child</text></navLabel><content src="two.xhtml#sub"/></navPoint></navPoint><navPoint><navLabel><text>Notes</text></navLabel><content src="notes.xhtml#note"/></navPoint></navMap></ncx>`)
@@ -200,27 +199,63 @@ func TestMOBI6Presentation(t *testing.T) {
 	}
 }
 
-func TestMOBI6RefusesLossBeforeWriting(t *testing.T) {
-	for _, tc := range []struct{ name, body, want string }{
-		{"missing image", `<img src="absent.png"/>`, "image is not packaged"},
-		{"SVG", `<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0L1 1"/></svg>`, "rasterization"},
-		{"cropped SVG image", `<svg xmlns="http://www.w3.org/2000/svg" viewBox="1 0 19 12"><image href="red.png" width="20" height="12"/></svg>`, "rasterization"},
-		{"implicit SVG viewport", `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="12"><image href="red.png" width="20" height="12"/></svg>`, "rasterization"},
-		{"media", `<audio src="voice.mp3">Transcript</audio>`, "cannot preserve <audio>"},
-		{"missing fragment", `<a href="two.xhtml#absent">Jump</a>`, "link target is missing"},
-		{"CSS background", `<p style="background-image:url(red.png)">Picture</p>`, "background images"},
-		{"unsupported generated text", `<style>.a + .b::before {content:"Required words"}</style>`, "unsupported CSS rule"},
-		{"conditional artwork", `<style>@media (min-width:30em) {p {background-image:url(red.png)}}</style>`, "unsupported CSS rule"},
+func TestMOBI6RecoversContentWithWarnings(t *testing.T) {
+	for _, tc := range []struct {
+		name, body, warning string
+		wantText            []string
+	}{
+		{"missing image", `<img src="absent.png" alt="Image description"/>`, "image is not packaged", []string{"Image description"}},
+		{"SVG", `<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0L1 1"/><text>Diagram label</text></svg>`, "rasterization", []string{"Diagram label"}},
+		{"cropped SVG image", `<svg xmlns="http://www.w3.org/2000/svg" viewBox="1 0 19 12"><image href="red.png" width="20" height="12"/></svg>`, "rasterization", nil},
+		{"media and equations", `<audio src="voice.mp3">Transcript</audio><math><mtext>Equation description</mtext></math><object data="other.bin">Object description</object>`, "cannot preserve", []string{"Transcript", "Equation description", "Object description"}},
+		{"missing fragment", `<a href="two.xhtml#absent">Jump</a>`, "link target is missing", []string{"Jump"}},
+		{"CSS background", `<p style="background-image:url(red.png)">Picture</p>`, "background images", []string{"Picture"}},
+		{"unsupported generated text", `<style>.a + .b::before {content:"Required words"}</style>`, "unsupported CSS rule", nil},
+		{"conditional artwork", `<style>@media (min-width:30em) {p {background-image:url(red.png)}}</style>`, "unsupported CSS rule", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			src := mobi6TestEPUB(t, false, func(files map[string][]byte) {
 				files["OEBPS/one.xhtml"] = bytes.Replace(files["OEBPS/one.xhtml"], []byte("</body>"), []byte(tc.body+"</body>"), 1)
 			})
 			var out bytes.Buffer
-			err := ConvertContext(t.Context(), &out, bytes.NewReader(src), format.FormatEPUB, int64(len(src)), TargetMOBI6)
-			if !errors.Is(err, ErrUnsupportedContent) || !strings.Contains(err.Error(), tc.want) || out.Len() != 0 {
-				t.Fatalf("error=%v output bytes=%d", err, out.Len())
+			var warnings []string
+			err := ConvertContextWithOptions(t.Context(), &out, bytes.NewReader(src), format.FormatEPUB, int64(len(src)), TargetMOBI6, ConversionOptions{OnWarning: func(message string) { warnings = append(warnings, message) }})
+			if err != nil || !strings.Contains(strings.Join(warnings, "\n"), tc.warning) {
+				t.Fatalf("error=%v warnings=%v", err, warnings)
+			}
+			doc, err := format.ExtractKindleDocument(bytes.NewReader(out.Bytes()), int64(out.Len()), format.FormatMOBI)
+			if err != nil || len(doc.Flows) != 1 {
+				t.Fatalf("read converted book: %v", err)
+			}
+			for _, want := range append(tc.wantText, "Note body.", "Body two.") {
+				if !bytes.Contains(doc.Flows[0].Data, []byte(want)) {
+					t.Fatalf("lost readable content %q: %s", want, doc.Flows[0].Data)
+				}
 			}
 		})
+	}
+}
+
+func TestMOBI6KeepsReadableChapters(t *testing.T) {
+	src := mobi6TestEPUB(t, false, func(files map[string][]byte) {
+		delete(files, "OEBPS/two.xhtml")
+		delete(files, "OEBPS/nav.xhtml")
+	})
+	var out bytes.Buffer
+	hasWarnings := false
+	err := ConvertContextWithOptions(t.Context(), &out, bytes.NewReader(src), format.FormatEPUB, int64(len(src)), TargetMOBI6, ConversionOptions{
+		OnWarning: func(string) { hasWarnings = true },
+	})
+	if err != nil || !hasWarnings {
+		t.Fatalf("conversion = %v, warnings = %v", err, hasWarnings)
+	}
+	doc, err := format.ExtractKindleDocument(bytes.NewReader(out.Bytes()), int64(out.Len()), format.FormatMOBI)
+	if err != nil || len(doc.Flows) != 1 {
+		t.Fatalf("read converted book: %v", err)
+	}
+	for _, want := range []string{"First chapter", "Note body."} {
+		if !bytes.Contains(doc.Flows[0].Data, []byte(want)) {
+			t.Fatalf("lost readable chapter %q", want)
+		}
 	}
 }

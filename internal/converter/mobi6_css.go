@@ -179,11 +179,8 @@ func (s *mobi6Source) readDocumentStyles(doc *mobi6Document) error {
 		if err != nil {
 			return nil, err
 		}
-		if external {
-			return nil, fmt.Errorf("MOBI6 cannot load external stylesheet %q: %w", href, ErrUnsupportedContent)
-		}
-		if file == nil {
-			// A missing presentation file is tolerated, as in EPUB rebuild.
+		if external || file == nil {
+			s.options.warn("Could not include stylesheet %.200q", href)
 			return nil, nil
 		}
 		if active[file.Name] {
@@ -201,7 +198,7 @@ func (s *mobi6Source) readDocumentStyles(doc *mobi6Document) error {
 		if err != nil {
 			return nil, err
 		}
-		rules, err := mobi6ParseCSS(string(raw), func(href string) ([]mobi6CSSRule, error) { return load(file.Name, href, active) })
+		rules, err := mobi6ParseCSS(string(raw), func(href string) ([]mobi6CSSRule, error) { return load(file.Name, href, active) }, s.options)
 		if err != nil {
 			return nil, fmt.Errorf("stylesheet %s: %w", file.Name, err)
 		}
@@ -224,10 +221,14 @@ func (s *mobi6Source) readDocumentStyles(doc *mobi6Document) error {
 			for c := n.FirstChild; c != nil; c = c.NextSibling {
 				raw.WriteString(c.Data)
 			}
-			rules, err = mobi6ParseCSS(raw.String(), func(href string) ([]mobi6CSSRule, error) { return load(doc.name, href, map[string]bool{}) })
+			rules, err = mobi6ParseCSS(raw.String(), func(href string) ([]mobi6CSSRule, error) { return load(doc.name, href, map[string]bool{}) }, s.options)
 		}
 		if err != nil {
-			return err
+			if fatalConversionError(err) {
+				return err
+			}
+			s.options.warn("%s: could not preserve stylesheet: %v", doc.name, err)
+			return nil
 		}
 		doc.css = append(doc.css, rules...)
 		if len(doc.css) > 4096 {
@@ -271,11 +272,11 @@ func mobi6CSSDelimiter(s string, start int, delimiters string) int {
 	return len(s)
 }
 
-func mobi6ParseCSS(raw string, imported func(string) ([]mobi6CSSRule, error)) ([]mobi6CSSRule, error) {
-	return mobi6ParseCSSRules(raw, imported, 0)
+func mobi6ParseCSS(raw string, imported func(string) ([]mobi6CSSRule, error), opts ConversionOptions) ([]mobi6CSSRule, error) {
+	return mobi6ParseCSSRules(raw, imported, 0, opts)
 }
 
-func mobi6ParseCSSRules(raw string, imported func(string) ([]mobi6CSSRule, error), depth int) ([]mobi6CSSRule, error) {
+func mobi6ParseCSSRules(raw string, imported func(string) ([]mobi6CSSRule, error), depth int, opts ConversionOptions) ([]mobi6CSSRule, error) {
 	if depth > 32 {
 		return nil, fmt.Errorf("CSS rule nesting exceeds limit: %w", ErrResourceLimit)
 	}
@@ -315,7 +316,7 @@ func mobi6ParseCSSRules(raw string, imported func(string) ([]mobi6CSSRule, error
 				if err != nil {
 					return nil, err
 				}
-				if err := mobi6AppendMediaRules(&rules, more, media); err != nil {
+				if err := mobi6AppendMediaRules(&rules, more, media, opts); err != nil {
 					return nil, err
 				}
 			}
@@ -344,12 +345,12 @@ func mobi6ParseCSSRules(raw string, imported func(string) ([]mobi6CSSRule, error
 			if strings.EqualFold(selector, "@font-face") || strings.EqualFold(selector, "@media print") {
 				continue
 			}
-			more, err := mobi6ParseCSSRules(body, imported, depth+1)
+			more, err := mobi6ParseCSSRules(body, imported, depth+1, opts)
 			if err != nil {
 				return nil, err
 			}
 			media := strings.TrimSpace(strings.TrimPrefix(strings.ToLower(selector), "@media"))
-			if err := mobi6AppendMediaRules(&rules, more, media); err != nil {
+			if err := mobi6AppendMediaRules(&rules, more, media, opts); err != nil {
 				return nil, err
 			}
 			continue
@@ -379,14 +380,14 @@ func mobi6ParseCSSRules(raw string, imported func(string) ([]mobi6CSSRule, error
 				}
 				rules = append(rules, mobi6CSSRule{selector: compiled, values: values, specificity: specificity, pseudo: pseudo})
 			} else if err := mobi6UnprojectedCSS(values); err != nil {
-				return nil, err
+				opts.warn("%v", err)
 			}
 		}
 	}
 	return rules, nil
 }
 
-func mobi6AppendMediaRules(rules *[]mobi6CSSRule, more []mobi6CSSRule, media string) error {
+func mobi6AppendMediaRules(rules *[]mobi6CSSRule, more []mobi6CSSRule, media string, opts ConversionOptions) error {
 	switch strings.ToLower(media) {
 	case "", "all", "screen":
 		if len(*rules)+len(more) > 4096 {
@@ -394,11 +395,11 @@ func mobi6AppendMediaRules(rules *[]mobi6CSSRule, more []mobi6CSSRule, media str
 		}
 		*rules = append(*rules, more...)
 	default:
-		// Device-dependent layout can be omitted, but generated words/artwork
-		// cannot disappear just because their selector or condition is unsupported.
+		// Unknown conditions must not become unconditional. Warn when skipping
+		// them could lose generated words or artwork.
 		for _, rule := range more {
 			if err := mobi6UnprojectedCSS(rule.values); err != nil {
-				return err
+				opts.warn("%v", err)
 			}
 		}
 	}
@@ -498,7 +499,7 @@ func mobi6Matches(n *html.Node, parts []mobi6SelectorPart, work *int) bool {
 	return match(n, len(parts)-1)
 }
 
-func mobi6ComputedStyle(n *html.Node, rules []mobi6CSSRule, inherited mobi6Style, work *int) (mobi6Style, error) {
+func mobi6ComputedStyle(n *html.Node, rules []mobi6CSSRule, inherited mobi6Style, work *int, opts ConversionOptions) (mobi6Style, error) {
 	style := inherited
 	style.before, style.after = "", ""
 	switch n.Data {
@@ -590,7 +591,8 @@ func mobi6ComputedStyle(n *html.Node, rules []mobi6CSSRule, inherited mobi6Style
 		case "before", "after":
 			text, err := mobi6CSSContent(value)
 			if err != nil {
-				return style, err
+				opts.warn("%v", err)
+				continue
 			}
 			if key == "before" {
 				style.before = text
@@ -600,7 +602,7 @@ func mobi6ComputedStyle(n *html.Node, rules []mobi6CSSRule, inherited mobi6Style
 		}
 	}
 	if !style.hidden && strings.Contains(strings.ToLower(values["background-image"]), "url(") {
-		return style, fmt.Errorf("MOBI6 cannot preserve CSS background images: %w", ErrUnsupportedContent)
+		opts.warn("MOBI6 cannot preserve CSS background images")
 	}
 	return style, nil
 }

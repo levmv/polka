@@ -801,7 +801,7 @@ func writeSimpleEPUBWithNav(ctx context.Context, w io.Writer, body string, meta 
 		body string
 	}{
 		{"META-INF/container.xml", epubContainerXML()},
-		{"OEBPS/content.opf", epubContentOPF(meta, assets)},
+		{"OEBPS/content.opf", epubContentOPF(meta, assets, epubBodyProperties(body, assets))},
 		{"OEBPS/nav.xhtml", epubNavXHTML(meta, nav)},
 	}
 	for _, file := range files {
@@ -880,7 +880,7 @@ func epubContainerXML() string {
 `
 }
 
-func epubContentOPF(meta epubMetadata, assets []epubAsset) string {
+func epubContentOPF(meta epubMetadata, assets []epubAsset, bodyProperties string) string {
 	var identifiers strings.Builder
 	fmt.Fprintf(&identifiers, "    <dc:identifier id=\"pub-id\">%s</dc:identifier>\n", html.EscapeString(meta.Identifier))
 	for _, identifier := range meta.ExtraIdentifiers {
@@ -931,6 +931,9 @@ func epubContentOPF(meta epubMetadata, assets []epubAsset) string {
 			properties,
 		)
 	}
+	if bodyProperties != "" {
+		bodyProperties = ` properties="` + html.EscapeString(bodyProperties) + `"`
+	}
 	return `<?xml version="1.0" encoding="UTF-8"?>
 <package version="3.0" unique-identifier="pub-id" xmlns="http://www.idpf.org/2007/opf">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
@@ -940,7 +943,7 @@ func epubContentOPF(meta epubMetadata, assets []epubAsset) string {
 ` + coverMeta + `  </metadata>
   <manifest>
     <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
-    <item id="text" href="text.xhtml" media-type="application/xhtml+xml"/>
+    <item id="text" href="text.xhtml" media-type="application/xhtml+xml"` + bodyProperties + `/>
 ` + manifest.String() + `
   </manifest>
   <spine>

@@ -11,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/levmv/polka/internal/bookmeta"
 	"github.com/levmv/polka/internal/converter"
@@ -68,6 +69,13 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDownloadAs(w http.ResponseWriter, r *http.Request) {
+	s.handleConvertedDownload(w, r, false)
+}
+
+func (s *Server) handleConvertedDownload(w http.ResponseWriter, r *http.Request, prepare bool) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	defer cancel()
+	r = r.WithContext(ctx)
 	assetID, validID := pathID(w, r, "id")
 	if !validID {
 		return
@@ -131,11 +139,17 @@ func (s *Server) handleDownloadAs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	hasWarnings := false
+	convertOpts.OnWarning = func(string) { hasWarnings = true }
 	ready, convertedSize, cleanup, err := s.stageConvertedDownload(r.Context(), targetExt, func(dst *os.File) error {
 		return converter.ConvertContextWithOptions(r.Context(), dst, f, asset.Format, info.Size(), target, convertOpts)
 	})
 	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		if errors.Is(err, context.Canceled) {
+			return
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			http.Error(w, "Conversion took too long", http.StatusGatewayTimeout)
 			return
 		}
 		if errors.Is(err, converter.ErrInputTooLarge) {
@@ -157,7 +171,33 @@ func (s *Server) handleDownloadAs(w http.ResponseWriter, r *http.Request) {
 		serverError(w, r, err)
 		return
 	}
-	defer cleanup()
+	retained := false
+	defer func() {
+		if !retained {
+			cleanup()
+		}
+	}()
+	if err := r.Context().Err(); err != nil {
+		return
+	}
+	if prepare {
+		token, err := s.preparedDownloads.add(&preparedDownload{
+			userID: UserID(r.Context()), assetID: assetID, target: target,
+			filename: convertedDownloadFilename(asset.Filename, target), hasWarnings: hasWarnings,
+			file: ready, size: convertedSize, cleanup: cleanup,
+		})
+		if err != nil {
+			http.Error(w, "Downloads are busy. Please try again shortly.", http.StatusServiceUnavailable)
+			return
+		}
+		retained = true
+		w.Header().Set("Cache-Control", "private, no-store")
+		writeJSON(w, http.StatusOK, struct {
+			DownloadURL string `json:"download_url"`
+			HasWarnings bool   `json:"has_warnings"`
+		}{"/download/prepared/" + token, hasWarnings})
+		return
+	}
 	if r.URL.Query().Get("source") == "" && r.Method == http.MethodGet {
 		// The browser's internal reading rendition is not a device download.
 		// Converted downloads get their own hashes, without replacing the cache
@@ -172,6 +212,9 @@ func (s *Server) handleDownloadAs(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Disposition", fileContentDisposition("attachment", convertedDownloadFilename(asset.Filename, target)))
 	w.Header().Set("Content-Length", strconv.FormatInt(convertedSize, 10))
+	if hasWarnings {
+		w.Header().Set("X-Polka-Conversion-Warnings", "true")
+	}
 	if conversionDependsOnlyOnSource(asset.Format, target) {
 		setVersionedConversionCacheControl(w, r, asset.CurrentHash)
 	} else {

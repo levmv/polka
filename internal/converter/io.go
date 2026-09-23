@@ -25,9 +25,18 @@ var ErrInputTooLarge = errors.New("conversion input exceeds size limit")
 // output would consume too much process memory, CPU, or temporary storage.
 var ErrResourceLimit = errors.New("conversion resource limit exceeded")
 
-// ErrUnsupportedContent means a source feature cannot be represented safely in
-// the target. Callers should report a conversion refusal, not a server failure.
+// ErrUnsupportedContent marks content the target cannot represent. Recover
+// locally with a warning where possible. If it reaches the caller, report a
+// conversion refusal rather than a server failure.
 var ErrUnsupportedContent = errors.New("unsupported content for target format")
+
+// An optional source resource can be omitted after a local read/decode error
+// or an individual size limit. Cancellation and aggregate conversion budgets
+// apply to the whole operation.
+func fatalConversionError(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
+		errors.Is(err, ErrResourceLimit)
+}
 
 type conversionLimits struct {
 	decodedBytes int64

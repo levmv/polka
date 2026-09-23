@@ -841,6 +841,18 @@ export async function emptyTrash(): Promise<{ purged: number }> {
     });
 }
 
+export async function prepareDownload(
+    assetId: number,
+    target: string,
+    signal: AbortSignal,
+): Promise<{ download_url: string; has_warnings: boolean }> {
+    return await fetchJSON(
+        `/api/assets/${assetId}/download/${encodeURIComponent(target)}`,
+        'Failed to prepare download',
+        { method: 'POST', signal },
+    );
+}
+
 export async function fetchReaderProgress(assetId: number): Promise<ReaderProgress> {
     return await fetchJSON<ReaderProgress>(
         `/api/reader/assets/${assetId}/progress`,

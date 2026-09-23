@@ -7,6 +7,7 @@ import {
     fetchDeliveryJob,
     fetchReaderProgress,
     fetchSendOptions,
+    prepareDownload,
     resetReaderPosition,
     setReadingStatus,
     writebackBook,
@@ -152,10 +153,6 @@ function assetDownloadUrl(asset: Asset): string {
     return `/download/${asset.id}`;
 }
 
-function assetDownloadAsUrl(asset: Asset, target: string): string {
-    return `/download/${asset.id}/as/${encodeURIComponent(target)}`;
-}
-
 function assetDownloadHtml(asset: Asset): string {
     const label = assetFormatLabel(asset);
     const nativeLink = `<a href="${assetDownloadUrl(asset)}" class="action-btn detail-download-main" target="_blank" rel="noopener noreferrer">${icon('download', 16)}${escapeHtml(label)}</a>`;
@@ -172,29 +169,28 @@ function assetDownloadHtml(asset: Asset): string {
     `;
 }
 
-function assetDownloadOptions(asset: Asset): Array<{ label: string; url: string }> {
-    const options = [
+function assetDownloadOptions(asset: Asset): Array<{ label: string; target?: string }> {
+    const options: Array<{ label: string; target?: string }> = [
         {
             label: `Download ${assetFormatLabel(asset)}`,
-            url: assetDownloadUrl(asset),
         },
     ];
     for (const option of asset.download_as || []) {
         options.push({
             label: `Download ${option.label}`,
-            url: assetDownloadAsUrl(asset, option.target),
+            target: option.target,
         });
     }
     return options;
 }
 
 function openDownload(url: string): void {
-    const opened = window.open(url, '_blank', 'noopener,noreferrer');
-    if (opened) {
-        opened.opener = null;
-        return;
-    }
-    window.location.href = url;
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = '';
+    document.body.append(link);
+    link.click();
+    link.remove();
 }
 
 // The controller is handed back before the book has arrived: content readiness
@@ -618,11 +614,43 @@ function renderBookDetail(
     container.querySelectorAll<HTMLButtonElement>('[data-download-menu-asset]').forEach((btn) => {
         const asset = b.assets?.find((a) => a.id === Number(btn.dataset.downloadMenuAsset));
         if (!asset) return;
+        const abort = new AbortController();
+        cleanup.push(() => abort.abort());
+        const download = async (target?: string): Promise<void> => {
+            if (!target) {
+                openDownload(assetDownloadUrl(asset));
+                return;
+            }
+            if (btn.disabled) return;
+            btn.disabled = true;
+            const finishLoading = beginGlobalLoading();
+            try {
+                const result = await prepareDownload(asset.id, target, abort.signal);
+                if (abort.signal.aborted) return;
+                openDownload(result.download_url);
+                if (result.has_warnings) {
+                    showToast('Some content could not be converted and may be missing.', {
+                        type: 'warning',
+                        action: {
+                            label: 'Download original',
+                            onClick: () => openDownload(assetDownloadUrl(asset)),
+                        },
+                    });
+                }
+            } catch (error) {
+                if (!abort.signal.aborted) {
+                    showToast(errorMessage(error, 'Failed to prepare download'), { type: 'error' });
+                }
+            } finally {
+                btn.disabled = false;
+                finishLoading();
+            }
+        };
         const menu = createMenu(
             btn,
             assetDownloadOptions(asset).map((option) => ({
                 label: option.label,
-                action: () => openDownload(option.url),
+                action: () => void download(option.target),
             })),
         );
         cleanup.push(() => menu.destroy());
@@ -931,7 +959,9 @@ function planLabel(plan?: DeliveryPlan): string {
 function pollDeliveryJob(initial: DeliveryJob): void {
     const tick = async (job: DeliveryJob, remaining: number) => {
         if (job.status === 'sent') {
-            showToast('Sent to mail server');
+            showToast(job.error ? `Sent to mail server. ${job.error}` : 'Sent to mail server', {
+                type: job.error ? 'warning' : 'success',
+            });
             return;
         }
         if (job.status === 'failed') {

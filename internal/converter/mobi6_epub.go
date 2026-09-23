@@ -23,6 +23,7 @@ import (
 )
 
 type mobi6Source struct {
+	options   ConversionOptions
 	ctx       context.Context
 	archive   *zip.Reader
 	documents []mobi6Document
@@ -69,7 +70,7 @@ func convertEPUBToMOBI6(ctx context.Context, w io.Writer, src io.ReaderAt, size 
 	if err != nil {
 		return err
 	}
-	s := &mobi6Source{ctx: ctx, archive: zr, imageIDs: map[*zip.File]int{}, styles: map[*zip.File][]mobi6CSSRule{}, cover: -1, meta: epubMetadataWithFallback(toEPUBMetadata(meta), opts)}
+	s := &mobi6Source{ctx: ctx, options: opts, archive: zr, imageIDs: map[*zip.File]int{}, styles: map[*zip.File][]mobi6CSSRule{}, cover: -1, meta: epubMetadataWithFallback(toEPUBMetadata(meta), opts)}
 	if s.meta.Title == "" {
 		s.meta.Title = "Untitled"
 	}
@@ -98,17 +99,23 @@ func convertEPUBToMOBI6(ctx context.Context, w io.Writer, src io.ReaderAt, size 
 	if coverID != "" {
 		item, ok := items[coverID]
 		if !ok {
-			return fmt.Errorf("EPUB cover item %q is missing", coverID)
-		}
-		s.cover, err = s.image(pkg.opfPath, item.Href)
-		if err != nil {
-			return fmt.Errorf("convert cover: %w", err)
+			opts.warn("EPUB cover item %q is missing", coverID)
+		} else {
+			s.cover, err = s.image(pkg.opfPath, item.Href)
+			if fatalConversionError(err) {
+				return fmt.Errorf("convert cover: %w", err)
+			}
+			if err != nil {
+				s.cover = -1
+				opts.warn("Could not include the cover: %v", err)
+			}
 		}
 	}
 	seen := map[*zip.File]bool{}
-	addDocument := func(item epubManifestItem) error {
+	readDocument := func(item epubManifestItem) error {
 		if !isEPUBContentDocument(item) {
-			return fmt.Errorf("MOBI6 needs HTML content, got %q: %w", item.MediaType, ErrUnsupportedContent)
+			opts.warn("MOBI6 needs HTML content; skipped %.200q (%s)", item.Href, item.MediaType)
+			return nil
 		}
 		file, _, external, err := s.reference(pkg.opfPath, item.Href)
 		if err != nil {
@@ -165,10 +172,20 @@ func convertEPUBToMOBI6(ctx context.Context, w io.Writer, src io.ReaderAt, size 
 		}
 		return nil
 	}
+	addDocument := func(item epubManifestItem) error {
+		if err := readDocument(item); err != nil {
+			if fatalConversionError(err) {
+				return err
+			}
+			opts.warn("Could not include EPUB document %.200q: %v", item.Href, err)
+		}
+		return nil
+	}
 	for _, ref := range opf.Spine.Items {
 		item, ok := items[ref.IDRef]
 		if !ok {
-			return fmt.Errorf("EPUB spine item %q is missing", ref.IDRef)
+			opts.warn("EPUB spine item %.200q is missing", ref.IDRef)
+			continue
 		}
 		if err := addDocument(item); err != nil {
 			return err
@@ -191,7 +208,8 @@ func convertEPUBToMOBI6(ctx context.Context, w io.Writer, src io.ReaderAt, size 
 		if ref.Type == "text" || ref.Type == "start" {
 			key, err := s.link(pkg.opfPath, ref.Href)
 			if err != nil {
-				return err
+				opts.warn("Could not preserve reading start: %v", err)
+				continue
 			}
 			s.start = key
 		}
@@ -200,7 +218,10 @@ func convertEPUBToMOBI6(ctx context.Context, w io.Writer, src io.ReaderAt, size 
 		item, ok := items[opf.Spine.TOC]
 		if ok {
 			if err := s.readNCX(pkg.opfPath, item.Href); err != nil {
-				return err
+				if fatalConversionError(err) {
+					return err
+				}
+				opts.warn("Could not preserve navigation: %v", err)
 			}
 		}
 	}
@@ -314,7 +335,7 @@ func (s *mobi6Source) image(base, href string) (int, error) {
 	}
 	const maxPixels = 16 << 20
 	if config.Width < 1 || config.Height < 1 || config.Width > maxPixels/config.Height {
-		return 0, fmt.Errorf("MOBI6 image dimensions exceed limit: %w", ErrResourceLimit)
+		return 0, fmt.Errorf("MOBI6 image dimensions exceed limit: %w", ErrInputTooLarge)
 	}
 	if err := claimConversionDecodedBytes(s.ctx, int64(config.Width)*int64(config.Height)*4, "MOBI6 decoded image"); err != nil {
 		return 0, err
@@ -412,7 +433,7 @@ func (s *mobi6Source) readNavigation(doc mobi6Document) error {
 							var err error
 							item.Href, err = s.link(doc.name, href)
 							if err != nil {
-								return nil, err
+								s.options.warn("Could not preserve navigation link: %v", err)
 							}
 						}
 					case "ol", "ul":
@@ -470,7 +491,7 @@ func (s *mobi6Source) readNCX(base, href string) error {
 		for _, p := range points {
 			key, err := s.link(file.Name, p.Content.Src)
 			if err != nil {
-				return nil, err
+				s.options.warn("Could not preserve navigation link: %v", err)
 			}
 			children, err := convert(p.Children, depth+1)
 			if err != nil {

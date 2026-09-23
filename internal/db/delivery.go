@@ -65,10 +65,12 @@ type DeliveryJob struct {
 	Filename    string
 	SizeBytes   sql.NullInt64
 	Status      string
-	Error       string
-	CreatedAt   int64
-	UpdatedAt   int64
-	SentAt      sql.NullInt64
+	// Error is a user-facing problem message: an error for failed jobs,
+	// or a conversion warning for sent jobs. Status alone drives the lifecycle.
+	Error     string
+	CreatedAt int64
+	UpdatedAt int64
+	SentAt    sql.NullInt64
 }
 
 type DeliveryBookRow struct {

@@ -129,7 +129,10 @@ func (s *Server) runDeliveryJob(ctx context.Context, jobID int64) error {
 		return s.failDeliveryJob(ctx, job.ID, deliveryMessageNoLongerVisible)
 	}
 
-	copy, cleanup, err := s.prepareDeliveryCopy(ctx, *job)
+	message := ""
+	copy, cleanup, err := s.prepareDeliveryCopy(ctx, *job, func(string) {
+		message = deliveryMessageConversionWarning
+	})
 	if err != nil {
 		if ctx.Err() != nil {
 			return s.requeueInterruptedDelivery(ctx, job.ID, ctx.Err())
@@ -162,7 +165,7 @@ func (s *Server) runDeliveryJob(ctx context.Context, jobID int64) error {
 		}
 		return s.failDeliveryJobFromError(resultCtx, job.ID, "send", err)
 	}
-	return s.db.SetDeliveryJobStatus(resultCtx, job.ID, db.DeliveryStatusSent, "")
+	return s.db.SetDeliveryJobStatus(resultCtx, job.ID, db.DeliveryStatusSent, message)
 }
 
 func (s *Server) requeueInterruptedDelivery(ctx context.Context, jobID int64, cause error) error {
@@ -174,7 +177,7 @@ func (s *Server) requeueInterruptedDelivery(ctx context.Context, jobID int64, ca
 	return cause
 }
 
-func (s *Server) prepareDeliveryCopy(ctx context.Context, job db.DeliveryJob) (delivery.DeliveryCopy, func(), error) {
+func (s *Server) prepareDeliveryCopy(ctx context.Context, job db.DeliveryJob, onWarning func(string)) (delivery.DeliveryCopy, func(), error) {
 	asset, src, err := s.openDeliverySource(ctx, job.AssetID.Int64)
 	if err != nil {
 		return delivery.DeliveryCopy{}, func() {}, err
@@ -206,6 +209,7 @@ func (s *Server) prepareDeliveryCopy(ctx context.Context, job db.DeliveryJob) (d
 	if err != nil {
 		return delivery.DeliveryCopy{}, func() {}, newDeliveryPrepError(deliveryMessagePrepareFailed, err)
 	}
+	convertOpts.OnWarning = onWarning
 	tmpPath, size, cleanup, err := s.prepareDeliveryTemp(converter.TargetExtension(target), func(dst *os.File) error {
 		info, err := src.Stat()
 		if err != nil {

@@ -43,7 +43,7 @@ func convertHTMLSourceToEPUB(ctx context.Context, w io.Writer, src io.ReaderAt, 
 	}
 	var assets []epubAsset
 	imageResolver := htmlDataImageResolver(&assets)
-	body, nav, _, err := htmlBodyToEPUBWithImages(decoded, "", imageResolver)
+	body, nav, _, err := htmlBodyToEPUB(decoded, "", htmlEPUBResolvers{image: imageResolver, options: opts})
 	if err != nil {
 		return err
 	}
@@ -92,7 +92,11 @@ func convertHTMLZSourceToEPUB(ctx context.Context, w io.Writer, src io.ReaderAt,
 
 	var assets []epubAsset
 	seenImages := make(map[string]string)
+	var resourceErr error
 	imageResolver := func(src string) (string, bool) {
+		if resourceErr != nil {
+			return "", false
+		}
 		name := cleanHTMLZResourceHref(entry.Name, src)
 		if name == "" {
 			return "", false
@@ -106,6 +110,9 @@ func convertHTMLZSourceToEPUB(ctx context.Context, w io.Writer, src io.ReaderAt,
 		}
 		raw, err := readZipFileContextLimited(ctx, img, maxConverterResourceBytes, "HTMLZ image")
 		if err != nil {
+			if fatalConversionError(err) {
+				resourceErr = err
+			}
 			return "", false
 		}
 		data, mediaType, ext, ok := format.EPUBImageResource(raw, name)
@@ -123,7 +130,10 @@ func convertHTMLZSourceToEPUB(ctx context.Context, w io.Writer, src io.ReaderAt,
 		return href, true
 	}
 	sourcePath := format.NormalizeZipName(entry.Name)
-	body, nav, ids, err := htmlBodyToEPUBWithImages(decoded, sourcePath, imageResolver)
+	body, nav, ids, err := htmlBodyToEPUB(decoded, sourcePath, htmlEPUBResolvers{image: imageResolver, options: opts})
+	if resourceErr != nil {
+		return resourceErr
+	}
 	if err != nil {
 		return err
 	}
@@ -149,8 +159,11 @@ type (
 )
 
 type htmlEPUBResolvers struct {
-	image htmlImageResolver
-	media htmlMediaResolver
+	image   htmlImageResolver
+	media   htmlMediaResolver
+	options ConversionOptions
+	// Format-owned conventions for prefixes omitted by legacy producers.
+	foreignNamespaces map[string]string
 }
 
 func htmlDataImageResolver(assets *[]epubAsset) htmlImageResolver {
@@ -238,12 +251,9 @@ func addEPUBCoverAsset(assets *[]epubAsset, cover []byte, ext string) {
 	})
 }
 
-func htmlBodyToEPUBWithImages(raw []byte, sourcePath string, imageResolver htmlImageResolver) (string, []epubNavItem, map[string]bool, error) {
-	return htmlBodyToEPUB(raw, sourcePath, htmlEPUBResolvers{image: imageResolver})
-}
-
 func htmlBodyToEPUB(raw []byte, sourcePath string, resolvers htmlEPUBResolvers) (string, []epubNavItem, map[string]bool, error) {
 	raw = xmlutil.RemoveInvalidXML10Chars(raw)
+	raw = normalizeEPUBForeignPrefixes(raw, resolvers.foreignNamespaces)
 	doc, err := html.Parse(bytes.NewReader(raw))
 	if err != nil {
 		return "", nil, nil, fmt.Errorf("parse HTML source: %w", err)
@@ -260,14 +270,17 @@ func htmlBodyToEPUB(raw []byte, sourcePath string, resolvers htmlEPUBResolvers) 
 		renderedIDs: map[string]bool{},
 	}
 	renderHTMLChildren(&out, root, false, resolvers, state)
-	body := strings.TrimSpace(out.String())
+	if state.err != nil {
+		return "", nil, nil, state.err
+	}
+	body := strings.TrimSpace(state.resolveReferences(out.String(), resolvers.options))
 	if body == "" {
-		return "<p></p>\n", nil, ids, nil
+		return "<p></p>\n", nil, state.renderedIDs, nil
 	}
 	if len(state.nav) == 0 {
-		state.nav = htmlLinkNavFallback(root, sourcePath, ids)
+		state.nav = htmlLinkNavFallback(root, sourcePath, state.renderedIDs)
 	}
-	return body + "\n", state.nav, ids, nil
+	return body + "\n", state.nav, state.renderedIDs, nil
 }
 
 type htmlEPUBRenderState struct {
@@ -275,6 +288,39 @@ type htmlEPUBRenderState struct {
 	headingSeq  int
 	usedIDs     map[string]bool
 	renderedIDs map[string]bool
+	references  []htmlEPUBReference
+	err         error
+}
+
+// References can point forward, or at a node later omitted during recovery.
+// Record only accepted attributes/styles and remove unresolved dependencies
+// after all retained IDs are known. Ranges are disjoint and in output order.
+type htmlEPUBReference struct {
+	start, end int
+	ids        []string
+}
+
+func (s *htmlEPUBRenderState) resolveReferences(body string, opts ConversionOptions) string {
+	var out strings.Builder
+	copied := 0
+	for _, ref := range s.references {
+		missing := false
+		for _, id := range ref.ids {
+			if !s.renderedIDs[id] {
+				opts.warn("Target #%.200s is missing; omitted its reference", id)
+				missing = true
+			}
+		}
+		if missing {
+			out.WriteString(body[copied:ref.start])
+			copied = ref.end
+		}
+	}
+	if copied == 0 {
+		return body
+	}
+	out.WriteString(body[copied:])
+	return out.String()
 }
 
 func renderHTMLChildren(out *strings.Builder, n *html.Node, inPre bool, resolvers htmlEPUBResolvers, state *htmlEPUBRenderState) {
@@ -284,6 +330,9 @@ func renderHTMLChildren(out *strings.Builder, n *html.Node, inPre bool, resolver
 }
 
 func renderHTMLNode(out *strings.Builder, n *html.Node, inPre bool, resolvers htmlEPUBResolvers, state *htmlEPUBRenderState) {
+	if state.err != nil {
+		return
+	}
 	switch n.Type {
 	case html.TextNode:
 		text := n.Data
@@ -301,6 +350,15 @@ func renderHTMLNode(out *strings.Builder, n *html.Node, inPre bool, resolvers ht
 }
 
 func renderHTMLElement(out *strings.Builder, n *html.Node, inPre bool, resolvers htmlEPUBResolvers, state *htmlEPUBRenderState) {
+	if isPrefixedEPUBForeign(n) {
+		resolvers.options.warn("Could not interpret <%s>; kept its text", n.Data)
+		renderHTMLPhrasingChildren(out, n, inPre, resolvers, state)
+		return
+	}
+	if n.Namespace == "svg" || n.Namespace == "math" {
+		state.err = renderEPUBForeign(out, n, "", resolvers, state, 0)
+		return
+	}
 	tag := strings.ToLower(n.Data)
 	if tag == "audio" || tag == "video" {
 		renderHTMLMedia(out, n, inPre, resolvers, state)
@@ -324,8 +382,12 @@ func renderHTMLElement(out *strings.Builder, n *html.Node, inPre bool, resolvers
 		out.WriteString("<hr/>\n")
 		return
 	}
+	if tag == "col" {
+		fmt.Fprintf(out, "<col%s%s/>\n", htmlElementAttributes(n, state), htmlStructureAttributes(n))
+		return
+	}
 	if tag == "img" {
-		renderHTMLImage(out, n, resolvers.image)
+		renderHTMLImage(out, n, resolvers)
 		return
 	}
 	if tag == "a" {
@@ -343,7 +405,7 @@ func renderHTMLElement(out *strings.Builder, n *html.Node, inPre bool, resolvers
 		return
 	}
 	nextInPre := inPre || mapped == "pre"
-	fmt.Fprintf(out, "<%s%s>", mapped, htmlElementAttributes(n, state))
+	fmt.Fprintf(out, "<%s%s%s>", mapped, htmlElementAttributes(n, state), htmlStructureAttributes(n))
 	if isEPUBBlockHTMLTag(mapped) {
 		renderHTMLChildren(out, n, nextInPre, resolvers, state)
 	} else {
@@ -411,28 +473,23 @@ func (s *htmlEPUBRenderState) claimRenderedID(id string) string {
 }
 
 func renderHTMLAnchor(out *strings.Builder, n *html.Node, inPre bool, resolvers htmlEPUBResolvers, state *htmlEPUBRenderState) {
-	attrs := htmlAnchorAttributes(n, state)
-	if attrs == "" {
-		renderHTMLChildren(out, n, inPre, resolvers, state)
-		return
-	}
-	out.WriteString("<a")
-	out.WriteString(attrs)
-	out.WriteString(">")
+	wrapped := renderHTMLAnchorStart(out, n, state)
 	renderHTMLChildren(out, n, inPre, resolvers, state)
-	out.WriteString("</a>")
+	if wrapped {
+		out.WriteString("</a>")
+	}
 }
 
-func renderHTMLImage(out *strings.Builder, n *html.Node, imageResolver htmlImageResolver) {
-	if imageResolver == nil {
-		return
-	}
+func renderHTMLImage(out *strings.Builder, n *html.Node, resolvers htmlEPUBResolvers) {
 	src := strings.TrimSpace(htmlAttr(n, "src"))
-	if src == "" {
-		return
+	var href string
+	var ok bool
+	if resolvers.image != nil && src != "" {
+		href, ok = resolvers.image(src)
 	}
-	href, ok := imageResolver(src)
 	if !ok {
+		resolvers.options.warn("Image %.200q could not be included", src)
+		out.WriteString(stdhtml.EscapeString(htmlAttr(n, "alt")))
 		return
 	}
 	alt := htmlAttr(n, "alt")
@@ -442,11 +499,13 @@ func renderHTMLImage(out *strings.Builder, n *html.Node, imageResolver htmlImage
 func renderHTMLMedia(out *strings.Builder, n *html.Node, inPre bool, resolvers htmlEPUBResolvers, state *htmlEPUBRenderState) {
 	tag := strings.ToLower(n.Data)
 	if resolvers.media == nil {
+		resolvers.options.warn("%s could not be included; kept fallback content", tag)
 		renderHTMLChildren(out, n, inPre, resolvers, state)
 		return
 	}
 	href, ok := resolvers.media(strings.TrimSpace(htmlAttr(n, "src")), tag+"/")
 	if !ok {
+		resolvers.options.warn("%s %.200q could not be included; kept fallback content", tag, htmlAttr(n, "src"))
 		renderHTMLChildren(out, n, inPre, resolvers, state)
 		return
 	}
@@ -466,6 +525,9 @@ func renderHTMLPhrasingChildren(out *strings.Builder, n *html.Node, inPre bool, 
 }
 
 func renderHTMLPhrasingNode(out *strings.Builder, n *html.Node, inPre bool, resolvers htmlEPUBResolvers, state *htmlEPUBRenderState) {
+	if state.err != nil {
+		return
+	}
 	switch n.Type {
 	case html.TextNode:
 		text := n.Data
@@ -483,6 +545,15 @@ func renderHTMLPhrasingNode(out *strings.Builder, n *html.Node, inPre bool, reso
 }
 
 func renderHTMLPhrasingElement(out *strings.Builder, n *html.Node, inPre bool, resolvers htmlEPUBResolvers, state *htmlEPUBRenderState) {
+	if isPrefixedEPUBForeign(n) {
+		resolvers.options.warn("Could not interpret <%s>; kept its text", n.Data)
+		renderHTMLPhrasingChildren(out, n, inPre, resolvers, state)
+		return
+	}
+	if n.Namespace == "svg" || n.Namespace == "math" {
+		state.err = renderEPUBForeign(out, n, "", resolvers, state, 0)
+		return
+	}
 	tag := strings.ToLower(n.Data)
 	if tag == "audio" || tag == "video" {
 		renderHTMLMedia(out, n, inPre, resolvers, state)
@@ -500,7 +571,7 @@ func renderHTMLPhrasingElement(out *strings.Builder, n *html.Node, inPre bool, r
 		return
 	}
 	if tag == "img" {
-		renderHTMLImage(out, n, resolvers.image)
+		renderHTMLImage(out, n, resolvers)
 		return
 	}
 	if tag == "a" {
@@ -533,33 +604,30 @@ func renderHTMLPhrasingElement(out *strings.Builder, n *html.Node, inPre bool, r
 }
 
 func renderHTMLPhrasingAnchor(out *strings.Builder, n *html.Node, inPre bool, resolvers htmlEPUBResolvers, state *htmlEPUBRenderState) {
-	attrs := htmlAnchorAttributes(n, state)
-	if attrs == "" {
-		renderHTMLPhrasingChildren(out, n, inPre, resolvers, state)
-		return
+	wrapped := renderHTMLAnchorStart(out, n, state)
+	renderHTMLPhrasingChildren(out, n, inPre, resolvers, state)
+	if wrapped {
+		out.WriteString("</a>")
+	}
+}
+
+func renderHTMLAnchorStart(out *strings.Builder, n *html.Node, state *htmlEPUBRenderState) bool {
+	attrs := htmlElementAttributes(n, state)
+	href := safeHTMLLinkHref(htmlAttr(n, "href"))
+	if attrs == "" && href == "" {
+		return false
 	}
 	out.WriteString("<a")
 	out.WriteString(attrs)
+	if href != "" {
+		start := out.Len()
+		fmt.Fprintf(out, ` href="%s"`, stdhtml.EscapeString(href))
+		if id, ok := htmlTargetDocumentFragment(href, "", ""); ok {
+			state.references = append(state.references, htmlEPUBReference{start, out.Len(), []string{id}})
+		}
+	}
 	out.WriteString(">")
-	renderHTMLPhrasingChildren(out, n, inPre, resolvers, state)
-	out.WriteString("</a>")
-}
-
-func htmlAnchorAttributes(n *html.Node, state *htmlEPUBRenderState) string {
-	var attrs strings.Builder
-	if id := htmlAnchorID(n); id != "" {
-		if state != nil {
-			id = state.claimRenderedID(id)
-		}
-		if id != "" {
-			fmt.Fprintf(&attrs, ` id="%s"`, stdhtml.EscapeString(id))
-		}
-	}
-	if href := safeHTMLLinkHref(htmlAttr(n, "href")); href != "" {
-		fmt.Fprintf(&attrs, ` href="%s"`, stdhtml.EscapeString(href))
-	}
-	attrs.WriteString(htmlSharedAttributes(n))
-	return attrs.String()
+	return true
 }
 
 func htmlElementAttributes(n *html.Node, state *htmlEPUBRenderState) string {
@@ -575,6 +643,104 @@ func htmlElementAttributes(n *html.Node, state *htmlEPUBRenderState) string {
 	}
 	attrs.WriteString(htmlSharedAttributes(n))
 	return attrs.String()
+}
+
+// These attributes affect reading order and cell relationships, rather than
+// presentation. Keep them on their owning elements when producing XHTML.
+func htmlStructureAttributes(n *html.Node) string {
+	var names []string
+	switch n.Data {
+	case "ol":
+		names = []string{"start", "reversed", "type"}
+	case "li":
+		names = []string{"value"}
+	case "td":
+		names = []string{"colspan", "rowspan", "headers"}
+	case "th":
+		names = []string{"colspan", "rowspan", "headers", "scope"}
+	case "col", "colgroup":
+		names = []string{"span"}
+	}
+	var out strings.Builder
+	for _, name := range names {
+		for _, attr := range n.Attr {
+			if attr.Namespace == "" && attr.Key == name {
+				if value := htmlStructureAttributeValue(name, attr.Val); value != "" {
+					fmt.Fprintf(&out, ` %s="%s"`, name, stdhtml.EscapeString(value))
+				}
+				break
+			}
+		}
+	}
+	return out.String()
+}
+
+func htmlStructureAttributeValue(name, value string) string {
+	switch name {
+	case "reversed":
+		return "reversed"
+	case "type":
+		if value == "1" || value == "a" || value == "A" || value == "i" || value == "I" {
+			return value
+		}
+	case "scope":
+		value = strings.ToLower(value)
+		switch value {
+		case "row", "col", "rowgroup", "colgroup":
+			return value
+		}
+	case "headers":
+		var ids []string
+		for _, id := range strings.Fields(value) {
+			if safeHTMLAnchorID(id) == id {
+				ids = append(ids, id)
+			}
+		}
+		return strings.Join(ids, " ")
+	case "start", "value", "colspan", "rowspan", "span":
+		// HTML accepts leading ASCII whitespace, a sign and a digit sequence;
+		// trailing junk is ignored. Serialize the interpreted number so the
+		// EPUB stays valid without changing list numbering or cell spans.
+		value = strings.TrimLeft(value, " \t\n\f\r")
+		start := 0
+		if len(value) > 0 && (value[0] == '+' || value[0] == '-') {
+			start++
+		}
+		end := start
+		for end < len(value) && value[end] >= '0' && value[end] <= '9' {
+			end++
+		}
+		if end == start {
+			return ""
+		}
+		digits := strings.TrimLeft(value[start:end], "0")
+		if digits == "" {
+			digits = "0"
+		}
+		negative := value[0] == '-' && digits != "0"
+		if name == "start" || name == "value" {
+			// Keep large ordinals as decimal text, without overflowing a Go
+			// integer or changing the source's reader-specific fallback.
+			if negative {
+				return "-" + digits
+			}
+			return digits
+		}
+		if negative || digits == "0" && name != "rowspan" {
+			return ""
+		}
+		limit := 1000
+		if name == "rowspan" {
+			limit = 65534
+		}
+		if len(digits) > 5 {
+			return strconv.Itoa(limit)
+		}
+		number, _ := strconv.Atoi(digits) // At most five decimal digits.
+		return strconv.Itoa(min(number, limit))
+	}
+	// Invalid values use the same defaults as absent HTML attributes.
+	return ""
 }
 
 func htmlSharedAttributes(n *html.Node) string {
@@ -609,19 +775,30 @@ func htmlAnchorID(n *html.Node) string {
 
 func collectHTMLIDs(n *html.Node) map[string]bool {
 	ids := map[string]bool{}
-	var walk func(*html.Node)
-	walk = func(node *html.Node) {
-		if node.Type == html.ElementNode {
-			if id := htmlAnchorID(node); id != "" {
-				ids[id] = true
+	walkHTMLAnchorIDs(n, func(id string) { ids[id] = true })
+	return ids
+}
+
+func walkHTMLAnchorIDs(n *html.Node, visit func(string)) {
+	if n.Type == html.ElementNode {
+		if id := htmlAnchorID(n); id != "" {
+			visit(id)
+		}
+		if n.Namespace == "svg" || n.Namespace == "math" {
+			// Foreign elements keep xml:id as well as id. Reserve both
+			// before generating heading IDs, using the renderer's names.
+			for _, attr := range n.Attr {
+				if name, _ := epubForeignAttributeName(n, attr); name == "xml:id" {
+					if id := safeHTMLAnchorID(attr.Val); id != "" {
+						visit(id)
+					}
+				}
 			}
 		}
-		for child := node.FirstChild; child != nil; child = child.NextSibling {
-			walk(child)
-		}
 	}
-	walk(n)
-	return ids
+	for child := n.FirstChild; child != nil; child = child.NextSibling {
+		walkHTMLAnchorIDs(child, visit)
+	}
 }
 
 func htmlHeadingLevel(tag string) int {
@@ -640,8 +817,14 @@ func htmlNodeText(n *html.Node) string {
 			text.WriteString(node.Data)
 			text.WriteByte(' ')
 		case html.ElementNode:
-			if shouldSkipHTMLElement(strings.ToLower(node.Data)) {
+			// Text extraction is also the fallback for unsupported graphics and
+			// media. Skip executable/style content, not their readable children.
+			switch strings.ToLower(node.Data) {
+			case "script", "style", "template", "noscript":
 				return
+			case "img", "mglyph":
+				text.WriteString(htmlAttr(node, "alt"))
+				text.WriteByte(' ')
 			}
 		}
 		for child := node.FirstChild; child != nil; child = child.NextSibling {
@@ -698,20 +881,13 @@ func htmlLinkNavFallback(root *html.Node, sourcePath string, ids map[string]bool
 
 func htmlAnchorDocumentOrder(root *html.Node, ids map[string]bool) map[string]int {
 	order := map[string]int{}
-	var walk func(*html.Node)
-	walk = func(node *html.Node) {
-		if node.Type == html.ElementNode {
-			if id := htmlAnchorID(node); ids[id] {
-				if _, exists := order[id]; !exists {
-					order[id] = len(order)
-				}
+	walkHTMLAnchorIDs(root, func(id string) {
+		if ids[id] {
+			if _, exists := order[id]; !exists {
+				order[id] = len(order)
 			}
 		}
-		for child := node.FirstChild; child != nil; child = child.NextSibling {
-			walk(child)
-		}
-	}
-	walk(root)
+	})
 	return order
 }
 
@@ -1247,7 +1423,7 @@ func epubHTMLTag(tag string) (string, bool) {
 		return "div", true
 	case "b":
 		return "strong", true
-	case "address", "blockquote", "caption", "code", "dd", "del", "dfn", "dl", "dt",
+	case "address", "blockquote", "caption", "code", "colgroup", "dd", "del", "dfn", "dl", "dt",
 		"em", "h1", "h2", "h3", "h4", "h5", "h6", "i", "ins", "kbd", "li",
 		"mark", "ol", "p", "pre", "q", "s", "samp", "small", "span", "strong",
 		"sub", "sup", "table", "tbody", "td", "tfoot", "th", "thead", "tr", "u",
@@ -1270,7 +1446,7 @@ func shouldSkipHTMLElement(tag string) bool {
 
 func isEPUBBlockHTMLTag(tag string) bool {
 	switch tag {
-	case "address", "blockquote", "caption", "dd", "div", "dl", "dt", "figcaption",
+	case "address", "blockquote", "caption", "colgroup", "dd", "div", "dl", "dt", "figcaption",
 		"figure", "h1", "h2", "h3", "h4", "h5", "h6", "li", "ol", "p", "pre",
 		"table", "tbody", "td", "tfoot", "th", "thead", "tr", "ul":
 		return true

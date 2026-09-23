@@ -479,51 +479,38 @@ func TestDownloadAsCBRToCBZ(t *testing.T) {
 	}
 }
 
-func TestDownloadAsRefusalDoesNotSendAttachment(t *testing.T) {
-	for _, tc := range []struct {
-		name, kind, target, want string
-		data                     []byte
-	}{
-		{"missing embedded PDF", "azw4", "pdf", "Asset cannot be converted to pdf", testfixture.MinimalMOBI()},
-		{"vector artwork", "epub", "mobi6", "MOBI6 requires rasterization", testfixture.EPUB(t,
-			[]byte(`<package xmlns="http://www.idpf.org/2007/opf" version="3.0"><manifest><item id="text" href="text.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="text"/></spine></package>`),
-			map[string][]byte{"OEBPS/text.xhtml": []byte(`<html xmlns="http://www.w3.org/1999/xhtml"><body><svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0L1 1"/></svg></body></html>`)}),
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			database, dir := setupTestDB(t)
-			defer database.Close()
-			filename := "source." + tc.kind
-			_, err := database.Write(t.Context()).Exec(`INSERT INTO books (id, title, sort_title) VALUES (126, 'Source', 'Source')`)
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, err = database.Write(t.Context()).Exec(`INSERT INTO assets (id, book_id, storage_path, filename, extension, format, original_hash, current_hash) VALUES (2, 126, ?, ?, ?, ?, randomblob(16), randomblob(16))`, filename, filename, "."+tc.kind, tc.kind)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(dir, filename), tc.data, 0o644); err != nil {
-				t.Fatal(err)
-			}
+func TestDownloadAsMissingPDFDoesNotSendAttachment(t *testing.T) {
+	database, dir := setupTestDB(t)
+	defer database.Close()
+	filename := "source.azw4"
+	_, err := database.Write(t.Context()).Exec(`INSERT INTO books (id, title, sort_title) VALUES (126, 'Source', 'Source')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = database.Write(t.Context()).Exec(`INSERT INTO assets (id, book_id, storage_path, filename, extension, format, original_hash, current_hash) VALUES (2, 126, ?, ?, ?, ?, randomblob(16), randomblob(16))`, filename, filename, ".azw4", "azw4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, filename), testfixture.MinimalMOBI(), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
-			user := mustUser(t, database, "reader", db.RoleReader)
-			s := newTestServer(database, dir)
-			handler := testRoutes(t, s)
-			req := httptest.NewRequest("GET", "/download/2/as/"+tc.target, nil)
-			addSessionCookie(t, s, req, user.ID)
-			w := httptest.NewRecorder()
-			handler.ServeHTTP(w, req)
+	user := mustUser(t, database, "reader", db.RoleReader)
+	s := newTestServer(database, dir)
+	handler := testRoutes(t, s)
+	req := httptest.NewRequest("GET", "/download/2/as/pdf", nil)
+	addSessionCookie(t, s, req, user.ID)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
 
-			if w.Code != http.StatusUnprocessableEntity {
-				t.Fatalf("download-as status = %d, want 422; body: %s", w.Code, w.Body.String())
-			}
-			if got := w.Header().Get("Content-Disposition"); got != "" {
-				t.Fatalf("Content-Disposition = %q, want empty for failed conversion", got)
-			}
-			if body := w.Body.String(); !strings.Contains(body, tc.want) {
-				t.Fatalf("download-as body = %q; want %q", body, tc.want)
-			}
-		})
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("download-as status = %d, want 422; body: %s", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("Content-Disposition"); got != "" {
+		t.Fatalf("Content-Disposition = %q, want empty for failed conversion", got)
+	}
+	if body := w.Body.String(); !strings.Contains(body, "Asset cannot be converted to pdf") {
+		t.Fatalf("download-as body = %q; want %q", body, "Asset cannot be converted to pdf")
 	}
 }
 

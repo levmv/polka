@@ -1,9 +1,9 @@
 // A single transient notification for command results that can't be shown at the
 // action site — e.g. "Removed rebecca" after a row disappears. A new toast
 // replaces the current one, matching Kontur's toast guidance. Neutral results
-// stay 3s; ones with an action stay 7s; errors stay 10s and, like action
+// stay 3s; ones with an action stay 7s; errors and warnings stay 10s and, like action
 // toasts, carry a close button. Form validation belongs inline, not here.
-export type ToastType = 'success' | 'error';
+export type ToastType = 'success' | 'error' | 'warning';
 
 export type ToastOptions = {
     type?: ToastType;
@@ -30,8 +30,8 @@ export function showToast(message: string, opts: ToastOptions = {}): () => void 
 
     const type = opts.type ?? 'success';
     const hasAction = Boolean(opts.action);
-    const closeable = hasAction || type === 'error';
-    const duration = opts.duration ?? (type === 'error' ? 10000 : hasAction ? 7000 : 3000);
+    const closeable = hasAction || type === 'error' || type === 'warning';
+    const duration = opts.duration ?? (type !== 'success' ? 10000 : hasAction ? 7000 : 3000);
 
     const toast = document.createElement('div');
     const dismiss = (): void => {

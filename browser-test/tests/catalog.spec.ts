@@ -181,9 +181,7 @@ test.describe('Catalog', () => {
       .getByRole('menuitem', { name: `Download ${option.label}`, exact: true })
       .click();
     const download = await downloadPromise;
-    expect(new URL(download.url()).pathname).toBe(
-      `/download/${readableAsset.id}/as/${option.target}`,
-    );
+    expect(new URL(download.url()).pathname).toMatch(/^\/download\/prepared\//);
     expect(await download.failure()).toBeNull();
 
     await expect(page.locator('.detail-authors a').first()).toBeVisible();

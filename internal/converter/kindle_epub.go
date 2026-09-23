@@ -57,7 +57,7 @@ func convertKindleDocumentToEPUB(ctx context.Context, w io.Writer, doc *format.K
 	}
 
 	flow := doc.Flows[0]
-	body, assets, err := kindleEPUBBody(doc, flow)
+	body, assets, err := kindleEPUBBody(doc, flow, opts)
 	if err != nil {
 		return err
 	}
@@ -68,15 +68,19 @@ func convertKindleDocumentToEPUB(ctx context.Context, w io.Writer, doc *format.K
 	return writeSimpleEPUBWithNav(ctx, w, body, meta, kindleEPUBNav(doc.Navigation), assets...)
 }
 
-func kindleEPUBBody(doc *format.KindleDocument, flow format.KindleTextFlow) (string, []epubAsset, error) {
+func kindleEPUBBody(doc *format.KindleDocument, flow format.KindleTextFlow, opts ConversionOptions) (string, []epubAsset, error) {
 	switch strings.ToLower(strings.TrimSpace(flow.MediaType)) {
 	case "", "text/html", "application/xhtml+xml":
 		bodyRaw := insertKindleFileposAnchors(flow.Data, kindleReferencedFilepos(doc, flow.Data))
 		bodyRaw = rewriteKindleFlowAttrs(bodyRaw)
 		assets := kindleEPUBAssets(doc.Resources)
 		resolvers := htmlEPUBResolvers{
-			image: kindleImageResolver(doc.Resources),
-			media: kindleMediaResolver(doc.Resources),
+			options: opts,
+			image:   kindleImageResolver(doc.Resources),
+			media:   kindleMediaResolver(doc.Resources),
+			// Some compiled Kindle flows retain svg:* elements after losing
+			// their declaration. Explicit source declarations still win.
+			foreignNamespaces: map[string]string{"svg": "http://www.w3.org/2000/svg"},
 		}
 		body, _, _, err := htmlBodyToEPUB(bodyRaw, "", resolvers)
 		return body, assets, err

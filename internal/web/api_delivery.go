@@ -27,6 +27,7 @@ const (
 	deliveryMessageNoLongerVisible   = "Book is no longer visible to this user."
 	deliveryMessageConversionMissing = "Conversion is not available for this file."
 	deliveryMessageConversionFailed  = "Conversion failed."
+	deliveryMessageConversionWarning = "Some content could not be converted and may be missing."
 	deliveryMessageSendInterrupted   = "Delivery was interrupted while sending; the message may have been sent."
 )
 

@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json/v2"
@@ -244,7 +245,7 @@ func TestPrepareDeliveryCopyCopiesNativeAssetToTemp(t *testing.T) {
 		Filename: "The Hobbit.epub",
 	}
 
-	copy, cleanup, err := s.prepareDeliveryCopy(context.Background(), job)
+	copy, cleanup, err := s.prepareDeliveryCopy(context.Background(), job, nil)
 	if err != nil {
 		t.Fatalf("prepareDeliveryCopy: %v", err)
 	}
@@ -299,13 +300,13 @@ func TestPrepareDeliveryCopyWaitsForStorageMutationBeforeReportingMissing(t *tes
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
-	if _, _, err := s.prepareDeliveryCopy(ctx, job); !errors.Is(err, context.DeadlineExceeded) {
+	if _, _, err := s.prepareDeliveryCopy(ctx, job, nil); !errors.Is(err, context.DeadlineExceeded) {
 		release()
 		t.Fatalf("prepare while storage mutation is active = %v; want context deadline", err)
 	}
 	release()
 
-	_, _, err = s.prepareDeliveryCopy(context.Background(), job)
+	_, _, err = s.prepareDeliveryCopy(context.Background(), job, nil)
 	userErr, ok := errors.AsType[deliveryUserError](err)
 	if !ok || userErr.UserMessage() != deliveryMessageFileMissing {
 		t.Fatalf("prepare after storage mutation = %v; want terminal missing-file error", err)
@@ -321,13 +322,15 @@ func TestRunDeliveryJobLifecycle(t *testing.T) {
 		wantStatus  string
 		wantError   string
 		wantCalls   int
+		warnings    bool
 	}{
-		{"sent", "", "", nil, db.DeliveryStatusSent, "", 1},
-		{"queued", "before", "/api/books/1/purge", nil, db.DeliveryStatusFailed, deliveryMessageFileMissing, 0},
-		{"sending succeeds", "during", "/api/trash", nil, db.DeliveryStatusSent, "", 1},
-		{"sending fails", "during", "/api/books/1/purge", errors.New("send failed"), db.DeliveryStatusFailed, deliveryMessageFailed, 1},
-		{"already sent", "after", "/api/books/1/purge", nil, db.DeliveryStatusSent, "", 1},
-		{"already failed", "after", "/api/trash", errors.New("send failed"), db.DeliveryStatusFailed, deliveryMessageFailed, 1},
+		{"sent", "", "", nil, db.DeliveryStatusSent, "", 1, false},
+		{"sent with conversion warnings", "", "", nil, db.DeliveryStatusSent, deliveryMessageConversionWarning, 1, true},
+		{"queued", "before", "/api/books/1/purge", nil, db.DeliveryStatusFailed, deliveryMessageFileMissing, 0, false},
+		{"sending succeeds", "during", "/api/trash", nil, db.DeliveryStatusSent, "", 1, false},
+		{"sending fails", "during", "/api/books/1/purge", errors.New("send failed"), db.DeliveryStatusFailed, deliveryMessageFailed, 1, false},
+		{"already sent", "after", "/api/books/1/purge", nil, db.DeliveryStatusSent, "", 1, false},
+		{"already failed", "after", "/api/trash", errors.New("send failed"), db.DeliveryStatusFailed, deliveryMessageFailed, 1, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -336,7 +339,15 @@ func TestRunDeliveryJobLifecycle(t *testing.T) {
 			seedDeliveryEmailSettings(t, database, 25)
 			user := mustUser(t, database, "sender", db.RoleReader)
 			admin := mustUser(t, database, "admin", db.RoleAdmin)
-			job := createQueuedDeliveryJob(t, database, user.ID, sql.NullString{})
+			var target sql.NullString
+			if tt.warnings {
+				target = sql.NullString{String: "epub", Valid: true}
+				mustExec(t, database, `UPDATE assets SET format = 'html' WHERE id = 1`)
+				if err := os.WriteFile(filepath.Join(dir, "Tolkien", "The_Hobbit", "a_1.epub"), []byte(`<html><body><p>Readable chapter</p><img src="missing.png"/></body></html>`), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			job := createQueuedDeliveryJob(t, database, user.ID, target)
 			s := newTestServer(database, dir)
 			s.storageQueue = workslot.New()
 			handler := testRoutes(t, s)
@@ -359,9 +370,11 @@ func TestRunDeliveryJobLifecycle(t *testing.T) {
 				}
 			}
 			var copyPath string
+			var copySize int64
 			transport := &stubDeliveryTransport{
 				send: func(ctx context.Context, copy delivery.DeliveryCopy, profile delivery.SMTPProfile) error {
 					copyPath = copy.Path
+					copySize = copy.Size
 					if tt.purgeWhen == "during" {
 						purge()
 					}
@@ -379,7 +392,7 @@ func TestRunDeliveryJobLifecycle(t *testing.T) {
 						t.Fatalf("status during transport = %q, want sending", current.Status)
 					}
 					contents, err := os.ReadFile(copy.Path)
-					if err != nil || string(contents) != "epub content" {
+					if err != nil || !tt.warnings && string(contents) != "epub content" || tt.warnings && !bytes.HasPrefix(contents, []byte("PK")) {
 						t.Fatalf("send copy = %q, err %v", contents, err)
 					}
 					return tt.sendErr
@@ -422,8 +435,8 @@ func TestRunDeliveryJobLifecycle(t *testing.T) {
 				(got.SentAt > 0) != (tt.wantStatus == db.DeliveryStatusSent) {
 				t.Fatalf("history = %+v, want original snapshots and %s (%q)", got, tt.wantStatus, tt.wantError)
 			}
-			if tt.wantCalls > 0 && got.SizeBytes != int64(len("epub content")) {
-				t.Fatalf("job size = %d, want %d", got.SizeBytes, len("epub content"))
+			if tt.wantCalls > 0 && got.SizeBytes != copySize {
+				t.Fatalf("job size = %d, want %d", got.SizeBytes, copySize)
 			}
 		})
 	}
