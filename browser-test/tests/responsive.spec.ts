@@ -19,7 +19,9 @@ test.describe('Responsive layout (iPad viewport)', () => {
     expect(await download.failure()).toBeNull();
     expect(download.suggestedFilename()).toMatch(/\.epub$/);
     const toast = page.locator('.toast-visible');
-    await expect(toast).toContainText('Some content could not be converted and may be missing.');
+    await expect(toast).toContainText(
+      'Some content, formatting or metadata could not be converted.',
+    );
     await expect(toast).toBeVisible();
     await expect(page).toHaveURL(new RegExp(`/book/${bookId}$`));
     const original = page.waitForEvent('download');

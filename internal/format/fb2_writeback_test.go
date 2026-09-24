@@ -181,6 +181,38 @@ func TestRewriteFB2MetadataDatePrecision(t *testing.T) {
 	}
 }
 
+func TestRewriteFB2MetadataPreservesDateSources(t *testing.T) {
+	const titleDate = `<date value="1990-01-02">January 1990</date>`
+	const sourceDate = `<date>1980</date>`
+	const printYear = `<year>2000</year>`
+	for _, tc := range []struct {
+		name, titleDate, sourceDate string
+	}{
+		{"source date", "", sourceDate},
+		{"print year", "", ""},
+		{"unrecognized date", `<date>unknown</date>`, sourceDate},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src := []byte(strings.ReplaceAll(strings.ReplaceAll(fb2WritebackSample, titleDate, tc.titleDate), sourceDate, tc.sourceDate))
+			meta := *extractFB2(t, src)
+			meta.Tags = []string{"New tag"}
+			out := rewriteFB2(t, src, meta)
+			for _, record := range []string{tc.titleDate, tc.sourceDate, printYear} {
+				if record != "" && !bytes.Contains(out, []byte(record)) {
+					t.Fatalf("tag edit lost date record %s:\n%s", record, out)
+				}
+			}
+			if got := extractFB2(t, out).Date; got != meta.Date {
+				t.Fatalf("date after tag edit = %q; want %q", got, meta.Date)
+			}
+			// A fallback date must not be copied into a new title-info/date.
+			if bytes.Count(out, []byte("<date")) != bytes.Count(src, []byte("<date")) {
+				t.Fatalf("tag edit changed the number of date records:\n%s", out)
+			}
+		})
+	}
+}
+
 func TestRewriteFB2MetadataClearsFallbacks(t *testing.T) {
 	src := []byte(fb2WritebackSample)
 	for _, tt := range []struct{ field, preserved string }{

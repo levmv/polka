@@ -277,7 +277,7 @@ func TestConvertTXTToEPUB(t *testing.T) {
 	}
 }
 
-func TestConvertTXTToEPUBUsesFallbackMetadata(t *testing.T) {
+func TestConvertTXTToEPUBUsesCatalogMetadata(t *testing.T) {
 	src := []byte("Body.\n")
 	var out bytes.Buffer
 	opts := ConversionOptions{
@@ -310,34 +310,32 @@ func TestConvertTXTToEPUBUsesFallbackMetadata(t *testing.T) {
 	}
 }
 
-func TestConvertMarkdownToEPUBEmbeddedMetadataWinsOverFallback(t *testing.T) {
-	src := []byte("# Title: Embedded Title\n\n## Author: Embedded Author\n## Language: fr\n\nBody.\n")
-	var out bytes.Buffer
-	opts := ConversionOptions{
-		Metadata: &bookmeta.Metadata{
-			Title:    "Library Title",
-			Authors:  []bookmeta.AuthorMeta{{Name: "Library Author"}},
-			Language: "en",
-		},
-	}
-	if err := ConvertContextWithOptions(context.Background(), &out, bytes.NewReader(src), format.FormatMarkdown, int64(len(src)), TargetEPUB, opts); err != nil {
-		t.Fatalf("Convert Markdown to EPUB: %v", err)
-	}
-
-	opf := zipEntry(t, out.Bytes(), "OEBPS/content.opf")
-	for _, want := range []string{
-		"<dc:title>Embedded Title</dc:title>",
-		"<dc:creator>Embedded Author</dc:creator>",
-		"<dc:language>fr</dc:language>",
+func TestConvertMarkdownToEPUBMetadata(t *testing.T) {
+	src := []byte("# Title: Embedded Title\n\n## Author: Embedded Author\n## Language: fr\n## Date: 1990\n\nBody.\n")
+	for _, tc := range []struct {
+		name                  string
+		catalog               *bookmeta.Metadata
+		title, language, date string
+		authors               int
+	}{
+		{name: "standalone", title: "Embedded Title", language: "fr", date: "1990", authors: 1},
+		{name: "catalog", catalog: &bookmeta.Metadata{Title: "Library Title", Language: "en", Date: "2024-03"}, title: "Library Title", language: "en", date: "2024-03"},
+		{name: "cleared", catalog: &bookmeta.Metadata{Title: "Library Title", Language: "en"}, title: "Library Title", language: "en"},
 	} {
-		if !strings.Contains(opf, want) {
-			t.Fatalf("content.opf missing %q:\n%s", want, opf)
-		}
-	}
-	for _, forbidden := range []string{"Library Title", "Library Author", "<dc:language>en</dc:language>"} {
-		if strings.Contains(opf, forbidden) {
-			t.Fatalf("content.opf used fallback over embedded metadata %q:\n%s", forbidden, opf)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			opts := ConversionOptions{Metadata: tc.catalog}
+			if err := ConvertContextWithOptions(t.Context(), &out, bytes.NewReader(src), format.FormatMarkdown, int64(len(src)), TargetEPUB, opts); err != nil {
+				t.Fatal(err)
+			}
+			got, err := format.ExtractEPUBMetadata(bytes.NewReader(out.Bytes()), int64(out.Len()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Title != tc.title || got.Language != tc.language || got.Date != tc.date || len(got.Authors) != tc.authors {
+				t.Fatalf("metadata = %+v; want title %q, language %q, date %q, %d authors", got, tc.title, tc.language, tc.date, tc.authors)
+			}
+		})
 	}
 }
 
@@ -766,7 +764,7 @@ func TestConvertHTMLToEPUBNormalizesDocumentStructure(t *testing.T) {
 	}
 }
 
-func TestConvertHTMLToEPUBUsesFallbackMetadataWhenMissing(t *testing.T) {
+func TestConvertHTMLToEPUBUsesCatalogMetadata(t *testing.T) {
 	src := []byte(`<!doctype html><html><body><p>Body.</p></body></html>`)
 	var out bytes.Buffer
 	opts := ConversionOptions{
@@ -1920,7 +1918,7 @@ func TestConvertEPUBToEPUBRemovesInvalidOPFXMLControlCharacters(t *testing.T) {
 	}
 }
 
-func TestConvertEPUBToEPUBRefusesAmbiguousOrUnsafePackage(t *testing.T) {
+func TestConvertEPUBToEPUBRefusesUnrecoverablePackage(t *testing.T) {
 	opf := func(chapter string) []byte {
 		return []byte(fmt.Sprintf(`<package xmlns="http://www.idpf.org/2007/opf" version="3.0"><manifest><item id="chapter" href="%s" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="chapter"/></spine></package>`, chapter))
 	}
@@ -1935,16 +1933,6 @@ func TestConvertEPUBToEPUBRefusesAmbiguousOrUnsafePackage(t *testing.T) {
 			"OPS/a.opf": opf("a.xhtml"), "OPS/a.xhtml": chapter,
 			"OPS/b.opf": opf("b.xhtml"), "OPS/b.xhtml": chapter,
 		}, want: "package is ambiguous"},
-		{name: "signed package", entries: map[string][]byte{
-			"META-INF/container.xml":  []byte(`<?xml version="1.0"?><container xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OPS/a.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`),
-			"META-INF/signatures.xml": []byte(`<signatures/>`),
-			"OPS/a.opf":               opf("a.xhtml"), "OPS/a.xhtml": chapter,
-		}, want: "signatures.xml"},
-		{name: "unknown encryption", entries: map[string][]byte{
-			"META-INF/container.xml":  []byte(`<?xml version="1.0"?><container xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OPS/a.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`),
-			"META-INF/encryption.xml": []byte(`<encryption><EncryptedData><EncryptionMethod Algorithm="urn:unknown"/></EncryptedData></encryption>`),
-			"OPS/a.opf":               opf("a.xhtml"), "OPS/a.xhtml": chapter,
-		}, want: "unsupported encryption algorithm"},
 		{name: "missing spine resource", entries: map[string][]byte{
 			"OPS/a.opf": opf("missing.xhtml"),
 		}, want: "no coherent OPF package"},
@@ -1953,12 +1941,6 @@ func TestConvertEPUBToEPUBRefusesAmbiguousOrUnsafePackage(t *testing.T) {
 			"OPS/a.opf":              append(opf("a.xhtml"), []byte(`<extra/>`)...),
 			"OPS/a.xhtml":            chapter,
 		}, want: "markup follows the closed package root"},
-		{name: "unsafe ZIP entry path", entries: map[string][]byte{
-			"META-INF/container.xml": []byte(`<?xml version="1.0"?><container xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OPS/a.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`),
-			"OPS/a.opf":              opf("a.xhtml"),
-			"OPS/a.xhtml":            chapter,
-			"../escape":              []byte("unsafe"),
-		}, want: "unsafe ZIP entry path"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			src := testZip(t, tt.entries)
@@ -2437,8 +2419,8 @@ func TestConvertEPUBToKEPUBRejectsEncryptedEntries(t *testing.T) {
 	if err == nil {
 		t.Fatal("Convert EPUB to KEPUB succeeded for encrypted entry")
 	}
-	if !strings.Contains(err.Error(), "OEBPS/text.xhtml is encrypted") {
-		t.Fatalf("Convert EPUB to KEPUB error = %v; want encrypted entry error", err)
+	if !errors.Is(err, ErrUnsupportedContent) {
+		t.Fatalf("Convert EPUB to KEPUB error = %v; want no readable content", err)
 	}
 }
 

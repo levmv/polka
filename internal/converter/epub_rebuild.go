@@ -53,9 +53,10 @@ type rebuildOPFDoc struct {
 		Items []epubManifestItem `xml:"item"`
 	} `xml:"manifest"`
 	Spine struct {
-		TOC     string `xml:"toc,attr"`
-		PageMap string `xml:"page-map,attr"`
-		Items   []struct {
+		TOC       string `xml:"toc,attr"`
+		PageMap   string `xml:"page-map,attr"`
+		Direction string `xml:"page-progression-direction,attr"`
+		Items     []struct {
 			IDRef string `xml:"idref,attr"`
 		} `xml:"itemref"`
 	} `xml:"spine"`
@@ -74,7 +75,7 @@ type rebuildCandidate struct {
 	normalizedXML11 bool
 }
 
-func rebuildEPUB(ctx context.Context, w io.Writer, src io.ReaderAt, size int64) error {
+func rebuildEPUB(ctx context.Context, w io.Writer, src io.ReaderAt, size int64, opts ConversionOptions) error {
 	if size < 0 {
 		return fmt.Errorf("source size is invalid")
 	}
@@ -85,42 +86,29 @@ func rebuildEPUB(ctx context.Context, w io.Writer, src io.ReaderAt, size int64) 
 	if err := claimConversionResources(ctx, len(zr.File), "EPUB archive"); err != nil {
 		return err
 	}
-	for _, file := range zr.File {
-		if err := validateRebuildEntryName(file.Name); err != nil {
-			return err
-		}
-		if err := kepubRejectEncryptedEntry(file); err != nil {
-			return err
-		}
-	}
-
-	signatures, ambiguous := format.ResolveZIPEntry(zr, "META-INF/signatures.xml")
-	if ambiguous {
-		return fmt.Errorf("EPUB signatures.xml resolves to multiple archive entries")
-	}
-	if signatures != nil {
-		return fmt.Errorf("EPUB contains signatures.xml; refusing rebuild because package signatures would become stale")
-	}
-	if _, ambiguous := format.ResolveZIPEntry(zr, "META-INF/encryption.xml"); ambiguous {
-		return fmt.Errorf("EPUB encryption.xml resolves to multiple archive entries")
-	}
-
 	pkg, err := readRebuildPackage(ctx, zr)
 	if err != nil {
 		return err
 	}
-	sourceOPFBytes := pkg.opfBytes
+	var recovery *epubRecovery
+	pkg.opfBytes, recovery, err = prepareEPUBConversion(ctx, zr, pkg.opfPath, pkg.opfBytes, true, opts)
+	if err != nil {
+		return err
+	}
 	var missingStylesheets map[string]bool
 	pkg.opfBytes, missingStylesheets, err = removeMissingPresentationReferences(zr, pkg.opfPath, pkg.opfBytes)
 	if err != nil {
 		return err
 	}
 	pkg.opfBytes = normalizeVendorImageGuide(pkg.opfPath, pkg.opfBytes)
-	pkg.opfBytes, err = removeLegacyPageMapPointer(ctx, zr, pkg.opfPath, pkg.opfBytes)
-	if err != nil {
+	if repaired, err := removeLegacyPageMapPointer(ctx, zr, pkg.opfPath, pkg.opfBytes); err == nil {
+		pkg.opfBytes = repaired
+	} else if fatalConversionError(err) {
 		return err
+	} else {
+		opts.warn("Could not repair EPUB page-list metadata: %v", err)
 	}
-	entryRepairs, inlineSVGDocuments, err := rebuildXHTMLRepairs(ctx, zr, pkg, rebuildContentRepairPlan{
+	entryRepairs, inlineSVGDocuments, err := rebuildXHTMLRepairs(ctx, zr, pkg, recovery, rebuildContentRepairPlan{
 		xml11MetaValues:    pkg.repairXHTMLMetaValues,
 		missingStylesheets: missingStylesheets,
 	})
@@ -128,12 +116,10 @@ func rebuildEPUB(ctx context.Context, w io.Writer, src io.ReaderAt, size int64) 
 		return err
 	}
 	pkg.opfBytes = addMissingSVGProperties(pkg.opfPath, pkg.opfBytes, inlineSVGDocuments)
-	pkg.opfBytes, err = format.NormalizeEPUBPageCountMetadata(zr, pkg.opfPath, pkg.opfBytes)
-	if err != nil {
-		return err
-	}
-	if err := format.ValidateEPUBRewriteSafety(zr, sourceOPFBytes, pkg.opfBytes); err != nil {
-		return err
+	if normalized, err := format.NormalizeEPUBPageCountMetadata(zr, pkg.opfPath, pkg.opfBytes); err == nil {
+		pkg.opfBytes = normalized
+	} else {
+		opts.warn("Could not normalize EPUB page counts: %v", err)
 	}
 	manifestPaths, err := kepubManifestPaths(pkg.opfPath, pkg.opfBytes)
 	if err != nil {
@@ -150,13 +136,12 @@ func rebuildEPUB(ctx context.Context, w io.Writer, src io.ReaderAt, size int64) 
 		}
 	}
 	ncxFile, ncxData, err := rebuildNCXRepairs(ctx, zr, pkg)
-	if err != nil {
+	if fatalConversionError(err) {
 		return err
+	} else if err != nil {
+		opts.warn("Could not repair EPUB navigation; kept source navigation: %v", err)
 	}
 	if ncxFile != nil {
-		if entryRepairs == nil {
-			entryRepairs = make(map[*zip.File][]byte)
-		}
 		entryRepairs[ncxFile] = ncxData
 	}
 
@@ -181,16 +166,10 @@ func rebuildEPUB(ctx context.Context, w io.Writer, src io.ReaderAt, size int64) 
 		if err := checkContext(ctx); err != nil {
 			return closeWith(err)
 		}
-		if rebuildIsRootMimetype(file.Name) || file == pkg.containerFile {
+		if rebuildIsRootMimetype(file.Name) || file == pkg.containerFile || file == pkg.opfFile || recovery.omitted[file.Name] {
 			continue
 		}
 		if kepubFilterFile(file.Name) && !manifestEntries[file] {
-			continue
-		}
-		if file == pkg.opfFile {
-			if err := writeRebuildEntry(zw, pkg.opfPath, pkg.opfBytes, zip.Deflate); err != nil {
-				return closeWith(err)
-			}
 			continue
 		}
 		if repaired, ok := entryRepairs[file]; ok {
@@ -199,11 +178,28 @@ func rebuildEPUB(ctx context.Context, w io.Writer, src io.ReaderAt, size int64) 
 			}
 			continue
 		}
-		if err := writeRebuildSourceEntry(ctx, zw, file, manifestEntries[file]); err != nil {
+		data, err := recovery.read(ctx, file, maxConverterDecodedInputBytes)
+		if err != nil {
+			return closeWith(err)
+		}
+		if recovery.omitted[file.Name] {
+			continue
+		}
+		if strings.EqualFold(path.Ext(file.Name), ".css") {
+			data = recovery.cleanFontCSS(file.Name, data)
+		}
+		if err := writeRebuildSourceEntry(zw, file, data, manifestEntries[file]); err != nil {
 			return closeWith(err)
 		}
 	}
 
+	pkg.opfBytes, err = recovery.finishOPF(zr, pkg.opfPath, pkg.opfBytes)
+	if err != nil {
+		return closeWith(err)
+	}
+	if err := writeRebuildEntry(zw, pkg.opfPath, pkg.opfBytes, zip.Deflate); err != nil {
+		return closeWith(err)
+	}
 	if err := zw.Close(); err != nil {
 		return fmt.Errorf("close rebuilt EPUB: %w", err)
 	}
@@ -348,7 +344,7 @@ func readRebuildCandidate(ctx context.Context, zr *zip.Reader, file *zip.File) (
 	if err := format.DecodeOPFXML(raw, &doc); err != nil {
 		return rebuildCandidate{}, fmt.Errorf("parse EPUB OPF %s: %w", file.Name, err)
 	}
-	if doc.XMLName.Local != "package" || len(doc.Manifest.Items) == 0 || len(doc.Spine.Items) == 0 {
+	if doc.XMLName.Local != "package" || len(doc.Manifest.Items) == 0 {
 		return rebuildCandidate{}, fmt.Errorf("EPUB OPF %s has no coherent manifest and spine", file.Name)
 	}
 	manifestPaths := make(map[string]string, len(doc.Manifest.Items))
@@ -375,7 +371,19 @@ func readRebuildCandidate(ctx context.Context, zr *zip.Reader, file *zip.File) (
 		}
 	}
 	if !matchedSpine {
-		return rebuildCandidate{}, fmt.Errorf("EPUB OPF %s spine does not resolve to its manifest", file.Name)
+		for _, item := range doc.Manifest.Items {
+			if !isEPUBContentDocument(item) {
+				continue
+			}
+			entry, err := epubZipFile(zr, cleanEPUBHref(file.Name, item.Href))
+			if err == nil && entry != nil {
+				matchedSpine = true
+				break
+			}
+		}
+		if !matchedSpine {
+			return rebuildCandidate{}, fmt.Errorf("EPUB OPF %s has no available content documents", file.Name)
+		}
 	}
 	return rebuildCandidate{path: file.Name, file: file, raw: raw, normalizedXML11: normalizedXML11}, nil
 }
@@ -496,7 +504,7 @@ func writeRebuildEntry(zw *zip.Writer, name string, data []byte, method uint16) 
 	return nil
 }
 
-func writeRebuildSourceEntry(ctx context.Context, zw *zip.Writer, file *zip.File, packageEntry bool) error {
+func writeRebuildSourceEntry(zw *zip.Writer, file *zip.File, data []byte, packageEntry bool) error {
 	header := file.FileHeader
 	if packageEntry && utf8.ValidString(header.Name) && utf8.ValidString(header.Comment) {
 		header.NonUTF8 = false
@@ -515,12 +523,7 @@ func writeRebuildSourceEntry(ctx context.Context, zw *zip.Writer, file *zip.File
 	if err != nil {
 		return fmt.Errorf("create rebuilt EPUB entry %s: %w", file.Name, err)
 	}
-	src, err := file.Open()
-	if err != nil {
-		return fmt.Errorf("open EPUB entry %s: %w", file.Name, err)
-	}
-	defer src.Close()
-	if err := copyContext(ctx, dst, src); err != nil {
+	if _, err := dst.Write(data); err != nil {
 		return fmt.Errorf("copy EPUB entry %s: %w", file.Name, err)
 	}
 	return nil

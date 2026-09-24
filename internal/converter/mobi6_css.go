@@ -255,6 +255,14 @@ func mobi6CSSDelimiter(s string, start int, delimiters string) int {
 			}
 			continue
 		}
+		if strings.HasPrefix(s[i:], "/*") {
+			end := strings.Index(s[i+2:], "*/")
+			if end < 0 {
+				return len(s)
+			}
+			i += end + 3
+			continue
+		}
 		if c == '\'' || c == '"' {
 			quote = c
 			continue

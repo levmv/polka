@@ -446,25 +446,6 @@ func TestParseOPFRejectsMalformedDate(t *testing.T) {
 	}
 }
 
-func TestParseOPFUsesEarliestParseableDate(t *testing.T) {
-	const opf = `<?xml version='1.0' encoding='utf-8'?>
-<package xmlns="http://www.idpf.org/2007/opf" version="2.0">
-  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
-    <dc:title>Multiple Dates</dc:title>
-    <dc:date>2020-06-01</dc:date>
-    <dc:date>0101-01-01T00:00:00+00:00</dc:date>
-    <dc:date>1999</dc:date>
-  </metadata>
-</package>`
-	meta, err := ParseOPF(strings.NewReader(opf))
-	if err != nil {
-		t.Fatalf("ParseOPF: %v", err)
-	}
-	if meta.Date != "1999" {
-		t.Fatalf("date = %q; want earliest parseable date", meta.Date)
-	}
-}
-
 func TestMetadataMerge(t *testing.T) {
 	base := &Metadata{
 		Title:       "Embedded Title",

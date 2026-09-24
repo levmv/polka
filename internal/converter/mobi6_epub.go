@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/url"
 	"path"
+	"slices"
 	"strings"
 
 	"golang.org/x/net/html"
@@ -62,15 +63,24 @@ func convertEPUBToMOBI6(ctx context.Context, w io.Writer, src io.ReaderAt, size 
 	if err != nil {
 		return err
 	}
+	sourceOptions := opts
+	sourceOptions.Metadata = nil
+	var recovery *epubRecovery
+	pkg.opfBytes, recovery, err = prepareEPUBConversion(ctx, zr, pkg.opfPath, pkg.opfBytes, false, sourceOptions)
+	if err != nil {
+		return err
+	}
+	zr.File = slices.DeleteFunc(zr.File, func(file *zip.File) bool { return recovery.omitted[file.Name] })
 	var opf rebuildOPFDoc
 	if err := format.DecodeOPFXML(pkg.opfBytes, &opf); err != nil {
 		return fmt.Errorf("parse EPUB package: %w", err)
 	}
 	meta, err := format.ParseOPF(bytes.NewReader(pkg.opfBytes))
 	if err != nil {
-		return err
+		opts.warn("Could not read EPUB metadata: %v", err)
+		meta = &format.Metadata{}
 	}
-	s := &mobi6Source{ctx: ctx, options: opts, archive: zr, imageIDs: map[*zip.File]int{}, styles: map[*zip.File][]mobi6CSSRule{}, cover: -1, meta: epubMetadataWithFallback(toEPUBMetadata(meta), opts)}
+	s := &mobi6Source{ctx: ctx, options: opts, archive: zr, imageIDs: map[*zip.File]int{}, styles: map[*zip.File][]mobi6CSSRule{}, cover: -1, meta: epubMetadataForOutput(toEPUBMetadata(meta), opts)}
 	if s.meta.Title == "" {
 		s.meta.Title = "Untitled"
 	}
@@ -92,9 +102,6 @@ func convertEPUBToMOBI6(ctx context.Context, w io.Writer, src io.ReaderAt, size 
 		if containsToken(item.Properties, "cover-image") {
 			coverID = item.ID
 		}
-	}
-	if err := s.checkEncryption(pkg.opfPath, items); err != nil {
-		return err
 	}
 	if coverID != "" {
 		item, ok := items[coverID]
@@ -128,9 +135,12 @@ func convertEPUBToMOBI6(ctx context.Context, w io.Writer, src io.ReaderAt, size 
 			return nil
 		}
 		seen[file] = true
-		raw, err := kepubReadZipFile(ctx, file, maxConverterDecodedInputBytes)
+		raw, err := recovery.read(ctx, file, maxConverterDecodedInputBytes)
 		if err != nil {
 			return err
+		}
+		if recovery.omitted[file.Name] {
+			return nil
 		}
 		originalSize := len(raw)
 		raw, err = format.DecodeHTMLToUTF8(raw)
@@ -140,10 +150,16 @@ func convertEPUBToMOBI6(ctx context.Context, w io.Writer, src io.ReaderAt, size 
 		if err := claimConversionDecodedBytes(ctx, int64(len(raw)-originalSize), "decoded EPUB content"); err != nil {
 			return err
 		}
-		raw, err = xmlutil.PrepareXHTMLForHTML(raw)
+		prepared, err := xmlutil.PrepareXHTMLForHTML(raw)
 		if err != nil {
-			return fmt.Errorf("read EPUB content %s: %w", file.Name, err)
+			prepareErr := err
+			prepared, err = recoverEPUBContent(raw)
+			if err != nil {
+				return fmt.Errorf("read EPUB content %s: %w", file.Name, err)
+			}
+			opts.warn("Could not preserve all formatting in %s: %v", file.Name, prepareErr)
 		}
+		raw = prepared
 		z := html.NewTokenizer(bytes.NewReader(raw))
 		for z.Next() != html.ErrorToken {
 			s.tokens++
@@ -192,7 +208,17 @@ func convertEPUBToMOBI6(ctx context.Context, w io.Writer, src io.ReaderAt, size 
 		}
 	}
 	if len(s.documents) == 0 {
-		return fmt.Errorf("EPUB has no reading-order content")
+		opts.warn("EPUB reading order was unavailable; trying documents in manifest order")
+		for _, item := range opf.Manifest.Items {
+			if isEPUBContentDocument(item) {
+				if err := addDocument(item); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	if len(s.documents) == 0 {
+		return fmt.Errorf("EPUB has no readable content: %w", ErrUnsupportedContent)
 	}
 	s.start = mobi6Key(s.documents[0].name, "")
 	// Non-spine documents can contain footnotes or other linked content. Keep
@@ -230,47 +256,6 @@ func convertEPUBToMOBI6(ctx context.Context, w io.Writer, src io.ReaderAt, size 
 		return err
 	}
 	return writeMOBI6(ctx, w, book)
-}
-
-func (s *mobi6Source) checkEncryption(opfPath string, items map[string]epubManifestItem) error {
-	file, err := epubZipFile(s.archive, "META-INF/encryption.xml")
-	if err != nil || file == nil {
-		return err
-	}
-	raw, err := kepubReadZipFile(s.ctx, file, maxConverterMetadataBytes)
-	if err != nil {
-		return err
-	}
-	var encryption struct {
-		Entries []struct {
-			Method struct {
-				Algorithm string `xml:"Algorithm,attr"`
-			} `xml:"EncryptionMethod"`
-			Cipher struct {
-				Reference struct {
-					URI string `xml:"URI,attr"`
-				} `xml:"CipherReference"`
-			} `xml:"CipherData"`
-		} `xml:"EncryptedData"`
-	}
-	if err := xml.Unmarshal(raw, &encryption); err != nil {
-		return fmt.Errorf("parse EPUB encryption: %w", err)
-	}
-	for _, entry := range encryption.Entries {
-		if entry.Method.Algorithm != "http://www.idpf.org/2008/embedding" && entry.Method.Algorithm != "http://ns.adobe.com/pdf/enc#RC" {
-			return fmt.Errorf("MOBI6 cannot convert encrypted EPUB content: %w", ErrUnsupportedContent)
-		}
-		font := false
-		for _, item := range items {
-			if cleanEPUBHref(opfPath, item.Href) == cleanEPUBHref("", entry.Cipher.Reference.URI) {
-				font = strings.HasPrefix(item.MediaType, "font/") || strings.Contains(item.MediaType, "font") || strings.HasSuffix(item.MediaType, "opentype")
-			}
-		}
-		if !font {
-			return fmt.Errorf("EPUB obfuscation is not confined to fonts: %w", ErrUnsupportedContent)
-		}
-	}
-	return nil
 }
 
 func mobi6Key(name, fragment string) string { return name + "\x00" + fragment }

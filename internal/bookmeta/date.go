@@ -11,8 +11,8 @@ import (
 var yearRegex = regexp.MustCompile(`\b(1[0-9]{3}|20[0-9]{2})\b`)
 
 var (
-	// YYYY-MM-DD or YYYY/MM/DD
-	reISO = regexp.MustCompile(`^(\d{4})[-\/](\d{2})[-\/](\d{2})(?:T.*)?$`)
+	// YYYY-MM-DD or YYYY/MM/DD, also accepting unpadded months and days.
+	reISO = regexp.MustCompile(`^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})(?:T.*)?$`)
 	// YYYY-MM or YYYY/MM
 	reYM = regexp.MustCompile(`^(\d{4})[-\/](\d{2})$`)
 	// YYYY

@@ -445,10 +445,15 @@ function foliateZIPEntryMap(entries: ZipEntry[]): Map<string, ZipEntry> {
 // opaque id with no extension. Fetch the bytes and wrap them in a File whose
 // name carries the real format so detection is reliable. EPUB is recognized by
 // its zip signature regardless, so a correct name there is simply harmless.
-export async function fetchFoliateBookFile(url: string, format: string): Promise<File> {
+export async function fetchFoliateBookFile(
+    url: string,
+    format: string,
+    onWarning?: () => void,
+): Promise<File> {
     const res = await fetch(url);
     if (!res.ok) throw new Error(`Failed to fetch book file: ${res.status}`);
     const blob = await res.blob();
+    if (res.headers.get('X-Polka-Conversion-Warnings') === 'true') onWarning?.();
     const filenameFormat = format === 'kepub' ? 'kepub.epub' : format;
     return new File([blob], `book.${filenameFormat}`, { type: blob.type });
 }

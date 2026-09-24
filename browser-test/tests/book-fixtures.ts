@@ -93,6 +93,7 @@ function buildEPUB(
     description?: string;
     verticalWriting?: boolean;
     scriptURL?: string;
+    signature?: boolean;
   } = {},
 ): UploadFile {
   const chapterName = options.chapterName || 'chapter.xhtml';
@@ -134,6 +135,9 @@ function buildEPUB(
     },
     { name: 'OEBPS/content.opf', data: Buffer.from(opf) },
     { name: `OEBPS/${chapterName}`, data: Buffer.from(chapter) },
+    ...(options.signature
+      ? [{ name: 'META-INF/signatures.xml', data: Buffer.from('<signatures/>') }]
+      : []),
   ]);
   return { name: `${name}.epub`, mimeType: 'application/epub+zip', buffer };
 }
@@ -227,7 +231,7 @@ export function epubWithNonstandardZIPSignature(
   author: string,
   name: string,
 ): UploadFile {
-  const fixture = buildEPUB(title, author, name);
+  const fixture = buildEPUB(title, author, name, { signature: true });
   // A real-world EPUB producer emitted `Pk` instead of `PK` in the first
   // local ZIP signature. Go's bounded package reader can still resolve the
   // central directory, while browser ZIP sniffing rejects the source. The

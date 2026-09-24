@@ -51,7 +51,7 @@ func convertHTMLSourceToEPUB(ctx context.Context, w io.Writer, src io.ReaderAt, 
 	if err := checkContext(ctx); err != nil {
 		return err
 	}
-	meta := epubMetadataWithFallback(toEPUBMetadata(format.MetadataFromHTML(raw)), opts)
+	meta := epubMetadataForOutput(toEPUBMetadata(format.MetadataFromHTML(raw)), opts)
 	return writeSimpleEPUBWithNav(ctx, w, body, meta, nav, assets...)
 }
 
@@ -150,7 +150,7 @@ func convertHTMLZSourceToEPUB(ctx context.Context, w io.Writer, src io.ReaderAt,
 	if err := checkContext(ctx); err != nil {
 		return err
 	}
-	return writeSimpleEPUBWithNav(ctx, w, body, epubMetadataWithFallback(toEPUBMetadata(meta), opts), nav, assets...)
+	return writeSimpleEPUBWithNav(ctx, w, body, epubMetadataForOutput(toEPUBMetadata(meta), opts), nav, assets...)
 }
 
 type (

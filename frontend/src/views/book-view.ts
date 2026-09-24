@@ -629,7 +629,7 @@ function renderBookDetail(
                 if (abort.signal.aborted) return;
                 openDownload(result.download_url);
                 if (result.has_warnings) {
-                    showToast('Some content could not be converted and may be missing.', {
+                    showToast('Some content, formatting or metadata could not be converted.', {
                         type: 'warning',
                         action: {
                             label: 'Download original',

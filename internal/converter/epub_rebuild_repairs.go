@@ -621,13 +621,13 @@ func removeEmptyTours(raw []byte) []byte {
 	return out
 }
 
-func rebuildXHTMLRepairs(ctx context.Context, zr *zip.Reader, pkg rebuildPackage, plan rebuildContentRepairPlan) (map[*zip.File][]byte, map[string]bool, error) {
+func rebuildXHTMLRepairs(ctx context.Context, zr *zip.Reader, pkg rebuildPackage, recovery *epubRecovery, plan rebuildContentRepairPlan) (map[*zip.File][]byte, map[string]bool, error) {
 	paths, err := kepubContentDocuments(pkg.opfPath, pkg.opfBytes)
 	if err != nil {
 		return nil, nil, err
 	}
 	epub3Documents, navDocument, epub2Package := classifyRebuildContent(pkg.opfPath, pkg.opfBytes)
-	repairs := make(map[*zip.File][]byte)
+	repairs := recovery.patches
 	inlineSVGDocuments := make(map[string]bool)
 	pageTemplatePresent := make(map[string]bool)
 	for _, contentPath := range paths {
@@ -638,9 +638,16 @@ func rebuildXHTMLRepairs(ctx context.Context, zr *zip.Reader, pkg rebuildPackage
 		if file == nil {
 			continue
 		}
-		raw, err := kepubReadZipFile(ctx, file, maxConverterDecodedInputBytes)
+		raw, err := recovery.read(ctx, file, maxConverterDecodedInputBytes)
 		if err != nil {
 			return nil, nil, fmt.Errorf("read EPUB content document %s: %w", contentPath, err)
+		}
+		if recovery.omitted[file.Name] {
+			continue
+		}
+		if cleaned := recovery.cleanFontStyles(file.Name, raw); !bytes.Equal(cleaned, raw) {
+			raw = cleaned
+			repairs[file] = raw
 		}
 		var missingPageTemplates map[string]bool
 		for target := range rebuildAdobePageTemplateLinkTargets(raw, contentPath) {

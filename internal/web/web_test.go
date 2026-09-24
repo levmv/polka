@@ -650,8 +650,8 @@ func TestDownloadAsEPUBToKEPUB(t *testing.T) {
 	if got := w.Header().Get("Content-Length"); got != strconv.Itoa(w.Body.Len()) {
 		t.Fatalf("Content-Length = %q, want %d", got, w.Body.Len())
 	}
-	if got := w.Header().Get("Cache-Control"); got != "private, max-age=31536000, immutable" {
-		t.Fatalf("Cache-Control = %q, want immutable private cache", got)
+	if got := w.Header().Get("Cache-Control"); got != "private, no-cache" {
+		t.Fatalf("Cache-Control = %q, want catalog-dependent revalidation", got)
 	}
 	xhtml := testZipEntry(t, w.Body.Bytes(), "OEBPS/text.xhtml")
 	if !strings.Contains(xhtml, "koboSpan") || !strings.Contains(xhtml, "Kobo body.") {
@@ -741,7 +741,7 @@ func TestDownloadAsEPUBToRepairedEPUB(t *testing.T) {
 	}
 }
 
-func TestDownloadAsConversionFailureDoesNotCommitAttachment(t *testing.T) {
+func TestDownloadAsRecoversOptionalDamageAndCleansFailedOutput(t *testing.T) {
 	database, dir := setupTestDB(t)
 	defer database.Close()
 
@@ -768,8 +768,23 @@ func TestDownloadAsConversionFailureDoesNotCommitAttachment(t *testing.T) {
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
-	if w.Code != http.StatusInternalServerError {
-		t.Fatalf("failed conversion status = %d, want 500; body: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusOK || w.Header().Get("X-Polka-Conversion-Warnings") != "true" {
+		t.Fatalf("recoverable conversion status = %d, headers = %v", w.Code, w.Header())
+	}
+	if !strings.Contains(testZipEntry(t, w.Body.Bytes(), "OEBPS/text.xhtml"), "Readable before corruption.") {
+		t.Fatal("conversion lost the readable chapter")
+	}
+	// No readable chapter is discovered only when the output package is finalized.
+	unreadable := testfixture.EPUB(t, []byte(`<package xmlns="http://www.idpf.org/2007/opf" version="3.0"><manifest><item id="text" href="missing.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="text"/></spine></package>`), nil)
+	if err := os.WriteFile(filepath.Join(fileDir, "source.epub"), unreadable, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	req = httptest.NewRequest("GET", "/download/2/as/kepub", nil)
+	addSessionCookie(t, s, req, user.ID)
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("failed conversion status = %d, want 422; body: %s", w.Code, w.Body.String())
 	}
 	if got := w.Header().Get("Content-Disposition"); got != "" {
 		t.Fatalf("failed conversion Content-Disposition = %q, want empty", got)

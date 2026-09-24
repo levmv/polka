@@ -86,7 +86,7 @@ func RewriteEPUBMetadataAndCoverTo(w io.Writer, src io.ReaderAt, size int64, met
 	if err != nil {
 		return fmt.Errorf("normalize EPUB OPF %s: %w", opf.path, err)
 	}
-	nextOPF, err := rewriteOPFMetadata(normalizedOPF, meta, modified)
+	nextOPF, err := RewriteOPFMetadata(normalizedOPF, meta, modified)
 	if err != nil {
 		return fmt.Errorf("rewrite EPUB OPF %s: %w", opf.path, err)
 	}
@@ -114,9 +114,7 @@ const (
 	epubAdobeFontObfuscation = "http://ns.adobe.com/pdf/enc#RC"
 )
 
-// ValidateEPUBRewriteSafety rejects package state that cannot survive an EPUB
-// rewrite safely. Rebuilders may share this with metadata write-back as long as
-// they preserve the key-bearing package identifier passed in rawOPF/nextOPF.
+// ValidateEPUBRewriteSafety checks signatures and font keys before metadata write-back.
 func ValidateEPUBRewriteSafety(zr *zip.Reader, rawOPF, nextOPF []byte) error {
 	if epubZipFile(zr, "META-INF/signatures.xml") != nil {
 		return fmt.Errorf("EPUB contains signatures.xml; refusing rewrite because package signatures would become stale")
@@ -867,7 +865,10 @@ func copyZipDirectoryEntry(zw *zip.Writer, f *zip.File) error {
 	return nil
 }
 
-func rewriteOPFMetadata(raw []byte, meta Metadata, modified time.Time) ([]byte, error) {
+// RewriteOPFMetadata writes a catalog snapshot into normalized UTF-8 package
+// XML. It shares write-back's preservation rules with converters. Callers own
+// archive signatures and font obfuscation when package identifiers change.
+func RewriteOPFMetadata(raw []byte, meta Metadata, modified time.Time) ([]byte, error) {
 	packageTag, err := opfFirstTag(raw, opfPackageTagRe)
 	if err != nil {
 		return nil, err
@@ -886,7 +887,23 @@ func rewriteOPFMetadata(raw []byte, meta Metadata, modified time.Time) ([]byte, 
 	uniqueID := strings.TrimSpace(packageAttrs["unique-identifier"])
 	epub3 := opfVersionAtLeast3(version)
 
+	var current opfDoc
+	if err := decodeOPFBytes(raw, &current); err != nil {
+		return nil, err
+	}
+	// Compare with the same date selection used by import, including its
+	// precision and legacy metadata containers. Unknown source dates survive
+	// unrelated edits when the catalog date is also empty.
 	inner := raw[metadataTag.end:endStart]
+	if meta.Date == opfDate(current.Metadata.Date) {
+		// The preserved source supplies this date; don't generate a second one.
+		meta.Date = ""
+	} else {
+		inner, err = removeOPFPublicationDates(inner, current.Metadata.Date, meta.Date == "")
+		if err != nil {
+			return nil, err
+		}
+	}
 	children, err := opfMetadataChildren(inner, false)
 	if err != nil {
 		return nil, err
@@ -915,20 +932,13 @@ func rewriteOPFMetadata(raw []byte, meta Metadata, modified time.Time) ([]byte, 
 	for _, id := range preserved.GeneratedIdentifierIDs {
 		ids[id] = true
 	}
-	generatedUsesOPFAttrs := opfGeneratedUsesOPFAttrs(meta, epub3)
-	generated := renderOPFMetadataChildren(raw, string(metadataTag.raw), meta, preserved, ids, modified, epub3, generatedUsesOPFAttrs)
+	generated := renderOPFMetadataChildren(packageTag.raw, metadataTag.raw, meta, preserved, ids, modified, epub3)
 	nextInner := assembleOPFMetadataInner(inner, generated, preserved.Children)
 
 	out := make([]byte, 0, len(raw)-len(inner)+len(nextInner))
 	out = append(out, raw[:metadataTag.end]...)
 	out = append(out, nextInner...)
 	out = append(out, raw[endStart:]...)
-	if generatedUsesOPFAttrs && !opfHasNamespacePrefix(raw, string(metadataTag.raw), "opf") {
-		out, err = opfEnsurePackageNamespace(out, "opf", "http://www.idpf.org/2007/opf")
-		if err != nil {
-			return nil, err
-		}
-	}
 	return out, nil
 }
 
@@ -1343,30 +1353,12 @@ func opfPreservedMetadataChildren(children []opfMetadataChild, uniqueID string, 
 		return opfChildOwnedByPolka(child, uniqueID, polkaTypes, uniqueIDPolkaTypes, seriesCollectionIDs)
 	}
 	removed := make([]bool, len(children))
-	refinements := make(map[string][]int)
-	var pending []int
 	for childIndex, child := range children {
-		if matchedChildren[childIndex] {
-			continue
-		}
-		if owned(child) {
-			removed[childIndex] = true
-			pending = append(pending, childIndex)
-		}
-		if target := strings.TrimPrefix(strings.TrimSpace(child.attrs["refines"]), "#"); target != "" {
-			refinements[target] = append(refinements[target], childIndex)
-		}
+		removed[childIndex] = !matchedChildren[childIndex] && owned(child)
 	}
-	// Refinements can themselves be refined, in any document order.
-	for i := 0; i < len(pending); i++ {
-		id := strings.TrimSpace(children[pending[i]].attrs["id"])
-		for _, childIndex := range refinements[id] {
-			if !removed[childIndex] && creatorRoles[childIndex] == "" {
-				removed[childIndex] = true
-				pending = append(pending, childIndex)
-			}
-		}
-	}
+	opfRemoveDependentRefinements(children, removed, func(index int) bool {
+		return matchedChildren[index] || creatorRoles[index] != ""
+	})
 
 	var preserved [][]byte
 	roles := make(map[string][][]byte)
@@ -1396,6 +1388,68 @@ func opfPreservedMetadataChildren(children []opfMetadataChild, uniqueID string, 
 	}
 }
 
+// Patch date records in place, including legacy containers. The decoded records
+// and raw spans follow the same document order; using the decoded events keeps
+// namespace resolution identical to import, including locally declared prefixes.
+func removeOPFPublicationDates(inner []byte, dates []opfDateRecord, clear bool) ([]byte, error) {
+	children, err := opfMetadataChildren(inner, true)
+	if err != nil {
+		return nil, err
+	}
+	removed := make([]bool, len(children))
+	dateIndex := 0
+	for i, child := range children {
+		if child.local != "date" {
+			continue
+		}
+		if dateIndex >= len(dates) {
+			return nil, fmt.Errorf("OPF date records do not match metadata spans")
+		}
+		priority := opfDatePriority(dates[dateIndex].Event)
+		dateIndex++
+		removed[i] = priority == opfDatePublication || priority == opfDateUnqualified || clear && priority != opfDateOther
+	}
+	if dateIndex != len(dates) {
+		return nil, fmt.Errorf("OPF date records do not match metadata spans")
+	}
+	opfRemoveDependentRefinements(children, removed, nil)
+	var out []byte
+	pos := 0
+	for i, child := range children {
+		if removed[i] {
+			out = append(out, inner[pos:child.start]...)
+			pos = child.end
+		}
+	}
+	return append(out, inner[pos:]...), nil
+}
+
+func opfRemoveDependentRefinements(children []opfMetadataChild, removed []bool, keep func(int) bool) {
+	refinements := make(map[string][]int)
+	var pending []int
+	for i, child := range children {
+		if removed[i] {
+			pending = append(pending, i)
+		}
+		if keep != nil && keep(i) {
+			continue
+		}
+		if target := strings.TrimPrefix(strings.TrimSpace(child.attrs["refines"]), "#"); target != "" {
+			refinements[target] = append(refinements[target], i)
+		}
+	}
+	// Refinements can themselves be refined, in any document order.
+	for i := 0; i < len(pending); i++ {
+		id := strings.TrimSpace(children[pending[i]].attrs["id"])
+		for _, index := range refinements[id] {
+			if !removed[index] {
+				removed[index] = true
+				pending = append(pending, index)
+			}
+		}
+	}
+}
+
 func opfIdentifiersEqual(a, b bookmeta.Identifier) bool {
 	return strings.EqualFold(strings.TrimSpace(a.Type), strings.TrimSpace(b.Type)) &&
 		strings.TrimSpace(a.Value) == strings.TrimSpace(b.Value)
@@ -1403,7 +1457,7 @@ func opfIdentifiersEqual(a, b bookmeta.Identifier) bool {
 
 func opfChildOwnedByPolka(child opfMetadataChild, uniqueID string, polkaTypes map[string]bool, uniqueIDPolkaTypes map[string]bool, seriesCollectionIDs map[string]bool) bool {
 	switch child.local {
-	case "title", "creator", "language", "description", "publisher", "date", "subject":
+	case "title", "creator", "language", "description", "publisher", "subject":
 		return true
 	case "identifier":
 		id := bookmeta.IdentifierFromOPF(child.attrs["scheme"], child.text)
@@ -1429,49 +1483,44 @@ func opfChildOwnedByPolka(child opfMetadataChild, uniqueID string, polkaTypes ma
 	return false
 }
 
-func opfGeneratedUsesOPFAttrs(meta Metadata, epub3 bool) bool {
-	if epub3 {
-		return false
-	}
-	for _, author := range meta.Authors {
-		if strings.TrimSpace(author.Name) != "" {
-			return true
-		}
-	}
-	for _, id := range bookmeta.ParseIdentifiers(meta.Identifier) {
-		scheme, value := opfIdentifierParts(id)
-		if scheme != "" && value != "" && !bookmeta.IsInternalIdentifier(id) {
-			return true
-		}
-	}
-	return false
-}
-
-func renderOPFMetadataChildren(raw []byte, metadataTag string, meta Metadata, preserved opfPreservedMetadata, ids opfIDSet, modified time.Time, epub3 bool, generatedUsesOPFAttrs bool) []string {
-	dc := "dc:"
-	if !opfHasNamespacePrefix(raw, metadataTag, "dc") {
-		dc = ""
-	}
-	opfAttrPrefix := ""
-	if generatedUsesOPFAttrs {
-		opfAttrPrefix = "opf:"
-	}
-
+func renderOPFMetadataChildren(packageTag, metadataTag []byte, meta Metadata, preserved opfPreservedMetadata, ids opfIDSet, modified time.Time, epub3 bool) []string {
+	const dc = "dc:"
+	const opfAttrPrefix = "opf:"
+	namespaces := opfMetadataNamespaces(packageTag, metadataTag)
 	var out []string
+	add := func(child string) {
+		// Bind only generated elements. Changing the package or metadata scope
+		// could reinterpret preserved source records that use the same prefixes.
+		var declarations string
+		if strings.HasPrefix(child, "<dc:") && namespaces["dc"] != "http://purl.org/dc/elements/1.1/" {
+			declarations += ` xmlns:dc="http://purl.org/dc/elements/1.1/"`
+		}
+		if strings.HasPrefix(child, "<meta") && namespaces[""] != "http://www.idpf.org/2007/opf" {
+			declarations += ` xmlns="http://www.idpf.org/2007/opf"`
+		}
+		if strings.Contains(child[:strings.IndexByte(child, '>')], " opf:") && namespaces["opf"] != "http://www.idpf.org/2007/opf" {
+			declarations += ` xmlns:opf="http://www.idpf.org/2007/opf"`
+		}
+		if declarations != "" {
+			end := strings.IndexAny(child, " >")
+			child = child[:end] + declarations + child[end:]
+		}
+		out = append(out, child)
+	}
 	titleID := ""
 	if title := strings.TrimSpace(meta.Title); title != "" {
 		titleID = ids.unique("polka-title")
 		attrs := fmt.Sprintf(` id="%s"`, titleID)
-		out = append(out, fmt.Sprintf("<%stitle%s>%s</%stitle>", dc, attrs, opfEscapeText(title), dc))
+		add(fmt.Sprintf("<%stitle%s>%s</%stitle>", dc, attrs, opfEscapeText(title), dc))
 	}
 	if epub3 && titleID != "" {
-		out = append(out, fmt.Sprintf(`<meta refines="#%s" property="title-type">main</meta>`, titleID))
+		add(fmt.Sprintf(`<meta refines="#%s" property="title-type">main</meta>`, titleID))
 		if sortTitle := strings.TrimSpace(meta.SortTitle); sortTitle != "" {
-			out = append(out, fmt.Sprintf(`<meta refines="#%s" property="file-as">%s</meta>`, titleID, opfEscapeText(sortTitle)))
+			add(fmt.Sprintf(`<meta refines="#%s" property="file-as">%s</meta>`, titleID, opfEscapeText(sortTitle)))
 		}
 	}
 	if sortTitle := strings.TrimSpace(meta.SortTitle); sortTitle != "" {
-		out = append(out, fmt.Sprintf(`<meta name="calibre:title_sort" content="%s"/>`, opfEscapeAttr(sortTitle)))
+		add(fmt.Sprintf(`<meta name="calibre:title_sort" content="%s"/>`, opfEscapeAttr(sortTitle)))
 	}
 
 	authorSeq := 0
@@ -1493,10 +1542,10 @@ func renderOPFMetadataChildren(raw []byte, metadataTag string, meta Metadata, pr
 			}
 			attrs += fmt.Sprintf(` %srole="%s"`, opfAttrPrefix, opfEscapeAttr(role))
 		}
-		out = append(out, fmt.Sprintf("<%screator%s>%s</%screator>", dc, attrs, opfEscapeText(name), dc))
+		add(fmt.Sprintf("<%screator%s>%s</%screator>", dc, attrs, opfEscapeText(name), dc))
 		if epub3 {
 			if sortName := strings.TrimSpace(author.SortName); sortName != "" {
-				out = append(out, fmt.Sprintf(`<meta refines="#%s" property="file-as">%s</meta>`, id, opfEscapeText(sortName)))
+				add(fmt.Sprintf(`<meta refines="#%s" property="file-as">%s</meta>`, id, opfEscapeText(sortName)))
 			}
 			roles := preserved.CreatorRoles[name]
 			hasPrimaryRole := false
@@ -1506,7 +1555,7 @@ func renderOPFMetadataChildren(raw []byte, metadataTag string, meta Metadata, pr
 				}
 			}
 			if !hasPrimaryRole {
-				out = append(out, fmt.Sprintf(`<meta refines="#%s" property="role" scheme="marc:relators">%s</meta>`, id, opfEscapeText(role)))
+				add(fmt.Sprintf(`<meta refines="#%s" property="role" scheme="marc:relators">%s</meta>`, id, opfEscapeText(role)))
 			}
 			for _, rawRole := range roles {
 				end := opfTagEnd(rawRole, 0)
@@ -1514,25 +1563,22 @@ func renderOPFMetadataChildren(raw []byte, metadataTag string, meta Metadata, pr
 				rebound = append(rebound, rawRole[end:]...)
 				out = append(out, string(rebound))
 			}
-			out = append(out, fmt.Sprintf(`<meta refines="#%s" property="display-seq">%d</meta>`, id, authorSeq))
+			add(fmt.Sprintf(`<meta refines="#%s" property="display-seq">%d</meta>`, id, authorSeq))
 		}
 	}
 
 	if language := strings.TrimSpace(meta.Language); language != "" {
-		out = append(out, fmt.Sprintf("<%slanguage>%s</%slanguage>", dc, opfEscapeText(language), dc))
+		add(fmt.Sprintf("<%slanguage>%s</%slanguage>", dc, opfEscapeText(language), dc))
 	}
 	if publisher := strings.TrimSpace(meta.Publisher); publisher != "" {
-		out = append(out, fmt.Sprintf("<%spublisher>%s</%spublisher>", dc, opfEscapeText(publisher), dc))
-	}
-	if date := strings.TrimSpace(meta.Date); date != "" {
-		out = append(out, fmt.Sprintf("<%sdate>%s</%sdate>", dc, opfEscapeText(date), dc))
+		add(fmt.Sprintf("<%spublisher>%s</%spublisher>", dc, opfEscapeText(publisher), dc))
 	}
 	if description := strings.TrimSpace(meta.Description); description != "" {
-		out = append(out, fmt.Sprintf("<%sdescription>%s</%sdescription>", dc, opfEscapeText(description), dc))
+		add(fmt.Sprintf("<%sdescription>%s</%sdescription>", dc, opfEscapeText(description), dc))
 	}
 	for _, tag := range meta.Tags {
 		if tag = strings.TrimSpace(tag); tag != "" {
-			out = append(out, fmt.Sprintf("<%ssubject>%s</%ssubject>", dc, opfEscapeText(tag), dc))
+			add(fmt.Sprintf("<%ssubject>%s</%ssubject>", dc, opfEscapeText(tag), dc))
 		}
 	}
 	identifierSeq := 0
@@ -1557,31 +1603,41 @@ func renderOPFMetadataChildren(raw []byte, metadataTag string, meta Metadata, pr
 		if scheme != "" && !epub3 {
 			attrs += fmt.Sprintf(` %sscheme="%s"`, opfAttrPrefix, opfEscapeAttr(scheme))
 		}
-		out = append(out, fmt.Sprintf(`<%sidentifier%s>%s</%sidentifier>`, dc, attrs, opfEscapeText(opfIdentifierText(scheme, value, epub3)), dc))
+		add(fmt.Sprintf(`<%sidentifier%s>%s</%sidentifier>`, dc, attrs, opfEscapeText(opfIdentifierText(scheme, value, epub3)), dc))
 	}
 	if series := strings.TrimSpace(meta.Series); series != "" {
-		out = append(out, fmt.Sprintf(`<meta name="calibre:series" content="%s"/>`, opfEscapeAttr(series)))
+		add(fmt.Sprintf(`<meta name="calibre:series" content="%s"/>`, opfEscapeAttr(series)))
 		if meta.SeriesIndex != 0 {
-			out = append(out, fmt.Sprintf(`<meta name="calibre:series_index" content="%s"/>`, opfEscapeAttr(strconv.FormatFloat(meta.SeriesIndex, 'f', -1, 64))))
+			add(fmt.Sprintf(`<meta name="calibre:series_index" content="%s"/>`, opfEscapeAttr(strconv.FormatFloat(meta.SeriesIndex, 'f', -1, 64))))
 		}
 		if epub3 {
 			seriesID := ids.unique("polka-series")
-			out = append(out, fmt.Sprintf(`<meta property="belongs-to-collection" id="%s">%s</meta>`, seriesID, opfEscapeText(series)))
-			out = append(out, fmt.Sprintf(`<meta refines="#%s" property="collection-type">series</meta>`, seriesID))
+			add(fmt.Sprintf(`<meta property="belongs-to-collection" id="%s">%s</meta>`, seriesID, opfEscapeText(series)))
+			add(fmt.Sprintf(`<meta refines="#%s" property="collection-type">series</meta>`, seriesID))
 			if meta.SeriesIndex != 0 {
-				out = append(out, fmt.Sprintf(`<meta refines="#%s" property="group-position">%s</meta>`, seriesID, opfEscapeText(strconv.FormatFloat(meta.SeriesIndex, 'f', -1, 64))))
+				add(fmt.Sprintf(`<meta refines="#%s" property="group-position">%s</meta>`, seriesID, opfEscapeText(strconv.FormatFloat(meta.SeriesIndex, 'f', -1, 64))))
 			}
 		}
 	}
 	if meta.PageCount > 0 {
 		if epub3 {
-			out = append(out, fmt.Sprintf(`<meta property="schema:numberOfPages">%d</meta>`, meta.PageCount))
+			add(fmt.Sprintf(`<meta property="schema:numberOfPages">%d</meta>`, meta.PageCount))
 		} else {
-			out = append(out, fmt.Sprintf(`<meta name="schema:numberOfPages" content="%d"/>`, meta.PageCount))
+			add(fmt.Sprintf(`<meta name="schema:numberOfPages" content="%d"/>`, meta.PageCount))
 		}
 	}
 	if epub3 && !modified.IsZero() {
-		out = append(out, fmt.Sprintf(`<meta property="dcterms:modified">%s</meta>`, opfEscapeText(modified.UTC().Format("2006-01-02T15:04:05Z"))))
+		add(fmt.Sprintf(`<meta property="dcterms:modified">%s</meta>`, opfEscapeText(modified.UTC().Format("2006-01-02T15:04:05Z"))))
+	}
+	// Put a replacement before all preserved records, then keep that order on
+	// later writes. Moving direct dates ahead of legacy containers would change
+	// which equally ranked date wins even when the catalog date is unchanged.
+	if date := strings.TrimSpace(meta.Date); date != "" {
+		attrs := ""
+		if !epub3 {
+			attrs = ` opf:event="publication"`
+		}
+		add(fmt.Sprintf("<dc:date%s>%s</dc:date>", attrs, opfEscapeText(date)))
 	}
 	return out
 }
@@ -1686,51 +1742,22 @@ func opfVersionAtLeast3(version string) bool {
 	return err == nil && n >= 3
 }
 
-func opfHasNamespacePrefix(raw []byte, metadataTag, prefix string) bool {
-	if opfTagDeclaresNamespace([]byte(metadataTag), prefix) {
-		return true
-	}
-	if loc := opfPackageTagRe.Find(raw); loc != nil && opfTagDeclaresNamespace(loc, prefix) {
-		return true
-	}
-	return false
-}
-
-func opfTagDeclaresNamespace(tag []byte, prefix string) bool {
-	want := "xmlns:" + strings.ToLower(strings.TrimSpace(prefix))
-	for _, match := range opfAttrRe.FindAllStringSubmatch(string(tag), -1) {
-		if len(match) >= 2 && strings.ToLower(strings.TrimSpace(match[1])) == want {
-			return true
+func opfMetadataNamespaces(packageTag, metadataTag []byte) map[string]string {
+	namespaces := make(map[string]string)
+	for _, tag := range [][]byte{packageTag, metadataTag} {
+		for _, match := range opfAttrRe.FindAllSubmatch(tag, -1) {
+			name := string(match[1])
+			prefix, qualified := strings.CutPrefix(name, "xmlns:")
+			if name != "xmlns" && !qualified {
+				continue
+			}
+			if !qualified {
+				prefix = ""
+			}
+			namespaces[prefix] = html.UnescapeString(string(match[3]) + string(match[4]))
 		}
 	}
-	return false
-}
-
-func opfEnsurePackageNamespace(raw []byte, prefix, uri string) ([]byte, error) {
-	if opfHasNamespacePrefix(raw, "", prefix) {
-		return raw, nil
-	}
-	loc := opfPackageTagRe.FindIndex(raw)
-	if loc == nil {
-		return nil, fmt.Errorf("OPF package tag not found")
-	}
-	end := opfTagEnd(raw, loc[0])
-	if end < 0 {
-		return nil, fmt.Errorf("unterminated OPF package tag")
-	}
-	insertAt := end - 1
-	for insertAt > loc[0] && isXMLSpace(raw[insertAt-1]) {
-		insertAt--
-	}
-	if insertAt > loc[0] && raw[insertAt-1] == '/' {
-		insertAt--
-	}
-	decl := []byte(fmt.Sprintf(` xmlns:%s="%s"`, prefix, uri))
-	out := make([]byte, 0, len(raw)+len(decl))
-	out = append(out, raw[:insertAt]...)
-	out = append(out, decl...)
-	out = append(out, raw[insertAt:]...)
-	return out, nil
+	return namespaces
 }
 
 func opfIdentifierParts(id bookmeta.Identifier) (string, string) {

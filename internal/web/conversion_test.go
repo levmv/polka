@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -12,7 +13,71 @@ import (
 	"time"
 
 	"github.com/levmv/polka/internal/db"
+	"github.com/levmv/polka/internal/format"
+	"github.com/levmv/polka/internal/storage"
+	"github.com/levmv/polka/internal/testfixture"
 )
+
+func TestConvertedDownloadAndDeliveryUseCatalogMetadata(t *testing.T) {
+	database, dir := setupTestDB(t)
+	defer database.Close()
+	src := testfixture.EPUB(t, []byte(`<package version="3.0" xmlns="http://www.idpf.org/2007/opf">
+<metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Source title</dc:title><dc:language>en</dc:language><dc:date>1990</dc:date></metadata>
+<manifest><item id="text" href="text.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="text"/></spine></package>`), map[string][]byte{
+		"OEBPS/text.xhtml": []byte(`<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Chapter</title></head><body><p>Book text.</p></body></html>`),
+	})
+	path := filepath.Join(dir, "Tolkien", "The_Hobbit", "a_1.epub")
+	if err := os.WriteFile(path, src, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	hash, err := storage.HashReader(t.Context(), bytes.NewReader(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, database, "UPDATE assets SET current_hash = ?, format = 'epub' WHERE id = 1", hash)
+	user := mustUser(t, database, "reader", db.RoleReader)
+	s := newTestServer(t, database, dir)
+	handler := testRoutes(t, s)
+	get := func(url string) *httptest.ResponseRecorder {
+		t.Helper()
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, jsonRequest(t, s, user.ID, http.MethodGet, url, nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d: %s", url, w.Code, w.Body)
+		}
+		return w
+	}
+	readerURL := readerFallbackURL(1, format.FormatEPUB, hash)
+	for _, date := range []string{"2000", ""} {
+		mustExec(t, database, "UPDATE books SET title = 'Catalog title', published_date = ?, updated_at = 1800000000 WHERE id = 1", date)
+		// Even a source-versioned URL must revalidate catalog-dependent output.
+		download := get("/download/1/as/kepub?v=" + conversionCacheVersion(hash))
+		if got := download.Header().Get("Cache-Control"); got != "private, no-cache" {
+			t.Fatalf("catalog-dependent download cache = %q", got)
+		}
+		meta, err := format.ExtractEPUBMetadata(bytes.NewReader(download.Body.Bytes()), int64(download.Body.Len()))
+		if err != nil || meta == nil || meta.Title != "Catalog title" || meta.Date != date {
+			t.Fatalf("converted download metadata = %+v, %v; want catalog title and date %q", meta, err, date)
+		}
+		job := createQueuedDeliveryJob(t, database, user.ID, sql.NullString{String: "kepub", Valid: true})
+		copy, cleanup, err := s.prepareDeliveryCopy(t.Context(), *job, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		delivered, err := os.ReadFile(copy.Path)
+		cleanup()
+		if err != nil || !bytes.Equal(delivered, download.Body.Bytes()) {
+			t.Fatalf("delivery and download differ: %v", err)
+		}
+		readerCopy := get(readerURL)
+		if !bytes.Equal(download.Body.Bytes(), readerCopy.Body.Bytes()) || readerCopy.Header().Get("Cache-Control") != "private, no-cache" {
+			t.Fatal("reader conversion did not use the same catalog snapshot and cache policy")
+		}
+	}
+	if original, err := os.ReadFile(path); err != nil || !bytes.Equal(original, src) {
+		t.Fatalf("conversion changed the library file: %v", err)
+	}
+}
 
 func TestConversionGateHonorsWaitingContext(t *testing.T) {
 	s := &Server{conversionSlots: make(chan struct{}, 1)}

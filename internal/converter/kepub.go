@@ -74,7 +74,7 @@ type kepubSpanState struct {
 	pending   bool
 }
 
-func convertEPUBToKEPUB(ctx context.Context, w io.Writer, src io.ReaderAt, size int64) error {
+func convertEPUBToKEPUB(ctx context.Context, w io.Writer, src io.ReaderAt, size int64, opts ConversionOptions) error {
 	if size < 0 {
 		return fmt.Errorf("source size is invalid")
 	}
@@ -90,9 +90,15 @@ func convertEPUBToKEPUB(ctx context.Context, w io.Writer, src io.ReaderAt, size 
 	if err != nil {
 		return err
 	}
-	pkg.opfBytes, err = format.NormalizeEPUBPageCountMetadata(zr, pkg.opfPath, pkg.opfBytes)
+	var recovery *epubRecovery
+	pkg.opfBytes, recovery, err = prepareEPUBConversion(ctx, zr, pkg.opfPath, pkg.opfBytes, true, opts)
 	if err != nil {
 		return err
+	}
+	if normalized, err := format.NormalizeEPUBPageCountMetadata(zr, pkg.opfPath, pkg.opfBytes); err == nil {
+		pkg.opfBytes = normalized
+	} else {
+		opts.warn("Could not normalize EPUB page counts: %v", err)
 	}
 	contentDocs, err := kepubContentDocuments(pkg.opfPath, pkg.opfBytes)
 	if err != nil {
@@ -103,18 +109,18 @@ func convertEPUBToKEPUB(ctx context.Context, w io.Writer, src io.ReaderAt, size 
 		return err
 	}
 
-	contentDocSet := make(map[*zip.File]bool, len(contentDocs))
 	packageEntrySet := map[*zip.File]bool{pkg.opfFile: true}
 	if pkg.containerFile != nil {
 		packageEntrySet[pkg.containerFile] = true
 	}
+	contentEntries := make(map[*zip.File]bool, len(contentDocs))
 	for _, name := range contentDocs {
 		file, err := epubZipFile(zr, name)
 		if err != nil {
 			return fmt.Errorf("resolve EPUB content document %s: %w", name, err)
 		}
-		if file != nil {
-			contentDocSet[file] = true
+		if file != nil && !packageEntrySet[file] {
+			contentEntries[file] = true
 			packageEntrySet[file] = true
 		}
 	}
@@ -146,7 +152,7 @@ func convertEPUBToKEPUB(ctx context.Context, w io.Writer, src io.ReaderAt, size 
 			zw.Close()
 			return err
 		}
-		if f == sourceMimetype || kepubFilterFile(f.Name) {
+		if f == sourceMimetype || f == pkg.opfFile || kepubFilterFile(f.Name) || recovery.omitted[f.Name] {
 			continue
 		}
 
@@ -156,33 +162,60 @@ func convertEPUBToKEPUB(ctx context.Context, w io.Writer, src io.ReaderAt, size 
 		case f == pkg.containerFile && pkg.containerBytes != nil:
 			data = pkg.containerBytes
 			method = zip.Deflate
-		case f == pkg.opfFile:
-			data, err = transformKEPUBOPF(pkg.opfBytes)
-			method = zip.Deflate
-		case contentDocSet[f]:
-			raw, readErr := kepubReadZipFile(ctx, f, maxConverterDecodedInputBytes)
-			if readErr != nil {
-				err = readErr
-				break
+		case contentEntries[f]:
+			data, err = recovery.read(ctx, f, maxConverterDecodedInputBytes)
+			if err != nil {
+				zw.Close()
+				return err
 			}
+			if recovery.omitted[f.Name] {
+				continue
+			}
+			data = recovery.cleanFontStyles(f.Name, data)
+			raw := data
 			data, err = transformKEPUBContent(raw)
+			if err != nil {
+				transformErr := err
+				data, err = recoverKEPUBContent(raw)
+				if err != nil {
+					recovery.omit(f.Name, "Could not recover EPUB document %s; omitted it: %v", f.Name, err)
+					continue
+				}
+				opts.warn("Could not fully transform EPUB document %s; kept readable content: %v", f.Name, transformErr)
+			}
 			method = zip.Deflate
 		default:
-			err = kepubWriteZipFile(ctx, zw, f, nil, f.Method, packageEntrySet[f])
-			method = 0
+			data, err = recovery.read(ctx, f, maxConverterResourceBytes)
+			if recovery.omitted[f.Name] {
+				continue
+			}
+			if strings.EqualFold(path.Ext(f.Name), ".css") {
+				data = recovery.cleanFontCSS(f.Name, data)
+			}
+			method = f.Method
 		}
 		if err != nil {
 			zw.Close()
 			return err
 		}
-		if method != 0 {
-			if err := kepubWriteZipFile(ctx, zw, f, data, method, packageEntrySet[f]); err != nil {
-				zw.Close()
-				return err
-			}
+		if err := kepubWriteZipFile(ctx, zw, f, data, method, packageEntrySet[f]); err != nil {
+			zw.Close()
+			return err
 		}
 	}
 
+	// Finalize references after resource reads have identified all omissions.
+	pkg.opfBytes, err = recovery.finishOPF(zr, pkg.opfPath, pkg.opfBytes)
+	if err == nil {
+		pkg.opfBytes, err = transformKEPUBOPF(pkg.opfBytes)
+	}
+	if err == nil {
+		err = kepubWriteZipFile(ctx, zw, pkg.opfFile, pkg.opfBytes, zip.Deflate, true)
+	}
+	if err != nil {
+		zw.Close()
+		return err
+	}
 	if err := zw.Close(); err != nil {
 		return fmt.Errorf("close KEPUB: %w", err)
 	}
@@ -974,22 +1007,11 @@ func kepubWriteZipFile(ctx context.Context, zw *zip.Writer, f *zip.File, data []
 	if err != nil {
 		return fmt.Errorf("create KEPUB entry %s: %w", f.Name, err)
 	}
-	if data != nil {
-		if err := checkContext(ctx); err != nil {
-			return err
-		}
-		if _, err := w.Write(data); err != nil {
-			return fmt.Errorf("write KEPUB entry %s: %w", f.Name, err)
-		}
-		return nil
+	if err := checkContext(ctx); err != nil {
+		return err
 	}
-	rc, err := f.Open()
-	if err != nil {
-		return fmt.Errorf("open EPUB entry %s: %w", f.Name, err)
-	}
-	defer rc.Close()
-	if err := copyContext(ctx, w, rc); err != nil {
-		return fmt.Errorf("copy EPUB entry %s: %w", f.Name, err)
+	if _, err := w.Write(data); err != nil {
+		return fmt.Errorf("write KEPUB entry %s: %w", f.Name, err)
 	}
 	return nil
 }

@@ -9,9 +9,9 @@ import (
 	"html"
 	"io"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -19,14 +19,12 @@ import (
 	"github.com/levmv/polka/internal/format"
 )
 
-const epubModified = "1970-01-01T00:00:00Z"
-
 func convertTextSourceToEPUB(ctx context.Context, w io.Writer, src io.ReaderAt, from format.Format, size int64, opts ConversionOptions) error {
 	raw, sourceFormat, meta, err := readEPUBTextSource(ctx, src, from, size)
 	if err != nil {
 		return err
 	}
-	meta = epubMetadataWithFallback(meta, opts)
+	meta = epubMetadataForOutput(meta, opts)
 
 	text := format.DecodeTextToUTF8(raw)
 	doc, err := epubDocumentForText(sourceFormat, text)
@@ -610,6 +608,7 @@ type epubMetadata struct {
 	Series           string
 	SeriesIndex      float64
 	Tags             []string
+	Modified         time.Time
 }
 
 func toEPUBMetadata(meta *format.Metadata) epubMetadata {
@@ -657,41 +656,15 @@ func toEPUBMetadata(meta *format.Metadata) epubMetadata {
 	return out
 }
 
-func epubMetadataWithFallback(meta epubMetadata, opts ConversionOptions) epubMetadata {
-	fallback := toEPUBMetadata(opts.Metadata)
-	fillEPUBMetadataGaps(&meta, fallback)
+func epubMetadataForOutput(meta epubMetadata, opts ConversionOptions) epubMetadata {
+	if opts.Metadata != nil {
+		meta = toEPUBMetadata(opts.Metadata)
+	}
+	meta.Modified = opts.modifiedTime()
 	if strings.TrimSpace(meta.Title) == "" {
 		meta.Title = epubTitleFromSourceName(opts.SourceName)
 	}
 	return meta
-}
-
-func fillEPUBMetadataGaps(meta *epubMetadata, fallback epubMetadata) {
-	fillEPUBString(&meta.Title, fallback.Title)
-	fillEPUBString(&meta.Language, fallback.Language)
-	fillEPUBString(&meta.Publisher, fallback.Publisher)
-	fillEPUBString(&meta.Date, fallback.Date)
-	fillEPUBString(&meta.Description, fallback.Description)
-	fillEPUBString(&meta.Identifier, fallback.Identifier)
-	fillEPUBString(&meta.Series, fallback.Series)
-	if meta.SeriesIndex == 0 {
-		meta.SeriesIndex = fallback.SeriesIndex
-	}
-	if len(meta.Authors) == 0 {
-		meta.Authors = slices.Clone(fallback.Authors)
-	}
-	if len(meta.ExtraIdentifiers) == 0 {
-		meta.ExtraIdentifiers = slices.Clone(fallback.ExtraIdentifiers)
-	}
-	if len(meta.Tags) == 0 {
-		meta.Tags = slices.Clone(fallback.Tags)
-	}
-}
-
-func fillEPUBString(dst *string, src string) {
-	if strings.TrimSpace(*dst) == "" {
-		*dst = strings.TrimSpace(src)
-	}
 }
 
 func epubTitleFromSourceName(sourceName string) string {
@@ -939,7 +912,7 @@ func epubContentOPF(meta epubMetadata, assets []epubAsset, bodyProperties string
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
 ` + identifiers.String() + `    <dc:title>` + html.EscapeString(meta.Title) + `</dc:title>
 ` + creators.String() + `    <dc:language>` + html.EscapeString(meta.Language) + `</dc:language>
-` + metadata.String() + `    <meta property="dcterms:modified">` + epubModified + `</meta>
+` + metadata.String() + `    <meta property="dcterms:modified">` + meta.Modified.UTC().Format(time.RFC3339) + `</meta>
 ` + coverMeta + `  </metadata>
   <manifest>
     <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>

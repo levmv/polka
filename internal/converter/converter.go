@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/levmv/polka/internal/bookmeta"
 	"github.com/levmv/polka/internal/format"
@@ -65,9 +66,15 @@ var targetSpecsBySourceFormat = map[format.Format][]TargetSpec{
 }
 
 type ConversionOptions struct {
-	// Metadata is fallback metadata for generated outputs. Source-embedded
-	// metadata wins; these fields only fill gaps in weak formats such as TXT.
+	// Metadata is a complete catalog snapshot for EPUB, KEPUB and MOBI6 output.
+	// Its supported book fields replace source values, including empty fields.
+	// Existing packages use write-back's per-field preservation rules.
+	// Nil keeps the source metadata. Page counts remain specific to each asset;
+	// PDF extraction and comic archive repacking retain their embedded metadata.
 	Metadata *bookmeta.Metadata
+	// Modified is the snapshot's modification time. Zero uses a fixed epoch so
+	// identical inputs never acquire a new download identity from the wall clock.
+	Modified time.Time
 	// SourceName is a final fallback for generated output titles.
 	SourceName string
 	// OnWarning is called synchronously for each recoverable problem. The
@@ -81,6 +88,32 @@ func (opts ConversionOptions) warn(message string, args ...any) {
 	if opts.OnWarning != nil {
 		opts.OnWarning(fmt.Sprintf(message, args...))
 	}
+}
+
+func (opts ConversionOptions) modifiedTime() time.Time {
+	if opts.Modified.IsZero() {
+		return time.Unix(0, 0).UTC()
+	}
+	return opts.Modified.UTC()
+}
+
+func (opts ConversionOptions) rewriteOPF(raw []byte) []byte {
+	if opts.Metadata == nil {
+		return raw
+	}
+	meta := *opts.Metadata
+	// Container conversions keep the package's own page-count policy.
+	meta.PageCount = 0
+	// EPUB requires a language; use the same unknown value as generated books.
+	if meta.Language == "" {
+		meta.Language = "und"
+	}
+	next, err := format.RewriteOPFMetadata(raw, meta, opts.modifiedTime())
+	if err != nil {
+		opts.warn("Could not update EPUB metadata; kept source metadata: %v", err)
+		return raw
+	}
+	return next
 }
 
 func NormalizeTarget(target string) Target {
@@ -155,14 +188,17 @@ func convertContextWithLimits(ctx context.Context, w io.Writer, src io.ReaderAt,
 		return format.ExtractAZW4PDFContext(ctx, w, src, size)
 	case TargetEPUB:
 		if from == format.FormatEPUB {
-			return rebuildEPUB(ctx, w, src, size)
+			return rebuildEPUB(ctx, w, src, size, opts)
 		}
 		return convertSourceToEPUB(ctx, w, src, from, size, opts)
 	case TargetKEPUB:
 		if from == format.FormatEPUB {
-			return convertEPUBToKEPUB(ctx, w, src, size)
+			return convertEPUBToKEPUB(ctx, w, src, size, opts)
 		}
-		return convertSourceViaEPUB(ctx, w, src, from, size, opts, limits.outputBytes, convertEPUBToKEPUB)
+		return convertSourceViaEPUB(ctx, w, src, from, size, opts, limits.outputBytes, func(ctx context.Context, w io.Writer, src io.ReaderAt, size int64) error {
+			// The generated intermediate already carries the catalog snapshot.
+			return convertEPUBToKEPUB(ctx, w, src, size, ConversionOptions{OnWarning: opts.OnWarning})
+		})
 	case TargetMOBI6:
 		convert := func(ctx context.Context, w io.Writer, src io.ReaderAt, size int64) error {
 			return convertEPUBToMOBI6(ctx, w, src, size, opts)

@@ -408,6 +408,9 @@ test.describe('Reader', () => {
     await page.goto(`/read/${bookId}`);
     const reader = page.locator('.reader-page');
     await expect(reader).toHaveAttribute('data-reader-fallback', 'epub-to-kepub');
+    await expect(page.locator('.toast-visible')).toContainText(
+      'Some content, formatting or metadata could not be converted.',
+    );
     await expect
       .poll(async () => page.locator('.reader-epub-stage').getAttribute('data-reader-ready'))
       .toBe('true');

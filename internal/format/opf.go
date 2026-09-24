@@ -105,7 +105,7 @@ type opfMetadata struct {
 	Language    []string        `xml:"language"`
 	Description []string        `xml:"description"`
 	Publisher   []string        `xml:"publisher"`
-	Date        []string        `xml:"date"`
+	Date        []opfDateRecord `xml:"date"`
 	Identifier  []opfIdentifier `xml:"identifier"`
 	Subject     []string        `xml:"subject"`
 	Meta        []opfMeta       `xml:"meta"`
@@ -161,8 +161,8 @@ func (m *opfMetadata) UnmarshalXML(dec *xml.Decoder, start xml.StartElement) err
 				}
 				parsed.Publisher = append(parsed.Publisher, value)
 			case "date":
-				var value string
-				if err := dec.DecodeElement(&value, &tok); err != nil {
+				value := opfDateRecord{Event: opfDateEvent(tok.Attr)}
+				if err := dec.DecodeElement(&value.Text, &tok); err != nil {
 					return err
 				}
 				parsed.Date = append(parsed.Date, value)
@@ -545,22 +545,6 @@ func opfMetaName(name string) string {
 		name = "calibre:" + after
 	}
 	return strings.ToLower(name)
-}
-
-func opfDate(dates []string) string {
-	var best string
-	for _, raw := range dates {
-		date := bookmeta.NormalizeMetadataDate(strings.TrimSpace(raw))
-		if date == "" {
-			continue
-		}
-		// Normalized dates are YYYY, YYYY-MM, or YYYY-MM-DD, so lexical order
-		// follows chronological order while preserving the original precision.
-		if best == "" || date < best {
-			best = date
-		}
-	}
-	return best
 }
 
 // EPUB 3 moved some metadata that OPF 2 exposed as attributes into generic

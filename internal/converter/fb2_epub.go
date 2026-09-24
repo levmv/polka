@@ -53,7 +53,7 @@ func convertFB2SourceToEPUB(ctx context.Context, w io.Writer, src io.ReaderAt, s
 	if err := checkContext(ctx); err != nil {
 		return err
 	}
-	return writeSimpleEPUBWithNav(ctx, w, body, epubMetadataWithFallback(toEPUBMetadata(meta), opts), nav, assets...)
+	return writeSimpleEPUBWithNav(ctx, w, body, epubMetadataForOutput(toEPUBMetadata(meta), opts), nav, assets...)
 }
 
 func readFB2SourceBytes(ctx context.Context, src io.ReaderAt, size int64) ([]byte, error) {

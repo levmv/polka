@@ -64,7 +64,7 @@ func convertKindleDocumentToEPUB(ctx context.Context, w io.Writer, doc *format.K
 	if err := checkContext(ctx); err != nil {
 		return err
 	}
-	meta := epubMetadataWithFallback(toEPUBMetadata(doc.Metadata), opts)
+	meta := epubMetadataForOutput(toEPUBMetadata(doc.Metadata), opts)
 	return writeSimpleEPUBWithNav(ctx, w, body, meta, kindleEPUBNav(doc.Navigation), assets...)
 }
 

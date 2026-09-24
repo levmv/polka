@@ -50,7 +50,10 @@ export function createReaderPagination(
     const source = page.dataset.readerFallback
         ? page.dataset.readerFallbackUrl
         : page.dataset.readerUrl;
-    const bookVersion = new URL(source!, location.href).searchParams.get('v') ?? source!;
+    const bookVersion = JSON.stringify([
+        new URL(source!, location.href).searchParams.get('v') ?? source!,
+        view.book?.metadata?.language,
+    ]);
     const cache = createPaginationCache(POLKA_READER_LAYOUT_VERSION, navigator.userAgent);
 
     if (!view.isFixedLayout) shareSectionResources(sections);

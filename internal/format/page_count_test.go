@@ -46,7 +46,7 @@ func TestDeclaredPageCountsAndWriteback(t *testing.T) {
 			}
 			raw := []byte(`<package xmlns="http://www.idpf.org/2007/opf" version="` + version + `"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Example</dc:title><meta name="schema:numberOfPages" content="55"/>` + strings.Join(foreign, "") + `</metadata><manifest/><spine/></package>`)
 			meta := Metadata{Title: "Example", PageCount: 123}
-			out, err := rewriteOPFMetadata(raw, meta, time.Time{})
+			out, err := RewriteOPFMetadata(raw, meta, time.Time{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -62,7 +62,7 @@ func TestDeclaredPageCountsAndWriteback(t *testing.T) {
 					t.Fatalf("writeback changed foreign field %s: %s", field, out)
 				}
 			}
-			repeated, err := rewriteOPFMetadata(out, meta, time.Time{})
+			repeated, err := RewriteOPFMetadata(out, meta, time.Time{})
 			if err != nil || !bytes.Equal(out, repeated) {
 				t.Fatalf("repeated writeback changed the OPF: %s, %v", repeated, err)
 			}
@@ -79,7 +79,7 @@ func TestDeclaredPageCountsAndWriteback(t *testing.T) {
 				t.Fatalf("repeated normalization changed the OPF: %s, %v", repeated, err)
 			}
 			meta.PageCount = 0
-			unknown, err := rewriteOPFMetadata(raw, meta, time.Time{})
+			unknown, err := RewriteOPFMetadata(raw, meta, time.Time{})
 			if err != nil || !bytes.Contains(unknown, []byte("#pages")) || !bytes.Contains(unknown, []byte("#pagecount")) {
 				t.Fatalf("unknown count erased source declarations: %s, %v", unknown, err)
 			}

@@ -138,7 +138,6 @@ func (s *Server) handleConvertedDownload(w http.ResponseWriter, r *http.Request,
 		serverError(w, r, err)
 		return
 	}
-
 	hasWarnings := false
 	convertOpts.OnWarning = func(string) { hasWarnings = true }
 	ready, convertedSize, cleanup, err := s.stageConvertedDownload(r.Context(), targetExt, func(dst *os.File) error {
@@ -225,8 +224,7 @@ func (s *Server) handleConvertedDownload(w http.ResponseWriter, r *http.Request,
 }
 
 func conversionDependsOnlyOnSource(from format.Format, target converter.Target) bool {
-	return from == format.FormatEPUB && target == converter.TargetKEPUB ||
-		(from == format.FormatCBR || from == format.FormatCB7) && target == converter.TargetCBZ
+	return (from == format.FormatCBR || from == format.FormatCB7) && target == converter.TargetCBZ
 }
 
 type assetFileRow struct {
@@ -248,6 +246,7 @@ type assetFileRow struct {
 	Series       string
 	SeriesIndex  float64
 	Tags         string
+	UpdatedAt    int64
 }
 
 func (s *Server) assetFile(ctx context.Context, assetID int64) (assetFileRow, error) {
@@ -262,14 +261,14 @@ func (s *Server) assetFile(ctx context.Context, assetID int64) (assetFileRow, er
 		       COALESCE(b.description, ''), COALESCE(b.publisher, ''),
 		       COALESCE(b.published_date, ''), COALESCE(b.identifiers, ''),
 		       COALESCE(b.series, ''), COALESCE(b.series_index, 0),
-		       COALESCE(b.tags, '')
+		       COALESCE(b.tags, ''), b.updated_at
 		FROM assets a
 		JOIN books b ON b.id = a.book_id
 		WHERE a.id = ?
 	`, assetID).Scan(
 		&a.StoragePath, &a.BookID, &a.Filename, &a.Extension, &formatKey, &canRead, &a.CurrentHash, &a.KOReaderHash,
 		&a.Title, &a.SortTitle, &a.Language, &a.Description, &a.Publisher,
-		&a.Date, &a.Identifier, &a.Series, &a.SeriesIndex, &a.Tags,
+		&a.Date, &a.Identifier, &a.Series, &a.SeriesIndex, &a.Tags, &a.UpdatedAt,
 	)
 	a.Format = format.FormatFromKey(formatKey)
 	a.CanRead = canRead == 1
@@ -305,7 +304,7 @@ func (s *Server) assetConversionOptions(ctx context.Context, asset assetFileRow)
 			})
 		}
 	}
-	return converter.ConversionOptions{Metadata: meta, SourceName: asset.Filename}, nil
+	return converter.ConversionOptions{Metadata: meta, Modified: time.Unix(asset.UpdatedAt, 0), SourceName: asset.Filename}, nil
 }
 
 func (a assetFileRow) conversionMetadata() *bookmeta.Metadata {

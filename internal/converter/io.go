@@ -189,9 +189,6 @@ func readAllContextLimited(ctx context.Context, r io.Reader, maxBytes int64, lab
 		reader = io.LimitReader(reader, maxBytes+1)
 	}
 	raw, err := io.ReadAll(reader)
-	if err != nil {
-		return nil, err
-	}
 	if err := checkContext(ctx); err != nil {
 		return nil, err
 	}
@@ -204,7 +201,7 @@ func readAllContextLimited(ctx context.Context, r io.Reader, maxBytes int64, lab
 	if err := budget.addDecodedBytes(int64(len(raw)), label); err != nil {
 		return nil, err
 	}
-	return raw, nil
+	return raw, err
 }
 
 func copyContext(ctx context.Context, w io.Writer, r io.Reader) error {

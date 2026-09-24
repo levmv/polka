@@ -1,5 +1,6 @@
 import { fetchReaderPosition, fetchUserSettings, touchReader } from '../api';
 import { errorMessage } from '../errors';
+import { showToast } from '../toast';
 import type { ReaderPreferences } from '../types';
 import { createReadingActivity } from './activity';
 import { wireAnnotations } from './annotations';
@@ -181,8 +182,11 @@ async function openFoliateBookWithFallback(
         // KEPUB conversion can repair package defects that Foliate rejects.
         // Progress and annotations remain attached to the original asset.
         view = createReaderFoliateView(page, stage);
+        let hasWarnings = false;
         try {
-            const fallbackFile = await fetchFoliateBookFile(fallbackURL, 'kepub');
+            const fallbackFile = await fetchFoliateBookFile(fallbackURL, 'kepub', () => {
+                hasWarnings = true;
+            });
             await openFoliateBookFile(view, fallbackFile);
         } catch (fallbackError) {
             view.remove();
@@ -191,6 +195,11 @@ async function openFoliateBookWithFallback(
             );
         }
         page.dataset.readerFallback = 'epub-to-kepub';
+        if (hasWarnings) {
+            showToast('Some content, formatting or metadata could not be converted.', {
+                type: 'warning',
+            });
+        }
         return view;
     }
 }

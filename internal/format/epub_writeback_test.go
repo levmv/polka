@@ -16,6 +16,78 @@ import (
 	"github.com/levmv/polka/internal/bookmeta"
 )
 
+func TestRewriteEPUBMetadataNamespaces(t *testing.T) {
+	for _, tc := range []struct{ name, packageAttrs, metadataAttrs string }{
+		{name: "alternative prefixes"},
+		{
+			name:          "shadowed namespaces",
+			packageAttrs:  ` xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf"`,
+			metadataAttrs: ` xmlns="urn:foreign" xmlns:dc="urn:foreign" xmlns:opf="urn:foreign"`,
+		},
+	} {
+		for _, version := range []string{"2.0", "3.0"} {
+			t.Run(tc.name+"/"+version, func(t *testing.T) {
+				metadataTag := `<p:metadata xmlns:d="http://purl.org/dc/elements/1.1/"` + tc.metadataAttrs + `>`
+				const rights = `<d:rights>Keep rights</d:rights>`
+				src := testWritebackEPUB(t, []testWritebackEntry{
+					{name: "META-INF/container.xml", data: []byte(testWritebackContainer("content.opf"))},
+					{name: "content.opf", data: []byte(`<p:package xmlns:p="http://www.idpf.org/2007/opf" version="` + version + `"` + tc.packageAttrs + `>` + metadataTag + `<d:title>Book</d:title><d:date>1998</d:date>` + rights + `</p:metadata></p:package>`)},
+				})
+				meta := Metadata{Title: "Book", Language: "en", Date: "2024", Identifier: "isbn:9780306406157",
+					Authors: []bookmeta.AuthorMeta{{Name: "Writer", SortName: "Writer sort"}}, Tags: []string{"Tag"}}
+				modified := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+				out, err := RewriteEPUBMetadata(src, meta, modified)
+				if err != nil {
+					t.Fatal(err)
+				}
+				opf := testZipEntryString(t, out, "content.opf")
+				if !strings.Contains(opf, metadataTag) || !strings.Contains(opf, rights) {
+					t.Fatalf("rewrite changed preserved metadata or its namespaces:\n%s", opf)
+				}
+				// Namespace-aware decoding catches output that Polka's tolerant
+				// importer accepts but other EPUB readers cannot interpret.
+				var got struct {
+					Metadata struct {
+						Title      string `xml:"http://purl.org/dc/elements/1.1/ title"`
+						Language   string `xml:"http://purl.org/dc/elements/1.1/ language"`
+						Identifier string `xml:"http://purl.org/dc/elements/1.1/ identifier"`
+						Tag        string `xml:"http://purl.org/dc/elements/1.1/ subject"`
+						Creator    struct {
+							Name string `xml:",chardata"`
+							Role string `xml:"http://www.idpf.org/2007/opf role,attr"`
+							Sort string `xml:"http://www.idpf.org/2007/opf file-as,attr"`
+						} `xml:"http://purl.org/dc/elements/1.1/ creator"`
+						Meta []struct {
+							Property string `xml:"property,attr"`
+							Text     string `xml:",chardata"`
+						} `xml:"http://www.idpf.org/2007/opf meta"`
+					} `xml:"http://www.idpf.org/2007/opf metadata"`
+				}
+				if err := xml.Unmarshal([]byte(opf), &got); err != nil {
+					t.Fatal(err)
+				}
+				m := got.Metadata
+				if m.Title != "Book" || m.Language != "en" || m.Creator.Name != "Writer" || m.Tag != "Tag" || !strings.Contains(m.Identifier, "9780306406157") {
+					t.Fatalf("Dublin Core metadata missing: %+v\n%s", m, opf)
+				}
+				if version == "2.0" && (m.Creator.Role != "aut" || m.Creator.Sort != "Writer sort") {
+					t.Fatalf("OPF author attributes missing: %+v", m.Creator)
+				}
+				if version == "3.0" {
+					foundModified := false
+					for _, record := range m.Meta {
+						foundModified = foundModified || record.Property == "dcterms:modified" && record.Text == modified.Format(time.RFC3339)
+					}
+					if !foundModified {
+						t.Fatalf("OPF modification record missing: %+v", m.Meta)
+					}
+				}
+				assertFirstOPFDate(t, []byte(opf), "2024", version)
+			})
+		}
+	}
+}
+
 func TestRewriteEPUBMetadataEPUB2PreservesForeignMetadata(t *testing.T) {
 	src := testWritebackEPUB(t, []testWritebackEntry{
 		{name: "mimetype", method: zip.Store, data: []byte("application/epub+zip")},
@@ -613,7 +685,7 @@ func TestRewriteOPFMetadataPreservesUnchangedCreatorRoles(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.author.SortName = "Updated sort name"
 			meta := Metadata{Title: "Revised", Authors: []bookmeta.AuthorMeta{tc.author}}
-			out, err := rewriteOPFMetadata(raw, meta, time.Time{})
+			out, err := RewriteOPFMetadata(raw, meta, time.Time{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -638,7 +710,7 @@ func TestRewriteOPFMetadataPreservesUnchangedCreatorRoles(t *testing.T) {
 				extracted.Authors[0].Name != tc.author.Name || extracted.Authors[0].SortName != tc.author.SortName || extracted.Authors[0].Role != primaryRole {
 				t.Fatalf("catalog metadata changed: %+v, %v", extracted, err)
 			}
-			again, err := rewriteOPFMetadata(out, meta, time.Time{})
+			again, err := RewriteOPFMetadata(out, meta, time.Time{})
 			if err != nil || !bytes.Equal(out, again) {
 				t.Fatalf("repeated write changed metadata: %v\n%s", err, again)
 			}
@@ -667,13 +739,13 @@ func TestRewriteOPFMetadataAvoidsIDCollisions(t *testing.T) {
   <spine><itemref idref="` + tc.manifestID + `"/></spine>
 </package>`)
 			meta := Metadata{Title: "Book", Identifier: "isbn:9780306406157, doi:10.1000/example"}
-			first, err := rewriteOPFMetadata(raw, meta, time.Time{})
+			first, err := RewriteOPFMetadata(raw, meta, time.Time{})
 			if err != nil {
 				t.Fatal(err)
 			}
 			assertOPFReferences(t, string(first))
 			meta.Identifier = "doi:10.1000/example, isbn:9780140449136"
-			next, err := rewriteOPFMetadata(first, meta, time.Time{})
+			next, err := RewriteOPFMetadata(first, meta, time.Time{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -684,7 +756,7 @@ func TestRewriteOPFMetadataAvoidsIDCollisions(t *testing.T) {
 			if !strings.Contains(string(next), `<dc:contributor id="`+tc.contributor+`">Editor</dc:contributor>`) {
 				t.Fatalf("lost contributor identity:\n%s", next)
 			}
-			again, err := rewriteOPFMetadata(next, meta, time.Time{})
+			again, err := RewriteOPFMetadata(next, meta, time.Time{})
 			if err != nil {
 				t.Fatal(err)
 			}
