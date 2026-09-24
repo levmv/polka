@@ -60,7 +60,7 @@ func (s *Server) serveCover(w http.ResponseWriter, r *http.Request, bookID int64
 		serverError(w, r, err)
 		return
 	}
-	if cacheStat, err := os.Stat(cachePath); err == nil && !cacheStat.ModTime().Before(originalStat.ModTime()) {
+	if cacheStat, err := os.Stat(cachePath); err == nil && cacheStat.ModTime().Equal(originalStat.ModTime()) {
 		serveCoverFile(w, r, cachePath, covers.ContentTypeJPEG)
 		return
 	}
@@ -76,11 +76,28 @@ func (s *Server) serveCover(w http.ResponseWriter, r *http.Request, bookID int64
 		serverError(w, r, err)
 		return
 	}
-	if err := storage.Place(root, cacheRel, covers.TempLabel(bookID), bytes.NewReader(processed.Bytes), nil); err != nil {
+	if err := s.writeCoverCache(bookID, variant, originalStat.ModTime(), processed.Bytes); err != nil {
 		serverError(w, r, err)
 		return
 	}
-	serveCoverBytes(w, r, processed.Bytes, filepath.Base(cachePath), time.Now(), processed.ContentType)
+	serveCoverBytes(w, r, processed.Bytes, filepath.Base(cachePath), originalStat.ModTime(), processed.ContentType)
+}
+
+// The cache time identifies its source, not when rendering finished. Stamp the
+// temp before publishing it, so a late render remains stale after replacement.
+func (s *Server) writeCoverCache(bookID int64, variant covers.Variant, sourceTime time.Time, data []byte) error {
+	root := s.dataRoot()
+	cacheRel := covers.CachePath(bookID, variant)
+	stagedRel, err := storage.WriteAdjacentTemp(root, cacheRel, covers.TempLabel(bookID), data)
+	if err != nil {
+		return err
+	}
+	stagedPath := root.Abs(stagedRel)
+	defer os.Remove(stagedPath)
+	if err := os.Chtimes(stagedPath, sourceTime, sourceTime); err != nil {
+		return err
+	}
+	return storage.ReplaceWithStaged(root, stagedRel, cacheRel)
 }
 
 func (s *Server) requireCoverAccess(w http.ResponseWriter, r *http.Request, bookID int64) bool {

@@ -148,6 +148,60 @@ func TestCoverHandler(t *testing.T) {
 	}
 }
 
+func TestCoverHandlerRebuildsStaleCache(t *testing.T) {
+	database, dir := setupTestDB(t)
+	defer database.Close()
+	s := newTestServer(t, database, dir)
+	reader := mustUser(t, database, "cover-reader", db.RoleReader)
+	source := validatedCoverBytes(testPNG(t))
+	if err := s.storeCoverBytes(t.Context(), 1, source); err != nil {
+		t.Fatal(err)
+	}
+	sourceTime := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	originalPath := filepath.Join(dir, covers.OriginalPath(1))
+	if err := os.Chtimes(originalPath, sourceTime, sourceTime); err != nil {
+		t.Fatal(err)
+	}
+	want, err := covers.Process(source, covers.VariantThumb, covers.DefaultOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name string
+		time time.Time
+	}{
+		// An older source finishes rendering after the new cover was saved.
+		{name: "late render", time: sourceTime.Add(-time.Hour)},
+		// Old caches were stamped when rendering finished, after replacement.
+		{name: "legacy timestamp", time: sourceTime.Add(time.Hour)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := s.writeCoverCache(1, covers.VariantThumb, tc.time, []byte("stale cover")); err != nil {
+				t.Fatal(err)
+			}
+			req := httptest.NewRequest(http.MethodGet, "/covers/1?variant=thumb", nil)
+			req.SetPathValue("id", "1")
+			req = req.WithContext(withUser(req.Context(), reader))
+			w := httptest.NewRecorder()
+			s.handleCover(w, req)
+			if w.Code != http.StatusOK || !bytes.Equal(w.Body.Bytes(), want.Bytes) {
+				t.Fatalf("cover GET = %d; want current cover", w.Code)
+			}
+			if got := w.Header().Get("Last-Modified"); got != sourceTime.Format(http.TimeFormat) {
+				t.Fatalf("Last-Modified = %q; want source time", got)
+			}
+			cached, err := os.Stat(filepath.Join(dir, covers.CachePath(1, covers.VariantThumb)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !cached.ModTime().Equal(sourceTime) {
+				t.Fatalf("cache time = %v; want %v", cached.ModTime(), sourceTime)
+			}
+		})
+	}
+}
+
 func TestIfNoneMatchContains(t *testing.T) {
 	etag := `"gen-v1-abc"`
 	for _, tc := range []struct {

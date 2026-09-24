@@ -138,15 +138,14 @@ func ParseImportTempLabel(label string) ([]byte, bool) {
 
 // CachePath deliberately does not include cover_version. cover_version is only
 // a browser cache-busting token in URLs; server-side derived files are replaced
-// by deleting this stable cache path when a new original cover is uploaded.
+// at this stable path and stamped with the original's modification time.
 func CachePath(bookID int64, variant Variant) string {
 	return path.Join("cache", "covers", CacheVersion, string(variant), strconv.FormatInt(bookID, 10)+".jpg")
 }
 
 // RemoveDerived deletes the rebuildable display/thumb cache for a book, so the
-// next read regenerates them from the (newly replaced) original. Best-effort: a
-// leftover stale variant is harmless because reads regenerate any cache older
-// than the original's mtime.
+// next read regenerates them from the (newly replaced) original. Best-effort:
+// reads regenerate any cache whose modification time differs from the original.
 func RemoveDerived(root interface{ Resolve(string) (string, error) }, bookID int64) {
 	for _, variant := range []Variant{VariantDisplay, VariantThumb} {
 		cachePath, err := root.Resolve(CachePath(bookID, variant))
