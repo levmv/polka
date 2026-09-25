@@ -1469,11 +1469,11 @@ func opfChildOwnedByPolka(child opfMetadataChild, uniqueID string, polkaTypes ma
 	case "meta":
 		name := opfMetaName(child.attrs["name"])
 		switch name {
-		case "calibre:title_sort", "calibre:series", "calibre:series_index":
+		case "calibre:title_sort", "calibre:series", "calibre:series_index", "polka:tags":
 			return true
 		}
 		property := strings.ToLower(strings.TrimSpace(child.attrs["property"]))
-		if property == "dcterms:modified" {
+		if property == "dcterms:modified" || property == "polka:tags" {
 			return true
 		}
 		if property == "belongs-to-collection" && seriesCollectionIDs[strings.TrimSpace(child.attrs["id"])] {
@@ -1576,9 +1576,10 @@ func renderOPFMetadataChildren(packageTag, metadataTag []byte, meta Metadata, pr
 	if description := strings.TrimSpace(meta.Description); description != "" {
 		add(fmt.Sprintf("<%sdescription>%s</%sdescription>", dc, opfEscapeText(description), dc))
 	}
-	for _, tag := range meta.Tags {
-		if tag = strings.TrimSpace(tag); tag != "" {
-			add(fmt.Sprintf("<%ssubject>%s</%ssubject>", dc, opfEscapeText(tag), dc))
+	add(OPFTagMetadata(meta.Tags))
+	for _, genre := range meta.Genres {
+		if genre = strings.TrimSpace(genre); genre != "" {
+			add(fmt.Sprintf("<%ssubject>%s</%ssubject>", dc, opfEscapeText(genre), dc))
 		}
 	}
 	identifierSeq := 0

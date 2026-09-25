@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -22,7 +23,7 @@ func TestConvertedDownloadAndDeliveryUseCatalogMetadata(t *testing.T) {
 	database, dir := setupTestDB(t)
 	defer database.Close()
 	src := testfixture.EPUB(t, []byte(`<package version="3.0" xmlns="http://www.idpf.org/2007/opf">
-<metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Source title</dc:title><dc:language>en</dc:language><dc:date>1990</dc:date></metadata>
+<metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Source title</dc:title><dc:language>en</dc:language><dc:date>1990</dc:date><dc:subject>Source tag</dc:subject></metadata>
 <manifest><item id="text" href="text.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="text"/></spine></package>`), map[string][]byte{
 		"OEBPS/text.xhtml": []byte(`<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Chapter</title></head><body><p>Book text.</p></body></html>`),
 	})
@@ -48,16 +49,27 @@ func TestConvertedDownloadAndDeliveryUseCatalogMetadata(t *testing.T) {
 		return w
 	}
 	readerURL := readerFallbackURL(1, format.FormatEPUB, hash)
-	for _, date := range []string{"2000", ""} {
-		mustExec(t, database, "UPDATE books SET title = 'Catalog title', published_date = ?, updated_at = 1800000000 WHERE id = 1", date)
+	mustSetTags(t, database, 2, "Classic")
+	for _, tc := range []struct {
+		date, tags string
+		wantTags   []string
+	}{
+		{"2000", "classic, Sci-Fi", []string{"Classic", "Sci-Fi"}},
+		{"", "", nil},
+	} {
+		mustSetTags(t, database, 1, tc.tags)
+		mustExec(t, database, "UPDATE books SET title = 'Catalog title', published_date = ?, updated_at = 1800000000 WHERE id = 1", tc.date)
 		// Even a source-versioned URL must revalidate catalog-dependent output.
 		download := get("/download/1/as/kepub?v=" + conversionCacheVersion(hash))
 		if got := download.Header().Get("Cache-Control"); got != "private, no-cache" {
 			t.Fatalf("catalog-dependent download cache = %q", got)
 		}
 		meta, err := format.ExtractEPUBMetadata(bytes.NewReader(download.Body.Bytes()), int64(download.Body.Len()))
-		if err != nil || meta == nil || meta.Title != "Catalog title" || meta.Date != date {
-			t.Fatalf("converted download metadata = %+v, %v; want catalog title and date %q", meta, err, date)
+		if err != nil || meta == nil || meta.Title != "Catalog title" || meta.Date != tc.date {
+			t.Fatalf("converted download metadata = %+v, %v; want catalog title and date %q", meta, err, tc.date)
+		}
+		if !slices.Equal(meta.Tags, tc.wantTags) {
+			t.Fatalf("converted tags = %v; want %v", meta.Tags, tc.wantTags)
 		}
 		job := createQueuedDeliveryJob(t, database, user.ID, sql.NullString{String: "kepub", Valid: true})
 		copy, cleanup, err := s.prepareDeliveryCopy(t.Context(), *job, nil)

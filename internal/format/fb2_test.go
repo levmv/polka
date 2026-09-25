@@ -158,8 +158,8 @@ func TestExtractFB2Metadata(t *testing.T) {
 	if meta.Authors[1].Name != "Boris Strugatsky" {
 		t.Fatalf("author[1].Name = %q", meta.Authors[1].Name)
 	}
-	if len(meta.Tags) != 2 || meta.Tags[0] != "sf_history" || meta.Tags[1] != "adventure" {
-		t.Fatalf("Tags = %+v; want deduped FB2 genres", meta.Tags)
+	if len(meta.Genres) != 2 || meta.Genres[0] != "sf_history" || meta.Genres[1] != "adventure" {
+		t.Fatalf("Genres = %+v; want deduped FB2 genres", meta.Genres)
 	}
 }
 
@@ -237,8 +237,8 @@ func TestExtractFB2MetadataFallbackSections(t *testing.T) {
 	if meta.Date != "1968" {
 		t.Fatalf("Date = %q; want source date fallback", meta.Date)
 	}
-	if len(meta.Tags) != 2 || meta.Tags[0] != "sf" || meta.Tags[1] != "adventure" {
-		t.Fatalf("Tags = %+v; want source genres", meta.Tags)
+	if len(meta.Genres) != 2 || meta.Genres[0] != "sf" || meta.Genres[1] != "adventure" {
+		t.Fatalf("Genres = %+v; want source genres", meta.Genres)
 	}
 }
 
@@ -321,7 +321,10 @@ func TestExtractFB2MetadataKeywordsAsTags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExtractFB2Metadata: %v", err)
 	}
-	want := []string{"sf", "classic", "roadside picnic"}
+	if len(meta.Genres) != 1 || meta.Genres[0] != "sf" {
+		t.Fatalf("Genres = %v; want [sf]", meta.Genres)
+	}
+	want := []string{"classic", "sf", "roadside picnic"}
 	if len(meta.Tags) != len(want) {
 		t.Fatalf("Tags = %+v; want %+v", meta.Tags, want)
 	}

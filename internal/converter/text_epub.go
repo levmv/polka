@@ -607,6 +607,7 @@ type epubMetadata struct {
 	ExtraIdentifiers []string
 	Series           string
 	SeriesIndex      float64
+	Genres           []string
 	Tags             []string
 	Modified         time.Time
 }
@@ -632,6 +633,11 @@ func toEPUBMetadata(meta *format.Metadata) epubMetadata {
 		name := strings.TrimSpace(author.Name)
 		if name != "" {
 			out.Authors = append(out.Authors, name)
+		}
+	}
+	for _, genre := range meta.Genres {
+		if genre = strings.TrimSpace(genre); genre != "" {
+			out.Genres = append(out.Genres, genre)
 		}
 	}
 	for _, tag := range meta.Tags {
@@ -731,6 +737,11 @@ func generatedEPUBIdentifier(meta epubMetadata, body string) string {
 	if meta.SeriesIndex != 0 {
 		writeHashField(strconv.FormatFloat(meta.SeriesIndex, 'f', -1, 64))
 	}
+	writeHashField("genres")
+	for _, genre := range meta.Genres {
+		writeHashField(genre)
+	}
+	writeHashField("tags")
 	for _, tag := range meta.Tags {
 		writeHashField(tag)
 	}
@@ -875,9 +886,10 @@ func epubContentOPF(meta epubMetadata, assets []epubAsset, bodyProperties string
 	if meta.Description != "" {
 		fmt.Fprintf(&metadata, "    <dc:description>%s</dc:description>\n", html.EscapeString(meta.Description))
 	}
-	for _, tag := range meta.Tags {
-		if tag = strings.TrimSpace(tag); tag != "" {
-			fmt.Fprintf(&metadata, "    <dc:subject>%s</dc:subject>\n", html.EscapeString(tag))
+	fmt.Fprintf(&metadata, "    %s\n", format.OPFTagMetadata(meta.Tags))
+	for _, genre := range meta.Genres {
+		if genre = strings.TrimSpace(genre); genre != "" {
+			fmt.Fprintf(&metadata, "    <dc:subject>%s</dc:subject>\n", html.EscapeString(genre))
 		}
 	}
 	if meta.Series != "" {

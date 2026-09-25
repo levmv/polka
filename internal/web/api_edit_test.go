@@ -275,8 +275,9 @@ func TestAPIEditSortTitleBehavior(t *testing.T) {
 			defer database.Close()
 
 			const bookID = 171
-			mustExec(t, database, "INSERT INTO books (id, title, sort_title, tags) VALUES (?, ?, ?, 'old')",
+			mustExec(t, database, "INSERT INTO books (id, title, sort_title) VALUES (?, ?, ?)",
 				bookID, tt.initialTitle, tt.initialSort)
+			mustSetTags(t, database, bookID, "old")
 
 			reqBody, err := json.Marshal(tt.patch)
 			if err != nil {

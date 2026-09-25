@@ -1,10 +1,9 @@
 import { addBookToShelf, fetchBookShelves, fetchCurrentUser, removeBookFromShelf } from '../api';
-import { notifyCatalogChanged } from '../catalog-events';
+import { notifyCatalogChanged, notifyShelvesChanged } from '../catalog-events';
 import { errorMessage } from '../errors';
 import { icon } from '../icons';
 import type { ManagedPopover } from '../popover';
 import { openCreateShelfDialog } from '../shelf-dialog';
-import { notifyShelvesChanged } from '../sidebar-shelves';
 import { showToast } from '../toast';
 import type { BookShelfMembership } from '../types';
 

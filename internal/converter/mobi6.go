@@ -185,7 +185,8 @@ func mobi6EXTH(book mobi6Book) []byte {
 	}
 	add(101, []byte(book.meta.Publisher))
 	add(103, []byte(book.meta.Description))
-	for _, tag := range book.meta.Tags {
+	// Mobipocket has one subject field: retain both lists when exporting.
+	for _, tag := range bookmeta.NormalizeTags(slices.Concat(book.meta.Genres, book.meta.Tags)) {
 		add(105, []byte(tag))
 	}
 	add(106, []byte(book.meta.Date))

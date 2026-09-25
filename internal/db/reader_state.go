@@ -279,7 +279,6 @@ func ListContinueReading(queryer Queryer, scope VisibilityScope, userID int64, l
 			&r.Title,
 			&r.Series,
 			&r.SeriesIndex,
-			&r.Tags,
 			&r.CoverVersion,
 			&r.Date,
 			&r.AssetID,

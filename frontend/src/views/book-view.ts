@@ -453,26 +453,21 @@ function renderBookDetail(
         detailsHtml += '</div>';
     }
 
-    let tagsHtml = '';
-    if (b.tags) {
-        const tags = b.tags
+    const classificationHtml = (field: 'genres' | 'tags', qualifier: string) => {
+        const names = (b[field] || '')
             .split(',')
-            .map((t: string) => t.trim())
-            .filter((t: string) => t.length > 0);
-        if (tags.length > 0) {
-            const VISIBLE_TAGS = 5;
-            const hiddenCount = tags.length - VISIBLE_TAGS;
-            tagsHtml = `<div id="book-tags-${b.id}" class="detail-tags">
-                ${tags
-                    .map(
-                        (tag, index) =>
-                            `<a href="/?q=${encodeURIComponent(queryTerm('tag', tag))}" class="detail-tag" title="${escapeHtml(tag)}"${index >= VISIBLE_TAGS ? ' hidden' : ''}>${escapeHtml(tag)}</a>`,
-                    )
-                    .join('')}
-                ${hiddenCount > 0 ? `<button type="button" class="detail-tags-more" data-reveal=".detail-tags .detail-tag[hidden]" aria-controls="book-tags-${b.id}" aria-expanded="false" aria-label="Show ${hiddenCount} more tags">+${hiddenCount}</button>` : ''}
-            </div>`;
-        }
-    }
+            .map((name) => name.trim())
+            .filter(Boolean);
+        if (names.length === 0) return '';
+        const limit = 5;
+        const hiddenCount = names.length - limit;
+        const id = `book-${field}-${b.id}`;
+        return `<div id="${id}" class="detail-tags">
+            ${names.map((name, index) => `<a href="/?q=${encodeURIComponent(queryTerm(qualifier, name))}" class="detail-tag" title="${escapeHtml(name)}"${index >= limit ? ' hidden' : ''}>${escapeHtml(name)}</a>`).join('')}
+            ${hiddenCount > 0 ? `<button type="button" class="detail-tags-more" data-reveal="#${id} .detail-tag[hidden]" aria-controls="${id}" aria-expanded="false" aria-label="Show ${hiddenCount} more ${hiddenCount === 1 ? qualifier : field}">+${hiddenCount}</button>` : ''}
+        </div>`;
+    };
+    const tagsHtml = classificationHtml('genres', 'genre') + classificationHtml('tags', 'tag');
 
     // Read + per-asset download buttons. They share the .action-btn family
     // with Shelves/Edit/⋯ below, so the whole row reads as one set; Read is the

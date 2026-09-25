@@ -19,7 +19,6 @@ CREATE TABLE books (
     series TEXT,
     series_index REAL,
     description TEXT,
-    tags TEXT, -- Comma-separated values; bookmeta.ParseTagList defines equality.
     publisher TEXT,
     published_date TEXT,
     language TEXT,
@@ -141,6 +140,24 @@ CREATE TABLE book_authors (
 );
 
 CREATE INDEX idx_book_authors_author_id ON book_authors(author_id);
+
+CREATE TABLE tags (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    -- Computed in Go: trimmed, lowercased Unicode, matching tag search.
+    name_key TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'tag' CHECK (kind IN ('tag', 'genre')),
+    UNIQUE (kind, name_key)
+);
+
+CREATE TABLE book_tags (
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    tag_id INTEGER NOT NULL REFERENCES tags(id),
+    position INTEGER NOT NULL,
+    PRIMARY KEY (book_id, tag_id)
+);
+
+CREATE INDEX idx_book_tags_tag_id ON book_tags(tag_id, book_id);
 
 -- Cleanup duplicate dismissals are detector bookkeeping, not book metadata. A
 -- group is hidden only while its current live member set is covered by one of
@@ -519,6 +536,7 @@ CREATE VIRTUAL TABLE search USING fts5(
     title,
     authors,
     series,
+    genres,
     tags,
     description,
     identifiers,
@@ -530,4 +548,4 @@ CREATE VIRTUAL TABLE search USING fts5(
 
 -- Prefer title, authors, then series. Exact tag keys filter membership without
 -- contributing relevance; ordinary word searches exclude that internal column.
-INSERT INTO search(search, rank) VALUES ('rank', 'bm25(10.0, 8.0, 4.0, 1.0, 1.0, 1.0, 1.0, 0.0)');
+INSERT INTO search(search, rank) VALUES ('rank', 'bm25(10.0, 8.0, 4.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0)');

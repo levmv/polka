@@ -87,6 +87,7 @@ function syncEditFormFromBook(
         authors: formatAuthorsForEdit(b.authors_list) || null,
         series: b.series || null,
         series_index: b.series_index ?? null,
+        genres: b.genres || null,
         tags: b.tags || null,
         description: b.description_source || null,
         language: b.language || null,
@@ -864,6 +865,8 @@ function openLoadedEditModal(
             onPick: applyPickedPrimaryAuthor,
         });
     }
+    const genresInput = form.querySelector<HTMLInputElement>('input[name="genres"]');
+    if (genresInput) attachTagAutocomplete(genresInput, 'genre');
     const tagsInput = form.querySelector('input[name="tags"]') as HTMLInputElement | null;
     if (tagsInput) {
         attachTagAutocomplete(tagsInput);
@@ -994,9 +997,13 @@ function renderEditForm(b: Book, uiID: string): string {
                                     <input type="number" step="0.1" name="series_index" value="${b.series_index || ''}" class="form-input">
                                 </div>
                             </div>
+                            <div class="form-group" data-edit-field="genres">
+                                <label class="form-label" for="genres-${uiID}">Genres</label>
+                                <input type="text" id="genres-${uiID}" name="genres" value="${escapeHtml(b.genres || '')}" class="form-input">
+                            </div>
                             <div class="form-group" data-edit-field="tags">
-                                <label class="form-label">Tags</label>
-                                <input type="text" name="tags" value="${escapeHtml(b.tags || '')}" class="form-input">
+                                <label class="form-label" for="tags-${uiID}">Tags</label>
+                                <input type="text" id="tags-${uiID}" name="tags" value="${escapeHtml(b.tags || '')}" class="form-input">
                             </div>
                             <div class="form-row">
                                 <div class="form-col-narrow" data-edit-field="language">

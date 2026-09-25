@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/levmv/polka/internal/bookmeta"
@@ -76,17 +77,16 @@ type MetadataWritebackCounts struct {
 // BumpMetadataRev marks books' writable assets as needing metadata write-back
 // and touches updated_at. Text metadata and cover changes share this revision.
 func BumpMetadataRev(tx *Tx, bookIDs []int64) error {
-	if len(bookIDs) == 0 {
-		return nil
-	}
-	placeholders, args := idPlaceholders(bookIDs)
-	if _, err := tx.Exec(`
+	for batch := range slices.Chunk(DedupBookIDs(bookIDs), 500) {
+		placeholders, args := idPlaceholders(batch)
+		if _, err := tx.Exec(`
 		UPDATE books
 		SET metadata_rev = metadata_rev + 1,
 		    updated_at = unixepoch()
 		WHERE id IN (`+placeholders+`)
-	`, args...); err != nil {
-		return fmt.Errorf("bump metadata rev: %w", err)
+		`, args...); err != nil {
+			return fmt.Errorf("bump metadata rev: %w", err)
+		}
 	}
 	return nil
 }
@@ -243,10 +243,9 @@ func scanMetadataWritebackAsset(row rowScanner) (MetadataWritebackAssetRow, erro
 // page count. Sibling formats can have different counts at the same book revision.
 func LoadMetadataWritebackSnapshot(queryer Queryer, assetID int64) (MetadataWritebackSnapshot, error) {
 	var snap MetadataWritebackSnapshot
-	var tags string
 	err := queryer.QueryRow(`
 		SELECT b.id, b.title, b.sort_title, COALESCE(series, ''), COALESCE(series_index, 0),
-		       COALESCE(description, ''), COALESCE(tags, ''),
+		       COALESCE(description, ''),
 		       COALESCE(publisher, ''), COALESCE(published_date, ''),
 		       COALESCE(language, ''), COALESCE(identifiers, ''), b.metadata_rev, b.cover_version, b.updated_at, COALESCE(a.page_count, 0)
 		FROM books b JOIN assets a ON a.book_id = b.id
@@ -254,7 +253,7 @@ func LoadMetadataWritebackSnapshot(queryer Queryer, assetID int64) (MetadataWrit
 	`, assetID).Scan(
 		&snap.BookID, &snap.Metadata.Title, &snap.Metadata.SortTitle,
 		&snap.Metadata.Series, &snap.Metadata.SeriesIndex,
-		&snap.Metadata.Description, &tags, &snap.Metadata.Publisher,
+		&snap.Metadata.Description, &snap.Metadata.Publisher,
 		&snap.Metadata.Date, &snap.Metadata.Language, &snap.Metadata.Identifier,
 		&snap.MetadataRev, &snap.CoverVersion, &snap.UpdatedAt, &snap.Metadata.PageCount,
 	)
@@ -262,7 +261,12 @@ func LoadMetadataWritebackSnapshot(queryer Queryer, assetID int64) (MetadataWrit
 		return MetadataWritebackSnapshot{}, err
 	}
 	snap.Metadata.Language = bookmeta.NormalizeLanguage(snap.Metadata.Language)
-	snap.Metadata.Tags = bookmeta.ParseTagList(tags)
+	tags, err := TagsByBookIDs(queryer, []int64{snap.BookID})
+	if err != nil {
+		return MetadataWritebackSnapshot{}, err
+	}
+	snap.Metadata.Genres = tags[snap.BookID].Genres
+	snap.Metadata.Tags = tags[snap.BookID].Tags
 
 	authors, err := AuthorsByBookIDs(queryer, []int64{snap.BookID})
 	if err != nil {

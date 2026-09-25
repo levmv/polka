@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"io"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -58,7 +59,7 @@ func newMetaSnapshot() bookmeta.Metadata {
 		Publisher:   "New Publisher",
 		Series:      "Chronicles",
 		SeriesIndex: 2,
-		Tags:        []string{"Fantasy"},
+		Genres:      []string{"Fantasy"},
 		Description: "A grand tale.",
 		Date:        "2021",
 		Identifier:  "isbn:9780306406157",
@@ -420,5 +421,30 @@ func TestRewriteFB2MetadataMissingDescription(t *testing.T) {
 	_, err := RewriteFB2Metadata([]byte(`<?xml version="1.0"?><FictionBook><body/></FictionBook>`), newMetaSnapshot())
 	if err == nil {
 		t.Fatal("expected an error when <description> is absent")
+	}
+}
+
+func TestFB2ClassificationWriteback(t *testing.T) {
+	const genre = `<genre match="80">sf</genre>`
+	const keywords = `<keywords>Favourite; Reviewed</keywords>`
+	src := []byte(`<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0"><description><title-info>` + genre + keywords + `<book-title>Book</book-title></title-info><src-title-info><genre>old</genre><keywords>old</keywords></src-title-info></description><body><section><p>Text</p></section></body></FictionBook>`)
+	for _, field := range []string{"genres", "tags"} {
+		t.Run(field, func(t *testing.T) {
+			for _, values := range [][]string{{"New"}, nil} {
+				meta := *extractFB2(t, src)
+				keep := keywords
+				if field == "genres" {
+					meta.Genres = values
+				} else {
+					meta.Tags = values
+					keep = genre
+				}
+				out := rewriteFB2(t, src, meta)
+				got := extractFB2(t, out)
+				if !slices.Equal(got.Genres, meta.Genres) || !slices.Equal(got.Tags, meta.Tags) || !strings.Contains(string(out), keep) {
+					t.Fatalf("roundtrip = %+v; want %+v, preserving %s", got, meta, keep)
+				}
+			}
+		})
 	}
 }

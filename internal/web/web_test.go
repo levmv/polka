@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/levmv/polka/internal/bookmeta"
 	"github.com/levmv/polka/internal/converter"
 	"github.com/levmv/polka/internal/db"
 	"github.com/levmv/polka/internal/format"
@@ -194,7 +195,7 @@ func TestAPISearch(t *testing.T) {
 func TestAPISearchTagAndSpecialChars(t *testing.T) {
 	database, dir := setupTestDB(t)
 	defer database.Close()
-	mustExec(t, database, "UPDATE books SET tags = 'fantasy, classics' WHERE id = 1")
+	mustSetTags(t, database, 1, "fantasy, classics")
 
 	mustUpdateSearchIndex(t, database, 1)
 
@@ -1528,5 +1529,14 @@ func testTinyPNG() []byte {
 		0x0d, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x62, 0xf8, 0xcf, 0xc0, 0xf0,
 		0x1f, 0x00, 0x05, 0x00, 0x01, 0xff, 0x89, 0x99, 0x3d, 0x1d, 0x00, 0x00,
 		0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+	}
+}
+
+func mustSetTags(t *testing.T, database *db.DB, id int64, raw string) {
+	t.Helper()
+	if err := database.Transact(t.Context(), func(tx *db.Tx) error {
+		return db.SetBookTags(tx, id, db.TagKindTag, bookmeta.ParseTagList(raw))
+	}); err != nil {
+		t.Fatal(err)
 	}
 }

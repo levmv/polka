@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -62,8 +63,8 @@ func (s *Server) handleOPDSRoot(w http.ResponseWriter, r *http.Request) {
 		},
 		{
 			ID:       "urn:polka:opds:tags",
-			Title:    "By tag",
-			Summary:  "Browse books grouped by tag.",
+			Title:    "Genres/Tags",
+			Summary:  "Browse books grouped by genre or tag.",
 			Href:     absoluteURL(r, "/opds/tags", nil),
 			LinkType: opds.NavigationFeedType,
 		},
@@ -156,25 +157,69 @@ func (s *Server) handleOPDSTags(w http.ResponseWriter, r *http.Request) {
 		serverError(w, r, err)
 		return
 	}
-	tags, err := db.ListTags(s.db.Read(r.Context()), scope, "", 0)
+	queryer := s.db.Read(r.Context())
+	genres, err := db.ListTags(queryer, scope, db.TagKindGenre, "", 0)
 	if err != nil {
 		serverError(w, r, err)
 		return
 	}
+	tags, err := db.ListTags(queryer, scope, db.TagKindTag, "", 0)
+	if err != nil {
+		serverError(w, r, err)
+		return
+	}
+	tags = bookmeta.NormalizeTags(append(genres, tags...))
+	slices.SortFunc(tags, func(a, b string) int {
+		return strings.Compare(bookmeta.TagKey(a), bookmeta.TagKey(b))
+	})
 
 	entries := make([]opds.NavEntry, 0, len(tags))
 	for _, tag := range tags {
 		q := url.Values{}
-		q.Set("q", db.QueryTerm("tag", tag))
+		q.Set("name", tag)
 		entries = append(entries, opds.NavEntry{
-			ID:       "urn:polka:opds:tag:" + tag,
+			ID:       "urn:polka:opds:tag:" + bookmeta.TagKey(tag),
 			Title:    tag,
-			Href:     absoluteURL(r, "/opds/search", q),
+			Href:     absoluteURL(r, "/opds/tags/books", q),
 			LinkType: opds.AcquisitionFeedType,
 		})
 	}
 
-	s.writeOPDSNavigation(w, r, "urn:polka:opds:tags", "By tag", "/opds/tags", "", entries)
+	s.writeOPDSNavigation(w, r, "urn:polka:opds:tags", "Genres/Tags", "/opds/tags", "", entries)
+}
+
+func (s *Server) handleOPDSTagBooks(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimSpace(r.URL.Query().Get("name"))
+	if name == "" {
+		http.Error(w, "name is required", http.StatusBadRequest)
+		return
+	}
+	limit, offset, ok := parseOPDSPagination(w, r)
+	if !ok {
+		return
+	}
+	scope, err := s.visibilityScope(r)
+	if err != nil {
+		serverError(w, r, err)
+		return
+	}
+	queryer := s.db.Read(r.Context())
+	rows, err := db.ListTagOPDSPublications(queryer, scope, name, limit, offset)
+	if err != nil {
+		serverError(w, r, err)
+		return
+	}
+	total, err := db.CountTagOPDSPublications(queryer, scope, name)
+	if err != nil {
+		serverError(w, r, err)
+		return
+	}
+	s.writeOPDSPagedAcquisition(w, r, opdsAcquisitionPage{
+		ID:    "urn:polka:opds:tag:" + bookmeta.TagKey(name),
+		Title: name,
+		Path:  "/opds/tags/books",
+		Query: url.Values{"name": {name}},
+	}, rows, total, limit, offset)
 }
 
 func (s *Server) handleOPDSShelves(w http.ResponseWriter, r *http.Request) {
@@ -445,6 +490,11 @@ func (s *Server) writeOPDSAcquisition(w http.ResponseWriter, r *http.Request, me
 		return
 	}
 
+	tagsByBook, err := db.TagsByBookIDs(queryer, bookIDs)
+	if err != nil {
+		serverError(w, r, err)
+		return
+	}
 	pubs := make([]opds.Publication, 0, len(rows))
 	for _, row := range rows {
 		links := opdsAssetLinks(r, assetsByBook[row.ID])
@@ -461,7 +511,7 @@ func (s *Server) writeOPDSAcquisition(w http.ResponseWriter, r *http.Request, me
 		}
 		links = append(links, opdsCoverLinks(r, row.ID, row.CoverVersion)...)
 
-		pubs = append(pubs, opdsPublication(db.BookURI(libraryID, row.ID), row, authorsByBook[row.ID], links))
+		pubs = append(pubs, opdsPublication(db.BookURI(libraryID, row.ID), row, authorsByBook[row.ID], tagsByBook[row.ID], links))
 	}
 
 	body, err := opds.Acquisition(time.Now(), meta, pubs)
@@ -472,11 +522,11 @@ func (s *Server) writeOPDSAcquisition(w http.ResponseWriter, r *http.Request, me
 	writeOPDS(w, opds.AcquisitionFeedType, body)
 }
 
-func opdsPublication(id string, row db.OPDSPublicationRow, authors []db.AuthorRow, links []opds.Link) opds.Publication {
+func opdsPublication(id string, row db.OPDSPublicationRow, authors []db.AuthorRow, tags db.BookTags, links []opds.Link) opds.Publication {
 	return opds.Publication{
 		ID: id, Title: row.Title, Updated: time.Unix(row.UpdatedAt, 0),
 		Authors: opdsAuthorNames(authors), Summary: htmlText(row.Description.String),
-		Categories: opdsCategories(row.Tags.String), Publisher: row.Publisher.String,
+		Categories: bookmeta.NormalizeTags(slices.Concat(tags.Genres, tags.Tags)), Publisher: row.Publisher.String,
 		PublishedDate: row.PublishedDate.String, Language: row.Language.String,
 		Identifiers: opdsIdentifiers(row.Identifiers.String), Links: links,
 	}
@@ -560,16 +610,6 @@ func opdsAuthorNames(rows []db.AuthorRow) []string {
 		}
 	}
 	return names
-}
-
-func opdsCategories(raw string) []string {
-	var categories []string
-	for part := range strings.SplitSeq(raw, ",") {
-		if part = strings.TrimSpace(part); part != "" {
-			categories = append(categories, part)
-		}
-	}
-	return categories
 }
 
 func htmlText(raw string) string {
@@ -664,12 +704,17 @@ func (s *Server) handleOPDSAssetPublication(w http.ResponseWriter, r *http.Reque
 		serverError(w, r, err)
 		return
 	}
+	tags, err := db.TagsByBookIDs(queryer, []int64{asset.BookID})
+	if err != nil {
+		serverError(w, r, err)
+		return
+	}
 	links := []opds.Link{
 		{Rel: opds.AcquisitionRel, Href: absoluteURL(r, "/download/"+strconv.FormatInt(assetID, 10), nil), Type: format.MediaTypeForExtension(asset.Extension)},
 		opdsProgressionLink(r, assetID),
 	}
 	links = append(links, opdsCoverLinks(r, row.ID, row.CoverVersion)...)
-	body, err := opds.AcquisitionEntry(opdsPublication(db.PublicationURI(libraryID, assetID), row, authors[asset.BookID], links))
+	body, err := opds.AcquisitionEntry(opdsPublication(db.PublicationURI(libraryID, assetID), row, authors[asset.BookID], tags[asset.BookID], links))
 	if err != nil {
 		serverError(w, r, err)
 		return

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"slices"
 	"strings"
 
 	"github.com/levmv/polka/internal/bookmeta"
@@ -71,7 +70,8 @@ type bulkEditResponse struct {
 
 // bulkWritePlan is the resolved column set for one changed book.
 type bulkWritePlan struct {
-	tags      sql.NullString
+	genres    []string
+	tags      []string
 	series    sql.NullString
 	index     sql.NullFloat64
 	overrides string
@@ -133,6 +133,7 @@ func (s *Server) handleAPIBulkEdit(w http.ResponseWriter, r *http.Request) {
 
 		var pathIDs []int64
 		authorsChanged := false
+		tagsChanged := false
 		// Request order controls series numbering; skip books no longer visible.
 		for _, id := range ids {
 			row, ok := byID[id]
@@ -146,11 +147,23 @@ func (s *Server) handleAPIBulkEdit(w http.ResponseWriter, r *http.Request) {
 			}
 			if _, err := tx.Exec(`
 				UPDATE books SET
-					tags = ?, series = ?, series_index = ?,
+					series = ?, series_index = ?,
 					manual_overrides = ?, updated_at = unixepoch()
 				WHERE id = ?
-			`, p.tags, p.series, p.index, p.overrides, id); err != nil {
+			`, p.series, p.index, p.overrides, id); err != nil {
 				return relayout.Changed{}, fmt.Errorf("bulk update %d: %w", id, err)
+			}
+			if !bookmeta.EqualTags(row.Genres, p.genres) {
+				if err := db.SetBookTags(tx, id, db.TagKindGenre, p.genres); err != nil {
+					return relayout.Changed{}, err
+				}
+				tagsChanged = true
+			}
+			if !bookmeta.EqualTags(row.Tags, p.tags) {
+				if err := db.SetBookTags(tx, id, db.TagKindTag, p.tags); err != nil {
+					return relayout.Changed{}, err
+				}
+				tagsChanged = true
 			}
 			if p.authors != nil {
 				if err := replaceBookAuthors(tx, id, *p.authors); err != nil {
@@ -165,6 +178,11 @@ func (s *Server) handleAPIBulkEdit(w http.ResponseWriter, r *http.Request) {
 		}
 		if authorsChanged {
 			if _, err := db.DeleteOrphanAuthors(tx); err != nil {
+				return relayout.Changed{}, err
+			}
+		}
+		if tagsChanged {
+			if err := db.DeleteOrphanTags(tx); err != nil {
 				return relayout.Changed{}, err
 			}
 		}
@@ -274,14 +292,16 @@ func (s *Server) handleAPIBulkTrash(w http.ResponseWriter, r *http.Request) {
 // selection, used by "assign" numbering.
 func resolveBulkPlan(row db.BulkEditRow, curAuthors string, ops []bulkOperation, pos int) (bulkWritePlan, bool) {
 	overrides := bookmeta.ParseOverrides(row.Overrides.String)
-	curTags := bookmeta.ParseTagList(row.Tags.String)
-	newTags := curTags
+	newTags := row.Tags
+	newGenres := row.Genres
 	newSeries := row.Series
 	newIndex := row.SeriesIndex
 	newAuthors := curAuthors
 
 	for _, op := range ops {
 		switch op.Type {
+		case "genres":
+			newGenres = bookmeta.ApplyTagMode(newGenres, bookmeta.TagMode(op.Mode), op.Values)
 		case "tags":
 			newTags = bookmeta.ApplyTagMode(newTags, bookmeta.TagMode(op.Mode), op.Values)
 		case "authors":
@@ -310,7 +330,8 @@ func resolveBulkPlan(row db.BulkEditRow, curAuthors string, ops []bulkOperation,
 		}
 	}
 
-	tagsChanged := !slices.Equal(newTags, curTags)
+	genresChanged := !bookmeta.EqualTags(newGenres, row.Genres)
+	tagsChanged := !bookmeta.EqualTags(newTags, row.Tags)
 	seriesChanged := seriesString(newSeries) != seriesString(row.Series)
 	authorsChanged := newAuthors != curAuthors
 
@@ -318,10 +339,13 @@ func resolveBulkPlan(row db.BulkEditRow, curAuthors string, ops []bulkOperation,
 	newIdx, newHasIdx := effectiveIndex(newIndex)
 	indexChanged := curHasIdx != newHasIdx || (newHasIdx && curIdx != newIdx)
 
-	if !tagsChanged && !seriesChanged && !indexChanged && !authorsChanged {
+	if !genresChanged && !tagsChanged && !seriesChanged && !indexChanged && !authorsChanged {
 		return bulkWritePlan{}, false
 	}
 
+	if genresChanged {
+		overrides["genres"] = true
+	}
 	if tagsChanged {
 		overrides["tags"] = true
 	}
@@ -335,10 +359,6 @@ func resolveBulkPlan(row db.BulkEditRow, curAuthors string, ops []bulkOperation,
 		overrides["authors"] = true
 	}
 
-	var tagsCol sql.NullString
-	if joined := bookmeta.FormatTagList(newTags); joined != "" {
-		tagsCol = sql.NullString{String: joined, Valid: true}
-	}
 	var seriesCol sql.NullString
 	if name := seriesString(newSeries); name != "" {
 		seriesCol = sql.NullString{String: name, Valid: true}
@@ -353,7 +373,8 @@ func resolveBulkPlan(row db.BulkEditRow, curAuthors string, ops []bulkOperation,
 	}
 
 	return bulkWritePlan{
-		tags:      tagsCol,
+		genres:    newGenres,
+		tags:      newTags,
 		series:    seriesCol,
 		index:     indexCol,
 		authors:   authorsCol,
@@ -381,17 +402,17 @@ func prepareBulkOperations(ops []bulkOperation) error {
 	for i := range ops {
 		op := &ops[i]
 		switch op.Type {
-		case "tags":
-			op.Values = bookmeta.ParseTagList(strings.Join(op.Values, ","))
+		case "tags", "genres":
+			op.Values = bookmeta.NormalizeTags(op.Values)
 			switch bookmeta.TagMode(op.Mode) {
 			case bookmeta.TagAdd, bookmeta.TagRemove:
 				if len(op.Values) == 0 {
-					return fmt.Errorf("tags %s requires at least one tag", op.Mode)
+					return fmt.Errorf("%s %s requires at least one value", op.Type, op.Mode)
 				}
 			case bookmeta.TagReplace, bookmeta.TagClear:
 				// replace with no values is an explicit clear; both are fine.
 			default:
-				return fmt.Errorf("unknown tags mode %q", op.Mode)
+				return fmt.Errorf("unknown %s mode %q", op.Type, op.Mode)
 			}
 		case "authors":
 			switch op.Mode {

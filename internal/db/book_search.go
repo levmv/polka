@@ -47,27 +47,31 @@ func QueryTerm(field, value string) string {
 // UpdateSearchIndex rebuilds the search table row for a book from the
 // relational catalog.
 func UpdateSearchIndex(tx *Tx, bookID int64) error {
-	var title, series, tags, description, identifiers, authors, filenames string
+	var title, series, description, identifiers, authors, filenames string
 	err := tx.QueryRow(fmt.Sprintf(`
 		SELECT
 			b.title,
 			COALESCE(b.series, ''),
-			COALESCE(b.tags, ''),
 			COALESCE(b.description, ''),
 			COALESCE(b.identifiers, ''),
 			%s,
 			COALESCE((SELECT group_concat(filename, ' ') FROM assets WHERE book_id = b.id), '')
 		FROM books b
 		WHERE b.id = ?
-	`, colAuthors), bookID).Scan(&title, &series, &tags, &description, &identifiers, &authors, &filenames)
+	`, colAuthors), bookID).Scan(&title, &series, &description, &identifiers, &authors, &filenames)
 	if err != nil {
 		return fmt.Errorf("query book fields: %w", err)
 	}
 
+	tagsByBook, err := TagsByBookIDs(tx, []int64{bookID})
+	if err != nil {
+		return err
+	}
+	tags := tagsByBook[bookID]
 	if _, err := tx.Exec(`
-		INSERT OR REPLACE INTO search (rowid, title, authors, series, tags, description, identifiers, filename, tag_keys)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, bookID, title, authors, series, tags, description, identifiers, filenames, TagSearchKeys(tags)); err != nil {
+		INSERT OR REPLACE INTO search (rowid, title, authors, series, genres, tags, description, identifiers, filename, tag_keys)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, bookID, title, authors, series, strings.Join(tags.Genres, " "), strings.Join(tags.Tags, " "), description, identifiers, filenames, TagSearchKeys(TagKindGenre, tags.Genres)+" "+TagSearchKeys(TagKindTag, tags.Tags)); err != nil {
 		return fmt.Errorf("insert search: %w", err)
 	}
 	return nil
@@ -77,18 +81,17 @@ func UpdateSearchIndex(tx *Tx, bookID int64) error {
 // and non-Latin text. Case/whitespace equivalence matches bookmeta.ParseTagList;
 // word tokenization must not turn "History" into "Art History" or "C++" into "C".
 // These keys are a disposable index projection, never catalog identifiers.
-func tagSearchKey(tag string) string {
-	return fmt.Sprintf("t%x", sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(tag)))))
+func tagSearchKey(kind TagKind, tag string) string {
+	return fmt.Sprintf("%c%x", kind[0], sha256.Sum256([]byte(bookmeta.TagKey(tag))))
 }
 
-// TagSearchKeys prepares whole tags for the internal FTS column. Index fixtures
-// use this same projection as UpdateSearchIndex.
-func TagSearchKeys(raw string) string {
-	tags := bookmeta.ParseTagList(raw)
+// TagSearchKeys encodes whole names for exact genre and tag searches.
+func TagSearchKeys(kind TagKind, tags []string) string {
+	keys := make([]string, len(tags))
 	for i, tag := range tags {
-		tags[i] = tagSearchKey(tag)
+		keys[i] = tagSearchKey(kind, tag)
 	}
-	return strings.Join(tags, " ")
+	return strings.Join(keys, " ")
 }
 
 type searchField uint8
@@ -99,13 +102,16 @@ const (
 	searchSeries
 	searchTags
 	searchExactTags
+	searchGenres
+	searchExactGenres
 	searchTitle
 )
 
 type searchTerm struct {
-	field  searchField
-	value  string
-	prefix bool
+	field      searchField
+	value      string
+	prefix     bool
+	start, end int // Rune offsets in the trimmed input, for exact tag renames.
 }
 
 type searchFilterKind uint8
@@ -114,6 +120,7 @@ const (
 	searchFilterUnknown searchFilterKind = iota
 	searchMissingCover
 	searchMissingTags
+	searchMissingGenres
 	searchMissingDescription
 	searchMissingAuthor
 	searchMissingSeries
@@ -155,7 +162,11 @@ func (q parsedSearchQuery) ftsMatch() string {
 		case searchTags:
 			value = "tags:" + value
 		case searchExactTags:
-			value = `tag_keys:"` + tagSearchKey(term.value) + `"`
+			value = `tag_keys:"` + tagSearchKey(TagKindTag, term.value) + `"`
+		case searchGenres:
+			value = "genres:" + value
+		case searchExactGenres:
+			value = `tag_keys:"` + tagSearchKey(TagKindGenre, term.value) + `"`
 		case searchTitle:
 			value = "title:" + value
 		}
@@ -166,6 +177,7 @@ func (q parsedSearchQuery) ftsMatch() string {
 
 const (
 	noCoverScopeShelfReason       = "A smart shelf using no:cover cannot define access because no:cover is not yet supported in access rules; use a manual or tag-based shelf instead"
+	noGenresScopeShelfReason      = "A smart shelf using no:genres cannot define access because no:genres is not yet supported in access rules; use a manual or genre-based shelf instead"
 	noTagsScopeShelfReason        = "A smart shelf using no:tags cannot define access because no:tags is not yet supported in access rules; use a manual or tag-based shelf instead"
 	noDescriptionScopeShelfReason = "A smart shelf using no:description cannot define access because no:description is not yet supported in access rules; use a manual or tag-based shelf instead"
 	noAuthorScopeShelfReason      = "A smart shelf using no:author cannot define access because no:author is not yet supported in access rules; use a manual or tag-based shelf instead"
@@ -182,6 +194,8 @@ func (q parsedSearchQuery) accessScope() (string, string) {
 		switch filter.kind {
 		case searchMissingCover:
 			return "", noCoverScopeShelfReason
+		case searchMissingGenres:
+			return "", noGenresScopeShelfReason
 		case searchMissingTags:
 			return "", noTagsScopeShelfReason
 		case searchMissingDescription:
@@ -217,9 +231,15 @@ func parseSearchQuery(q string, lenient bool) (parsedSearchQuery, error) {
 	inQuote := false
 	tokenQuoted := false
 	var key string
+	tokenStart := 0
 
-	flushToken := func() error {
+	flushToken := func(end int) error {
+		before := len(parsed.terms)
 		err := parsed.addClause(key, currentToken.String(), tokenQuoted && !inQuote, lenient)
+		if len(parsed.terms) > before {
+			parsed.terms[before].start = tokenStart
+			parsed.terms[before].end = end
+		}
 		currentToken.Reset()
 		key = ""
 		tokenQuoted = false
@@ -243,9 +263,10 @@ func parseSearchQuery(q string, lenient bool) (parsedSearchQuery, error) {
 		}
 
 		if unicode.IsSpace(r) && !inQuote {
-			if err := flushToken(); err != nil {
+			if err := flushToken(i); err != nil {
 				return parsedSearchQuery{}, err
 			}
+			tokenStart = i + 1
 			continue
 		}
 
@@ -263,7 +284,7 @@ func parseSearchQuery(q string, lenient bool) (parsedSearchQuery, error) {
 	if inQuote && !lenient {
 		return parsedSearchQuery{}, errors.New("Close the quote")
 	}
-	if err := flushToken(); err != nil {
+	if err := flushToken(len(runes)); err != nil {
 		return parsedSearchQuery{}, err
 	}
 	// Qualifiers match independently. Only the last free-text term can use a
@@ -299,6 +320,11 @@ func (q *parsedSearchQuery) addClause(key, value string, quoted, lenient bool) e
 		if quoted {
 			term.field = searchExactTags
 		}
+	case "genre":
+		term.field = searchGenres
+		if quoted {
+			term.field = searchExactGenres
+		}
 	case "title":
 		term.field = searchTitle
 	case "no":
@@ -327,7 +353,7 @@ func (q *parsedSearchQuery) addClause(key, value string, quoted, lenient bool) e
 
 func isSearchQualifier(value string) bool {
 	switch value {
-	case "author", "series", "tag", "title", "no", "status":
+	case "author", "series", "tag", "genre", "title", "no", "status":
 		return true
 	default:
 		return false
@@ -338,6 +364,8 @@ func missingFilterKind(value string) (searchFilterKind, bool) {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "cover":
 		return searchMissingCover, true
+	case "genres":
+		return searchMissingGenres, true
 	case "tags":
 		return searchMissingTags, true
 	case "description":
@@ -355,6 +383,8 @@ func searchFilterCondition(kind searchFilterKind) string {
 	switch kind {
 	case searchMissingCover:
 		return noCoverCondition
+	case searchMissingGenres:
+		return noGenresCondition
 	case searchMissingTags:
 		return noTagsCondition
 	case searchMissingDescription:

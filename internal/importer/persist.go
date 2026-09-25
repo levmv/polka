@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 
 	"github.com/levmv/polka/internal/bookmeta"
 	"github.com/levmv/polka/internal/covers"
@@ -319,12 +318,19 @@ func insertBookRow(tx *db.Tx, resolved resolvedBook) (storedBook, error) {
 
 	var bookID int64
 	err := tx.QueryRow(`
-			INSERT INTO books (title, sort_title, series, series_index, description, tags, cover_version, publisher, published_date, language, identifiers, added_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, unixepoch()))
+			INSERT INTO books (title, sort_title, series, series_index, description, cover_version, publisher, published_date, language, identifiers, added_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, unixepoch()))
 			RETURNING id
-		`, meta.Title, meta.SortTitle, meta.Series, meta.SeriesIndex, meta.Description, strings.Join(meta.Tags, ", "), coverVersion, meta.Publisher, meta.Date, language, meta.Identifier, addedAt).Scan(&bookID)
+		`, meta.Title, meta.SortTitle, meta.Series, meta.SeriesIndex, meta.Description, coverVersion, meta.Publisher, meta.Date, language, meta.Identifier, addedAt).Scan(&bookID)
 	if err != nil {
 		return storedBook{}, fmt.Errorf("insert book: %w", err)
+	}
+
+	if err := db.SetBookTags(tx, bookID, db.TagKindGenre, bookmeta.NormalizeTags(meta.Genres)); err != nil {
+		return storedBook{}, err
+	}
+	if err := db.SetBookTags(tx, bookID, db.TagKindTag, bookmeta.NormalizeTags(meta.Tags)); err != nil {
+		return storedBook{}, err
 	}
 
 	// Reuse persisted author sort names so new assets follow the same storage layout.

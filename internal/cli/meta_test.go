@@ -483,6 +483,7 @@ func TestRunMetaSetEPUBOverlaysPassedFields(t *testing.T) {
 			"--authors", "Alice Example; Bob Co",
 			"--series", "Saga",
 			"--series-index", "2.5",
+			"--genres", "Fiction, fiction",
 			"--tags", "Sci-Fi, Classic, sci-fi",
 			"--description", "New description",
 			"--publisher", "Polka Press",
@@ -515,8 +516,8 @@ func TestRunMetaSetEPUBOverlaysPassedFields(t *testing.T) {
 	if len(meta.Authors) != 2 || meta.Authors[0].Name != "Alice Example" || meta.Authors[0].SortName != "Example, Alice" || meta.Authors[1].Name != "Bob Co" {
 		t.Fatalf("authors = %+v; want normalized authors from flag", meta.Authors)
 	}
-	if strings.Join(meta.Tags, "|") != "Sci-Fi|Classic" {
-		t.Fatalf("tags = %+v; want deduplicated comma-list tags", meta.Tags)
+	if strings.Join(meta.Genres, "|") != "Fiction" || strings.Join(meta.Tags, "|") != "Sci-Fi|Classic" {
+		t.Fatalf("genres/tags = %v / %v; want independently deduplicated lists", meta.Genres, meta.Tags)
 	}
 	if !strings.Contains(meta.Identifier, "isbn:978-0-306-40615-7") || !strings.Contains(meta.Identifier, "url:https://example.test/book") {
 		t.Fatalf("identifiers = %q; want normalized isbn and url", meta.Identifier)
@@ -528,10 +529,10 @@ func TestRunMetaSetExplicitEmptyClearsFields(t *testing.T) {
 	src := filepath.Join(dir, "book.fb2")
 	writeMetaFB2(t, src, "FB2 Meta")
 
-	if err := runMeta(t.Context(), []string{"set", src, "--series", "Roadside", "--series-index", "4", "--tags", "one, two"}); err != nil {
+	if err := runMeta(t.Context(), []string{"set", src, "--series", "Roadside", "--series-index", "4", "--genres", "sf", "--tags", "one, two"}); err != nil {
 		t.Fatalf("runMeta set seed fields: %v", err)
 	}
-	if err := runMeta(t.Context(), []string{"set", src, "--authors", "", "--series", "", "--series-index", "", "--tags", ""}); err != nil {
+	if err := runMeta(t.Context(), []string{"set", src, "--authors", "", "--series", "", "--series-index", "", "--genres", "", "--tags", ""}); err != nil {
 		t.Fatalf("runMeta set clear fields: %v", err)
 	}
 
@@ -543,8 +544,8 @@ func TestRunMetaSetExplicitEmptyClearsFields(t *testing.T) {
 	if meta == nil {
 		t.Fatal("rewritten metadata missing")
 	}
-	if len(meta.Authors) != 0 || meta.Series != "" || meta.SeriesIndex != 0 || len(meta.Tags) != 0 {
-		t.Fatalf("cleared metadata = %+v; want empty authors/series/tags", meta)
+	if len(meta.Authors) != 0 || meta.Series != "" || meta.SeriesIndex != 0 || len(meta.Genres) != 0 || len(meta.Tags) != 0 {
+		t.Fatalf("cleared metadata = %+v; want empty authors/series/genres/tags", meta)
 	}
 }
 

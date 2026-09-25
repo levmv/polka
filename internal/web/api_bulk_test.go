@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"testing/synctest"
 
@@ -45,11 +46,11 @@ func callBulkEdit(t *testing.T, database *db.DB, dataDir string, body map[string
 
 func bookTags(t *testing.T, database *db.DB, id int64) string {
 	t.Helper()
-	var tags sql.NullString
-	if err := database.Read(t.Context()).QueryRow("SELECT tags FROM books WHERE id = ?", id).Scan(&tags); err != nil {
-		t.Fatalf("query tags %d: %v", id, err)
+	tags, err := db.TagsByBookIDs(database.Read(t.Context()), []int64{id})
+	if err != nil {
+		t.Fatal(err)
 	}
-	return tags.String
+	return strings.Join(tags[id].Tags, ", ")
 }
 
 func setBookAuthors(t *testing.T, database *db.DB, id int64, authors string) {
@@ -138,7 +139,7 @@ func TestBulkEditTagsAdd(t *testing.T) {
 
 	insertBook(t, database, 1, "One")
 	insertBook(t, database, 2, "Two")
-	mustExec(t, database, "UPDATE books SET tags = ? WHERE id = ?", "sci-fi", 1)
+	mustSetTags(t, database, 1, "sci-fi")
 
 	rr := callBulkEdit(t, database, dataDir, map[string]any{
 		"ids": []int64{1, 2},
@@ -180,7 +181,7 @@ func TestBulkEditTagsAddNoOpIsUnchanged(t *testing.T) {
 	dataDir := t.TempDir()
 
 	insertBook(t, database, 1, "One")
-	mustExec(t, database, "UPDATE books SET tags = ? WHERE id = ?", "sci-fi, classic", 1)
+	mustSetTags(t, database, 1, "sci-fi, classic")
 
 	rr := callBulkEdit(t, database, dataDir, map[string]any{
 		"ids": []int64{1},
@@ -210,8 +211,8 @@ func TestBulkEditTagsReplaceRemoveAndClear(t *testing.T) {
 	dataDir := t.TempDir()
 	insertBook(t, database, 1, "One")
 	insertBook(t, database, 2, "Two")
-	mustExec(t, database, "UPDATE books SET tags = ? WHERE id = ?", "sci-fi, classic, pulp", 1)
-	mustExec(t, database, "UPDATE books SET tags = ? WHERE id = ?", "sci-fi, classic", 2)
+	mustSetTags(t, database, 1, "sci-fi, classic, pulp")
+	mustSetTags(t, database, 2, "sci-fi, classic")
 
 	callBulkEdit(t, database, dataDir, map[string]any{
 		"ids": []int64{1},

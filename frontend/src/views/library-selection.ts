@@ -124,7 +124,7 @@ export function createLibrarySelection(opts: SelectionOptions): LibrarySelection
         el.innerHTML = `
             <div class="bulk-bar-actions">
                 <button type="button" class="bulk-bar-action" data-action="authors" aria-label="Author" title="Author">${icon('person', 18)}<span>Author</span></button>
-                <button type="button" class="bulk-bar-action" data-action="tags" aria-label="Tags" title="Tags">${icon('sell', 18)}<span>Tags</span></button>
+                <button type="button" class="bulk-bar-action" data-action="tags" aria-label="Genres/Tags" title="Genres/Tags">${icon('sell', 18)}<span>Genres/Tags</span></button>
                 <button type="button" class="bulk-bar-action" data-action="series" aria-label="Series" title="Series">${icon('menu_book', 18)}<span>Series</span></button>
                 <button type="button" class="bulk-bar-action" data-action="shelves" aria-label="Shelves" title="Shelves">${icon('bookmark', 18)}<span>Shelves</span></button>
                 ${

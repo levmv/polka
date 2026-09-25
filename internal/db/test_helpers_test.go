@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/levmv/polka/internal/bookmeta"
 	"github.com/levmv/polka/internal/testfixture"
 )
 
@@ -40,4 +41,13 @@ func bookIDs(books []BookSummaryRow) []int64 {
 		ids = append(ids, book.ID)
 	}
 	return ids
+}
+
+func mustSetTags(t *testing.T, database *DB, id int64, raw string) {
+	t.Helper()
+	if err := database.Transact(t.Context(), func(tx *Tx) error {
+		return SetBookTags(tx, id, TagKindTag, bookmeta.ParseTagList(raw))
+	}); err != nil {
+		t.Fatal(err)
+	}
 }

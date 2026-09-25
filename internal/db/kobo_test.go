@@ -12,9 +12,10 @@ import (
 func seedKoboBook(t *testing.T, database *DB, bookID, assetID int64, title string, formatKey string, tags string) {
 	t.Helper()
 	mustExec(t, database, `
-		INSERT INTO books (id, title, sort_title, tags, language, publisher)
-		VALUES (?, ?, ?, ?, 'en', 'Polka Press')
-	`, bookID, title, title, tags)
+		INSERT INTO books (id, title, sort_title, language, publisher)
+		VALUES (?, ?, ?, 'en', 'Polka Press')
+	`, bookID, title, title)
+	mustSetTags(t, database, bookID, tags)
 	mustExec(t, database, `
 		INSERT INTO assets
 		    (id, book_id, storage_path, filename, extension, format, is_primary, current_size, original_hash, current_hash)

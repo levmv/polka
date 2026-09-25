@@ -43,6 +43,7 @@ type BookPatch struct {
 	Series      patchValue[string]  `json:"series"`
 	SeriesIndex patchValue[float64] `json:"series_index"`
 	Description patchValue[string]  `json:"description"`
+	Genres      patchValue[string]  `json:"genres"`
 	Tags        patchValue[string]  `json:"tags"`
 	Language    patchValue[string]  `json:"language"`
 	Publisher   patchValue[string]  `json:"publisher"`
@@ -57,7 +58,8 @@ type bookEditState struct {
 	Series       sql.NullString
 	SeriesIndex  sql.NullFloat64
 	Description  sql.NullString
-	Tags         sql.NullString
+	Genres       []string
+	Tags         []string
 	OverridesStr string
 	Language     sql.NullString
 	Publisher    sql.NullString
@@ -66,6 +68,8 @@ type bookEditState struct {
 }
 
 type bookEditChanges struct {
+	Genres     bool
+	Tags       bool
 	Authors    bool
 	PathInputs bool
 	Metadata   bool
@@ -87,6 +91,10 @@ func loadBookEditState(queryer db.Queryer, bookID int64) (bookEditState, error) 
 		authorNames = append(authorNames, a.Name)
 	}
 
+	tagsByBook, err := db.TagsByBookIDs(queryer, []int64{bookID})
+	if err != nil {
+		return bookEditState{}, err
+	}
 	var existingOverrides sql.NullString
 	if err := queryer.QueryRow("SELECT manual_overrides FROM books WHERE id = ?", bookID).Scan(&existingOverrides); err != nil {
 		return bookEditState{}, err
@@ -99,7 +107,8 @@ func loadBookEditState(queryer db.Queryer, bookID int64) (bookEditState, error) 
 		Series:       b.Series,
 		SeriesIndex:  b.SeriesIndex,
 		Description:  b.Description,
-		Tags:         b.Tags,
+		Genres:       tagsByBook[bookID].Genres,
+		Tags:         tagsByBook[bookID].Tags,
 		OverridesStr: existingOverrides.String,
 		Language:     b.Language,
 		Publisher:    b.Publisher,
@@ -157,10 +166,17 @@ func applyBookPatch(existing bookEditState, req BookPatch) (bookEditState, bookE
 		}
 		overrides["description"] = true
 	}
+	if req.Genres.Present {
+		next.Genres = nil
+		if !req.Genres.Null {
+			next.Genres = bookmeta.ParseTagList(req.Genres.Value)
+		}
+		overrides["genres"] = true
+	}
 	if req.Tags.Present {
-		next.Tags = sql.NullString{}
+		next.Tags = nil
 		if !req.Tags.Null {
-			next.Tags = trimmedNullableText(req.Tags.Value)
+			next.Tags = bookmeta.ParseTagList(req.Tags.Value)
 		}
 		overrides["tags"] = true
 	}
@@ -209,6 +225,8 @@ func applyBookPatch(existing bookEditState, req BookPatch) (bookEditState, bookE
 
 	changes := bookEditChanges{
 		Authors:   next.Authors != existing.Authors,
+		Genres:    !bookmeta.EqualTags(next.Genres, existing.Genres),
+		Tags:      !bookmeta.EqualTags(next.Tags, existing.Tags),
 		Overrides: next.OverridesStr != beforeOverrides,
 	}
 	changes.PathInputs = titleChanged || next.SortTitle != existing.SortTitle || changes.Authors ||
@@ -216,7 +234,7 @@ func applyBookPatch(existing bookEditState, req BookPatch) (bookEditState, bookE
 		!sameNullableNumber(next.SeriesIndex, existing.SeriesIndex)
 	changes.Metadata = changes.PathInputs ||
 		!sameNullableText(next.Description, existing.Description) ||
-		!sameNullableText(next.Tags, existing.Tags) ||
+		changes.Genres || changes.Tags ||
 		!sameNullableText(next.Language, existing.Language) ||
 		!sameNullableText(next.Publisher, existing.Publisher) ||
 		!sameNullableText(next.Date, existing.Date) ||
@@ -300,16 +318,31 @@ func (s *Server) handleAPIEditBook(w http.ResponseWriter, r *http.Request, bookI
 		_, err = tx.Exec(`
 			UPDATE books SET
 				title = ?, sort_title = ?, series = ?, series_index = ?,
-				description = ?, tags = ?, manual_overrides = ?,
+				description = ?, manual_overrides = ?,
 				language = ?, publisher = ?, published_date = ?, identifiers = ?,
 				updated_at = unixepoch()
 			WHERE id = ?
-		`, next.Title, next.SortTitle, next.Series, next.SeriesIndex, next.Description, next.Tags, next.OverridesStr,
+		`, next.Title, next.SortTitle, next.Series, next.SeriesIndex, next.Description, next.OverridesStr,
 			next.Language, next.Publisher, next.Date, next.Identifiers, bookID)
 		if err != nil {
 			return relayout.Changed{}, fmt.Errorf("update book: %w", err)
 		}
 
+		if changes.Genres {
+			if err := db.SetBookTags(tx, bookID, db.TagKindGenre, next.Genres); err != nil {
+				return relayout.Changed{}, err
+			}
+		}
+		if changes.Tags {
+			if err := db.SetBookTags(tx, bookID, db.TagKindTag, next.Tags); err != nil {
+				return relayout.Changed{}, err
+			}
+		}
+		if changes.Genres || changes.Tags {
+			if err := db.DeleteOrphanTags(tx); err != nil {
+				return relayout.Changed{}, err
+			}
+		}
 		if changes.Authors {
 			if err := replaceBookAuthors(tx, bookID, next.Authors); err != nil {
 				return relayout.Changed{}, fmt.Errorf("replace book authors: %w", err)

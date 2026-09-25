@@ -522,7 +522,7 @@ func metadataFromOPF(opf opfDoc) *Metadata {
 		}
 	}
 
-	meta.Tags = opfTags(opf.Metadata.Subject)
+	meta.Genres, meta.Tags = opfClassification(opf.Metadata)
 	meta.Title = bookmeta.DecodeLegacyHexWrappedText(meta.Title)
 	meta.SortTitle = bookmeta.DecodeLegacyHexWrappedText(meta.SortTitle)
 
@@ -789,25 +789,6 @@ func opfRoleIsAuthor(role string) bool {
 
 func opfRoleIsEditor(role string) bool {
 	return role == "edt" || role == "editor"
-}
-
-func opfTags(subjects []string) []string {
-	var tags []string
-	seenTags := make(map[string]bool)
-	for _, s := range subjects {
-		for rawTag := range strings.SplitSeq(s, ",") {
-			tag := strings.TrimSpace(rawTag)
-			if tag == "" {
-				continue
-			}
-			lower := strings.ToLower(tag)
-			if !seenTags[lower] {
-				seenTags[lower] = true
-				tags = append(tags, tag)
-			}
-		}
-	}
-	return tags
 }
 
 func opfSeries(metas []opfMeta, refinements map[string]opfRefinement) (string, float64, bool) {

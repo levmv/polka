@@ -26,6 +26,7 @@ type BookSummaryDTO struct {
 	AuthorsDisplay string   `json:"authors_display"`
 	Series         *string  `json:"series"`
 	SeriesIndex    *float64 `json:"series_index"`
+	Genres         *string  `json:"genres"`
 	Tags           *string  `json:"tags"`
 	Date           *string  `json:"date"`
 	Year           string   `json:"year,omitempty"`
@@ -84,9 +85,6 @@ func summaryRowDTO(row db.BookSummaryRow) BookSummaryDTO {
 	if row.SeriesIndex.Valid {
 		b.SeriesIndex = &row.SeriesIndex.Float64
 	}
-	if row.Tags.Valid {
-		b.Tags = &row.Tags.String
-	}
 	if row.Date.Valid {
 		b.Date = &row.Date.String
 		b.Year = bookmeta.FormatYear(*b.Date)
@@ -121,6 +119,14 @@ func detailRowDTO(row db.BookDetailRow) BookDetailDTO {
 		b.DateHuman = bookmeta.FormatDateHuman(row.Date.String)
 	}
 	return b
+}
+
+func tagsDTO(tags []string) *string {
+	if len(tags) == 0 {
+		return nil
+	}
+	text := bookmeta.FormatTagList(tags)
+	return &text
 }
 
 // authorsToDTO turns ordered author rows into the structured list and the
@@ -441,7 +447,13 @@ func (s *Server) bookSummaryDTOs(ctx context.Context, bookRows []db.BookSummaryR
 	if err != nil {
 		return nil, err
 	}
+	tagsByBook, err := db.TagsByBookIDs(s.db.Read(ctx), bookIDs)
+	if err != nil {
+		return nil, err
+	}
 	for id, b := range bookMap {
+		b.Genres = tagsDTO(tagsByBook[id].Genres)
+		b.Tags = tagsDTO(tagsByBook[id].Tags)
 		b.AuthorsList, b.AuthorsDisplay = authorsToDTO(authorsByBook[id])
 	}
 
@@ -500,6 +512,12 @@ func (s *Server) bookDetailDTO(ctx context.Context, scope db.VisibilityScope, vi
 		return BookDetailDTO{}, err
 	}
 	b.AuthorsList, b.AuthorsDisplay = authorsToDTO(authorsByBook[b.ID])
+	tagsByBook, err := db.TagsByBookIDs(queryer, []int64{b.ID})
+	if err != nil {
+		return BookDetailDTO{}, err
+	}
+	b.Genres = tagsDTO(tagsByBook[b.ID].Genres)
+	b.Tags = tagsDTO(tagsByBook[b.ID].Tags)
 
 	readingStatus := db.ReadingStatusState{BookID: b.ID, Status: db.ReadingStatusUnread}
 	if viewerID > 0 {

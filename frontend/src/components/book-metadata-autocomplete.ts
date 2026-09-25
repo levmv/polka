@@ -1,4 +1,4 @@
-import { fetchAuthors, fetchSeriesPage, fetchTags } from '../api';
+import { fetchAuthors, fetchSeriesPage, fetchTags, type TagKind } from '../api';
 import { isAuthorListDelimiter } from '../authors';
 import type { Author } from '../types';
 import {
@@ -33,10 +33,13 @@ export function attachAuthorAutocomplete(
     });
 }
 
-export function attachTagAutocomplete(input: HTMLInputElement): TextListAutocompleteController {
+export function attachTagAutocomplete(
+    input: HTMLInputElement,
+    kind: TagKind = 'tag',
+): TextListAutocompleteController {
     return attachTextListAutocomplete(input, {
         className: 'tag-list-input',
-        load: async (query) => (await fetchTags(query)).map((tag) => ({ value: tag })),
+        load: async (query) => (await fetchTags(query, kind)).map((tag) => ({ value: tag })),
     });
 }
 

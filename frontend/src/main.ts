@@ -33,6 +33,7 @@ import { initBookDetail, renderBookPage } from './views/book-view';
 import { initCleanup, renderCleanupPage } from './views/cleanup-view';
 import { initLibrary, renderLibraryPage } from './views/library-view';
 import { initSeries, renderSeriesPage } from './views/series-view';
+import { initTags, renderTagsPage, tagsPageTitle } from './views/tags-view';
 import { initTrash, renderTrashPage } from './views/trash-view';
 
 applyCachedTheme();
@@ -71,6 +72,14 @@ const routes: Route<unknown>[] = [
         match: (path) => (path === '/series' ? true : null),
         render: renderSeriesPage,
         mount: (_match, root, context) => initSeries(root, context.signal),
+    },
+    {
+        navId: 'nav-tags',
+        mainClass: 'main--strip',
+        title: tagsPageTitle,
+        match: (path) => (path === '/tags' ? true : null),
+        render: renderTagsPage,
+        mount: (_match, root, context) => initTags(root, context.signal),
     },
     {
         navId: 'nav-authors',

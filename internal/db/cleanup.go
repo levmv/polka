@@ -3,10 +3,10 @@ package db
 import "fmt"
 
 type CleanupCounts struct {
-	MissingCover  int
-	MissingAuthor int
-	NoTags        int
-	NoDescription int
+	MissingCover   int
+	MissingAuthor  int
+	NoGenresOrTags int
+	NoDescription  int
 }
 
 func GetCleanupCounts(queryer Queryer, scope VisibilityScope) (CleanupCounts, error) {
@@ -18,7 +18,7 @@ func GetCleanupCounts(queryer Queryer, scope VisibilityScope) (CleanupCounts, er
 	if counts.MissingAuthor, err = countBooksByCondition(queryer, scope, noAuthorCondition); err != nil {
 		return counts, err
 	}
-	if counts.NoTags, err = countBooksByCondition(queryer, scope, noTagsCondition); err != nil {
+	if counts.NoGenresOrTags, err = countBooksByCondition(queryer, scope, noClassificationCondition); err != nil {
 		return counts, err
 	}
 	if counts.NoDescription, err = countBooksByCondition(queryer, scope, noDescriptionCondition); err != nil {

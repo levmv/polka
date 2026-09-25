@@ -3,13 +3,14 @@ package db
 import (
 	"database/sql"
 	"fmt"
+
+	"github.com/levmv/polka/internal/bookmeta"
 )
 
 type OPDSPublicationRow struct {
 	ID            int64
 	Title         string
 	Description   sql.NullString
-	Tags          sql.NullString
 	Publisher     sql.NullString
 	PublishedDate sql.NullString
 	Language      sql.NullString
@@ -20,7 +21,7 @@ type OPDSPublicationRow struct {
 
 const opdsPublicationColumns = `
 	b.id, b.title,
-	b.description, b.tags, b.publisher, b.published_date,
+	b.description, b.publisher, b.published_date,
 	b.language, b.identifiers, b.cover_version, b.updated_at`
 
 func GetOPDSPublication(queryer Queryer, scope VisibilityScope, bookID int64) (OPDSPublicationRow, error) {
@@ -148,6 +149,45 @@ func CountManualShelfOPDSPublications(queryer Queryer, scope VisibilityScope, sh
 	return count, nil
 }
 
+// OPDS presents genres and tags together. IN includes a book only once even
+// when it has the same name in both kinds; kind keeps the lookup indexed.
+const opdsTagCondition = `b.deleted_at IS NULL
+	AND b.id IN (
+		SELECT bt.book_id FROM tags t JOIN book_tags bt ON bt.tag_id = t.id
+		WHERE t.kind IN ('genre', 'tag') AND t.name_key = ?)
+	AND EXISTS (SELECT 1 FROM assets a WHERE a.book_id = b.id)`
+
+func ListTagOPDSPublications(queryer Queryer, scope VisibilityScope, name string, limit, offset int) ([]OPDSPublicationRow, error) {
+	withSQL, fromSQL, args := scope.joinVisibleBooks("books b")
+	args = append(args, bookmeta.TagKey(name), limit, offset)
+	rows, err := queryer.Query(fmt.Sprintf(`
+		%s
+		SELECT %s FROM %s
+		WHERE %s
+		ORDER BY b.sort_title COLLATE NOCASE ASC, b.title COLLATE NOCASE ASC, b.id ASC
+		LIMIT ? OFFSET ?
+	`, withClause(withSQL), opdsPublicationColumns, fromSQL, opdsTagCondition), args...)
+	if err != nil {
+		return nil, fmt.Errorf("list tag opds publications: %w", err)
+	}
+	defer rows.Close()
+	return scanOPDSPublications(rows)
+}
+
+func CountTagOPDSPublications(queryer Queryer, scope VisibilityScope, name string) (int, error) {
+	withSQL, fromSQL, args := scope.joinVisibleBooks("books b")
+	args = append(args, bookmeta.TagKey(name))
+	var count int
+	err := queryer.QueryRow(fmt.Sprintf(`
+		%s
+		SELECT COUNT(*) FROM %s WHERE %s
+	`, withClause(withSQL), fromSQL, opdsTagCondition), args...).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count tag opds publications: %w", err)
+	}
+	return count, nil
+}
+
 func scanOPDSPublications(rows *sql.Rows) ([]OPDSPublicationRow, error) {
 	var pubs []OPDSPublicationRow
 	for rows.Next() {
@@ -164,7 +204,7 @@ func scanOPDSPublications(rows *sql.Rows) ([]OPDSPublicationRow, error) {
 }
 
 func scanOPDSPublication(scanner rowScanner, p *OPDSPublicationRow) error {
-	return scanner.Scan(&p.ID, &p.Title, &p.Description, &p.Tags,
+	return scanner.Scan(&p.ID, &p.Title, &p.Description,
 		&p.Publisher, &p.PublishedDate, &p.Language, &p.Identifiers,
 		&p.CoverVersion, &p.UpdatedAt)
 }

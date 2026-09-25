@@ -151,7 +151,7 @@ func googleBooksCandidate(q Query, item googleBookItem) Candidate {
 		Description: info.Description,
 		Language:    info.Language,
 		Identifier:  identifiers(ids),
-		Tags:        trimStrings(info.Categories, 8),
+		Genres:      trimStrings(info.Categories, 8),
 		CoverURL: httpsImageURL(firstNonEmpty(
 			info.ImageLinks.ExtraLarge,
 			info.ImageLinks.Large,

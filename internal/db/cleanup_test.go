@@ -11,22 +11,26 @@ func TestCleanupCategories(t *testing.T) {
 
 	// Seed books
 	// Book 1: Missing cover, but has tags, desc, real author
-	mustExec(t, database, "INSERT INTO books (id, title, sort_title, tags, description, cover_version) VALUES (1, 'B1', 'B1', 't1', 'd1', 0)")
+	mustExec(t, database, "INSERT INTO books (id, title, sort_title, description, cover_version) VALUES (1, 'B1', 'B1', 'd1', 0)")
+	mustSetTags(t, database, 1, "t1")
 	mustExec(t, database, "INSERT INTO book_authors (book_id, author_id, author_order) VALUES (1, 2, 0)")
 
 	// Book 2: Missing author, but has cover, tags, desc
-	mustExec(t, database, "INSERT INTO books (id, title, sort_title, tags, description, cover_version) VALUES (2, 'B2', 'B2', 't2', 'd2', 1)")
+	mustExec(t, database, "INSERT INTO books (id, title, sort_title, description, cover_version) VALUES (2, 'B2', 'B2', 'd2', 1)")
+	mustSetTags(t, database, 2, "t2")
 
 	// Book 3: No tags
-	mustExec(t, database, "INSERT INTO books (id, title, sort_title, tags, description, cover_version) VALUES (3, 'B3', 'B3', NULL, 'd3', 1)")
+	mustExec(t, database, "INSERT INTO books (id, title, sort_title, description, cover_version) VALUES (3, 'B3', 'B3', 'd3', 1)")
 	mustExec(t, database, "INSERT INTO book_authors (book_id, author_id, author_order) VALUES (3, 2, 0)")
 
 	// Book 4: No description
-	mustExec(t, database, "INSERT INTO books (id, title, sort_title, tags, description, cover_version) VALUES (4, 'B4', 'B4', 't4', NULL, 1)")
+	mustExec(t, database, "INSERT INTO books (id, title, sort_title, description, cover_version) VALUES (4, 'B4', 'B4', NULL, 1)")
+	mustSetTags(t, database, 4, "t4")
 	mustExec(t, database, "INSERT INTO book_authors (book_id, author_id, author_order) VALUES (4, 2, 0)")
 
 	// Book 5: Perfect book (should not be in any)
-	mustExec(t, database, "INSERT INTO books (id, title, sort_title, tags, description, cover_version) VALUES (5, 'B5', 'B5', 't5', 'd5', 1)")
+	mustExec(t, database, "INSERT INTO books (id, title, sort_title, description, cover_version) VALUES (5, 'B5', 'B5', 'd5', 1)")
+	mustSetTags(t, database, 5, "t5")
 	mustExec(t, database, "INSERT INTO book_authors (book_id, author_id, author_order) VALUES (5, 1, 0)")
 	mustExec(t, database, "INSERT INTO search (rowid, title, authors, tags, description) VALUES (1, 'B1', 'Real Author', 't1', 'd1')")
 	mustExec(t, database, "INSERT INTO search (rowid, title, authors, tags, description) VALUES (2, 'B2', '', 't2', 'd2')")
@@ -38,7 +42,7 @@ func TestCleanupCategories(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetCleanupCounts failed: %v", err)
 	}
-	if counts.MissingCover != 1 || counts.MissingAuthor != 1 || counts.NoTags != 1 || counts.NoDescription != 1 {
+	if counts.MissingCover != 1 || counts.MissingAuthor != 1 || counts.NoGenresOrTags != 1 || counts.NoDescription != 1 {
 		t.Errorf("Unexpected counts: %+v", counts)
 	}
 

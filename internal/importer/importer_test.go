@@ -51,6 +51,37 @@ func writeEPUB(t *testing.T, path string, opf []byte) {
 	writeEPUBWithBinaryFiles(t, path, opf, nil)
 }
 
+func TestImportClassificationSidecarOverrides(t *testing.T) {
+	for _, tc := range []struct {
+		name, fields string
+		genres, tags []string
+	}{
+		{"calibre columns", `<dc:subject>Favourite</dc:subject><meta name="calibre:user_metadata:#genre" content='{"#value#":["History"]}'/><meta name="calibre:user_metadata:#extra_tags" content='{"#value#":["History","Read"]}'/>`, []string{"History"}, []string{"Favourite", "History", "Read"}},
+		{"empty extra tags", `<dc:subject>History</dc:subject><meta name="calibre:user_metadata:#extra_tags" content='{"#value#":null}'/>`, []string{"History"}, nil},
+		{"explicit clear", `<meta name="polka:tags" content='[]'/>`, nil, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dataDir, sourceDir := t.TempDir(), t.TempDir()
+			database, root := openTestLibrary(t, dataDir, dataDir)
+			path := filepath.Join(sourceDir, "book.epub")
+			writeEPUB(t, path, []byte(`<package xmlns="http://www.idpf.org/2007/opf" version="2.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Book</dc:title><dc:subject>Old genre</dc:subject><meta name="polka:tags" content='["Old tag"]'/></metadata></package>`))
+			opf := `<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">` + tc.fields + `</metadata>`
+			if err := os.WriteFile(filepath.Join(sourceDir, "metadata.opf"), []byte(opf), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			result, err := ImportFile(t.Context(), database, root, path, nil, Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			tags, err := db.TagsByBookIDs(database.Read(t.Context()), []int64{result.BookID})
+			got := tags[result.BookID]
+			if err != nil || !slices.Equal(got.Genres, tc.genres) || !slices.Equal(got.Tags, tc.tags) {
+				t.Fatalf("imported classification = %+v, %v; want %v / %v", got, err, tc.genres, tc.tags)
+			}
+		})
+	}
+}
+
 func writeEPUBWithBinaryFiles(t *testing.T, path string, opf []byte, binaryFiles map[string][]byte) {
 	t.Helper()
 	if err := os.WriteFile(path, testfixture.EPUB(t, opf, binaryFiles), 0o644); err != nil {
@@ -2149,7 +2180,8 @@ func TestPersistPreparedStoresBookMetadata(t *testing.T) {
 			Identifier:  "isbn:978-0-00-000000-1",
 			Series:      "Mapping Series",
 			SeriesIndex: 2.5,
-			Tags:        []string{"mapping", "contract"},
+			Genres:      []string{" Mapping, fiction ", "FICTION"},
+			Tags:        []string{" mapping, contract ", "", "MAPPING", "contract"},
 		},
 		CoverBytes: []byte("cover bytes"),
 	}
@@ -2160,34 +2192,41 @@ func TestPersistPreparedStoresBookMetadata(t *testing.T) {
 	}
 
 	type storedMetadata struct {
-		title, sortTitle, series string
-		seriesIndex              float64
-		description, tags        string
-		coverVersion             int
-		publisher, date          string
-		language, identifiers    string
+		title, sortTitle, series  string
+		seriesIndex               float64
+		description, genres, tags string
+		coverVersion              int
+		publisher, date           string
+		language, identifiers     string
 	}
 	var got storedMetadata
 	if err := database.Read(t.Context()).QueryRow(`
-		SELECT title, sort_title, series, series_index, description, tags,
+		SELECT title, sort_title, series, series_index, description,
 		       cover_version, publisher, published_date,
 		       language, identifiers
 		FROM books
 		WHERE id = ?
 	`, result.BookID).Scan(
 		&got.title, &got.sortTitle, &got.series, &got.seriesIndex,
-		&got.description, &got.tags, &got.coverVersion, &got.publisher,
+		&got.description, &got.coverVersion, &got.publisher,
 		&got.date, &got.language, &got.identifiers,
 	); err != nil {
 		t.Fatalf("query book metadata: %v", err)
 	}
+	tags, err := db.TagsByBookIDs(database.Read(t.Context()), []int64{result.BookID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got.genres = strings.Join(tags[result.BookID].Genres, ", ")
+	got.tags = strings.Join(tags[result.BookID].Tags, ", ")
 	want := storedMetadata{
 		title:        resolved.Metadata.Title,
 		sortTitle:    resolved.Metadata.SortTitle,
 		series:       resolved.Metadata.Series,
 		seriesIndex:  resolved.Metadata.SeriesIndex,
 		description:  resolved.Metadata.Description,
-		tags:         strings.Join(resolved.Metadata.Tags, ", "),
+		genres:       "Mapping, fiction",
+		tags:         "mapping, contract",
 		coverVersion: 1,
 		publisher:    resolved.Metadata.Publisher,
 		date:         resolved.Metadata.Date,

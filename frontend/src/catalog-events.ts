@@ -1,6 +1,7 @@
 import type { Book, BookSummary, BookUpdate } from './types';
 
 export const CATALOG_CHANGED = 'polka:catalog-changed';
+export const SHELVES_CHANGED = 'polka:shelves-changed';
 
 // Wire names shared with internal/db/book_list_dependencies.go.
 export type CatalogField =
@@ -25,6 +26,10 @@ export function notifyCatalogChanged(change: CatalogChange = { kind: 'coarse' })
     document.dispatchEvent(new CustomEvent<CatalogChange>(CATALOG_CHANGED, { detail: change }));
 }
 
+export function notifyShelvesChanged(): void {
+    document.dispatchEvent(new CustomEvent(SHELVES_CHANGED));
+}
+
 // Compare saved values, not submitted controls: normalization and partial saves
 // must not make unrelated edits look like list changes.
 export function changedBookFields(before: BookSummary, after: BookSummary): CatalogField[] {
@@ -34,7 +39,7 @@ export function changedBookFields(before: BookSummary, after: BookSummary): Cata
     const compare = (field: CatalogField, a: unknown, b: unknown) => {
         if (JSON.stringify(a) !== JSON.stringify(b)) fields.push(field);
     };
-    for (const key of ['title', 'series', 'series_index', 'tags', 'date'] as const) {
+    for (const key of ['title', 'series', 'series_index', 'genres', 'tags', 'date'] as const) {
         compare(key, previous[key], saved[key]);
     }
     // Full Book records always include reading_status; bulk summaries omit it.

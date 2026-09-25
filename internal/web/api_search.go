@@ -13,8 +13,12 @@ func (s *Server) handleAPITags(w http.ResponseWriter, r *http.Request) {
 		serverError(w, r, err)
 		return
 	}
+	kind, ok := tagKindParam(w, r)
+	if !ok {
+		return
+	}
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	tags, err := db.ListTags(s.db.Read(r.Context()), scope, q, 20)
+	tags, err := db.ListTags(s.db.Read(r.Context()), scope, kind, q, 20)
 	if err != nil {
 		serverError(w, r, err)
 		return

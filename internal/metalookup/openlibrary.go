@@ -128,7 +128,7 @@ func openLibraryCandidate(q Query, doc openLibraryDoc) Candidate {
 		Date:       bookmeta.NormalizeMetadataDate(date),
 		Language:   firstNonEmpty(doc.Language...),
 		Identifier: identifiers(ids),
-		Tags:       trimStrings(doc.Subject, 8),
+		Genres:     trimStrings(doc.Subject, 8),
 	}
 	if doc.CoverID > 0 {
 		c.CoverURL = fmt.Sprintf("https://covers.openlibrary.org/b/id/%d-L.jpg?default=false", doc.CoverID)

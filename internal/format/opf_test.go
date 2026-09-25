@@ -56,8 +56,8 @@ func TestParseOPF(t *testing.T) {
 	if meta.Identifier != "isbn:978-0-553-29335-0" {
 		t.Errorf("identifier = %q; want isbn:978-0-553-29335-0", meta.Identifier)
 	}
-	if len(meta.Tags) != 1 || meta.Tags[0] != "Science Fiction" {
-		t.Errorf("tags = %v; want [Science Fiction]", meta.Tags)
+	if len(meta.Genres) != 1 || meta.Genres[0] != "Science Fiction" {
+		t.Errorf("genres = %v; want [Science Fiction]", meta.Genres)
 	}
 	if meta.CalibreTimestamp != "2014-01-08T22:00:58.123456+00:00" {
 		t.Errorf("calibre timestamp = %q; want import timestamp", meta.CalibreTimestamp)
@@ -411,12 +411,12 @@ func TestParseOPFCommaSeparatedSubjects(t *testing.T) {
 		t.Fatalf("ParseOPF: %v", err)
 	}
 	want := []string{"Science Fiction", "Adventure", "History"}
-	if len(meta.Tags) != len(want) {
-		t.Fatalf("tags = %v; want %v", meta.Tags, want)
+	if len(meta.Genres) != len(want) {
+		t.Fatalf("genres = %v; want %v", meta.Genres, want)
 	}
 	for i, tag := range want {
-		if meta.Tags[i] != tag {
-			t.Fatalf("tags = %v; want %v", meta.Tags, want)
+		if meta.Genres[i] != tag {
+			t.Fatalf("genres = %v; want %v", meta.Genres, want)
 		}
 	}
 }

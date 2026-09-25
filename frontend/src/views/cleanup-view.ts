@@ -52,7 +52,7 @@ function renderCleanup(container: HTMLElement, cleanup: Cleanup): void {
     }[] = [
         { key: 'missing_cover', title: 'Missing cover', query: 'no:cover' },
         { key: 'missing_author', title: 'Missing author', query: 'no:author' },
-        { key: 'no_tags', title: 'No tags', query: 'no:tags' },
+        { key: 'no_genres_or_tags', title: 'No genres or tags', query: 'no:genres no:tags' },
         { key: 'no_description', title: 'No description', query: 'no:description' },
     ];
 

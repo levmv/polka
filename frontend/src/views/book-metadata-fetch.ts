@@ -13,6 +13,7 @@ type MetadataFieldKey =
     | 'series'
     | 'series_index'
     | 'description'
+    | 'genres'
     | 'tags'
     | 'language'
     | 'publisher'
@@ -53,6 +54,7 @@ const metadataFields: MetadataField[] = [
         value: (candidate) => candidate.series_index,
     },
     { key: 'description', label: 'Description', value: (candidate) => candidate.description },
+    { key: 'genres', label: 'Genres', value: (candidate) => candidate.genres },
     { key: 'tags', label: 'Tags', value: (candidate) => candidate.tags },
     { key: 'language', label: 'Language', value: (candidate) => candidate.language },
     { key: 'publisher', label: 'Publisher', value: (candidate) => candidate.publisher },
@@ -230,6 +232,9 @@ function renderMetadataCandidateList(args: {
             ? `<div>${escapeHtml(parseAuthorList(candidate.authors).join(', '))}</div>`
             : '';
         const facts = [candidate.publisher, candidate.date].filter(Boolean).join(' · ');
+        const genres = candidate.genres
+            ? `<div class="metadata-candidate-tags">${escapeHtml(candidate.genres)}</div>`
+            : '';
         const tags = candidate.tags
             ? `<div class="metadata-candidate-tags">${escapeHtml(candidate.tags)}</div>`
             : '';
@@ -247,6 +252,7 @@ function renderMetadataCandidateList(args: {
                 <div class="metadata-candidate-title">${escapeHtml(candidate.title || 'Untitled')}</div>
                 ${authors}
                 ${facts ? `<div>${escapeHtml(facts)}</div>` : ''}
+                ${genres}
                 ${tags}
                 <div class="metadata-candidate-provider">${escapeHtml(candidate.provider_name)}</div>
                 ${fieldBadges}

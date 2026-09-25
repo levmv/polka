@@ -34,7 +34,7 @@ func TestRewriteEPUBMetadataNamespaces(t *testing.T) {
 					{name: "content.opf", data: []byte(`<p:package xmlns:p="http://www.idpf.org/2007/opf" version="` + version + `"` + tc.packageAttrs + `>` + metadataTag + `<d:title>Book</d:title><d:date>1998</d:date>` + rights + `</p:metadata></p:package>`)},
 				})
 				meta := Metadata{Title: "Book", Language: "en", Date: "2024", Identifier: "isbn:9780306406157",
-					Authors: []bookmeta.AuthorMeta{{Name: "Writer", SortName: "Writer sort"}}, Tags: []string{"Tag"}}
+					Authors: []bookmeta.AuthorMeta{{Name: "Writer", SortName: "Writer sort"}}, Genres: []string{"Genre"}, Tags: []string{"Tag"}}
 				modified := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
 				out, err := RewriteEPUBMetadata(src, meta, modified)
 				if err != nil {
@@ -67,7 +67,7 @@ func TestRewriteEPUBMetadataNamespaces(t *testing.T) {
 					t.Fatal(err)
 				}
 				m := got.Metadata
-				if m.Title != "Book" || m.Language != "en" || m.Creator.Name != "Writer" || m.Tag != "Tag" || !strings.Contains(m.Identifier, "9780306406157") {
+				if m.Title != "Book" || m.Language != "en" || m.Creator.Name != "Writer" || m.Tag != "Genre" || !strings.Contains(m.Identifier, "9780306406157") {
 					t.Fatalf("Dublin Core metadata missing: %+v\n%s", m, opf)
 				}
 				if version == "2.0" && (m.Creator.Role != "aut" || m.Creator.Sort != "Writer sort") {

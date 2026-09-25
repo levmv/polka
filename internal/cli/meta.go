@@ -43,6 +43,7 @@ type metaMetadata struct {
 	Identifier  string       `json:"identifier,omitempty"`
 	Series      string       `json:"series,omitempty"`
 	SeriesIndex float64      `json:"series_index,omitzero"`
+	Genres      []string     `json:"genres,omitempty"`
 	Tags        []string     `json:"tags,omitempty"`
 	PageCount   int          `json:"page_count,omitzero"`
 }
@@ -348,6 +349,11 @@ func metadataForReport(meta *bookmeta.Metadata) *metaMetadata {
 		}
 		out.Authors = append(out.Authors, metaAuthor{Name: name, SortName: sortName, Role: role})
 	}
+	for _, genre := range meta.Genres {
+		if genre = strings.TrimSpace(genre); genre != "" {
+			out.Genres = append(out.Genres, genre)
+		}
+	}
 	for _, tag := range meta.Tags {
 		if tag = strings.TrimSpace(tag); tag != "" {
 			out.Tags = append(out.Tags, tag)
@@ -576,6 +582,9 @@ func printMetaMetadata(meta metaMetadata) {
 		} else {
 			fmt.Printf("  series: %s\n", meta.Series)
 		}
+	}
+	if len(meta.Genres) > 0 {
+		fmt.Printf("  genres: %s\n", strings.Join(meta.Genres, ", "))
 	}
 	if len(meta.Tags) > 0 {
 		fmt.Printf("  tags: %s\n", strings.Join(meta.Tags, ", "))

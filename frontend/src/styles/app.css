@@ -1098,7 +1098,8 @@ body.can-curate .library-table-container {
 /* Table filters stay quiet until hovered or focused. */
 .table-author-link,
 .table-series-link,
-.table-tag-text {
+.table-genre-text,
+.tag-name-link {
     color: inherit;
     text-decoration: none;
     cursor: pointer;
@@ -1108,8 +1109,10 @@ body.can-curate .library-table-container {
 .table-author-link:focus-visible,
 .table-series-link:hover,
 .table-series-link:focus-visible,
-.table-tag-text:hover,
-.table-tag-text:focus-visible {
+.table-genre-text:hover,
+.table-genre-text:focus-visible,
+.tag-name-link:hover,
+.tag-name-link:focus-visible {
     text-decoration: underline;
     outline: 0;
 }
@@ -1135,7 +1138,7 @@ body.can-curate .library-table-container {
     white-space: nowrap;
 }
 
-.col-tags {
+.col-genres {
     width: 15%;
 }
 
@@ -1170,17 +1173,17 @@ body.can-curate .library-table-container {
     outline: 0;
 }
 
-.table-tags-text {
+.table-genres-text {
     color: var(--text-muted);
     font-size: 0.85rem;
     overflow-wrap: normal;
 }
 
-.table-tag-sep {
+.table-genre-sep {
     opacity: 0.5;
 }
 
-.table-tag-more {
+.table-genre-more {
     font-size: 0.8rem;
     color: var(--text-muted);
     background: transparent;
@@ -1189,7 +1192,7 @@ body.can-curate .library-table-container {
     cursor: pointer;
 }
 
-.table-tag-more:hover {
+.table-genre-more:hover {
     color: var(--text-main);
     text-decoration: underline;
 }
@@ -4314,6 +4317,112 @@ body.has-library-jump-rail #content {
     }
 }
 
+/* Genres and tags */
+.dictionary-heading {
+    justify-content: flex-start;
+    gap: 1.5rem;
+}
+
+.dictionary-heading a {
+    display: block;
+    padding: 0.5rem 0;
+    border-bottom: 2px solid transparent;
+    color: var(--text-muted);
+    font-size: 1.4rem;
+    font-weight: 700;
+    line-height: 1.2;
+    text-decoration: none;
+}
+
+.dictionary-heading a:hover,
+.dictionary-heading a[aria-current="page"] {
+    color: var(--text-main);
+}
+
+.dictionary-heading a[aria-current="page"] {
+    border-bottom-color: currentColor;
+}
+
+.dictionary-heading a:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 4px;
+}
+
+.tags-search {
+    max-width: 28rem;
+    margin-bottom: 1.25rem;
+}
+
+.tags-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.tags-table th,
+.tags-table td {
+    padding: 0.7rem 0.6rem;
+    border-bottom: 1px solid var(--border-color);
+    text-align: left;
+}
+
+.tags-table th,
+.tag-count,
+.tag-rename-hint {
+    color: var(--text-muted);
+}
+
+.tags-table td:first-child {
+    overflow-wrap: anywhere;
+}
+
+.tags-table th:nth-child(2),
+.tags-table .tag-count {
+    width: 1%;
+    text-align: right;
+}
+
+.tags-table .tag-actions {
+    width: 1%;
+    text-align: right;
+    white-space: nowrap;
+}
+
+.tag-action-buttons {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+@media (max-width: 620px) {
+    .tags-table th,
+    .tags-table td {
+        padding-inline: 0.4rem;
+    }
+
+    .tag-edit {
+        width: 36px;
+        padding: 0;
+    }
+
+    .tag-edit-label {
+        display: none;
+    }
+}
+
+.tag-rename-modal {
+    max-width: 28rem;
+}
+
+.tag-rename-modal label {
+    display: block;
+    margin-bottom: 0.5rem;
+}
+
+.tag-rename-hint {
+    margin-top: 0.75rem;
+    font-size: 0.875rem;
+}
+
 /* Authors */
 .authors-intro {
     margin-bottom: 2rem;
@@ -4726,15 +4835,14 @@ body.can-curate .table-row.selected:hover td {
        over the bar instead of the other way round. */
     z-index: 150;
     display: flex;
-    /* nowrap: a fixed, shrink-to-fit bar with wrapping would collapse to the
-       widest single line (the actions) and push the count onto a second row
-       instead of using its available width. The label-collapse media queries
-       keep the one-line content within max-width. */
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
     align-items: center;
     justify-content: center;
     gap: 0.6rem;
-    max-width: min(94vw, 760px);
+    /* Explicit width avoids fixed-position shrink-to-fit sizing at left: 50%. */
+    width: max-content;
+    max-width: calc(100vw - 24px);
+    box-sizing: border-box;
     padding: 0.4rem 0.5rem 0.4rem 0.6rem;
     color: var(--bar-fg);
     background: var(--bar-bg);
@@ -4759,7 +4867,8 @@ body.can-curate .table-row.selected:hover td {
 
 .bulk-bar-actions {
     display: flex;
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
+    min-width: 0;
     gap: 0.35rem;
 }
 
@@ -4809,12 +4918,17 @@ body.can-curate .table-row.selected:hover td {
     padding: 0.45rem;
 }
 
-/* The labelled bar is ~641px wide, so it fits (at 94vw) down to ~690px of
-   viewport; below that the actions collapse to their icons so the bar stays on
-   one row instead of wrapping. 720px keeps a small margin and still lets an iPad
-   mini in portrait (768px) show the labels. Each button keeps its aria-label and
-   title, so the accessible name and hover tooltip survive the collapse. */
-@media (max-width: 720px) {
+.bulk-bar-end {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 0.35rem;
+    padding-left: 0.6rem;
+    border-left: 1px solid var(--bar-line);
+}
+
+/* Keep labels on tablets; narrow screens use icons with accessible names. */
+@media (max-width: 760px) {
     .bulk-bar-action {
         padding: 0.45rem;
     }
@@ -4844,14 +4958,6 @@ body.can-curate .table-row.selected:hover td {
     }
 }
 
-.bulk-bar-end {
-    display: flex;
-    align-items: center;
-    gap: 0.35rem;
-    padding-left: 0.6rem;
-    border-left: 1px solid var(--bar-line);
-}
-
 .bulk-bar-count {
     font-weight: 600;
     white-space: nowrap;
@@ -4876,12 +4982,12 @@ body.can-curate .table-row.selected:hover td {
     opacity: 1;
 }
 
-/* Operation dialogs (Tags / Series). Width tracks content up to a cap, so a book
+/* Operation dialogs. Width tracks content up to a cap, so a book
    with many tags gets a wider row (less vertical scrolling) while a small edit
    stays compact. */
 .bulk-modal {
     width: max-content;
-    min-width: 380px;
+    min-width: min(380px, 92vw);
     max-width: min(92vw, 820px);
 }
 
@@ -4896,7 +5002,8 @@ body.can-curate .table-row.selected:hover td {
     color: var(--text-main);
 }
 
-.bulk-dialog-field[hidden] {
+.bulk-dialog-field[hidden],
+.bulk-dialog[hidden] {
     display: none;
 }
 
@@ -4965,6 +5072,25 @@ body.can-curate .table-row.selected:hover td {
 .bulk-segmented-btn.active {
     color: var(--on-accent);
     background: var(--accent);
+    border-color: var(--accent);
+}
+
+.bulk-kind-switch {
+    gap: 1rem;
+}
+
+.bulk-kind-switch .bulk-segmented-btn {
+    padding: 0.15rem 0 0.4rem;
+    font-size: 18px;
+    font-weight: 600;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    background: transparent;
+}
+
+.bulk-kind-switch .bulk-segmented-btn.active {
+    color: var(--text-main);
     border-color: var(--accent);
 }
 

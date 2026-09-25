@@ -20,7 +20,7 @@ func BookListDependencies(scope VisibilityScope, query string, sort BookSort, ma
 	// Filename search also depends on metadata used by the storage template.
 	searchable := []string{
 		"title", "sort_title", "authors", "author_sort", "series", "series_index",
-		"tags", "description", "language", "publisher", "date", "identifiers", "assets",
+		"genres", "tags", "description", "language", "publisher", "date", "identifiers", "assets",
 	}
 	if !scope.IsFull() {
 		// A reader's access may come from another saved search or manual shelf.
@@ -45,6 +45,8 @@ func BookListDependencies(scope VisibilityScope, query string, sort BookSort, ma
 			add("authors")
 		case searchSeries:
 			add("series")
+		case searchGenres, searchExactGenres:
+			add("genres")
 		case searchTags, searchExactTags:
 			add("tags")
 		case searchEverywhere:
@@ -57,6 +59,8 @@ func BookListDependencies(scope VisibilityScope, query string, sort BookSort, ma
 		switch filter.kind {
 		case searchMissingCover:
 			add("cover")
+		case searchMissingGenres:
+			add("genres")
 		case searchMissingTags:
 			add("tags")
 		case searchMissingDescription:

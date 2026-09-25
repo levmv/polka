@@ -182,6 +182,7 @@ func cloneCandidates(in []Candidate) []Candidate {
 	out := slices.Clone(in)
 	for i, candidate := range in {
 		out[i].Authors = slices.Clone(candidate.Authors)
+		out[i].Genres = slices.Clone(candidate.Genres)
 		out[i].Tags = slices.Clone(candidate.Tags)
 	}
 	return out

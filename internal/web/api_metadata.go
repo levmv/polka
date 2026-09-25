@@ -22,6 +22,7 @@ type MetadataCandidateDTO struct {
 	Series       string   `json:"series,omitempty"`
 	SeriesIndex  *float64 `json:"series_index,omitzero"`
 	Description  string   `json:"description,omitempty"`
+	Genres       string   `json:"genres,omitempty"`
 	Tags         string   `json:"tags,omitempty"`
 	Language     string   `json:"language,omitempty"`
 	Publisher    string   `json:"publisher,omitempty"`
@@ -147,6 +148,7 @@ func metadataCandidateDTO(c metalookup.Candidate, providerName string) MetadataC
 		Series:       c.Series,
 		SeriesIndex:  seriesIndex,
 		Description:  c.Description,
+		Genres:       strings.Join(c.Genres, ", "),
 		Tags:         strings.Join(c.Tags, ", "),
 		Language:     c.Language,
 		Publisher:    c.Publisher,

@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/levmv/polka/internal/bookmeta"
 )
 
 func TestQuotedTagsMatchWholeValues(t *testing.T) {
@@ -27,10 +29,13 @@ func TestQuotedTagsMatchWholeValues(t *testing.T) {
 	}
 	for _, book := range books {
 		if err := database.Transact(context.Background(), func(tx *Tx) error {
-			if _, err := tx.Exec("INSERT INTO books (id, title, sort_title, tags) VALUES (?, ?, ?, ?)", book.id, fmt.Sprintf("Needle %d", book.id), book.id, book.tags); err != nil {
+			if _, err := tx.Exec("INSERT INTO books (id, title, sort_title) VALUES (?, ?, ?)", book.id, fmt.Sprintf("Needle %d", book.id), book.id); err != nil {
 				return err
 			}
 			if _, err := tx.Exec("INSERT INTO assets (id, book_id, storage_path, filename, extension, original_hash, current_hash) VALUES (?, ?, ?, ?, '.epub', randomblob(16), randomblob(16))", book.id, book.id, fmt.Sprintf("%d.epub", book.id), fmt.Sprintf("%d.epub", book.id)); err != nil {
+				return err
+			}
+			if err := SetBookTags(tx, book.id, TagKindTag, bookmeta.ParseTagList(book.tags)); err != nil {
 				return err
 			}
 			return UpdateSearchIndex(tx, book.id)
@@ -59,8 +64,8 @@ func TestQuotedTagsMatchWholeValues(t *testing.T) {
 		{"unaccented exact name", `tag:"cafe"`, []int64{7}},
 		{"long tag not truncated", QueryTerm("tag", longTag+"a"), []int64{8}},
 		{"long tag suffix differs", QueryTerm("tag", longTag+"b"), []int64{9}},
-		{"keys hidden from free search", tagSearchKey("История"), nil},
-		{"keys hidden from quoted free search", `"` + tagSearchKey("История") + `"`, nil},
+		{"keys hidden from free search", tagSearchKey(TagKindTag, "История"), nil},
+		{"keys hidden from quoted free search", `"` + tagSearchKey(TagKindTag, "История") + `"`, nil},
 		{"missing tag", `tag:"never present"`, nil},
 	}
 	for _, tt := range tests {
@@ -76,7 +81,7 @@ func TestExactTagShelfTracksMetadataAndAccess(t *testing.T) {
 		id   int64
 		tags string
 	}{{1, "История"}, {2, "История искусства"}} {
-		mustExec(t, database, "INSERT INTO books (id, title, sort_title, tags) VALUES (?, ?, ?, ?)", book.id, book.id, book.id, book.tags)
+		mustExec(t, database, "INSERT INTO books (id, title, sort_title) VALUES (?, ?, ?)", book.id, book.id, book.id)
 		mustExec(t, database, "INSERT INTO assets (id, book_id, storage_path, filename, extension, original_hash, current_hash) VALUES (?, ?, ?, ?, '.epub', randomblob(16), randomblob(16))", book.id, book.id, fmt.Sprintf("%d.epub", book.id), fmt.Sprintf("%d.epub", book.id))
 
 		setSearchTags(t, database, book.id, book.tags)
@@ -120,7 +125,7 @@ func TestExactTagShelfTracksMetadataAndAccess(t *testing.T) {
 func setSearchTags(t *testing.T, database *DB, bookID int64, tags string) {
 	t.Helper()
 	if err := database.Transact(context.Background(), func(tx *Tx) error {
-		if _, err := tx.Exec("UPDATE books SET tags = ? WHERE id = ?", tags, bookID); err != nil {
+		if err := SetBookTags(tx, bookID, TagKindTag, bookmeta.ParseTagList(tags)); err != nil {
 			return err
 		}
 		return UpdateSearchIndex(tx, bookID)

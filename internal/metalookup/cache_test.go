@@ -28,6 +28,7 @@ func (p *countingProvider) Search(_ context.Context, q Query) ([]Candidate, erro
 		Provider: "counting",
 		Title:    q.Title,
 		Authors:  []bookmeta.AuthorMeta{{Name: q.Author}},
+		Genres:   []string{"Fiction"},
 		Tags:     []string{"cached"},
 	}}, nil
 }
@@ -48,6 +49,7 @@ func TestCachedProviderCachesSuccessfulSearches(t *testing.T) {
 	}
 	first[0].Title = "mutated by caller"
 	first[0].Authors[0].Name = "mutated author"
+	first[0].Genres[0] = "mutated genre"
 	first[0].Tags[0] = "mutated tag"
 
 	second, err := provider.Search(context.Background(), query)
@@ -57,7 +59,7 @@ func TestCachedProviderCachesSuccessfulSearches(t *testing.T) {
 	if base.searchCalls != 1 {
 		t.Fatalf("search calls = %d, want 1", base.searchCalls)
 	}
-	if second[0].Title != "Dune" || second[0].Authors[0].Name != "Frank Herbert" || second[0].Tags[0] != "cached" {
+	if second[0].Title != "Dune" || second[0].Authors[0].Name != "Frank Herbert" || second[0].Genres[0] != "Fiction" || second[0].Tags[0] != "cached" {
 		t.Fatalf("cached candidates were mutated: %+v", second[0])
 	}
 }

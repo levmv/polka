@@ -5,12 +5,13 @@ import "testing"
 func seedAccessBooks(t *testing.T, database *DB) {
 	t.Helper()
 	mustExec(t, database, `
-		INSERT INTO books (id, title, sort_title, tags) VALUES (142, 'Kid Book', 'Kid Book', 'kids');
-		INSERT INTO books (id, title, sort_title, tags) VALUES (107, 'Adult Book', 'Adult Book', 'adult');
+		INSERT INTO books (id, title, sort_title) VALUES (142, 'Kid Book', 'Kid Book');
+		INSERT INTO books (id, title, sort_title) VALUES (107, 'Adult Book', 'Adult Book');
 		INSERT INTO search (rowid, title, tags) VALUES (142, 'Kid Book', 'kids');
 		INSERT INTO search (rowid, title, tags) VALUES (107, 'Adult Book', 'adult');
 	`)
-
+	mustSetTags(t, database, 142, "kids")
+	mustSetTags(t, database, 107, "adult")
 }
 
 func TestVisibilityScopeManualShelf(t *testing.T) {

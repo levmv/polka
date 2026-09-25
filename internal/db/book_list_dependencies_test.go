@@ -12,6 +12,8 @@ func TestBookListDependencies(t *testing.T) {
 		manual         bool
 		refresh, patch []string
 	}{
+		{"genre search", `genre:"History"`, SortTitle, false, []string{"genres", "title"}, []string{"tags", "cover"}},
+		{"missing genres", "no:genres", SortAdded, false, []string{"genres"}, []string{"tags"}},
 		{"recent library", "", SortAdded, false, []string{"added_at"}, []string{"title", "authors", "tags", "cover", "reading_status"}},
 		{"series numbering", `series:"The Series"`, SortSeries, false, []string{"series", "series_index", "title"}, []string{"sort_title", "tags", "cover"}},
 		{"manual series shelf", "", SortSeries, true, []string{"shelves", "series", "series_index", "title"}, []string{"tags", "cover"}},

@@ -5,7 +5,12 @@ import {
     libraryBookListContext,
     parseShelfID,
 } from '../book-list-context';
-import { CATALOG_CHANGED, type CatalogChange, type CatalogField } from '../catalog-events';
+import {
+    CATALOG_CHANGED,
+    type CatalogChange,
+    type CatalogField,
+    notifyShelvesChanged,
+} from '../catalog-events';
 import { createBookCard } from '../components/book-card';
 import { createSelect, type ManagedSelect } from '../components/select';
 import { coverUrl } from '../cover';
@@ -25,7 +30,6 @@ import { queryTerm, seriesLibraryURL } from '../search-query';
 import { openSettingsModal } from '../settings';
 import { loadPersonalSettings, type PersonalSettings, writebackSetting } from '../settings/state';
 import { openCreateShelfDialog } from '../shelf-dialog';
-import { notifyShelvesChanged } from '../sidebar-shelves';
 import { showToast } from '../toast';
 import type { BookJump, BookSequenceWindow, BookSummary } from '../types';
 import { openEditModal } from './book-edit';
@@ -1141,7 +1145,7 @@ function renderTable(
                 <th class="col-author">Author</th>
                 <th class="col-series">Series</th>
                 <th class="col-year">Year</th>
-                <th class="col-tags">Tags</th>
+                <th class="col-genres">Genres</th>
                 <th class="col-format">Format</th>
                 <th class="col-actions"></th>
             </tr>
@@ -1218,8 +1222,7 @@ function createLibraryEmptyState(state: LibraryViewState): HTMLElement {
     return el;
 }
 
-// How many tags a table row shows before collapsing the rest behind a "+N".
-const TABLE_TAG_LIMIT = 3;
+const TABLE_GENRE_LIMIT = 3;
 
 // Add a table filter to the current search without repeating it.
 function applyTableFilter(state: LibraryViewState, token: string): void {
@@ -1243,30 +1246,29 @@ function authorCellHtml(b: BookSummary): string {
         .join(' &amp; ');
 }
 
-function tagsCellHtml(b: BookSummary): string {
-    const tags = b.tags
-        ? b.tags
+function genresCellHtml(b: BookSummary): string {
+    const genres = b.genres
+        ? b.genres
               .split(',')
-              .map((t) => t.trim())
+              .map((name) => name.trim())
               .filter(Boolean)
         : [];
-    if (tags.length === 0) return '';
+    if (genres.length === 0) return '';
 
-    const shown = tags.slice(0, TABLE_TAG_LIMIT);
-    const hidden = tags.slice(TABLE_TAG_LIMIT);
-    // Plain, compact text — a table row isn't the book page, so no pills. Each
-    // hidden tag carries its own leading separator so revealing reads cleanly.
-    const sep = ' <span class="table-tag-sep">·</span> ';
-    const tag = (t: string) =>
-        `<span class="table-tag-text" role="button" tabindex="0" data-filter="${escapeHtml(queryTerm('tag', t))}">${escapeHtml(t)}</span>`;
+    const shown = genres.slice(0, TABLE_GENRE_LIMIT);
+    const hidden = genres.slice(TABLE_GENRE_LIMIT);
+    // Hidden values include their separator so expansion keeps the list readable.
+    const sep = ' <span class="table-genre-sep">·</span> ';
+    const genre = (name: string) =>
+        `<span class="table-genre-text" role="button" tabindex="0" data-filter="${escapeHtml(queryTerm('genre', name))}">${escapeHtml(name)}</span>`;
 
-    let html = `<span class="table-tags-text">${shown.map(tag).join(sep)}`;
+    let html = `<span class="table-genres-text">${shown.map(genre).join(sep)}`;
     html += hidden
-        .map((t) => `<span class="table-tag-hidden" hidden>${sep}${tag(t)}</span>`)
+        .map((name) => `<span class="table-genre-hidden" hidden>${sep}${genre(name)}</span>`)
         .join('');
     html += '</span>';
     if (hidden.length > 0) {
-        html += ` <button type="button" class="table-tag-more" aria-label="Show ${hidden.length} more tags">+${hidden.length}</button>`;
+        html += ` <button type="button" class="table-genre-more" aria-label="Show ${hidden.length} more ${hidden.length === 1 ? 'genre' : 'genres'}">+${hidden.length}</button>`;
     }
     return html;
 }
@@ -1303,7 +1305,7 @@ function createBookRow(state: LibraryViewState, b: BookSummary): HTMLTableRowEle
         <td class="col-author">${authorCellHtml(b)}</td>
         <td class="col-series">${seriesHtml}</td>
         <td class="col-year">${escapeHtml(b.year || '')}</td>
-        <td class="col-tags">${tagsCellHtml(b)}</td>
+        <td class="col-genres">${genresCellHtml(b)}</td>
         <td class="col-format">${formats}</td>
         <td class="col-actions">
             <button class="btn-quick-edit" title="Quick Edit" aria-label="Quick Edit">
@@ -1322,9 +1324,9 @@ function createBookRow(state: LibraryViewState, b: BookSummary): HTMLTableRowEle
         });
     }
 
-    const moreBtn = tr.querySelector('.table-tag-more');
+    const moreBtn = tr.querySelector('.table-genre-more');
     moreBtn?.addEventListener('click', () => {
-        for (const el of tr.querySelectorAll<HTMLElement>('.table-tag-hidden')) {
+        for (const el of tr.querySelectorAll<HTMLElement>('.table-genre-hidden')) {
             el.hidden = false;
         }
         moreBtn.remove();

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -60,7 +61,7 @@ func TestOPDSRootFeed(t *testing.T) {
 		`<title>Recently added</title>`,
 		`<title>By shelf</title>`,
 		`<title>By series</title>`,
-		`<title>By tag</title>`,
+		`<title>Genres/Tags</title>`,
 		`href="http://example.com/opds/books"`,
 		`href="http://example.com/opds/recent"`,
 		`href="http://example.com/opds/shelves"`,
@@ -266,45 +267,118 @@ func TestOPDSSeriesNavPaging(t *testing.T) {
 	}
 }
 
-func TestOPDSTagsNav(t *testing.T) {
+func TestOPDSTagsCombineGenresAndTagsWithinContentScope(t *testing.T) {
 	database, dir := setupTestDB(t)
 	defer database.Close()
 
-	_ = mustUser(t, database, "alice", db.RoleMember)
-	mustExec(t, database, `UPDATE books SET tags = 'fantasy, classics' WHERE id = 1`)
+	alice := mustUser(t, database, "alice", db.RoleMember)
+	reader := mustUser(t, database, "reader", db.RoleReader)
+	mustSetTags(t, database, 1, "fantasy, classics")
+	mustSetTags(t, database, 2, "Fantasy, Private")
+	if err := database.Transact(t.Context(), func(tx *db.Tx) error {
+		return db.SetBookTags(tx, 1, db.TagKindGenre, []string{"Fantasy", "adventure"})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, database, `
+		INSERT INTO assets (book_id, storage_path, filename, extension, original_hash, current_hash)
+		VALUES (2, 'dune.epub', 'dune.epub', '.epub', randomblob(16), randomblob(16));
+		INSERT INTO books (id, title, sort_title) VALUES (3, 'No asset', 'No asset'), (4, 'Trashed', 'Trashed');
+		INSERT INTO assets (book_id, storage_path, filename, extension, original_hash, current_hash)
+		VALUES (4, 'trashed.epub', 'trashed.epub', '.epub', randomblob(16), randomblob(16));
+		UPDATE books SET deleted_at = 1 WHERE id = 4;
+	`)
+	for _, id := range []int64{3, 4} {
+		mustSetTags(t, database, id, "fantasy")
+	}
+	shelf, err := database.CreateShelf(t.Context(), alice.ID, db.ShelfShared, "Allowed", db.ShelfManual, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.AddBookToShelf(t.Context(), shelf.ID, alice.ID, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.UpdateUserAccess(t.Context(), reader.ID, db.UserAccess{Role: db.RoleReader, ContentScope: db.ContentScopeShelves, ShelfIDs: []int64{shelf.ID}}); err != nil {
+		t.Fatal(err)
+	}
 
 	s := newTestServer(t, database, dir)
-
-	req := httptest.NewRequest("GET", "/opds/tags", nil)
-	req.SetBasicAuth("alice", "pw")
-	w := httptest.NewRecorder()
-	testRoutes(t, s).ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	handler := testRoutes(t, s)
+	type link struct {
+		Href string `xml:"href,attr"`
 	}
-	assertValidXML(t, w.Body.Bytes())
-	body := w.Body.String()
-	for _, want := range []string{
-		`<title>fantasy</title>`,
-		`<title>classics</title>`,
-		`q=tag%3A%22fantasy%22`,
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("tags nav missing %q:\n%s", want, body)
+	type entry struct {
+		Title string `xml:"title"`
+		Links []link `xml:"link"`
+	}
+	type feed struct {
+		Total   int     `xml:"totalResults"`
+		Entries []entry `xml:"entry"`
+	}
+	fetch := func(t *testing.T, user, path string) feed {
+		t.Helper()
+		req := httptest.NewRequest("GET", path, nil)
+		req.SetBasicAuth(user, "pw")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: %d %s", path, w.Code, w.Body.String())
 		}
+		var got feed
+		if err := xml.Unmarshal(w.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	for _, tc := range []struct {
+		user  string
+		names []string
+		books []string
+	}{
+		{"alice", []string{"adventure", "classics", "Fantasy", "Private"}, []string{"Dune", "The Hobbit"}},
+		{"reader", []string{"adventure", "classics", "Fantasy"}, []string{"The Hobbit"}},
+	} {
+		t.Run(tc.user, func(t *testing.T) {
+			nav := fetch(t, tc.user, "/opds/tags")
+			var names []string
+			hrefs := make(map[string]string)
+			for _, entry := range nav.Entries {
+				names = append(names, entry.Title)
+				hrefs[entry.Title] = entry.Links[0].Href
+			}
+			if !slices.Equal(names, tc.names) {
+				t.Fatalf("navigation = %v; want %v", names, tc.names)
+			}
+			genre := fetch(t, tc.user, hrefs["adventure"])
+			if genre.Total != 1 || len(genre.Entries) != 1 || genre.Entries[0].Title != "The Hobbit" {
+				t.Fatalf("genre-only feed = %+v; want The Hobbit", genre)
+			}
+			books := fetch(t, tc.user, hrefs["Fantasy"])
+			var titles []string
+			for _, entry := range books.Entries {
+				titles = append(titles, entry.Title)
+			}
+			if books.Total != len(tc.books) || !slices.Equal(titles, tc.books) {
+				t.Fatalf("books = %+v; want %v", books, tc.books)
+			}
+		})
 	}
 }
 
 func TestOPDSBooksFeed(t *testing.T) {
 	database, dir := setupTestDB(t)
 	defer database.Close()
+	mustSetTags(t, database, 1, "fantasy, classics")
+	if err := database.Transact(t.Context(), func(tx *db.Tx) error {
+		return db.SetBookTags(tx, 1, db.TagKindGenre, []string{"Fantasy", "adventure"})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	_ = mustUser(t, database, "alice", db.RoleMember)
 	mustExec(t, database, `
 		UPDATE books
 		SET description = '<p>A small <strong>adventure</strong>.</p>',
-		    tags = 'fantasy, classics',
 		    cover_version = 2,
 		    publisher = 'Allen & Unwin',
 		    published_date = '1937-09-21',
@@ -330,11 +404,15 @@ func TestOPDSBooksFeed(t *testing.T) {
 	assertValidXML(t, w.Body.Bytes())
 
 	body := w.Body.String()
+	if strings.Count(strings.ToLower(body), `term="fantasy"`) != 1 {
+		t.Fatalf("a genre and tag with the same name must appear once: %s", body)
+	}
 	for _, want := range []string{
+		`term="adventure"`,
 		`<title>The Hobbit</title>`,
 		`<name>J.R.R. Tolkien</name>`,
 		`A small adventure.`,
-		`term="fantasy"`,
+		`term="Fantasy"`,
 		`term="classics"`,
 		`xmlns:dc="http://purl.org/dc/elements/1.1/"`,
 		`xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/"`,

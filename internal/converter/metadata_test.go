@@ -2,6 +2,7 @@ package converter
 
 import (
 	"bytes"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -10,6 +11,37 @@ import (
 	"github.com/levmv/polka/internal/format"
 	"github.com/levmv/polka/internal/testfixture"
 )
+
+func TestGeneratedBooksRetainGenresAndTags(t *testing.T) {
+	source := []byte("Chapter one.\n\nSome text.")
+	for _, target := range []Target{TargetEPUB, TargetKEPUB, TargetMOBI6} {
+		t.Run(string(target), func(t *testing.T) {
+			meta := &bookmeta.Metadata{Title: "Book", Genres: []string{"Fiction"}, Tags: []string{"Favourite", "Fiction"}}
+			input, from := source, format.FormatTXT
+			if target == TargetMOBI6 {
+				var epub bytes.Buffer
+				if err := ConvertContextWithOptions(t.Context(), &epub, bytes.NewReader(source), from, int64(len(source)), TargetEPUB, ConversionOptions{Metadata: meta}); err != nil {
+					t.Fatal(err)
+				}
+				input, from = epub.Bytes(), format.FormatEPUB
+			}
+			var out bytes.Buffer
+			if err := ConvertContextWithOptions(t.Context(), &out, bytes.NewReader(input), from, int64(len(input)), target, ConversionOptions{Metadata: meta}); err != nil {
+				t.Fatal(err)
+			}
+			kind := format.FormatEPUB
+			wantGenres, wantTags := meta.Genres, meta.Tags
+			if target == TargetMOBI6 {
+				kind = format.FormatMOBI
+				wantGenres, wantTags = nil, []string{"Fiction", "Favourite"}
+			}
+			got, err := format.ExtractMetadata(bytes.NewReader(out.Bytes()), int64(out.Len()), kind)
+			if err != nil || !slices.Equal(got.Genres, wantGenres) || !slices.Equal(got.Tags, wantTags) {
+				t.Fatalf("converted metadata = %+v, %v; want %v / %v", got, err, wantGenres, wantTags)
+			}
+		})
+	}
+}
 
 func TestConvertEPUBCatalogMetadata(t *testing.T) {
 	const primary = `<dc:date id="publication" opf:event="publication">2001-06-01T12:00:00Z</dc:date>`
@@ -64,7 +96,7 @@ func TestConvertEPUBCatalogMetadata(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got.Title != "Catalog title" || got.Language != "" || got.Date != date || len(got.Authors) != 0 || got.Publisher != "" || len(got.Tags) != 0 || got.Series != "" || got.SeriesIndex != 0 || !strings.Contains(got.Identifier, "9780140328721") || strings.Contains(got.Identifier, "9780306406157") {
+			if got.Title != "Catalog title" || got.Language != "" || got.Date != date || len(got.Authors) != 0 || got.Publisher != "" || len(got.Genres) != 0 || len(got.Tags) != 0 || got.Series != "" || got.SeriesIndex != 0 || !strings.Contains(got.Identifier, "9780140328721") || strings.Contains(got.Identifier, "9780306406157") {
 				t.Fatalf("catalog edits were not carried into output: %+v", got)
 			}
 			if target != TargetMOBI6 {

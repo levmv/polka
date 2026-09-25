@@ -69,7 +69,7 @@ func ListTrashedBooks(queryer Queryer, scope VisibilityScope) ([]TrashedBookRow,
 	for rows.Next() {
 		var t TrashedBookRow
 		if err := rows.Scan(&t.ID, &t.Title, &t.Series, &t.SeriesIndex,
-			&t.Tags, &t.CoverVersion, &t.Date,
+			&t.CoverVersion, &t.Date,
 			&t.DeletedAt, &t.DeletedByName); err != nil {
 			return nil, fmt.Errorf("list trashed books scan: %w", err)
 		}
@@ -138,6 +138,9 @@ func PurgeBooks(tx *Tx, bookIDs []int64) (int, error) {
 	if _, err := DeleteOrphanAuthors(tx); err != nil {
 		return 0, fmt.Errorf("purge orphan authors: %w", err)
 	}
+	if err := DeleteOrphanTags(tx); err != nil {
+		return 0, err
+	}
 	return len(trashedIDs), nil
 }
 
@@ -163,6 +166,9 @@ func PurgeAllTrashedBooks(tx *Tx) (int, error) {
 	if n > 0 {
 		if _, err := DeleteOrphanAuthors(tx); err != nil {
 			return 0, fmt.Errorf("purge orphan authors: %w", err)
+		}
+		if err := DeleteOrphanTags(tx); err != nil {
+			return 0, err
 		}
 	}
 	return int(n), nil

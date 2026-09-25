@@ -15,7 +15,7 @@ func TestListOPDSPublicationsReturnsOnlyLiveBooksWithAssets(t *testing.T) {
 	}
 
 	mustExec("INSERT INTO authors (id, name, sort_name) VALUES (1, 'Author One', 'Author One')")
-	mustExec("INSERT INTO books (id, title, sort_title, description, tags, publisher, published_date, language, identifiers, updated_at) VALUES (1, 'B Title', 'B Title', 'Desc', 'one, two', 'Press', '2024-05-01', 'en', 'isbn:978-0-306-40615-7', 10)")
+	mustExec("INSERT INTO books (id, title, sort_title, description, publisher, published_date, language, identifiers, updated_at) VALUES (1, 'B Title', 'B Title', 'Desc', 'Press', '2024-05-01', 'en', 'isbn:978-0-306-40615-7', 10)")
 	mustExec("INSERT INTO book_authors (book_id, author_id, author_order) VALUES (1, 1, 0)")
 	mustExec("INSERT INTO assets (id, book_id, storage_path, filename, extension, original_hash, current_hash) VALUES (1, 1, 'b.epub', 'b.epub', '.epub', randomblob(16), randomblob(16))")
 	mustExec("INSERT INTO books (id, title, sort_title, updated_at) VALUES (2, 'The A Book', 'A Book, The', 11)")
@@ -40,9 +40,6 @@ func TestListOPDSPublicationsReturnsOnlyLiveBooksWithAssets(t *testing.T) {
 	}
 	if !got.Description.Valid || got.Description.String != "Desc" {
 		t.Fatalf("description = %+v, want Desc", got.Description)
-	}
-	if !got.Tags.Valid || got.Tags.String != "one, two" {
-		t.Fatalf("tags = %+v, want one, two", got.Tags)
 	}
 	if !got.Publisher.Valid || got.Publisher.String != "Press" {
 		t.Fatalf("publisher = %+v, want Press", got.Publisher)

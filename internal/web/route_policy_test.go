@@ -27,6 +27,8 @@ func TestReaderRoutePolicy(t *testing.T) {
 		{http.MethodPost, "/api/admin/storage/import", http.StatusForbidden},
 		{http.MethodGet, "/api/cleanup", http.StatusForbidden},
 		{http.MethodPost, "/api/authors/rename", http.StatusForbidden},
+		{http.MethodPatch, "/api/tags/1", http.StatusForbidden},
+		{http.MethodDelete, "/api/tags/1", http.StatusForbidden},
 	} {
 		req := jsonRequest(t, s, reader.ID, tc.method, tc.path, nil)
 		w := httptest.NewRecorder()

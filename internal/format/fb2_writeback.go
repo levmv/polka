@@ -229,9 +229,8 @@ func rewriteFB2XMLBytes(raw []byte, meta bookmeta.Metadata) ([]byte, error) {
 	childIndent := opfChildIndent(inner)
 	endIndent := opfEndIndent(inner)
 
-	tagsChanged := !slices.Equal(meta.Tags, current.Tags)
 	titleFields := map[string]bool{
-		"genre": tagsChanged, "keywords": tagsChanged,
+		"genre": !slices.Equal(meta.Genres, current.Genres), "keywords": !slices.Equal(meta.Tags, current.Tags),
 		"author": !slices.EqualFunc(meta.Authors, current.Authors, func(a, b bookmeta.AuthorMeta) bool {
 			return a.Name == b.Name && a.SortName == b.SortName
 		}),
@@ -261,9 +260,14 @@ func rewriteFB2XMLBytes(raw []byte, meta bookmeta.Metadata) ([]byte, error) {
 	addChild(mergeFB2Info(titleInfo, buildFB2TitleInfo(meta, newline, childIndent), titleFields,
 		[]string{"genre", "author", "book-title", "annotation", "keywords", "date", "coverpage", "lang", "src-lang", "translator", "sequence"}, newline, childIndent)...)
 	if srcTitle != nil {
-		if clearDate {
-			addChild(mergeFB2Info(srcTitle, "<src-title-info></src-title-info>", map[string]bool{"date": true},
-				[]string{"date"}, newline, childIndent)...)
+		clearFields := map[string]bool{
+			"date":     clearDate,
+			"genre":    titleFields["genre"] && len(meta.Genres) == 0,
+			"keywords": titleFields["keywords"] && len(meta.Tags) == 0,
+		}
+		if clearFields["date"] || clearFields["genre"] || clearFields["keywords"] {
+			addChild(mergeFB2Info(srcTitle, "<src-title-info></src-title-info>", clearFields,
+				[]string{"genre", "keywords", "date"}, newline, childIndent)...)
 		} else {
 			addChild(fb2Segment{raw: srcTitle})
 		}
@@ -451,6 +455,18 @@ func mergeFB2Info(source []byte, generated string, changed map[string]bool, orde
 		}
 	}
 	original := scanFB2DirectChildren(inner)
+	if source != nil {
+		hasChanges := false
+		for _, child := range original {
+			hasChanges = hasChanges || changed[child.local]
+		}
+		for _, child := range freshChildren {
+			hasChanges = hasChanges || changed[child.local]
+		}
+		if !hasChanges {
+			return []fb2Segment{{raw: source}}
+		}
+	}
 	parts := []fb2Segment{opening}
 	appendField := func(part fb2Segment) {
 		parts = append(parts, fb2Segment{gen: newline + indent + "  "}, part)
@@ -511,9 +527,9 @@ func buildFB2TitleInfo(meta bookmeta.Metadata, newline, indent string) string {
 	sub := indent + "  "
 	var b strings.Builder
 	b.WriteString("<title-info>")
-	for _, tag := range meta.Tags {
-		if t := strings.TrimSpace(tag); t != "" {
-			b.WriteString(newline + sub + "<genre>" + opfEscapeText(t) + "</genre>")
+	for _, genre := range meta.Genres {
+		if genre = strings.TrimSpace(genre); genre != "" {
+			b.WriteString(newline + sub + "<genre>" + opfEscapeText(genre) + "</genre>")
 		}
 	}
 	for _, author := range meta.Authors {
@@ -526,6 +542,9 @@ func buildFB2TitleInfo(meta bookmeta.Metadata, newline, indent string) string {
 	}
 	if desc := strings.TrimSpace(meta.Description); desc != "" {
 		b.WriteString(newline + sub + "<annotation>" + newline + sub + "  <p>" + opfEscapeText(desc) + "</p>" + newline + sub + "</annotation>")
+	}
+	if tags := bookmeta.FormatTagList(meta.Tags); tags != "" {
+		b.WriteString(newline + sub + "<keywords>" + opfEscapeText(tags) + "</keywords>")
 	}
 	if date := strings.TrimSpace(meta.Date); date != "" {
 		b.WriteString(newline + sub + "<date")

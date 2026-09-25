@@ -657,13 +657,13 @@ test.describe('Book editor', () => {
     await page.keyboard.press('Enter');
     await expect(authorsInput).toHaveValue('Le Guin, Ursula K.; Cover Author');
 
-    const tagsInput = page.locator('.edit-modal input[name="tags"]');
-    await tagsInput.fill('new, s');
-    const tagSuggestions = page.locator('.tag-list-input .text-list-ac-list');
-    await expect(tagSuggestions).toBeVisible();
-    // Other fixture tags can also match "s", so choose the exact suggestion.
-    await tagSuggestions.getByRole('option', { name: 'sf', exact: true }).click();
-    await expect(tagsInput).toHaveValue('new, sf');
+    const genresInput = page.locator('.edit-modal input[name="genres"]');
+    await genresInput.fill('new, s');
+    const genreSuggestions = page.locator('[data-edit-field="genres"] .text-list-ac-list');
+    await expect(genreSuggestions).toBeVisible();
+    // Other fixture genres can also match "s", so choose the exact suggestion.
+    await genreSuggestions.getByRole('option', { name: 'sf', exact: true }).click();
+    await expect(genresInput).toHaveValue('new, sf');
 
     const identifiersInput = page.locator('.edit-modal input[name="identifiers"]');
     await expect(identifiersInput).toHaveAttribute('role', 'combobox');

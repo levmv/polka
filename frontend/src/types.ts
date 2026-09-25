@@ -31,6 +31,7 @@ export interface BookSummary {
     authors_display: string;
     series: string | null;
     series_index: number | null;
+    genres: string | null;
     tags: string | null;
     date: string | null;
     year?: string;
@@ -120,6 +121,7 @@ export interface MetadataCandidate {
     series?: string;
     series_index?: number;
     description?: string;
+    genres?: string;
     tags?: string;
     language?: string;
     publisher?: string;
@@ -460,6 +462,7 @@ export interface BookUpdate {
     series: string | null;
     series_index: number | null;
     description: string | null;
+    genres: string | null;
     tags: string | null;
     language: string | null;
     publisher: string | null;
@@ -473,7 +476,7 @@ export type BulkTagMode = 'add' | 'remove' | 'replace' | 'clear';
 export type BulkSeriesIndexMode = 'keep' | 'clear' | 'assign';
 
 export interface BulkTagOperation {
-    type: 'tags';
+    type: 'tags' | 'genres';
     mode: BulkTagMode;
     values?: string[];
 }
@@ -554,7 +557,7 @@ export interface PossibleDuplicatesCategory {
 export interface Cleanup {
     missing_cover: CleanupCategory;
     missing_author: CleanupCategory;
-    no_tags: CleanupCategory;
+    no_genres_or_tags: CleanupCategory;
     no_description: CleanupCategory;
     possible_duplicates: PossibleDuplicatesCategory;
 }

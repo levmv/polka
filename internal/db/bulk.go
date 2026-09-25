@@ -11,7 +11,8 @@ import (
 // set to merge into.
 type BulkEditRow struct {
 	ID          int64
-	Tags        sql.NullString
+	Genres      []string
+	Tags        []string
 	Series      sql.NullString
 	SeriesIndex sql.NullFloat64
 	Overrides   sql.NullString
@@ -40,7 +41,7 @@ func BooksForBulkEdit(queryer Queryer, scope VisibilityScope, ids []int64) ([]Bu
 	where, args = scope.AppendBookWhere(where, "b.id", args...)
 
 	rows, err := queryer.Query(`
-		SELECT b.id, b.tags, b.series, b.series_index, b.manual_overrides
+		SELECT b.id, b.series, b.series_index, b.manual_overrides
 		FROM books b
 		WHERE `+where, args...)
 	if err != nil {
@@ -51,13 +52,28 @@ func BooksForBulkEdit(queryer Queryer, scope VisibilityScope, ids []int64) ([]Bu
 	var out []BulkEditRow
 	for rows.Next() {
 		var r BulkEditRow
-		if err := rows.Scan(&r.ID, &r.Tags, &r.Series, &r.SeriesIndex, &r.Overrides); err != nil {
+		if err := rows.Scan(&r.ID, &r.Series, &r.SeriesIndex, &r.Overrides); err != nil {
 			return nil, fmt.Errorf("books for bulk edit scan: %w", err)
 		}
 		out = append(out, r)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("books for bulk edit rows: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	bookIDs := make([]int64, len(out))
+	for i, row := range out {
+		bookIDs[i] = row.ID
+	}
+	tags, err := TagsByBookIDs(queryer, bookIDs)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].Genres = tags[out[i].ID].Genres
+		out[i].Tags = tags[out[i].ID].Tags
 	}
 	return out, nil
 }

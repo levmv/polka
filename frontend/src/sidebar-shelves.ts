@@ -1,5 +1,6 @@
 import { deleteShelf, fetchCurrentUser, fetchShelves } from './api';
 import { parseShelfID, readBookListContextFromLocation } from './book-list-context';
+import { notifyShelvesChanged, SHELVES_CHANGED } from './catalog-events';
 import { errorMessage } from './errors';
 import { icon } from './icons';
 import { createMenu, type ManagedMenu, type MenuItem } from './menu';
@@ -7,12 +8,6 @@ import { navigateApp } from './router';
 import { openCreateShelfDialog, openEditShelfDialog } from './shelf-dialog';
 import { showToast } from './toast';
 import type { CurrentUser, Shelf } from './types';
-
-const SHELVES_CHANGED = 'polka:shelves-changed';
-
-export function notifyShelvesChanged(): void {
-    document.dispatchEvent(new CustomEvent(SHELVES_CHANGED));
-}
 
 // Floating menus are appended to <body> by createMenu, so they outlive a
 // list.innerHTML reset. Track them and destroy before each re-render to avoid

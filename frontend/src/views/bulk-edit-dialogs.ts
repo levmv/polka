@@ -29,10 +29,9 @@ const PREVIEW_LIMIT = 8;
 
 type OnApplied = (result: BulkEditResult) => void;
 
-// --- Pure tag transforms, mirroring internal/bookmeta/tags.go so the local preview
-// matches exactly what the server will write. ---
+// List transforms for bulk previews, matching internal/bookmeta/tags.go.
 
-export function parseTagList(s: string): string[] {
+function parseTagList(s: string): string[] {
     const seen = new Set<string>();
     const out: string[] = [];
     for (const part of s.split(',')) {
@@ -46,12 +45,8 @@ export function parseTagList(s: string): string[] {
     return out;
 }
 
-export function formatTagList(tags: string[]): string {
-    return tags.join(', ');
-}
-
 // Inputs are parsed tag lists. The result is independent of both input arrays.
-export function applyTagMode(current: string[], mode: BulkTagMode, values: string[]): string[] {
+function applyTagMode(current: string[], mode: BulkTagMode, values: string[]): string[] {
     switch (mode) {
         case 'clear':
             return [];
@@ -97,6 +92,7 @@ function createSegmented(options: { value: string; label: string }[], initial: s
             const active = key === next;
             btn.classList.toggle('active', active);
             btn.setAttribute('aria-checked', active ? 'true' : 'false');
+            btn.tabIndex = active ? 0 : -1;
         }
         if (fire) listener?.();
     };
@@ -111,6 +107,15 @@ function createSegmented(options: { value: string; label: string }[], initial: s
         buttons.set(opt.value, btn);
         el.appendChild(btn);
     }
+    el.addEventListener('keydown', (event) => {
+        const direction = { ArrowLeft: -1, ArrowUp: -1, ArrowRight: 1, ArrowDown: 1 }[event.key];
+        if (!direction) return;
+        event.preventDefault();
+        const index = options.findIndex((option) => option.value === value);
+        const next = options[(index + direction + options.length) % options.length].value;
+        setValue(next, true);
+        buttons.get(next)?.focus();
+    });
     setValue(initial, false);
 
     return {
@@ -172,89 +177,150 @@ function previewTable(rows: string, extra: number): string {
         ${more}`;
 }
 
-// --- Tags dialog ---
+// --- Genres / Tags dialog ---
 
 export function openBulkTagsDialog(books: BookSummary[], onApplied: OnApplied): void {
     const body = document.createElement('div');
-    body.className = 'bulk-dialog';
-    body.innerHTML = `
-        <div class="bulk-dialog-field">
-            <div data-mode-host></div>
-        </div>
-        <div class="bulk-dialog-field" data-tags-field>
-            <label class="form-label" for="bulk-tags-input">Tags</label>
-            <input id="bulk-tags-input" type="text" class="form-input" placeholder="tag, tag" autocomplete="off">
-        </div>
-        <div class="bulk-preview" data-preview></div>
-    `;
-
-    const mode = createSegmented(
+    const footer = buildFooter('Apply genres');
+    const field = createSegmented(
         [
-            { value: 'add', label: 'Add' },
-            { value: 'remove', label: 'Remove' },
-            { value: 'replace', label: 'Replace' },
-            { value: 'clear', label: 'Clear' },
+            { value: 'genres', label: 'Genres' },
+            { value: 'tags', label: 'Tags' },
         ],
-        'add',
+        'genres',
     );
-    body.querySelector('[data-mode-host]')?.appendChild(mode.el);
+    field.el.classList.add('bulk-kind-switch');
+    field.el.setAttribute('aria-label', 'Metadata field');
+    const header = document.createElement('div');
+    header.className = 'modal-header';
+    header.appendChild(field.el);
 
-    const tagsField = body.querySelector('[data-tags-field]') as HTMLElement;
-    const input = body.querySelector('#bulk-tags-input') as HTMLInputElement;
-    const preview = body.querySelector('[data-preview]') as HTMLElement;
-    const footer = buildFooter('Apply');
+    const createPanel = (kind: 'genres' | 'tags') => {
+        const label = kind === 'genres' ? 'Genres' : 'Tags';
+        const el = document.createElement('div');
+        el.className = 'bulk-dialog';
+        el.innerHTML = `
+            <div class="bulk-dialog-field">
+                <div data-mode-host></div>
+            </div>
+            <div class="bulk-dialog-field" data-tags-field>
+                <label class="form-label" for="bulk-${kind}-input">${label}</label>
+                <input id="bulk-${kind}-input" type="text" class="form-input" placeholder="${kind === 'genres' ? 'genre, genre' : 'tag, tag'}" autocomplete="off">
+            </div>
+            <div class="bulk-preview" data-preview></div>
+        `;
 
-    const currentMode = () => mode.getValue() as BulkTagMode;
-    const values = () => parseTagList(input.value);
+        const mode = createSegmented(
+            [
+                { value: 'add', label: 'Add' },
+                { value: 'remove', label: 'Remove' },
+                { value: 'replace', label: 'Replace' },
+                { value: 'clear', label: 'Clear' },
+            ],
+            'add',
+        );
+        mode.el.setAttribute('aria-label', `${label} operation`);
+        el.querySelector('[data-mode-host]')?.appendChild(mode.el);
 
-    const hasInput = () => currentMode() === 'clear' || values().length > 0;
+        const tagsField = el.querySelector('[data-tags-field]') as HTMLElement;
+        const input = el.querySelector('input') as HTMLInputElement;
+        const preview = el.querySelector('[data-preview]') as HTMLElement;
 
-    const refresh = () => {
-        const m = currentMode();
-        tagsField.hidden = m === 'clear';
-        const vals = values();
-        let changed = 0;
-        const rows: string[] = [];
-        books.forEach((b, i) => {
-            const current = parseTagList(b.tags || '');
-            const result = applyTagMode(current, m, vals);
-            if (formatTagList(result) !== formatTagList(current)) changed++;
-            if (i < PREVIEW_LIMIT) {
-                rows.push(`
-                    <tr>
-                        <td>${escapeHtml(b.title)}</td>
-                        <td>${tagChips(current)}</td>
-                        <td>${tagChips(result)}</td>
-                    </tr>`);
+        const currentMode = () => mode.getValue() as BulkTagMode;
+        // Names used in this selection keep their catalog spelling in previews.
+        const currentLists = books.map((book) => parseTagList(book[kind] || ''));
+        const knownNames = new Map<string, string>();
+        for (const names of currentLists) {
+            for (const name of names) {
+                knownNames.set(name.toLowerCase(), name);
             }
-        });
-        preview.innerHTML =
-            `<p class="bulk-summary">${summaryLine(books.length, changed)}</p>` +
-            previewTable(rows.join(''), Math.max(0, books.length - PREVIEW_LIMIT));
-        footer.applyBtn.disabled = !hasInput();
+        }
+        const values = () =>
+            parseTagList(input.value).map((name) => knownNames.get(name.toLowerCase()) || name);
+
+        const refresh = () => {
+            const m = currentMode();
+            tagsField.hidden = m === 'clear';
+            const vals = values();
+            let changed = 0;
+            const rows: string[] = [];
+            books.forEach((b, i) => {
+                const current = currentLists[i];
+                const result = applyTagMode(current, m, vals);
+                if (
+                    result.length !== current.length ||
+                    result.some((name, i) => name !== current[i])
+                ) {
+                    changed++;
+                }
+                if (i < PREVIEW_LIMIT) {
+                    rows.push(`
+                        <tr>
+                            <td>${escapeHtml(b.title)}</td>
+                            <td>${tagChips(current)}</td>
+                            <td>${tagChips(result)}</td>
+                        </tr>`);
+                }
+            });
+            preview.innerHTML =
+                `<p class="bulk-summary">${summaryLine(books.length, changed)}</p>` +
+                previewTable(rows.join(''), Math.max(0, books.length - PREVIEW_LIMIT));
+            footer.applyBtn.disabled = m !== 'clear' && vals.length === 0;
+        };
+
+        mode.onChange(refresh);
+        input.addEventListener('input', refresh);
+        body.appendChild(el);
+        const operation = (): BulkOperation => {
+            const m = currentMode();
+            return m === 'clear'
+                ? { type: kind, mode: 'clear' }
+                : { type: kind, mode: m, values: values() };
+        };
+        return { el, input, refresh, operation };
     };
 
-    mode.onChange(refresh);
-    input.addEventListener('input', refresh);
+    // Keep each input and operation alive while switching between fields.
+    const panels = { genres: createPanel('genres'), tags: createPanel('tags') };
+    const activePanel = () => panels[field.getValue() as keyof typeof panels];
 
     footer.applyBtn.addEventListener('click', () => {
-        const m = currentMode();
-        const op: BulkOperation =
-            m === 'clear'
-                ? { type: 'tags', mode: 'clear' }
-                : { type: 'tags', mode: m, values: values() };
-        void runBulk(books, [op], footer, onApplied, () => modal.close());
+        body.inert = true;
+        field.el.inert = true;
+        void runBulk(books, [activePanel().operation()], footer, onApplied, () =>
+            modal.close(),
+        ).finally(() => {
+            body.inert = false;
+            field.el.inert = false;
+        });
     });
 
     const { modal } = openModal({
-        title: `Tags · ${books.length} books`,
+        header,
+        ariaLabel: `Genres/Tags · ${books.length} books`,
         body,
         actions: footer.actions,
         modalClass: 'bulk-modal',
+        onClose: () => {
+            for (const item of autocomplete) item.close();
+        },
     });
+    const autocomplete = [
+        attachTagAutocomplete(panels.genres.input, 'genre'),
+        attachTagAutocomplete(panels.tags.input, 'tag'),
+    ];
+    const switchField = () => {
+        for (const item of autocomplete) item.close();
+        for (const [kind, panel] of Object.entries(panels)) {
+            panel.el.hidden = kind !== field.getValue();
+        }
+        footer.status.textContent = '';
+        footer.applyBtn.textContent = `Apply ${field.getValue()}`;
+        activePanel().refresh();
+    };
+    field.onChange(switchField);
+    switchField();
     modal.open();
-    attachTagAutocomplete(input);
-    refresh();
 }
 
 // --- Series dialog ---

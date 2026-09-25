@@ -5,7 +5,7 @@ import {
 } from './annotations';
 import { type BookListContext, bookListContextParams } from './book-list-context';
 import { takeBootstrapCurrentUser, takeBootstrapUserSettings } from './bootstrap';
-import { notifyCatalogChanged } from './catalog-events';
+import { notifyCatalogChanged, notifyShelvesChanged } from './catalog-events';
 import { browserTimeZone } from './time-zone';
 import type {
     AdminStorageStatus,
@@ -1210,13 +1210,12 @@ export async function fetchAuthors(query: string = ''): Promise<Author[]> {
     );
 }
 
-export async function fetchTags(query: string = ''): Promise<string[]> {
-    const params = new URLSearchParams();
+export type TagKind = 'genre' | 'tag';
+
+export async function fetchTags(query: string = '', kind: TagKind = 'tag'): Promise<string[]> {
+    const params = new URLSearchParams({ kind });
     if (query) params.set('q', query);
-    return await fetchJSON<string[]>(
-        `/api/tags${params.toString() ? `?${params.toString()}` : ''}`,
-        'Failed to fetch tags',
-    );
+    return await fetchJSON<string[]>(`/api/tags?${params}`, `Failed to fetch ${kind}s`);
 }
 
 export async function fetchCleanup(signal?: AbortSignal): Promise<Cleanup> {
@@ -1299,5 +1298,50 @@ export async function setAuthorSortName(name: string, sortName: string): Promise
     );
     if (result.affected > 0)
         notifyCatalogChanged({ kind: 'author-sort', name: name.trim(), sortName: sortName.trim() });
+    return result;
+}
+
+export interface TagSummary {
+    id: number;
+    name: string;
+    book_count: number;
+}
+
+export async function fetchTagPage(
+    kind: TagKind,
+    query: string,
+    cursor: string,
+    signal?: AbortSignal,
+): Promise<CursorPage<TagSummary>> {
+    const params = new URLSearchParams({ kind });
+    if (query) params.set('q', query);
+    if (cursor) params.set('cursor', cursor);
+    return fetchJSON<CursorPage<TagSummary>>(
+        `/api/tags/list?${params}`,
+        `Failed to load ${kind}s`,
+        {
+            signal,
+        },
+    );
+}
+
+export async function renameTag(id: number, name: string): Promise<{ affected: number }> {
+    const result = await fetchJSON<{ affected: number }>(
+        `/api/tags/${id}`,
+        'Rename failed',
+        jsonBody('PATCH', { name }),
+    );
+    if (result.affected > 0) {
+        notifyCatalogChanged();
+        notifyShelvesChanged();
+    }
+    return result;
+}
+
+export async function deleteTag(id: number): Promise<{ affected: number }> {
+    const result = await fetchJSON<{ affected: number }>(`/api/tags/${id}`, 'Delete failed', {
+        method: 'DELETE',
+    });
+    if (result.affected > 0) notifyCatalogChanged();
     return result;
 }

@@ -18,7 +18,6 @@ type BookSummaryRow struct {
 	Title        string
 	Series       sql.NullString
 	SeriesIndex  sql.NullFloat64
-	Tags         sql.NullString
 	CoverVersion int
 	Date         sql.NullString
 }
@@ -47,9 +46,8 @@ const (
 
 const (
 	// bookSummaryColumns is the SELECT column list consumed by scanBookSummary.
-	// Authors deliberately are not flattened into this common projection:
-	// display callers batch-load the ordered book_authors rows.
-	bookSummaryColumns = `b.id, b.title, b.series, b.series_index, b.tags, b.cover_version,
+	// Display callers batch-load ordered authors and tags separately.
+	bookSummaryColumns = `b.id, b.title, b.series, b.series_index, b.cover_version,
 		b.published_date`
 
 	// colAuthors flattens author names for FTS and delivery. UI-facing book rows
@@ -67,18 +65,20 @@ const (
 		WHERE ba.book_id = b.id
 		ORDER BY ba.author_order ASC, ba.rowid ASC LIMIT 1)`
 
-	noCoverCondition       = `b.cover_version <= 0`
-	noTagsCondition        = `b.tags IS NULL OR b.tags = ''`
-	noDescriptionCondition = `b.description IS NULL OR b.description = ''`
-	noAuthorCondition      = `NOT EXISTS (SELECT 1 FROM book_authors ba WHERE ba.book_id = b.id)`
-	noSeriesCondition      = `b.series IS NULL OR TRIM(b.series) = ''`
+	noCoverCondition          = `b.cover_version <= 0`
+	noClassificationCondition = `NOT EXISTS (SELECT 1 FROM book_tags bt WHERE bt.book_id = b.id)`
+	noTagsCondition           = `NOT EXISTS (SELECT 1 FROM book_tags bt JOIN tags t ON t.id = bt.tag_id WHERE bt.book_id = b.id AND t.kind = 'tag')`
+	noGenresCondition         = `NOT EXISTS (SELECT 1 FROM book_tags bt JOIN tags t ON t.id = bt.tag_id WHERE bt.book_id = b.id AND t.kind = 'genre')`
+	noDescriptionCondition    = `b.description IS NULL OR b.description = ''`
+	noAuthorCondition         = `NOT EXISTS (SELECT 1 FROM book_authors ba WHERE ba.book_id = b.id)`
+	noSeriesCondition         = `b.series IS NULL OR TRIM(b.series) = ''`
 )
 
 // scanBookSummary scans one row produced by bookSummaryColumns.
 func scanBookSummary(rows *sql.Rows) (BookSummaryRow, error) {
 	var b BookSummaryRow
 	err := rows.Scan(&b.ID, &b.Title, &b.Series, &b.SeriesIndex,
-		&b.Tags, &b.CoverVersion, &b.Date)
+		&b.CoverVersion, &b.Date)
 	return b, err
 }
 
@@ -376,7 +376,7 @@ func ListBooksInManualShelf(queryer Queryer, scope VisibilityScope, shelfID int6
 func GetBook(queryer Queryer, scope VisibilityScope, bookID int64) (BookDetailRow, error) {
 	where, args := scope.AppendBookWhere("b.id = ? AND b.deleted_at IS NULL", "b.id", bookID)
 	row := queryer.QueryRow(fmt.Sprintf(`
-		SELECT b.id, b.title, b.series, b.series_index, b.tags, b.cover_version,
+		SELECT b.id, b.title, b.series, b.series_index, b.cover_version,
 		       b.sort_title, b.description, b.language, b.publisher, b.published_date, b.identifiers,
 		       b.added_at, b.updated_at
 		FROM books b
@@ -384,7 +384,7 @@ func GetBook(queryer Queryer, scope VisibilityScope, bookID int64) (BookDetailRo
 	`, where), args...)
 
 	var b BookDetailRow
-	err := row.Scan(&b.ID, &b.Title, &b.Series, &b.SeriesIndex, &b.Tags, &b.CoverVersion, &b.SortTitle, &b.Description, &b.Language, &b.Publisher, &b.Date, &b.Identifiers, &b.AddedAt, &b.UpdatedAt)
+	err := row.Scan(&b.ID, &b.Title, &b.Series, &b.SeriesIndex, &b.CoverVersion, &b.SortTitle, &b.Description, &b.Language, &b.Publisher, &b.Date, &b.Identifiers, &b.AddedAt, &b.UpdatedAt)
 	if err != nil {
 		return b, err
 	}

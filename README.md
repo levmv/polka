@@ -20,8 +20,7 @@ lower-maintenance home for your books.
   browser, from a folder already mounted on the server, or by dropping files
   into an incoming folder.
 - **Find them** with fast search, shelves, saved searches, series pages, and
-  tags. Search stays fast at tens of thousands of books; large catalogs also
-  get a compact alphabetic jump rail when browsing by title or author.
+  genres and tags. Search stays fast at tens of thousands of books.
 - **Fix metadata and covers** when you care to. Books are usable immediately,
   and the details can improve later — one at a time, in bulk, or with
   suggestions fetched from Open Library and Google Books (only when you ask).

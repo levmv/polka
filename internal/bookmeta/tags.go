@@ -5,13 +5,18 @@ import (
 	"strings"
 )
 
-// Tags are stored in the books.tags column as a single comma-list string (import
-// writes strings.Join(tags, ", ")). These helpers are the pure, tested transform
-// core shared by single-book edit and bulk edit; matching is case-insensitive and
-// the first-seen spelling wins, mirroring how db.ListTags and the table view read
-// the column.
+// TagKey defines tag identity for catalog storage, editing, and exact search.
+func TagKey(name string) string {
+	return strings.ToLower(strings.TrimSpace(name))
+}
 
-// TagMode is a bulk tag transform selected in the bulk Tags dialog.
+// EqualTags compares ordered memberships; ordinary book edits cannot change
+// the spelling of an existing shared tag.
+func EqualTags(a, b []string) bool {
+	return slices.EqualFunc(a, b, func(a, b string) bool { return TagKey(a) == TagKey(b) })
+}
+
+// TagMode selects how a bulk edit changes a genre or tag list.
 type TagMode string
 
 const (
@@ -21,29 +26,35 @@ const (
 	TagClear   TagMode = "clear"
 )
 
-// ParseTagList splits a stored comma-list tags string into trimmed, non-empty
+// ParseTagList splits comma-separated input into trimmed, non-empty
 // tags. Order is preserved and duplicates are dropped case-insensitively, keeping
 // the first spelling.
 func ParseTagList(s string) []string {
+	return NormalizeTags([]string{s})
+}
+
+// NormalizeTags trims, splits comma-separated input, and deduplicates names.
+func NormalizeTags(values []string) []string {
 	var tags []string
 	seen := make(map[string]struct{})
-	for part := range strings.SplitSeq(s, ",") {
-		t := strings.TrimSpace(part)
-		if t == "" {
-			continue
+	for _, value := range values {
+		for part := range strings.SplitSeq(value, ",") {
+			t := strings.TrimSpace(part)
+			if t == "" {
+				continue
+			}
+			key := TagKey(t)
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			tags = append(tags, t)
 		}
-		key := strings.ToLower(t)
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		tags = append(tags, t)
 	}
 	return tags
 }
 
-// FormatTagList joins tags back into the canonical stored form: ", "-separated,
-// matching the import writer.
+// FormatTagList formats tags for the comma-separated text editor and API.
 func FormatTagList(tags []string) string {
 	return strings.Join(tags, ", ")
 }
@@ -67,11 +78,11 @@ func ApplyTagMode(current []string, mode TagMode, values []string) []string {
 	case TagRemove:
 		drop := make(map[string]struct{})
 		for _, v := range values {
-			drop[strings.ToLower(v)] = struct{}{}
+			drop[TagKey(v)] = struct{}{}
 		}
 		var out []string
 		for _, t := range current {
-			if _, ok := drop[strings.ToLower(t)]; ok {
+			if _, ok := drop[TagKey(t)]; ok {
 				continue
 			}
 			out = append(out, t)
@@ -81,10 +92,10 @@ func ApplyTagMode(current []string, mode TagMode, values []string) []string {
 		out := slices.Clone(current)
 		have := make(map[string]struct{}, len(out))
 		for _, t := range out {
-			have[strings.ToLower(t)] = struct{}{}
+			have[TagKey(t)] = struct{}{}
 		}
 		for _, v := range values {
-			key := strings.ToLower(v)
+			key := TagKey(v)
 			if _, ok := have[key]; ok {
 				continue
 			}

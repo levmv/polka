@@ -14,7 +14,7 @@ async function saveAndClose(page: Page): Promise<void> {
   await page.locator('.edit-modal .modal-close').click();
 }
 
-test('Series edits reorder the result and keep selection; unrelated tags patch in place', async ({
+test('Series edits reorder the result and keep selection; unrelated genres patch in place', async ({
   page,
 }) => {
   const a = await addBook(page, 'Catalog series A');
@@ -53,9 +53,9 @@ test('Series edits reorder the result and keep selection; unrelated tags patch i
   await page.getByRole('button', { name: 'Clear selection' }).click();
 
   await rowA.locator('.btn-quick-edit').click();
-  await page.locator('.edit-modal input[name="tags"]').fill('Checked');
+  await page.locator('.edit-modal input[name="genres"]').fill('Adventure');
   await saveAndClose(page);
-  await expect(rowA).toContainText('Checked');
+  await expect(rowA).toContainText('Adventure');
   expect(reads).toBe(2);
 });
 

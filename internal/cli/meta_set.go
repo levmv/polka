@@ -21,6 +21,7 @@ type metaSetOptions struct {
 	Authors     trackedStringFlag
 	Series      trackedStringFlag
 	SeriesIndex trackedFloatFlag
+	Genres      trackedStringFlag
 	Tags        trackedStringFlag
 	Description trackedStringFlag
 	Publisher   trackedStringFlag
@@ -79,6 +80,7 @@ func runMetaSet(args []string) error {
 	fs.Var(&opts.Authors, "authors", "set authors as a semicolon-separated list; empty clears")
 	fs.Var(&opts.Series, "series", "set series; empty clears")
 	fs.Var(&opts.SeriesIndex, "series-index", "set series index; empty clears to 0")
+	fs.Var(&opts.Genres, "genres", "set comma-separated genres; empty clears")
 	fs.Var(&opts.Tags, "tags", "set comma-separated tags; empty clears")
 	fs.Var(&opts.Description, "description", "set description; empty clears")
 	fs.Var(&opts.Publisher, "publisher", "set publisher; empty clears")
@@ -115,6 +117,7 @@ func (opts metaSetOptions) hasChanges() bool {
 		opts.Authors.Seen ||
 		opts.Series.Seen ||
 		opts.SeriesIndex.Seen ||
+		opts.Genres.Seen ||
 		opts.Tags.Seen ||
 		opts.Description.Seen ||
 		opts.Publisher.Seen ||
@@ -138,6 +141,9 @@ func (opts metaSetOptions) apply(meta *format.Metadata) {
 	}
 	if opts.SeriesIndex.Seen {
 		meta.SeriesIndex = opts.SeriesIndex.Value
+	}
+	if opts.Genres.Seen {
+		meta.Genres = bookmeta.ParseTagList(opts.Genres.Value)
 	}
 	if opts.Tags.Seen {
 		meta.Tags = bookmeta.ParseTagList(opts.Tags.Value)

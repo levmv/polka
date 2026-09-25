@@ -28,7 +28,12 @@ test.describe('Cleanup page', () => {
 
     const tiles = page.locator('.cleanup-tile');
     await expect(tiles).toHaveCount(4);
-    for (const label of ['Missing cover', 'Missing author', 'No tags', 'No description']) {
+    for (const label of [
+      'Missing cover',
+      'Missing author',
+      'No genres or tags',
+      'No description',
+    ]) {
       await expect(tiles.filter({ hasText: label }).locator('.cleanup-tile-count')).toHaveText(
         /^\d[\d,]*$/,
       );

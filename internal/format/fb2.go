@@ -11,7 +11,6 @@ import (
 	"image"
 	"io"
 	"regexp"
-	"slices"
 	"strings"
 
 	"golang.org/x/net/html/charset"
@@ -551,18 +550,17 @@ func metadataFromFB2(doc *fb2Doc) *Metadata {
 		meta.SeriesIndex = parseFB2SequenceNumber(publishInfo.Sequences[0].Number)
 	}
 
-	seenTags := make(map[string]bool)
-	for _, rawTag := range fb2Tags(doc) {
-		tag := cleanText(rawTag)
-		if tag == "" {
-			continue
+	for _, info := range fb2TitleInfoFallbacks(doc) {
+		if len(meta.Genres) == 0 {
+			var values []string
+			for _, genre := range info.Genres {
+				values = append(values, cleanText(genre))
+			}
+			meta.Genres = bookmeta.NormalizeTags(values)
 		}
-		key := strings.ToLower(tag)
-		if seenTags[key] {
-			continue
+		if len(meta.Tags) == 0 {
+			meta.Tags = bookmeta.NormalizeTags(strings.FieldsFunc(cleanText(info.Keywords), func(r rune) bool { return r == ',' || r == ';' }))
 		}
-		seenTags[key] = true
-		meta.Tags = append(meta.Tags, tag)
 	}
 
 	return meta
@@ -613,25 +611,6 @@ func fb2DateInfo(doc *fb2Doc) fb2Date {
 		}
 	}
 	return fb2Date{}
-}
-
-func fb2Tags(doc *fb2Doc) []string {
-	if tags := fb2TagsFromTitleInfo(doc.Description.TitleInfo); len(tags) > 0 {
-		return tags
-	}
-	return fb2TagsFromTitleInfo(doc.Description.SrcTitleInfo)
-}
-
-func fb2TagsFromTitleInfo(titleInfo fb2TitleInfo) []string {
-	tags := slices.Clone(titleInfo.Genres)
-	for _, keyword := range strings.FieldsFunc(titleInfo.Keywords, func(r rune) bool {
-		return r == ',' || r == ';'
-	}) {
-		if keyword = cleanText(keyword); keyword != "" {
-			tags = append(tags, keyword)
-		}
-	}
-	return tags
 }
 
 func fb2AuthorName(a fb2Author) string {

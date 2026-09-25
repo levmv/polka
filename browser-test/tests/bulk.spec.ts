@@ -19,24 +19,47 @@ async function selectCards(page: Page): Promise<void> {
 }
 
 test.describe('Bulk actions', () => {
-  test('Bulk tags preserve selection and keep narrow-screen actions usable', async ({ page }) => {
-    await page.setViewportSize({ width: 400, height: 800 });
+  test('Bulk genres and tags keep separate drafts and preserve selection', async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 800 });
     const tag = 'Reviewed';
+    const genre = 'Speculative';
     await selectCards(page);
     const bar = page.locator('.bulk-bar');
     await expect(bar).toBeInViewport({ ratio: 1 });
     const tags = bar.locator('.bulk-bar-action[data-action="tags"]');
     await expect(tags.locator('span')).toBeHidden();
-    await expect(tags).toHaveAttribute('aria-label', 'Tags');
+    await expect(tags).toHaveAttribute('aria-label', 'Genres/Tags');
 
-    await page.locator('.bulk-bar-action[data-action="tags"]').click();
+    await tags.click();
     const dialog = page.locator('.bulk-modal');
+    const panel = dialog.locator('.bulk-dialog:visible');
+    const genresSwitch = dialog.getByRole('radio', { name: 'Genres', exact: true });
+    const tagsSwitch = dialog.getByRole('radio', { name: 'Tags', exact: true });
     await expect(dialog).toBeVisible();
-    await dialog.locator('#bulk-tags-input').fill(tag);
-    await expect(dialog.locator('.bulk-summary')).toContainText('2 to change');
-    await expect(dialog.locator('.bulk-preview-tag', { hasText: tag }).first()).toBeVisible();
+    await expect(dialog).toBeInViewport({ ratio: 1 });
+    await expect(genresSwitch).toBeChecked();
+    await dialog.locator('#bulk-genres-input').fill(genre);
+    await dialog.getByRole('radio', { name: 'Replace', exact: true }).click();
 
-    await dialog.getByRole('button', { name: 'Apply' }).click();
+    await tagsSwitch.click();
+    await expect(dialog.getByRole('button', { name: 'Apply tags' })).toBeDisabled();
+    await dialog.locator('#bulk-tags-input').fill(tag);
+    await expect(panel.locator('.bulk-summary')).toContainText('2 to change');
+    await expect(panel.locator('.bulk-preview-tag', { hasText: tag }).first()).toBeVisible();
+
+    await genresSwitch.click();
+    await expect(dialog.locator('#bulk-genres-input')).toHaveValue(genre);
+    await expect(dialog.getByRole('radio', { name: 'Replace', exact: true })).toBeChecked();
+    await expect(panel.locator('.bulk-preview-table tbody tr td:last-child')).toHaveText([
+      genre,
+      genre,
+    ]);
+    await genresSwitch.press('ArrowRight');
+    await expect(tagsSwitch).toBeChecked();
+    await expect(dialog.locator('#bulk-tags-input')).toHaveValue(tag);
+    await expect(dialog.getByRole('radio', { name: 'Add', exact: true })).toBeChecked();
+
+    await dialog.getByRole('button', { name: 'Apply tags' }).click();
     await expect(dialog).toHaveCount(0);
     await expect(page.locator('.toast', { hasText: 'Updated 2 books' })).toBeVisible();
 
@@ -44,15 +67,38 @@ test.describe('Bulk actions', () => {
       `/api/books?q=${encodeURIComponent(queryTerm('tag', tag))}`,
     );
     expect(matched.ok()).toBe(true);
-    expect((await matched.json()).map((book: { title: string }) => book.title).sort()).toEqual(
-      [...titles].sort(),
-    );
+    const books = (await matched.json()) as { title: string; genres: string }[];
+    expect(books.map((book) => book.title).sort()).toEqual([...titles].sort());
+    for (const book of books) expect(book.genres || '').not.toContain(genre);
 
     for (const title of titles) {
       const card = page.locator('.book-card', { hasText: title });
       await expect(card).toHaveClass(/selected/);
       await expect(card.locator('.card-select')).toHaveAttribute('aria-checked', 'true');
     }
+
+    await tags.click();
+    await dialog.locator('#bulk-genres-input').fill(genre);
+    await dialog.getByRole('button', { name: 'Apply genres' }).click();
+    await expect(dialog).toHaveCount(0);
+    const both = await page.request.get(
+      `/api/books?q=${encodeURIComponent(`${queryTerm('genre', genre)} ${queryTerm('tag', tag)}`)}`,
+    );
+    expect(both.ok()).toBe(true);
+    expect((await both.json()).map((book: { title: string }) => book.title).sort()).toEqual(
+      [...titles].sort(),
+    );
+
+    await tags.click();
+    await tagsSwitch.click();
+    await dialog.getByRole('radio', { name: 'Replace', exact: true }).click();
+    await dialog.locator('#bulk-tags-input').fill(tag.toLowerCase());
+    await expect(panel.locator('.bulk-summary')).toContainText('0 to change');
+    await expect(panel.locator('.bulk-preview-table tbody tr td:last-child')).toHaveText([
+      tag,
+      tag,
+    ]);
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
 
     await bar.getByRole('button', { name: 'Clear selection' }).click();
     await expect(bar).toHaveCount(0);

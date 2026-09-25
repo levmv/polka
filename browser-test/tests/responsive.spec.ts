@@ -181,7 +181,25 @@ test.describe('Responsive layout (iPad viewport)', () => {
     await page.locator('.table-select-all').check();
     await expect(page.locator('.bulk-bar-count')).toHaveText(`${rowCount} selected`);
     const bar = page.locator('.bulk-bar');
-    await expect(bar).toBeInViewport({ ratio: 1 });
+    for (const width of [1280, 761, 760, 320]) {
+      await page.setViewportSize({ width, height: 1180 });
+      await expect(bar).toBeInViewport({ ratio: 1 });
+      const outside = await bar.evaluate((element) => {
+        const bounds = element.getBoundingClientRect();
+        return [...element.querySelectorAll('button, [data-count]')]
+          .filter((control) => {
+            const rect = control.getBoundingClientRect();
+            return (
+              rect.left < bounds.left - 1 ||
+              rect.right > bounds.right + 1 ||
+              rect.top < bounds.top - 1 ||
+              rect.bottom > bounds.bottom + 1
+            );
+          })
+          .map((control) => control.getAttribute('aria-label') || control.textContent);
+      });
+      expect(outside, `Controls outside the bulk bar at ${width}px`).toEqual([]);
+    }
     await expect(page.locator('.table-select-row:checked')).toHaveCount(rowCount);
     await page.locator('.table-select-all').uncheck();
     await expect(bar).toHaveCount(0);

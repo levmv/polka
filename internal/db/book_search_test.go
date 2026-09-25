@@ -14,6 +14,7 @@ func TestSearchFilterAccessScopeReasons(t *testing.T) {
 	}{
 		{name: "unknown", kind: searchFilterUnknown, reason: queryScopeShelfReason},
 		{name: "missing cover", kind: searchMissingCover, reason: noCoverScopeShelfReason},
+		{name: "missing genres", kind: searchMissingGenres, reason: noGenresScopeShelfReason},
 		{name: "missing tags", kind: searchMissingTags, reason: noTagsScopeShelfReason},
 		{name: "missing description", kind: searchMissingDescription, reason: noDescriptionScopeShelfReason},
 		{name: "missing author", kind: searchMissingAuthor, reason: noAuthorScopeShelfReason},
@@ -46,16 +47,19 @@ func TestBookSearchConsumersSelectTheSameBooks(t *testing.T) {
 	database := newTestDB(t)
 	user := mustUser(t, database, "search-reader", RoleReader)
 	mustExec(t, database, `
-		INSERT INTO books (id, title, sort_title, cover_version, tags) VALUES
-			(1, 'Alpha Needle', 'Alpha Needle', 0, 'Science fiction'),
-			(2, 'Beta Needle', 'Beta Needle', 1, 'Science'),
-			(3, 'Gamma', 'Gamma', 0, 'Other');
+		INSERT INTO books (id, title, sort_title, cover_version) VALUES
+			(1, 'Alpha Needle', 'Alpha Needle', 0),
+			(2, 'Beta Needle', 'Beta Needle', 1),
+			(3, 'Gamma', 'Gamma', 0);
 		INSERT INTO assets (id, book_id, storage_path, filename, extension, original_hash, current_hash) VALUES
 			(1, 1, 'a.epub', 'a.epub', '.epub', randomblob(16), randomblob(16)),
 			(2, 2, 'b.epub', 'b.epub', '.epub', randomblob(16), randomblob(16)),
 			(3, 3, 'c.epub', 'c.epub', '.epub', randomblob(16), randomblob(16));
 	`)
 
+	mustSetTags(t, database, 1, "Science fiction")
+	mustSetTags(t, database, 2, "Science")
+	mustSetTags(t, database, 3, "Other")
 	if err := database.Transact(t.Context(), func(tx *Tx) error {
 		for _, id := range []int64{1, 2, 3} {
 			if err := UpdateSearchIndex(tx, id); err != nil {

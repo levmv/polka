@@ -381,6 +381,7 @@ func (s *Server) routes() (*http.ServeMux, error) {
 	s.route(mux, "POST /logout", db.RoleReader, s.handleLogout)
 	s.route(mux, "GET /setup", rolePublic, s.handleSetup)
 	s.route(mux, "POST /setup", rolePublic, s.handleSetup)
+	s.route(mux, "GET /tags", db.RoleReader, s.handleApp)
 	s.route(mux, "GET /authors", db.RoleMember, s.handleApp)
 	s.route(mux, "GET /cleanup", db.RoleMember, s.handleApp)
 	s.route(mux, "GET /series", db.RoleReader, s.handleApp)
@@ -400,6 +401,7 @@ func (s *Server) routes() (*http.ServeMux, error) {
 	s.route(mux, "GET /opds/shelves/{id}", db.RoleReader, s.handleOPDSShelf)
 	s.route(mux, "GET /opds/series", db.RoleReader, s.handleOPDSSeries)
 	s.route(mux, "GET /opds/tags", db.RoleReader, s.handleOPDSTags)
+	s.route(mux, "GET /opds/tags/books", db.RoleReader, s.handleOPDSTagBooks)
 
 	// KOReader authenticates each request through its KOSync headers.
 	s.route(mux, "GET /kosync/users/auth", db.RoleReader, s.handleKOReaderAuth)
@@ -512,6 +514,9 @@ func (s *Server) routes() (*http.ServeMux, error) {
 	s.route(mux, "PUT /api/shelves/{id}/books/{bookID}", db.RoleReader, s.handleAPIShelfAddBook)
 	s.route(mux, "DELETE /api/shelves/{id}/books/{bookID}", db.RoleReader, s.handleAPIShelfRemoveBook)
 	s.route(mux, "GET /api/series", db.RoleReader, s.handleAPISeries)
+	s.route(mux, "GET /api/tags/list", db.RoleReader, s.handleAPITagList)
+	s.route(mux, "PATCH /api/tags/{id}", db.RoleMember, s.handleAPITagRename)
+	s.route(mux, "DELETE /api/tags/{id}", db.RoleMember, s.handleAPITagDelete)
 	s.route(mux, "GET /api/authors", db.RoleReader, s.handleAPIAuthors)
 	s.route(mux, "GET /api/authors/info", db.RoleMember, s.handleAPIAuthorInfo)
 	s.route(mux, "GET /api/authors/list", db.RoleMember, s.handleAPIAuthorList)

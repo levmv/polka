@@ -17,6 +17,7 @@ type Metadata struct {
 	Identifier  string
 	Series      string
 	SeriesIndex float64
+	Genres      []string
 	Tags        []string
 	// PageCount describes this file, not all formats of the book. Merge leaves
 	// it alone; import resolves embedded and sidecar counts separately.
@@ -38,7 +39,7 @@ type AuthorMeta struct {
 
 // Merge overlays nonempty book fields from o onto m. Used to let a
 // curated metadata sidecar take precedence over metadata embedded in the book
-// file.
+// file. A non-nil genre/tag list also represents an explicit empty value.
 func (m *Metadata) Merge(o *Metadata) {
 	if o == nil {
 		return
@@ -73,7 +74,10 @@ func (m *Metadata) Merge(o *Metadata) {
 	if o.SeriesIndex != 0 {
 		m.SeriesIndex = o.SeriesIndex
 	}
-	if len(o.Tags) > 0 {
+	if o.Genres != nil {
+		m.Genres = o.Genres
+	}
+	if o.Tags != nil {
 		m.Tags = o.Tags
 	}
 	if o.CalibreTimestamp != "" {

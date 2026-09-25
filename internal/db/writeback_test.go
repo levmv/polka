@@ -106,10 +106,11 @@ func TestMetadataWritebackSnapshotAndAttempt(t *testing.T) {
 	newHash := bytes.Repeat([]byte{2}, 16)
 	mustExec(t, database, `
 		INSERT INTO books
-			(id, title, sort_title, series, series_index, description, tags, publisher, published_date, language, identifiers, metadata_rev)
+			(id, title, sort_title, series, series_index, description, publisher, published_date, language, identifiers, metadata_rev)
 		VALUES
-			(1, 'Snapshot Title', 'Title, Snapshot', 'Series', 2, 'Desc', 'tag one, tag two', 'Press', '2026', 'eng', 'isbn:9780306406157', 4)
+			(1, 'Snapshot Title', 'Title, Snapshot', 'Series', 2, 'Desc', 'Press', '2026', 'eng', 'isbn:9780306406157', 4)
 	`)
+	mustSetTags(t, database, 1, "tag one, tag two")
 	mustExec(t, database, "INSERT INTO authors (id, name, sort_name) VALUES (1, 'Jane Writer', 'Writer, Jane')")
 	mustExec(t, database, "INSERT INTO book_authors (book_id, author_id, role, author_order) VALUES (1, 1, 'aut', 0)")
 	mustExec(t, database, `

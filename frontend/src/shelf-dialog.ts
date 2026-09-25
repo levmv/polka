@@ -239,7 +239,10 @@ function openShelfDialog(opts: ShelfDialogState): Promise<Shelf | null> {
                           })
                         : await updateShelf(opts.shelf!.id, {
                               name: shelfName,
-                              query: opts.kind === 'query' ? shelfQuery : undefined,
+                              query:
+                                  opts.kind === 'query' && shelfQuery !== opts.initialQuery
+                                      ? shelfQuery
+                                      : undefined,
                               shared: visibility?.shared(),
                           });
                 finish(shelf);

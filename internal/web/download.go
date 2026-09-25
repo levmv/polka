@@ -245,7 +245,6 @@ type assetFileRow struct {
 	Identifier   string
 	Series       string
 	SeriesIndex  float64
-	Tags         string
 	UpdatedAt    int64
 }
 
@@ -261,14 +260,14 @@ func (s *Server) assetFile(ctx context.Context, assetID int64) (assetFileRow, er
 		       COALESCE(b.description, ''), COALESCE(b.publisher, ''),
 		       COALESCE(b.published_date, ''), COALESCE(b.identifiers, ''),
 		       COALESCE(b.series, ''), COALESCE(b.series_index, 0),
-		       COALESCE(b.tags, ''), b.updated_at
+		       b.updated_at
 		FROM assets a
 		JOIN books b ON b.id = a.book_id
 		WHERE a.id = ?
 	`, assetID).Scan(
 		&a.StoragePath, &a.BookID, &a.Filename, &a.Extension, &formatKey, &canRead, &a.CurrentHash, &a.KOReaderHash,
 		&a.Title, &a.SortTitle, &a.Language, &a.Description, &a.Publisher,
-		&a.Date, &a.Identifier, &a.Series, &a.SeriesIndex, &a.Tags, &a.UpdatedAt,
+		&a.Date, &a.Identifier, &a.Series, &a.SeriesIndex, &a.UpdatedAt,
 	)
 	a.Format = format.FormatFromKey(formatKey)
 	a.CanRead = canRead == 1
@@ -292,6 +291,12 @@ func (s *Server) assetConversionOptions(ctx context.Context, asset assetFileRow)
 		if err != nil {
 			return converter.ConversionOptions{}, err
 		}
+		tags, err := db.TagsByBookIDs(s.db.Read(ctx), []int64{asset.BookID})
+		if err != nil {
+			return converter.ConversionOptions{}, err
+		}
+		meta.Genres = tags[asset.BookID].Genres
+		meta.Tags = tags[asset.BookID].Tags
 		for _, author := range authorsByBook[asset.BookID] {
 			name := strings.TrimSpace(author.Name)
 			if name == "" {
@@ -318,7 +323,6 @@ func (a assetFileRow) conversionMetadata() *bookmeta.Metadata {
 		Identifier:  strings.TrimSpace(a.Identifier),
 		Series:      strings.TrimSpace(a.Series),
 		SeriesIndex: a.SeriesIndex,
-		Tags:        bookmeta.ParseTagList(a.Tags),
 	}
 }
 

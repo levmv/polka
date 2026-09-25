@@ -8,18 +8,17 @@ import (
 func TestListTags(t *testing.T) {
 	database := newTestDB(t)
 
-	must := func(query string) {
-		mustExec(t, database, query)
-
+	for _, book := range []struct {
+		id   int64
+		tags string
+	}{
+		{1, " Fantasy, classics, Fantasy "}, {2, "science fiction, CLASSICS"}, {3, ""},
+		{4, `100% real, under_score, path\name`}, {5, "Классика"}, {122, "archived"}, {6, "İstanbul, Kelvin"},
+	} {
+		mustExec(t, database, "INSERT INTO books (id, title, sort_title) VALUES (?, ?, ?)", book.id, book.id, book.id)
+		mustSetTags(t, database, book.id, book.tags)
 	}
-	must("INSERT INTO books (id, title, sort_title, tags) VALUES (1, 'T1', 'T1', ' Fantasy, classics, Fantasy ')")
-	must("INSERT INTO books (id, title, sort_title, tags) VALUES (2, 'T2', 'T2', 'science fiction, CLASSICS')")
-	must("INSERT INTO books (id, title, sort_title, tags) VALUES (3, 'T3', 'T3', '')")
-	must(`INSERT INTO books (id, title, sort_title, tags) VALUES (4, 'T4', 'T4', '100% real, under_score, path\name')`)
-	must("INSERT INTO books (id, title, sort_title, tags) VALUES (5, 'T5', 'T5', 'Классика')")
-	must("INSERT INTO books (id, title, sort_title, tags, deleted_at) VALUES (122, 'Deleted', 'Deleted', 'archived', 1)")
-
-	must(`INSERT INTO books (id, title, sort_title, tags) VALUES (6, 'T6', 'T6', 'İstanbul, Kelvin')`)
+	mustExec(t, database, "UPDATE books SET deleted_at = 1 WHERE id = 122")
 
 	wantAll := []string{"100% real", "classics", "Fantasy", "İstanbul", "Kelvin", `path\name`, "science fiction", "under_score", "Классика"}
 	for _, tt := range []struct {
@@ -41,7 +40,7 @@ func TestListTags(t *testing.T) {
 		{"limited", "", 2, wantAll[:2]},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := ListTags(database.Read(t.Context()), FullVisibilityScope(), tt.q, tt.limit)
+			got, err := ListTags(database.Read(t.Context()), FullVisibilityScope(), TagKindTag, tt.q, tt.limit)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -51,8 +50,8 @@ func TestListTags(t *testing.T) {
 		})
 	}
 
-	must("UPDATE books SET tags = 'newtag' WHERE id = 2")
-	updated, err := ListTags(database.Read(t.Context()), FullVisibilityScope(), "new", 20)
+	mustSetTags(t, database, 2, "newtag")
+	updated, err := ListTags(database.Read(t.Context()), FullVisibilityScope(), TagKindTag, "new", 20)
 	if err != nil {
 		t.Fatalf("ListTags updated: %v", err)
 	}
@@ -67,13 +66,13 @@ func TestListTagsVisibility(t *testing.T) {
 		INSERT INTO users (id, username, password_hash, role, content_scope) VALUES
 			(1, 'reader', 'unused', 'reader', 'shelves'),
 			(2, 'curator', 'unused', 'admin', 'all');
-		INSERT INTO books (id, title, sort_title, tags, deleted_at) VALUES
-			(1, 'Manual book', 'Manual book', 'Fantasy, Shared', NULL),
-			(2, 'Query book', 'Query book', 'Science fiction, Shared, Классика, İstanbul', NULL),
-			(3, 'Query overlap', 'Query overlap', 'Adventure, Shared', NULL),
-			(4, 'Hidden book', 'Hidden book', 'Hİdden, Классика тайная', NULL),
-			(5, 'Query trashed', 'Query trashed', 'Archived', 1);
-		INSERT INTO search (rowid, title, tags) SELECT  id, title, tags FROM books;
+		INSERT INTO books (id, title, sort_title, deleted_at) VALUES
+			(1, 'Manual book', 'Manual book', NULL),
+			(2, 'Query book', 'Query book', NULL),
+			(3, 'Query overlap', 'Query overlap', NULL),
+			(4, 'Hidden book', 'Hidden book', NULL),
+			(5, 'Query trashed', 'Query trashed', 1);
+		INSERT INTO search (rowid, title) SELECT id, title FROM books;
 		INSERT INTO shelves (id, name, kind, owner_id, visibility, query, query_match) VALUES
 			(1, 'Manual', 'manual', 2, 'shared', NULL, NULL),
 			(2, 'Query', 'query', 2, 'shared', 'title:Query', ?),
@@ -87,6 +86,9 @@ func TestListTagsVisibility(t *testing.T) {
 		INSERT INTO user_scope_shelves (user_id, shelf_id) VALUES (2, 3);
 	`, ParseQuery("title:Query"), ParseQuery("title:Hidden"))
 
+	for i, tags := range []string{"Fantasy, Shared", "Science fiction, Shared, Классика, İstanbul", "Adventure, Shared", "Hİdden, Классика тайная", "Archived"} {
+		mustSetTags(t, database, int64(i+1), tags)
+	}
 	manual := []string{"Adventure", "Fantasy", "Shared"}
 	query := []string{"Adventure", "İstanbul", "Science fiction", "Shared", "Классика"}
 	mixed := []string{"Adventure", "Fantasy", "İstanbul", "Science fiction", "Shared", "Классика"}
@@ -119,7 +121,7 @@ func TestListTagsVisibility(t *testing.T) {
 
 			}
 			scope := VisibilityScope{UserID: 1, ContentScope: ContentScopeShelves}
-			got, err := ListTags(database.Read(t.Context()), scope, tt.q, tt.limit)
+			got, err := ListTags(database.Read(t.Context()), scope, TagKindTag, tt.q, tt.limit)
 			if err != nil {
 				t.Fatal(err)
 			}
