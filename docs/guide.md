@@ -158,6 +158,11 @@ default), automatically, or not at all. Manual mode adds single-book and bulk
 *Write metadata* actions. EPUB, KEPUB, and FB2 are currently writable; a failed
 file update leaves the saved catalog metadata intact and can be retried.
 
+In EPUB and KEPUB, genres are written as subjects and tags as the Calibre
+custom column `#extra_tags`. An imported `#genre` column is replaced by those
+subjects when writing metadata. Apps without custom-column support may show
+only the genres.
+
 Removing a book sends it to Trash without deleting its files. Members can
 restore it; permanent deletion and emptying Trash are administrator-only. The
 Library action menu also opens Cleanup, which collects metadata-gap searches

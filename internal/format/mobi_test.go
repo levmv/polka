@@ -82,8 +82,8 @@ func TestExtractMOBIMetadataFromHeaderAndEXTH(t *testing.T) {
 	if meta.Identifier != "isbn:9780306406157, amazon:B000TESTID" {
 		t.Fatalf("Identifier = %q", meta.Identifier)
 	}
-	if len(meta.Tags) != 2 || meta.Tags[0] != "Sci-Fi, Classics" || meta.Tags[1] != "Space Adventure" {
-		t.Fatalf("Tags = %+v", meta.Tags)
+	if len(meta.Genres) != 2 || meta.Genres[0] != "Sci-Fi, Classics" || meta.Genres[1] != "Space Adventure" || len(meta.Tags) != 0 {
+		t.Fatalf("Genres / Tags = %v / %v", meta.Genres, meta.Tags)
 	}
 }
 
@@ -129,9 +129,9 @@ func TestExtractMOBIMetadataCleansEXTHText(t *testing.T) {
 	if meta.Description != "A <b>short</b> description." {
 		t.Fatalf("Description = %q; want decoded EXTH description", meta.Description)
 	}
-	wantTags := []string{"Drama & Comedy", "Old Books"}
-	if !equalStrings(meta.Tags, wantTags) {
-		t.Fatalf("Tags = %+v; want %+v", meta.Tags, wantTags)
+	wantGenres := []string{"Drama & Comedy", "Old Books"}
+	if !equalStrings(meta.Genres, wantGenres) {
+		t.Fatalf("Genres = %+v; want %+v", meta.Genres, wantGenres)
 	}
 }
 

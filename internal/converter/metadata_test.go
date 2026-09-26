@@ -33,7 +33,7 @@ func TestGeneratedBooksRetainGenresAndTags(t *testing.T) {
 			wantGenres, wantTags := meta.Genres, meta.Tags
 			if target == TargetMOBI6 {
 				kind = format.FormatMOBI
-				wantGenres, wantTags = nil, []string{"Fiction", "Favourite"}
+				wantGenres, wantTags = []string{"Fiction", "Favourite"}, nil
 			}
 			got, err := format.ExtractMetadata(bytes.NewReader(out.Bytes()), int64(out.Len()), kind)
 			if err != nil || !slices.Equal(got.Genres, wantGenres) || !slices.Equal(got.Tags, wantTags) {

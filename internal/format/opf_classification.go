@@ -7,10 +7,9 @@ import (
 	"github.com/levmv/polka/internal/bookmeta"
 )
 
-// OPF has subjects but no standard genre/tag distinction. A polka tags record
-// marks subjects as genres, including when either list has been explicitly
-// cleared. Otherwise recognize the two Calibre custom columns before falling
-// back to subjects as genres. Unknown custom metadata remains untouched.
+// A recognized Calibre #genre column makes subjects a tag list. Otherwise
+// subjects are genres, and extra_tags carries tags. Explicit empty lists
+// distinguish cleared values from missing metadata when applying a sidecar.
 func opfClassification(metadata opfMetadata) (genres, tags []string) {
 	subjects := bookmeta.NormalizeTags(metadata.Subject)
 	var calibreGenres, extraTags []string
@@ -21,10 +20,6 @@ func opfClassification(metadata opfMetadata) (genres, tags []string) {
 			name, value = opfMetaName(m.Property), m.Text
 		}
 		switch name {
-		case "polka:tags":
-			if ownTags, ok := opfStringList(value); ok {
-				return nonNilTagList(subjects), nonNilTagList(ownTags)
-			}
 		case "calibre:user_metadata:#genre", "calibre:user_metadata:#extra_tags":
 			if values, ok := calibreColumnValues(jsontext.Value(value)); ok {
 				if name == "calibre:user_metadata:#genre" {
@@ -51,7 +46,7 @@ func opfClassification(metadata opfMetadata) (genres, tags []string) {
 		return nonNilTagList(calibreGenres), nonNilTagList(bookmeta.NormalizeTags(append(subjects, extraTags...)))
 	}
 	if hasExtraTags {
-		return subjects, nonNilTagList(bookmeta.NormalizeTags(extraTags))
+		return nonNilTagList(subjects), nonNilTagList(bookmeta.NormalizeTags(extraTags))
 	}
 	return subjects, nil
 }
@@ -85,12 +80,4 @@ func nonNilTagList(values []string) []string {
 		return []string{}
 	}
 	return values
-}
-
-// OPFTagMetadata preserves tags separately from dc:subject in both generated
-// and rewritten EPUBs. An empty record also prevents stale Calibre columns from
-// overriding explicit clears on a later import.
-func OPFTagMetadata(tags []string) string {
-	value, _ := json.Marshal(nonNilTagList(tags))
-	return `<meta name="polka:tags" content="` + opfEscapeAttr(string(value)) + `"/>`
 }

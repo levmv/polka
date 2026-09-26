@@ -312,7 +312,11 @@ func TestExtractCBZMetadataAndCover(t *testing.T) {
 	if meta.Identifier != "isbn:9781563893421, url:https://comicvine.gamespot.com/batman-the-dark-knight-returns/4050-2138/" {
 		t.Fatalf("Identifier = %q; want isbn and URL", meta.Identifier)
 	}
-	wantTags := []string{"Superhero", "Action", "Classic"}
+	wantGenres := []string{"Superhero", "Action"}
+	if !equalStrings(meta.Genres, wantGenres) {
+		t.Fatalf("Genres = %#v; want %#v", meta.Genres, wantGenres)
+	}
+	wantTags := []string{"Classic", "superhero"}
 	if !equalStrings(meta.Tags, wantTags) {
 		t.Fatalf("Tags = %#v; want %#v", meta.Tags, wantTags)
 	}

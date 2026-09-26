@@ -920,7 +920,7 @@ func epubContentOPF(meta epubMetadata, assets []epubAsset, bodyProperties string
 		bodyProperties = ` properties="` + html.EscapeString(bodyProperties) + `"`
 	}
 	return `<?xml version="1.0" encoding="UTF-8"?>
-<package version="3.0" unique-identifier="pub-id" xmlns="http://www.idpf.org/2007/opf">
+<package version="3.0" unique-identifier="pub-id" xmlns="http://www.idpf.org/2007/opf" prefix="calibre: https://calibre-ebook.com">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
 ` + identifiers.String() + `    <dc:title>` + html.EscapeString(meta.Title) + `</dc:title>
 ` + creators.String() + `    <dc:language>` + html.EscapeString(meta.Language) + `</dc:language>

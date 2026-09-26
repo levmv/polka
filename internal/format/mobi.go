@@ -308,7 +308,7 @@ func mobiApplyEXTH(meta *Metadata, record0 []byte, codepage uint32) {
 		case 104:
 			addID(bookmeta.IdentifierFromOPF("isbn", value))
 		case 105:
-			meta.Tags = append(meta.Tags, mobiSplitTags(value)...)
+			meta.Genres = append(meta.Genres, value)
 		case 106:
 			if date := bookmeta.NormalizeMetadataDate(value); date != "" {
 				meta.Date = date
@@ -334,7 +334,7 @@ func mobiApplyEXTH(meta *Metadata, record0 []byte, codepage uint32) {
 	if len(ids) > 0 {
 		meta.Identifier = bookmeta.FormatIdentifiers(ids)
 	}
-	meta.Tags = mobiUniqStrings(meta.Tags)
+	meta.Genres = uniqueTagList(meta.Genres, semicolonNewlineTabSeparator, mobiCleanString)
 }
 
 func mobiWalkEXTH(record0 []byte, fn func(recordType uint32, content []byte) bool) {
@@ -419,10 +419,6 @@ func mobiAuthor(value string) bookmeta.AuthorMeta {
 		}
 	}
 	return bookmeta.AuthorMeta{Name: name, Role: "aut"}
-}
-
-func mobiSplitTags(value string) []string {
-	return splitTagFields(value, semicolonNewlineTabSeparator, mobiCleanString)
 }
 
 func mobiIdentifierKey(id bookmeta.Identifier) string {
@@ -577,21 +573,4 @@ func mobiPrimaryLanguage(primary byte) string {
 	default:
 		return ""
 	}
-}
-
-func mobiUniqStrings(values []string) []string {
-	if len(values) == 0 {
-		return nil
-	}
-	seen := make(map[string]bool, len(values))
-	out := values[:0]
-	for _, value := range values {
-		key := strings.ToLower(value)
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		out = append(out, value)
-	}
-	return out
 }

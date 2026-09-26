@@ -366,7 +366,8 @@ func metadataFromComicInfo(info comicInfoXML) *Metadata {
 		SeriesIndex: parseComicInfoNumber(info.Number),
 		Language:    bookmeta.NormalizeLanguage(info.LanguageISO),
 		Date:        comicInfoDate(info.Year, info.Month, info.Day),
-		Tags:        comicInfoTags(info.Genre, info.Tags),
+		Genres:      comicInfoTags(info.Genre),
+		Tags:        comicInfoTags(info.Tags),
 	}
 
 	seenAuthors := make(map[string]bool)
@@ -463,8 +464,8 @@ func validComicInfoDate(y, m, d int) bool {
 	return t.Year() == y && int(t.Month()) == m && t.Day() == d
 }
 
-func comicInfoTags(values ...string) []string {
-	return uniqueTagList(values, commaSemicolonNewlineSeparator, cleanText)
+func comicInfoTags(value string) []string {
+	return uniqueTagList([]string{value}, commaSemicolonNewlineSeparator, cleanText)
 }
 
 func validGTIN(value string) bool {

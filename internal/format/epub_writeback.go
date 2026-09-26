@@ -904,6 +904,11 @@ func RewriteOPFMetadata(raw []byte, meta Metadata, modified time.Time) ([]byte, 
 			return nil, err
 		}
 	}
+	nextPackageTag, calibreEPUB3 := opfCalibrePackageTag(packageTag.raw, epub3)
+	inner, calibreMetadata, err := rewriteOPFCalibreMetadata(inner, meta.Tags, calibreEPUB3)
+	if err != nil {
+		return nil, err
+	}
 	children, err := opfMetadataChildren(inner, false)
 	if err != nil {
 		return nil, err
@@ -914,6 +919,7 @@ func RewriteOPFMetadata(raw []byte, meta Metadata, modified time.Time) ([]byte, 
 		creatorRoles = opfRetainedCreatorRoles(children, meta.Authors)
 	}
 	preserved := opfPreservedMetadataChildren(children, uniqueID, bookmeta.ParseIdentifiers(meta.Identifier), meta.PageCount > 0, creatorRoles)
+	preserved.CalibreMetadata = calibreMetadata
 	// IDs share one namespace across metadata and the rest of the package.
 	ids := make(opfIDSet)
 	ids.add(raw[:metadataTag.end])
@@ -936,7 +942,9 @@ func RewriteOPFMetadata(raw []byte, meta Metadata, modified time.Time) ([]byte, 
 	nextInner := assembleOPFMetadataInner(inner, generated, preserved.Children)
 
 	out := make([]byte, 0, len(raw)-len(inner)+len(nextInner))
-	out = append(out, raw[:metadataTag.end]...)
+	out = append(out, raw[:packageTag.start]...)
+	out = append(out, nextPackageTag...)
+	out = append(out, raw[packageTag.end:metadataTag.end]...)
 	out = append(out, nextInner...)
 	out = append(out, raw[endStart:]...)
 	return out, nil
@@ -1201,6 +1209,7 @@ func opfMetadataChildren(raw []byte, includeLegacy bool) ([]opfMetadataChild, er
 
 type opfPreservedMetadata struct {
 	Children               [][]byte
+	CalibreMetadata        []string
 	CreatorRoles           map[string][][]byte
 	GeneratedIdentifierIDs map[string]string
 	Identifiers            []opfOutputIdentifier
@@ -1412,6 +1421,10 @@ func removeOPFPublicationDates(inner []byte, dates []opfDateRecord, clear bool) 
 	if dateIndex != len(dates) {
 		return nil, fmt.Errorf("OPF date records do not match metadata spans")
 	}
+	return removeOPFMetadataChildren(inner, children, removed), nil
+}
+
+func removeOPFMetadataChildren(inner []byte, children []opfMetadataChild, removed []bool) []byte {
 	opfRemoveDependentRefinements(children, removed, nil)
 	var out []byte
 	pos := 0
@@ -1421,7 +1434,7 @@ func removeOPFPublicationDates(inner []byte, dates []opfDateRecord, clear bool) 
 			pos = child.end
 		}
 	}
-	return append(out, inner[pos:]...), nil
+	return append(out, inner[pos:]...)
 }
 
 func opfRemoveDependentRefinements(children []opfMetadataChild, removed []bool, keep func(int) bool) {
@@ -1469,11 +1482,11 @@ func opfChildOwnedByPolka(child opfMetadataChild, uniqueID string, polkaTypes ma
 	case "meta":
 		name := opfMetaName(child.attrs["name"])
 		switch name {
-		case "calibre:title_sort", "calibre:series", "calibre:series_index", "polka:tags":
+		case "calibre:title_sort", "calibre:series", "calibre:series_index":
 			return true
 		}
 		property := strings.ToLower(strings.TrimSpace(child.attrs["property"]))
-		if property == "dcterms:modified" || property == "polka:tags" {
+		if property == "dcterms:modified" {
 			return true
 		}
 		if property == "belongs-to-collection" && seriesCollectionIDs[strings.TrimSpace(child.attrs["id"])] {
@@ -1576,7 +1589,9 @@ func renderOPFMetadataChildren(packageTag, metadataTag []byte, meta Metadata, pr
 	if description := strings.TrimSpace(meta.Description); description != "" {
 		add(fmt.Sprintf("<%sdescription>%s</%sdescription>", dc, opfEscapeText(description), dc))
 	}
-	add(OPFTagMetadata(meta.Tags))
+	for _, column := range preserved.CalibreMetadata {
+		add(column)
+	}
 	for _, genre := range meta.Genres {
 		if genre = strings.TrimSpace(genre); genre != "" {
 			add(fmt.Sprintf("<%ssubject>%s</%ssubject>", dc, opfEscapeText(genre), dc))

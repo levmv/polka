@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"image/color"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -57,10 +58,13 @@ func TestDeclaredPageCountsAndWriteback(t *testing.T) {
 			if parsed.PageCount != 123 || bytes.Count(out, []byte("schema:numberOfPages")) != 1 {
 				t.Fatalf("canonical count was not replaced: %s", out)
 			}
-			for _, field := range foreign {
-				if !bytes.Contains(out, []byte(field)) {
-					t.Fatalf("writeback changed foreign field %s: %s", field, out)
-				}
+			if !bytes.Contains(out, []byte(`<meta name="bookorbit:page_count" content="9"/>`)) {
+				t.Fatalf("writeback changed foreign page count: %s", out)
+			}
+			columnsAfter := testOPFCalibreColumns(t, out)
+			delete(columnsAfter, "#extra_tags")
+			if !reflect.DeepEqual(columnsAfter, testOPFCalibreColumns(t, raw)) {
+				t.Fatalf("writeback changed foreign Calibre columns: %s", out)
 			}
 			repeated, err := RewriteOPFMetadata(out, meta, time.Time{})
 			if err != nil || !bytes.Equal(out, repeated) {

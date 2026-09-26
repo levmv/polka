@@ -58,13 +58,13 @@ func TestImportClassificationSidecarOverrides(t *testing.T) {
 	}{
 		{"calibre columns", `<dc:subject>Favourite</dc:subject><meta name="calibre:user_metadata:#genre" content='{"#value#":["History"]}'/><meta name="calibre:user_metadata:#extra_tags" content='{"#value#":["History","Read"]}'/>`, []string{"History"}, []string{"Favourite", "History", "Read"}},
 		{"empty extra tags", `<dc:subject>History</dc:subject><meta name="calibre:user_metadata:#extra_tags" content='{"#value#":null}'/>`, []string{"History"}, nil},
-		{"explicit clear", `<meta name="polka:tags" content='[]'/>`, nil, nil},
+		{"explicit clear", `<meta name="calibre:user_metadata:#extra_tags" content='{"#value#":[]}'/>`, nil, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dataDir, sourceDir := t.TempDir(), t.TempDir()
 			database, root := openTestLibrary(t, dataDir, dataDir)
 			path := filepath.Join(sourceDir, "book.epub")
-			writeEPUB(t, path, []byte(`<package xmlns="http://www.idpf.org/2007/opf" version="2.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Book</dc:title><dc:subject>Old genre</dc:subject><meta name="polka:tags" content='["Old tag"]'/></metadata></package>`))
+			writeEPUB(t, path, []byte(`<package xmlns="http://www.idpf.org/2007/opf" version="2.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Book</dc:title><dc:subject>Old genre</dc:subject><meta name="calibre:user_metadata:#extra_tags" content='{"#value#":["Old tag"]}'/></metadata></package>`))
 			opf := `<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">` + tc.fields + `</metadata>`
 			if err := os.WriteFile(filepath.Join(sourceDir, "metadata.opf"), []byte(opf), 0o644); err != nil {
 				t.Fatal(err)
