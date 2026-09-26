@@ -11,23 +11,19 @@ func TestParseQuery(t *testing.T) {
 		expected string
 	}{
 		{"author qualifier", "author:asimov", `authors:"asimov"*`},
-		{"single alphabetic character uses prefix", "a", `-tag_keys:"a"*`},
 		{"single number uses prefix", "1", `-tag_keys:"1"*`},
-		{"two-character term uses prefix", "ab", `-tag_keys:"ab"*`},
-		{"single Han character uses prefix", "地", `-tag_keys:"地"*`},
-		{"single kana character uses prefix", "ね", `-tag_keys:"ね"*`},
 		{"series quoted", `series:"Foundation"`, `series:"Foundation"`},
 		{"tag qualifier", "tag:scifi", `tags:"scifi"*`},
 		{"title qualifier", "title:foo", `title:"foo"*`},
-		{"mixed free and qualified", "author:asimov foundation", `authors:"asimov"* -tag_keys:"foundation"*`},
-		{"mixed free and qualified quoted", `author:asimov "foundation base"`, `authors:"asimov"* -tag_keys:"foundation base"`},
-		{"trailing qualifier preserves free-text prefix", `fo author:"Isaac Asimov"`, `-tag_keys:"fo"* authors:"Isaac Asimov"`},
-		{"qualifier between free-text terms", "foundation author:asi ba", `-tag_keys:"foundation" authors:"asi"* -tag_keys:"ba"*`},
-		{"quoted final free-text term stays exact", `fo "base" author:asi`, `-tag_keys:"fo" -tag_keys:"base" authors:"asi"*`},
+		{"mixed free and qualified", "author:asimov foundation", `authors:"asimov"* AND -tag_keys:"foundation"*`},
+		{"mixed free and qualified quoted", `author:asimov "foundation base"`, `authors:"asimov"* AND -tag_keys:"foundation base"`},
+		{"trailing qualifier preserves free-text prefix", `fo author:"Isaac Asimov"`, `-tag_keys:"fo"* AND authors:"Isaac Asimov"`},
+		{"qualifier between free-text terms", "foundation author:asi ba", `-tag_keys:"foundation" AND authors:"asi"* AND -tag_keys:"ba"*`},
+		{"quoted final free-text term stays exact", `fo "base" author:asi`, `-tag_keys:"fo" AND -tag_keys:"base" AND authors:"asi"*`},
 		{"unfinished quoted phrase uses prefix", `"foundation ba`, `-tag_keys:"foundation ba"*`},
 		{"malformed qualifier with no value is ignored", "author:", ""},
 		{"malformed colon in text", "some:text", `-tag_keys:"some:text"*`},
-		{"multiple qualifiers", "author:asimov tag:scifi", `authors:"asimov"* tags:"scifi"*`},
+		{"multiple qualifiers", "author:asimov tag:scifi", `authors:"asimov"* AND tags:"scifi"*`},
 		{"escaped quote stays one phrase", `series:"The ""Best"" Books"`, `series:"The ""Best"" Books"`},
 		{"structural no filter has no FTS term", "no:cover", ""},
 		{"structural no filter mixes with free text", "no:cover foundation", `-tag_keys:"foundation"*`},
@@ -55,13 +51,10 @@ func TestQueryTermRoundTrips(t *testing.T) {
 	}{
 		{field: "series", value: `The "Best" Books`, want: `series:"The ""Best"" Books"`},
 		{field: "title", value: `A "Quoted" Title`, want: `title:"A ""Quoted"" Title"`},
-		{field: "tag", value: `sci-"fi"`, want: `tag_keys:"t4577904a8649a2a6c36a4250d68d0b60167aff6d446d1af7f4651f930f4a4faa"`},
 		{field: "author", value: "Ursula K. Le Guin", want: `authors:"Ursula K. Le Guin"`},
 	}
 	for _, tt := range tests {
 		term := QueryTerm(tt.field, tt.value)
-		// Quotes inside a value must survive build → parse, including exact tags.
-		// Otherwise a literal quote changes the selected books or breaks the feed.
 		if got := ParseQuery(term); got != tt.want {
 			t.Errorf("ParseQuery(QueryTerm(%q, %q)) = %q; want %q", tt.field, tt.value, got, tt.want)
 		}

@@ -46,6 +46,7 @@ import { queryTerm, seriesLibraryURL } from '../search-query';
 import { openSettingsModal } from '../settings';
 import { sendingSetting } from '../settings/state';
 import { inlineSettingsButton } from '../settings/ui';
+import { tagDisplayLabels } from '../tags';
 import { showToast } from '../toast';
 import type {
     Asset,
@@ -459,11 +460,12 @@ function renderBookDetail(
             .map((name) => name.trim())
             .filter(Boolean);
         if (names.length === 0) return '';
+        const labels = tagDisplayLabels(names);
         const limit = 5;
         const hiddenCount = names.length - limit;
         const id = `book-${field}-${b.id}`;
         return `<div id="${id}" class="detail-tags">
-            ${names.map((name, index) => `<a href="/?q=${encodeURIComponent(queryTerm(qualifier, name))}" class="detail-tag" title="${escapeHtml(name)}"${index >= limit ? ' hidden' : ''}>${escapeHtml(name)}</a>`).join('')}
+            ${names.map((name, index) => `<a href="/?q=${encodeURIComponent(queryTerm(qualifier, name))}" class="detail-tag" title="${escapeHtml(name)}"${index >= limit ? ' hidden' : ''}>${escapeHtml(labels[index])}</a>`).join('')}
             ${hiddenCount > 0 ? `<button type="button" class="detail-tags-more" data-reveal="#${id} .detail-tag[hidden]" aria-controls="${id}" aria-expanded="false" aria-label="Show ${hiddenCount} more ${hiddenCount === 1 ? qualifier : field}">+${hiddenCount}</button>` : ''}
         </div>`;
     };

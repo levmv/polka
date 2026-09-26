@@ -12,7 +12,7 @@ import {
     notifyShelvesChanged,
 } from '../catalog-events';
 import { createBookCard } from '../components/book-card';
-import { createSelect, type ManagedSelect } from '../components/select';
+import { type CollectionView, createCollectionControls } from '../components/collection-controls';
 import { coverUrl } from '../cover';
 import { debounce, escapeHtml } from '../dom';
 import { errorMessage } from '../errors';
@@ -30,6 +30,7 @@ import { queryTerm, seriesLibraryURL } from '../search-query';
 import { openSettingsModal } from '../settings';
 import { loadPersonalSettings, type PersonalSettings, writebackSetting } from '../settings/state';
 import { openCreateShelfDialog } from '../shelf-dialog';
+import { tagDisplayLabels } from '../tags';
 import { showToast } from '../toast';
 import type { BookJump, BookSequenceWindow, BookSummary } from '../types';
 import { openEditModal } from './book-edit';
@@ -49,8 +50,6 @@ const BROWSE_SORT_OPTIONS = [
     { value: 'series', label: 'Series order' },
 ];
 const SEARCH_SORT_OPTIONS = [{ value: 'relevance', label: 'Relevance' }, ...BROWSE_SORT_OPTIONS];
-
-type LibraryViewMode = 'grid' | 'table';
 
 interface LibraryQuery {
     query: string;
@@ -74,7 +73,7 @@ interface LibraryViewState {
     // Putting the reader back where they were; see return-position.ts.
     returnPosition: ReturnPosition;
     books: BookSummary[];
-    view: LibraryViewMode;
+    view: CollectionView;
     current: LibraryQuery;
     // Retained until success, including cancellation and failed reads. This is
     // independent of both the displayed result and the search input's draft.
@@ -138,17 +137,7 @@ export function renderLibraryPage(): string {
                         ${icon('bookmark', 20)}
                     </button>
                 </div>
-                <div class="library-view-controls">
-                    <div class="view-toggle">
-                        <button id="view-grid-btn" class="view-btn active" aria-label="Grid view">
-                            ${icon('grid_view', 18)}
-                        </button>
-                        <button id="view-table-btn" class="view-btn" aria-label="Table view">
-                            ${icon('table_rows', 18)}
-                        </button>
-                    </div>
-                    <div id="sort-control" class="sort-control"></div>
-                </div>
+                <div class="collection-controls"></div>
             </div>
         </div>
         <div id="library-grid" class="library-grid"></div>
@@ -248,26 +237,24 @@ export function initLibrary(root: HTMLElement): RouteController {
     // Held so suspend() can unschedule a pending search: a debounce that fired
     // from a detached library would rewrite the book page's URL.
     let cancelPendingSearch: (() => void) | null = null;
-    let sortSelect: ManagedSelect | null = null;
-    const sortControl = root.querySelector('#sort-control');
-
-    const renderSortSelect = () => {
-        sortSelect?.destroy();
-        sortSelect = null;
-        if (!sortControl) return;
-        const select = createSelect({
-            ariaLabel: 'Sort books',
-            value: sortValue,
-            options: sortOptions(searching),
-            onChange: (value) => {
-                sortValue = value;
-                sortOverridden = true;
-                reload();
-            },
-        });
-        sortControl.replaceChildren(select.el);
-        sortSelect = select;
-    };
+    const controls = createCollectionControls({
+        view: state.view,
+        sort: sortValue,
+        sortOptions: sortOptions(searching),
+        sortLabel: 'Sort books',
+        onViewChange: (view) => {
+            state.view = view;
+            localStorage.setItem('polka-view-mode', view);
+            renderBooks(state, state.books);
+        },
+        onSortChange: (value) => {
+            sortValue = value;
+            sortOverridden = true;
+            reload();
+        },
+    });
+    root.querySelector('.collection-controls')!.replaceWith(controls.el);
+    addCleanup(() => controls.destroy());
 
     const syncSearchSort = () => {
         const nextSearching = searchInput?.value.trim() !== '';
@@ -279,7 +266,7 @@ export function initLibrary(root: HTMLElement): RouteController {
             sortValue = 'added';
             sortOverridden = false;
         }
-        renderSortSelect();
+        controls.setSort(sortValue, sortOptions(searching));
     };
 
     if (searchInput) {
@@ -296,9 +283,6 @@ export function initLibrary(root: HTMLElement): RouteController {
         addCleanup(setupLibrarySearchShortcuts(state, searchInput));
         addCleanup(setupSaveSearchButton(root, searchInput));
     }
-
-    renderSortSelect();
-    addCleanup(() => sortSelect?.destroy());
 
     const libraryGrid = root.querySelector<HTMLElement>('#library-grid');
     if (libraryGrid) {
@@ -434,40 +418,6 @@ export function initLibrary(root: HTMLElement): RouteController {
             /* main bootstrap keeps the default theme/settings behavior */
         });
 
-    const gridBtn = root.querySelector('#view-grid-btn');
-    const tableBtn = root.querySelector('#view-table-btn');
-
-    const updateViewButtons = () => {
-        if (state.view === 'grid') {
-            gridBtn?.classList.add('active');
-            tableBtn?.classList.remove('active');
-        } else {
-            tableBtn?.classList.add('active');
-            gridBtn?.classList.remove('active');
-        }
-    };
-
-    const handleGridClick = () => {
-        if (state.view === 'grid') return;
-        state.view = 'grid';
-        localStorage.setItem('polka-view-mode', 'grid');
-        updateViewButtons();
-        renderBooks(state, state.books);
-    };
-    gridBtn?.addEventListener('click', handleGridClick);
-    addCleanup(() => gridBtn?.removeEventListener('click', handleGridClick));
-
-    const handleTableClick = () => {
-        if (state.view === 'table') return;
-        state.view = 'table';
-        localStorage.setItem('polka-view-mode', 'table');
-        updateViewButtons();
-        renderBooks(state, state.books);
-    };
-    tableBtn?.addEventListener('click', handleTableClick);
-    addCleanup(() => tableBtn?.removeEventListener('click', handleTableClick));
-
-    updateViewButtons();
     // Mount stays synchronous so the router holds this route's cleanup before
     // anything is awaited; awaiting here would leave the global subscriptions
     // above live on whatever page the reader moved to next. The saved scroll is
@@ -489,7 +439,7 @@ export function initLibrary(root: HTMLElement): RouteController {
             state.loadMoreObserver?.disconnect();
             state.returnPosition.capture();
             cancelPendingSearch?.();
-            sortSelect?.close();
+            controls.close();
             state.selection?.setActive(false);
             document.body.classList.remove('has-library-jump-rail');
             // A cancelled replacement needs rebuilding on return. A cancelled
@@ -532,7 +482,7 @@ function renderedBookSelector(state: LibraryViewState): string {
     return state.view === 'table' ? '.table-row' : '.book-card';
 }
 
-function readLibraryViewMode(): LibraryViewMode {
+function readLibraryViewMode(): CollectionView {
     return localStorage.getItem('polka-view-mode') === 'table' ? 'table' : 'grid';
 }
 
@@ -1255,20 +1205,22 @@ function genresCellHtml(b: BookSummary): string {
         : [];
     if (genres.length === 0) return '';
 
-    const shown = genres.slice(0, TABLE_GENRE_LIMIT);
-    const hidden = genres.slice(TABLE_GENRE_LIMIT);
+    const labels = tagDisplayLabels(genres);
     // Hidden values include their separator so expansion keeps the list readable.
     const sep = ' <span class="table-genre-sep">·</span> ';
-    const genre = (name: string) =>
-        `<span class="table-genre-text" role="button" tabindex="0" data-filter="${escapeHtml(queryTerm('genre', name))}">${escapeHtml(name)}</span>`;
-
-    let html = `<span class="table-genres-text">${shown.map(genre).join(sep)}`;
-    html += hidden
-        .map((name) => `<span class="table-genre-hidden" hidden>${sep}${genre(name)}</span>`)
-        .join('');
+    let html = '<span class="table-genres-text">';
+    for (const [index, name] of genres.entries()) {
+        const genre = `<span class="table-genre-text" role="button" tabindex="0" data-filter="${escapeHtml(queryTerm('genre', name))}" title="${escapeHtml(name)}">${escapeHtml(labels[index])}</span>`;
+        if (index >= TABLE_GENRE_LIMIT) {
+            html += `<span class="table-genre-hidden" hidden>${sep}${genre}</span>`;
+        } else {
+            html += (index > 0 ? sep : '') + genre;
+        }
+    }
     html += '</span>';
-    if (hidden.length > 0) {
-        html += ` <button type="button" class="table-genre-more" aria-label="Show ${hidden.length} more ${hidden.length === 1 ? 'genre' : 'genres'}">+${hidden.length}</button>`;
+    const hiddenCount = genres.length - TABLE_GENRE_LIMIT;
+    if (hiddenCount > 0) {
+        html += ` <button type="button" class="table-genre-more" aria-label="Show ${hiddenCount} more ${hiddenCount === 1 ? 'genre' : 'genres'}">+${hiddenCount}</button>`;
     }
     return html;
 }

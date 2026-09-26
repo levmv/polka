@@ -45,9 +45,9 @@ func BookListDependencies(scope VisibilityScope, query string, sort BookSort, ma
 			add("authors")
 		case searchSeries:
 			add("series")
-		case searchGenres, searchExactGenres:
+		case searchGenres, searchGenreBranch, searchExactGenres:
 			add("genres")
-		case searchTags, searchExactTags:
+		case searchTags, searchTagBranch, searchExactTags:
 			add("tags")
 		case searchEverywhere:
 			add(searchable...)

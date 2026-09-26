@@ -8,6 +8,7 @@ import {
 } from '../components/book-metadata-autocomplete';
 import { escapeHtml } from '../dom';
 import { openModal } from '../modal';
+import { parseTagList } from '../tags';
 import type {
     BookSummary,
     BulkEditResult,
@@ -28,22 +29,6 @@ export type BulkShelfOutcome = { changed: number; op: BulkShelfOp; shelfName: st
 const PREVIEW_LIMIT = 8;
 
 type OnApplied = (result: BulkEditResult) => void;
-
-// List transforms for bulk previews, matching internal/bookmeta/tags.go.
-
-function parseTagList(s: string): string[] {
-    const seen = new Set<string>();
-    const out: string[] = [];
-    for (const part of s.split(',')) {
-        const t = part.trim();
-        if (!t) continue;
-        const key = t.toLowerCase();
-        if (seen.has(key)) continue;
-        seen.add(key);
-        out.push(t);
-    }
-    return out;
-}
 
 // Inputs are parsed tag lists. The result is independent of both input arrays.
 function applyTagMode(current: string[], mode: BulkTagMode, values: string[]): string[] {

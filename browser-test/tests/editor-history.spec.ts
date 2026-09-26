@@ -2,7 +2,7 @@ import { expect, type Page, test } from './fixtures';
 
 async function showTable(page: Page) {
   await expect(page.locator('#library-grid')).toBeVisible();
-  await page.locator('#view-table-btn').click();
+  await page.getByRole('button', { name: 'Table view', exact: true }).click();
   await expect(page.locator('.library-table')).toBeVisible();
 }
 

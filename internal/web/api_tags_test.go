@@ -116,8 +116,8 @@ func TestAPITagListVisibleCountsAndPagination(t *testing.T) {
 	defer database.Close()
 	owner := mustUser(t, database, "owner", db.RoleMember)
 	reader := mustUser(t, database, "reader", db.RoleReader)
-	mustSetTags(t, database, 1, "Alpha, Shared")
-	mustSetTags(t, database, 2, "shared, Hidden")
+	mustSetTags(t, database, 1, "Alpha.One, Alpha.One.Leaf, Shared")
+	mustSetTags(t, database, 2, "shared, Hidden, Alpha.Hidden, Shared.Hidden")
 	mustExec(t, database, "INSERT INTO books (id, title, sort_title, deleted_at) VALUES (3, 'Trash', 'Trash', 1)")
 	mustSetTags(t, database, 3, "Shared, Trash-only")
 	shelf, err := database.CreateShelf(t.Context(), owner.ID, db.ShelfShared, "Visible", db.ShelfManual, "")
@@ -152,15 +152,56 @@ func TestAPITagListVisibleCountsAndPagination(t *testing.T) {
 		return got
 	}
 	first := get(reader.ID, "limit=1")
-	if len(first.Items) != 1 || first.Items[0].Name != "Alpha" || first.Items[0].BookCount != 1 || first.NextCursor == "" {
+	if len(first.Items) != 1 || first.Items[0].Name != "Alpha" || first.Items[0].BookCount != 1 || !first.Items[0].HasChildren || first.NextCursor == "" {
 		t.Fatalf("first page = %+v", first)
 	}
 	second := get(reader.ID, "limit=1&cursor="+url.QueryEscape(first.NextCursor))
-	if len(second.Items) != 1 || second.Items[0].Name != "Shared" || second.Items[0].BookCount != 1 || second.NextCursor != "" {
+	if len(second.Items) != 1 || second.Items[0].Name != "Shared" || second.Items[0].BookCount != 1 || second.Items[0].HasChildren || second.NextCursor != "" {
 		t.Fatalf("second page = %+v", second)
 	}
 	full := get(owner.ID, "q=SHAR")
-	if len(full.Items) != 1 || full.Items[0].Name != "Shared" || full.Items[0].BookCount != 2 {
-		t.Fatalf("full-scope count = %+v", full)
+	if len(full.Items) != 2 || full.Items[0].Name != "Shared" || full.Items[1].Name != "Shared.Hidden" {
+		t.Fatalf("search results = %+v", full)
+	}
+	children := get(reader.ID, fmt.Sprintf("parent=%d", first.Items[0].ID))
+	if len(children.Items) != 1 || children.Items[0].Name != "Alpha.One" || children.Items[0].Label != "One" {
+		t.Fatalf("visible children = %+v", children)
+	}
+	for _, tc := range []struct {
+		name   string
+		userID int64
+		want   []string
+	}{
+		{"full", owner.ID, []string{"Alpha", "Shared", "Hidden"}},
+		{"visible", reader.ID, []string{"Alpha", "Shared"}},
+	} {
+		t.Run("book count order/"+tc.name, func(t *testing.T) {
+			var got []string
+			var cursor string
+			for range len(tc.want) {
+				page := get(tc.userID, "sort=books&limit=1&cursor="+url.QueryEscape(cursor))
+				if len(page.Items) != 1 {
+					t.Fatalf("page = %+v", page)
+				}
+				got = append(got, page.Items[0].Name)
+				cursor = page.NextCursor
+				if cursor == "" {
+					break
+				}
+			}
+			if !slices.Equal(got, tc.want) || cursor != "" {
+				t.Fatalf("pages = %+v, cursor = %q; want %+v and no cursor", got, cursor, tc.want)
+			}
+		})
+	}
+	for _, query := range []string{
+		fmt.Sprintf("parent=%d&cursor=%s", first.Items[0].ID, url.QueryEscape(first.NextCursor)),
+		"sort=books&cursor=" + url.QueryEscape(first.NextCursor),
+	} {
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, jsonRequest(t, s, reader.ID, http.MethodGet, "/api/tags/list?"+query, nil))
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("cursor from a different branch or sort: %d %s", w.Code, w.Body.String())
+		}
 	}
 }

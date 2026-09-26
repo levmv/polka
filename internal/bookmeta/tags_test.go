@@ -17,6 +17,8 @@ func TestParseTagList(t *testing.T) {
 		{"trim and split", "a, b ,c", []string{"a", "b", "c"}},
 		{"drop empties", "a,,b,", []string{"a", "b"}},
 		{"dedup case-insensitive keeps first", "Sci-Fi, sci-fi, SCI-FI, fantasy", []string{"Sci-Fi", "fantasy"}},
+		{"paths trim each level", " Fiction . Science Fiction , fiction.science fiction", []string{"Fiction.Science Fiction"}},
+		{"literal incomplete paths survive", ".NET, A..B, Finished.", []string{".NET", "A..B", "Finished."}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

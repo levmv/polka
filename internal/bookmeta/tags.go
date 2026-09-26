@@ -5,9 +5,40 @@ import (
 	"strings"
 )
 
+// MaxTagDepth limits hierarchy expansion; deeper names remain literal tags.
+const MaxTagDepth = 16
+
 // TagKey defines tag identity for catalog storage, editing, and exact search.
 func TagKey(name string) string {
-	return strings.ToLower(strings.TrimSpace(name))
+	return strings.ToLower(NormalizeTagName(name))
+}
+
+// TagParts interprets non-empty dot-separated components as a path. Malformed
+// or excessively deep imported names remain literal values rather than losing
+// metadata or creating an unbounded number of catalog nodes.
+func TagParts(name string) []string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+	if strings.Count(name, ".") >= MaxTagDepth {
+		return []string{name}
+	}
+	parts := strings.Split(name, ".")
+	for i, part := range parts {
+		parts[i] = strings.TrimSpace(part)
+		if parts[i] == "" {
+			return []string{name}
+		}
+	}
+	return parts
+}
+
+func NormalizeTagName(name string) string {
+	if !strings.Contains(name, ".") {
+		return strings.TrimSpace(name)
+	}
+	return strings.Join(TagParts(name), ".")
 }
 
 // EqualTags compares ordered memberships; ordinary book edits cannot change
@@ -39,11 +70,11 @@ func NormalizeTags(values []string) []string {
 	seen := make(map[string]struct{})
 	for _, value := range values {
 		for part := range strings.SplitSeq(value, ",") {
-			t := strings.TrimSpace(part)
+			t := NormalizeTagName(part)
 			if t == "" {
 				continue
 			}
-			key := TagKey(t)
+			key := strings.ToLower(t)
 			if _, ok := seen[key]; ok {
 				continue
 			}

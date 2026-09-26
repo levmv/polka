@@ -143,12 +143,16 @@ CREATE INDEX idx_book_authors_author_id ON book_authors(author_id);
 
 CREATE TABLE tags (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    -- Full path; book_tags stores direct membership, not inherited ancestors.
     name TEXT NOT NULL,
     -- Computed in Go: trimmed, lowercased Unicode, matching tag search.
     name_key TEXT NOT NULL,
     kind TEXT NOT NULL DEFAULT 'tag' CHECK (kind IN ('tag', 'genre')),
+    parent_id INTEGER REFERENCES tags(id),
     UNIQUE (kind, name_key)
 );
+
+CREATE INDEX idx_tags_parent ON tags(parent_id, kind, name_key);
 
 CREATE TABLE book_tags (
     book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
@@ -531,7 +535,7 @@ CREATE TABLE writer_leases (
 
 -- Contentless FTS5 projection updated with searchable metadata. Each rowid
 -- matches books.id; the relational tables remain authoritative.
--- tag_keys contains encoded whole-tag tokens produced by TagSearchKeys.
+-- tag_keys contains direct-membership and proper-ancestor tokens from TagSearchKeys.
 CREATE VIRTUAL TABLE search USING fts5(
     title,
     authors,

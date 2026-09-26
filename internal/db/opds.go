@@ -153,8 +153,12 @@ func CountManualShelfOPDSPublications(queryer Queryer, scope VisibilityScope, sh
 // when it has the same name in both kinds; kind keeps the lookup indexed.
 const opdsTagCondition = `b.deleted_at IS NULL
 	AND b.id IN (
-		SELECT bt.book_id FROM tags t JOIN book_tags bt ON bt.tag_id = t.id
-		WHERE t.kind IN ('genre', 'tag') AND t.name_key = ?)
+		WITH RECURSIVE branch(id) AS (
+			SELECT id FROM tags WHERE kind IN ('genre', 'tag') AND name_key = ?
+			UNION ALL
+			SELECT child.id FROM tags child JOIN branch ON child.parent_id = branch.id
+		)
+		SELECT bt.book_id FROM branch JOIN book_tags bt ON bt.tag_id = branch.id)
 	AND EXISTS (SELECT 1 FROM assets a WHERE a.book_id = b.id)`
 
 func ListTagOPDSPublications(queryer Queryer, scope VisibilityScope, name string, limit, offset int) ([]OPDSPublicationRow, error) {

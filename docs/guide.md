@@ -104,7 +104,8 @@ author:herbert            author names only
 series:"Foundation"       quotes keep a phrase together
 genre:sci-fi title:dune   qualifiers can be combined
 tag:"favourite"           books with this tag
-tag:"history"             one whole tag, not "art history"
+genre:"Fiction"           Fiction and all its subgenres
+genre:="Fiction"          books assigned directly to Fiction
 status:unread             your unread books
 status:dropped dune       status and text can be combined
 no:cover                  books without a selected cover
@@ -114,9 +115,10 @@ no:genres                 books with no genres recorded
 
 Search completes the final word as you type: `fo` finds Foundation and
 `author:herb` finds Herbert. Quote a term or phrase to keep it exact.
-For genres and tags, quotes select the whole name, ignoring letter case;
-clicking a genre or tag uses this exact match. Leave the value unquoted to
-search its words as you type.
+Use dots to nest genres and tags, for example `Fiction.Science Fiction`.
+A quoted name selects that branch, ignoring letter case.
+Add `=` before the quoted name to select only books assigned
+directly to that node. Leave the value unquoted to search its words as you type.
 
 Reading status is personal, so `status:` can produce different results for
 different accounts even when the rest of the query is shared. `/` focuses the
@@ -142,9 +144,8 @@ Members and administrators can select several books in the library and edit
 authors, genres, tags, series numbering, and shelf membership in bulk.
 The Authors page renames an author across the catalog, merges duplicate spellings, and overrides
 automatic sort names. The Genres page contains separate genre and tag lists;
-renaming a value updates every book that uses it. Renaming to an existing name
-merges the two entries within that list. Saved searches using the exact name
-follow the rename.
+renaming a path updates its whole branch on every book that uses it. Existing
+paths merge within that list. Saved searches using quoted paths follow the rename.
 
 Metadata used by the storage path template also controls the corresponding
 folders on disk. Changing a title or author therefore moves the managed files;

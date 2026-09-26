@@ -379,7 +379,7 @@ test.describe('Retained library navigation', () => {
 
   test('Table view returns to the same rows and position', async ({ page }) => {
     await page.goto('/');
-    await page.locator('#view-table-btn').click();
+    await page.getByRole('button', { name: 'Table view', exact: true }).click();
     await expect(page.locator('.library-table')).toBeVisible();
 
     // Only the rendered row differs from the grid: the table owns its own
@@ -395,6 +395,6 @@ test.describe('Retained library navigation', () => {
     expect(Math.abs((await bookTop(page, '.table-row', anchor.id)) - anchor.top)).toBeLessThan(2);
     await expect(page.locator('.table-row').nth(30).locator('.table-title-link')).toBeFocused();
 
-    await page.locator('#view-grid-btn').click();
+    await page.getByRole('button', { name: 'Grid view', exact: true }).click();
   });
 });

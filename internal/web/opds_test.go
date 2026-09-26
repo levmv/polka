@@ -273,10 +273,10 @@ func TestOPDSTagsCombineGenresAndTagsWithinContentScope(t *testing.T) {
 
 	alice := mustUser(t, database, "alice", db.RoleMember)
 	reader := mustUser(t, database, "reader", db.RoleReader)
-	mustSetTags(t, database, 1, "fantasy, classics")
+	mustSetTags(t, database, 1, "fantasy.Epic, classics")
 	mustSetTags(t, database, 2, "Fantasy, Private")
 	if err := database.Transact(t.Context(), func(tx *db.Tx) error {
-		return db.SetBookTags(tx, 1, db.TagKindGenre, []string{"Fantasy", "adventure"})
+		return db.SetBookTags(tx, 1, db.TagKindGenre, []string{"Fantasy.Epic", "adventure.Sea"})
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -335,8 +335,8 @@ func TestOPDSTagsCombineGenresAndTagsWithinContentScope(t *testing.T) {
 		names []string
 		books []string
 	}{
-		{"alice", []string{"adventure", "classics", "Fantasy", "Private"}, []string{"Dune", "The Hobbit"}},
-		{"reader", []string{"adventure", "classics", "Fantasy"}, []string{"The Hobbit"}},
+		{"alice", []string{"adventure", "adventure.Sea", "classics", "Fantasy", "Fantasy.Epic", "Private"}, []string{"Dune", "The Hobbit"}},
+		{"reader", []string{"adventure", "adventure.Sea", "classics", "Fantasy", "Fantasy.Epic"}, []string{"The Hobbit"}},
 	} {
 		t.Run(tc.user, func(t *testing.T) {
 			nav := fetch(t, tc.user, "/opds/tags")

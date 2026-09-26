@@ -1304,18 +1304,23 @@ export async function setAuthorSortName(name: string, sortName: string): Promise
 export interface TagSummary {
     id: number;
     name: string;
+    label: string;
     book_count: number;
+    has_children: boolean;
 }
+
+export type TagSort = 'name' | 'books';
 
 export async function fetchTagPage(
     kind: TagKind,
-    query: string,
-    cursor: string,
+    options: { query: string; cursor: string; parentID: number; sort: TagSort },
     signal?: AbortSignal,
 ): Promise<CursorPage<TagSummary>> {
     const params = new URLSearchParams({ kind });
-    if (query) params.set('q', query);
-    if (cursor) params.set('cursor', cursor);
+    if (options.query) params.set('q', options.query);
+    if (options.cursor) params.set('cursor', options.cursor);
+    if (options.parentID) params.set('parent', String(options.parentID));
+    if (options.sort !== 'name') params.set('sort', options.sort);
     return fetchJSON<CursorPage<TagSummary>>(
         `/api/tags/list?${params}`,
         `Failed to load ${kind}s`,

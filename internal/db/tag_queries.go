@@ -6,9 +6,9 @@ import (
 	"github.com/levmv/polka/internal/bookmeta"
 )
 
-// Exact tag selectors follow the shared tag's name. Word/prefix searches keep
+// Quoted path and direct-membership selectors follow renames. Word searches keep
 // their textual meaning. Query and authorization projection change atomically.
-func renameSavedTagQueries(tx *Tx, kind TagKind, oldName, newName string) error {
+func renameSavedTagQueries(tx *Tx, kind TagKind, names map[string]string) error {
 	rows, err := tx.Query("SELECT id, query FROM shelves WHERE kind = 'query'")
 	if err != nil {
 		return err
@@ -25,7 +25,7 @@ func renameSavedTagQueries(tx *Tx, kind TagKind, oldName, newName string) error 
 			rows.Close()
 			return err
 		}
-		next, changed := renameExactTagQuery(query, kind, oldName, newName)
+		next, changed := renameTagQuery(query, kind, names)
 		if changed {
 			validation := ValidateSearchQuery(next)
 			changes = append(changes, change{id, next, validation.scopeMatch})
@@ -44,7 +44,7 @@ func renameSavedTagQueries(tx *Tx, kind TagKind, oldName, newName string) error 
 	return nil
 }
 
-func renameExactTagQuery(query string, kind TagKind, oldName, newName string) (string, bool) {
+func renameTagQuery(query string, kind TagKind, names map[string]string) (string, bool) {
 	parsed, err := parseSearchQuery(query, false)
 	if err != nil {
 		return query, false
@@ -52,16 +52,24 @@ func renameExactTagQuery(query string, kind TagKind, oldName, newName string) (s
 	runes := []rune(strings.TrimSpace(query))
 	var out strings.Builder
 	last := 0
-	field := searchExactTags
+	branchField, exactField := searchTagBranch, searchExactTags
 	if kind == TagKindGenre {
-		field = searchExactGenres
+		branchField, exactField = searchGenreBranch, searchExactGenres
 	}
 	for _, term := range parsed.terms {
-		if term.field != field || bookmeta.TagKey(term.value) != bookmeta.TagKey(oldName) {
+		if term.field != branchField && term.field != exactField {
+			continue
+		}
+		name, found := names[bookmeta.TagKey(term.value)]
+		if !found {
 			continue
 		}
 		out.WriteString(string(runes[last:term.start]))
-		out.WriteString(QueryTerm(string(kind), newName))
+		if term.field == exactField {
+			out.WriteString(string(kind) + `:="` + strings.ReplaceAll(name, `"`, `""`) + `"`)
+		} else {
+			out.WriteString(QueryTerm(string(kind), name))
+		}
 		last = term.end
 	}
 	if last == 0 {

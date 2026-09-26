@@ -20,7 +20,7 @@ func TestQuotedTagsMatchWholeValues(t *testing.T) {
 		{1, " История , ИСТОРИЯ "},
 		{2, "История искусства"},
 		{3, "История, искусства"},
-		{4, `C++, sci-"fi", lang:ru / 2026, ☆`},
+		{4, `C++, sci-"fi", lang:ru / 2026, ☆, =read`},
 		{5, "C, sci-fi"},
 		{6, "café"},
 		{7, "cafe"},
@@ -60,12 +60,13 @@ func TestQuotedTagsMatchWholeValues(t *testing.T) {
 		{"literal quotes", QueryTerm("tag", `sci-"fi"`), []int64{4}},
 		{"literal query syntax", `tag:"lang:ru / 2026"`, []int64{4}},
 		{"symbol-only tag", `tag:"☆"`, []int64{4}},
+		{"literal equals inside quotes", `tag:"=read"`, []int64{4}},
+		{"direct tag with literal equals", `tag:="=read"`, []int64{4}},
 		{"accents are part of exact name", `tag:"CAFÉ"`, []int64{6}},
 		{"unaccented exact name", `tag:"cafe"`, []int64{7}},
 		{"long tag not truncated", QueryTerm("tag", longTag+"a"), []int64{8}},
 		{"long tag suffix differs", QueryTerm("tag", longTag+"b"), []int64{9}},
-		{"keys hidden from free search", tagSearchKey(TagKindTag, "История"), nil},
-		{"keys hidden from quoted free search", `"` + tagSearchKey(TagKindTag, "История") + `"`, nil},
+		{"internal tag tokens do not match ordinary prefixes", "t", nil},
 		{"missing tag", `tag:"never present"`, nil},
 	}
 	for _, tt := range tests {
@@ -87,7 +88,7 @@ func TestExactTagShelfTracksMetadataAndAccess(t *testing.T) {
 		setSearchTags(t, database, book.id, book.tags)
 	}
 	user := mustUser(t, database, "reader", RoleReader)
-	shelf, err := database.CreateShelf(t.Context(), user.ID, ShelfShared, "History", ShelfQuery, `tag:"История"`)
+	shelf, err := database.CreateShelf(t.Context(), user.ID, ShelfShared, "History", ShelfQuery, `tag:="История"`)
 	if err != nil {
 		t.Fatal(err)
 	}

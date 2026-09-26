@@ -999,7 +999,7 @@ function renderEditForm(b: Book, uiID: string): string {
                             </div>
                             <div class="form-group" data-edit-field="genres">
                                 <label class="form-label" for="genres-${uiID}">Genres</label>
-                                <input type="text" id="genres-${uiID}" name="genres" value="${escapeHtml(b.genres || '')}" class="form-input">
+                                <input type="text" id="genres-${uiID}" name="genres" value="${escapeHtml(b.genres || '')}" class="form-input" placeholder="Fiction.Science Fiction, History">
                             </div>
                             <div class="form-group" data-edit-field="tags">
                                 <label class="form-label" for="tags-${uiID}">Tags</label>

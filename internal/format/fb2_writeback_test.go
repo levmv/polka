@@ -430,7 +430,7 @@ func TestFB2ClassificationWriteback(t *testing.T) {
 	src := []byte(`<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0"><description><title-info>` + genre + keywords + `<book-title>Book</book-title></title-info><src-title-info><genre>old</genre><keywords>old</keywords></src-title-info></description><body><section><p>Text</p></section></body></FictionBook>`)
 	for _, field := range []string{"genres", "tags"} {
 		t.Run(field, func(t *testing.T) {
-			for _, values := range [][]string{{"New"}, nil} {
+			for _, values := range [][]string{{"Fiction.Science Fiction"}, nil} {
 				meta := *extractFB2(t, src)
 				keep := keywords
 				if field == "genres" {

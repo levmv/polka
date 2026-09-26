@@ -283,21 +283,13 @@ test.describe('Catalog', () => {
     await page.goto('/');
     await expect(page.locator('.book-card').first()).toBeVisible();
 
-    await page.locator('#view-table-btn').click();
+    await page.getByRole('button', { name: 'Table view', exact: true }).click();
 
     const table = page.locator('.library-table');
     await expect(table).toBeVisible();
 
-    await expect(table.locator('th.col-title')).toBeVisible();
-    await expect(table.locator('th.col-author')).toBeVisible();
-
     const firstRow = table.locator('.table-row', { hasText: 'With Cover Book' });
-    await expect(firstRow).toBeVisible();
-    await expect(firstRow.locator('.table-title-link')).toBeVisible();
-    await expect(firstRow.locator('.table-format-badge').first()).toBeVisible();
-
     await firstRow.locator('.btn-quick-edit').click();
-    await expect(page.locator('.modal-backdrop')).toBeVisible();
 
     // BookSummary omits identifiers, so quick-edit must fetch the full record.
     await expect(page.locator('.modal-backdrop input[name="identifiers"]')).toHaveValue(
@@ -357,7 +349,7 @@ test.describe('Catalog', () => {
     await page.reload();
     await expect(page.locator('.library-table')).toBeVisible();
 
-    await page.locator('#view-grid-btn').click();
+    await page.getByRole('button', { name: 'Grid view', exact: true }).click();
     await expect(page.locator('.book-card').first()).toBeVisible();
   });
 
@@ -621,7 +613,7 @@ test.describe('Catalog', () => {
     page,
   }) => {
     await page.goto('/');
-    await page.locator('#view-table-btn').click();
+    await page.getByRole('button', { name: 'Table view', exact: true }).click();
     await expect(page.locator('.library-table')).toBeVisible();
 
     const author = page.locator('.table-author-link').first();

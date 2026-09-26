@@ -570,6 +570,76 @@
     }
 }
 
+/* Collection controls */
+.collection-controls {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    margin-left: auto;
+    min-width: 0;
+}
+
+.view-toggle {
+    display: flex;
+    flex-shrink: 0;
+    gap: 0.15rem;
+}
+
+.view-btn {
+    display: flex;
+    box-sizing: border-box;
+    width: var(--toolbar-control-height);
+    height: var(--toolbar-control-height);
+    padding: 0;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-control);
+    cursor: pointer;
+    transition:
+        background-color 0.14s ease,
+        color 0.14s ease;
+}
+
+.view-btn:hover,
+.view-btn:focus-visible {
+    color: var(--text-main);
+    background: var(--surface-hover);
+    outline: 0;
+}
+
+.view-btn[aria-pressed="true"] {
+    color: var(--text-main);
+    background: var(--border-color);
+}
+
+.collection-controls .select-trigger {
+    box-sizing: border-box;
+    min-height: var(--toolbar-control-height);
+    /* Compact padding keeps the frameless trigger aligned with the view buttons. */
+    padding: 0.4rem 0.35rem 0.4rem 0.6rem;
+    border-radius: var(--radius-control);
+    font-size: 1rem;
+    min-width: 0;
+    gap: 3px;
+    background: transparent;
+    border-color: transparent;
+}
+
+.collection-controls .select-trigger:hover,
+.collection-controls .select-trigger:focus-visible,
+.collection-controls .select-trigger[aria-expanded="true"] {
+    background: var(--surface-hover);
+    border-color: transparent;
+}
+
+.collection-controls .select-trigger:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+}
+
 /* Library */
 .continue-reading {
     margin-bottom: 2rem;
@@ -784,14 +854,6 @@
     min-width: 0;
 }
 
-/* Pin the view toggle + sort to the right; search stays left. */
-.library-view-controls {
-    display: flex;
-    gap: 1rem;
-    align-items: center;
-    margin-left: auto;
-}
-
 /* Drawer widths: the fixed hamburger owns the top-left corner, so the whole
    toolbar moves up beside it. */
 @media (max-width: 900px) {
@@ -814,7 +876,7 @@
         padding-left: 0;
     }
 
-    .library-view-controls {
+    .search-row .collection-controls {
         order: -1;
         width: 100%;
         margin-left: 0;
@@ -824,20 +886,13 @@
     }
 
     /* Same as above: with the rail on, the strip is already spoken for. */
-    .continue-reading:not([hidden]) + .search-container .library-view-controls {
+    .continue-reading:not([hidden]) + .search-container .collection-controls {
         padding-left: 0;
     }
 
     .search-field {
         flex: 1 1 100%;
         max-width: none;
-    }
-
-    /* Narrow phones: the cluster itself must shrink too, or the row pushes the
-       page into horizontal scroll, which pins position:fixed elements to the
-       off-screen layout viewport on iOS. */
-    .library-view-controls {
-        min-width: 0;
     }
 }
 
@@ -859,56 +914,6 @@
     outline: none;
     border-color: var(--accent);
     box-shadow: 0 0 0 3px rgba(0, 102, 204, 0.1);
-}
-
-.sort-control {
-    display: inline-flex;
-}
-
-/* Match the larger search-row controls (search box, icon buttons). */
-.search-row .select-trigger {
-    box-sizing: border-box;
-    min-height: var(--toolbar-control-height);
-    /* Vertical padding trimmed so the label's line box cannot push the trigger
-       past the shared control height. */
-    padding: 0.4rem 0.9rem;
-    border-radius: var(--radius-control);
-    font-size: 1rem;
-}
-
-/* In the library toolbar the sort control is frameless like the view toggle, so
-   the right-hand cluster reads as one light group and the search field stays the
-   only bordered box in the row. Selects inside forms and dialogs keep theirs. */
-.library-view-controls .select-trigger {
-    /* Without a frame the trigger has to hug its value: the base 140px floor
-       would leave a gap between a short label and the chevron with no box to
-       explain it. */
-    min-width: 0;
-    /* The chevron's 18px box carries ~4.5px of empty margin around its ink, so
-       the nominal gap and right padding read wider than they measure. Both are
-       trimmed by about that much: the hover pill ends up optically symmetric
-       and the control sits closer to the row's right edge. */
-    gap: 3px;
-    padding-left: 0.6rem;
-    padding-right: 0.35rem;
-    background: transparent;
-    border-color: transparent;
-}
-
-.library-view-controls .sort-control {
-    min-width: 0;
-}
-
-.library-view-controls .select-trigger:hover,
-.library-view-controls .select-trigger:focus-visible,
-.library-view-controls .select-trigger[aria-expanded="true"] {
-    background: var(--surface-hover);
-    border-color: transparent;
-}
-
-.library-view-controls .select-trigger:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: -2px;
 }
 
 .search-icon-btn {
@@ -944,43 +949,6 @@
 
 .book-upload-input[hidden] {
     display: none;
-}
-
-/* No frame: a filled pill marks the active view, so the pair sits quietly next
-   to the bordered sort control instead of competing with it. */
-.view-toggle {
-    display: flex;
-    gap: 0.15rem;
-}
-
-.view-btn {
-    display: flex;
-    box-sizing: border-box;
-    width: var(--toolbar-control-height);
-    height: var(--toolbar-control-height);
-    padding: 0;
-    align-items: center;
-    justify-content: center;
-    color: var(--text-muted);
-    background: transparent;
-    border: none;
-    border-radius: var(--radius-control);
-    cursor: pointer;
-    transition:
-        background-color 0.14s ease,
-        color 0.14s ease;
-}
-
-.view-btn:hover,
-.view-btn:focus-visible {
-    color: var(--text-main);
-    background: var(--surface-hover);
-    outline: 0;
-}
-
-.view-btn.active {
-    color: var(--text-main);
-    background: var(--border-color);
 }
 
 /* Load more */
@@ -4319,8 +4287,10 @@ body.has-library-jump-rail #content {
 
 /* Genres and tags */
 .dictionary-heading {
+    flex-shrink: 0;
     justify-content: flex-start;
     gap: 1.5rem;
+    margin-bottom: 0;
 }
 
 .dictionary-heading a {
@@ -4348,64 +4318,270 @@ body.has-library-jump-rail #content {
     outline-offset: 4px;
 }
 
-.tags-search {
-    max-width: 28rem;
+.tags-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 1rem 1.5rem;
     margin-bottom: 1.25rem;
 }
 
+.tags-search {
+    flex: 1 1 8rem;
+    min-width: 0;
+    max-width: 28rem;
+    min-height: var(--toolbar-control-height);
+}
+
+.tags-toolbar .collection-controls {
+    flex-shrink: 0;
+    gap: 0.75rem;
+}
+
+.tags-path {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.3rem;
+    margin-bottom: 1rem;
+    color: var(--text-muted);
+}
+
+.tags-path[hidden] {
+    display: none;
+}
+
+.tags-path button {
+    min-height: 2.75rem;
+    padding: 0.35rem;
+    border: 0;
+    border-radius: var(--radius-control);
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+    overflow-wrap: anywhere;
+}
+
+.tags-path button[aria-current] {
+    color: var(--text-main);
+}
+
+.tags-path button:hover {
+    background: var(--surface-hover);
+}
+
+.tags-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.6rem;
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.tags-grid .tag-row {
+    display: flex;
+    align-items: stretch;
+    min-width: 0;
+    padding-right: 0.25rem;
+    border-radius: var(--radius-control);
+    background: var(--surface-subtle);
+}
+
+.tag-main {
+    display: flex;
+    flex: 1;
+    align-items: center;
+    gap: 0.4rem;
+    box-sizing: border-box;
+    min-width: 0;
+    min-height: 2.75rem;
+    padding: 0.6rem 0.7rem;
+    border: 0;
+    border-radius: var(--radius-control);
+    background: transparent;
+    color: var(--text-main);
+    font: inherit;
+    text-align: left;
+    text-decoration: none;
+    cursor: pointer;
+}
+
+.tag-main span {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.tags-grid .tag-main span {
+    flex: 1;
+}
+
+.tag-main:hover,
+.tag-count:hover {
+    background: var(--surface-hover);
+}
+
+.tag-chevron {
+    flex-shrink: 0;
+    color: var(--text-muted);
+    transform: rotate(-90deg);
+}
+
+.tag-main[aria-expanded="true"] .tag-chevron {
+    transform: none;
+}
+
+.tag-count {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    box-sizing: border-box;
+    min-width: 2.5rem;
+    min-height: 2.75rem;
+    padding: 0.4rem;
+    border-radius: var(--radius-control);
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+    text-decoration: underline;
+    text-decoration-color: var(--border-color);
+    text-underline-offset: 0.2em;
+}
+
+.tag-main:focus-visible,
+.tag-count:focus-visible,
+.tags-path button:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+}
+
+.tag-action-buttons {
+    display: flex;
+    align-items: center;
+    height: 100%;
+}
+
+.tag-actions {
+    flex-shrink: 0;
+}
+
+.tag-actions .action-btn {
+    width: 2rem;
+    min-height: 2.5rem;
+    padding: 0;
+    border: 0;
+    background: transparent;
+}
+
+.tag-actions .action-btn:hover,
+.tag-actions .action-btn:focus-visible {
+    background: var(--surface-hover);
+}
+
 .tags-table {
+    --tag-indent: 1.25rem;
     width: 100%;
+    table-layout: fixed;
     border-collapse: collapse;
 }
 
-.tags-table th,
-.tags-table td {
-    padding: 0.7rem 0.6rem;
+.tags-table th {
+    box-sizing: border-box;
+    padding: 0.5rem 0.7rem;
     border-bottom: 1px solid var(--border-color);
+    color: var(--text-muted);
+    font-weight: 500;
     text-align: left;
 }
 
-.tags-table th,
-.tag-count,
+.tags-table td {
+    padding: 0;
+}
+
+.tags-table .tag-main,
+.tags-table .tag-status-cell {
+    width: 100%;
+    padding-inline-start: calc(0.7rem + min(5rem, var(--tag-depth) * var(--tag-indent)));
+}
+
+.tags-table .tag-count-cell {
+    width: 4rem;
+    text-align: right;
+}
+
+.tags-table .tag-count {
+    justify-content: flex-end;
+    padding-inline-end: 0.7rem;
+}
+
+.tags-table .tag-actions {
+    width: 4.25rem;
+}
+
+.tags-table .tag-action-buttons {
+    justify-content: flex-end;
+}
+
+.tag-page-status {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+    margin: 0.75rem 0;
+    color: var(--text-muted);
+}
+
+.tag-page-status p {
+    margin: 0;
+}
+
 .tag-rename-hint {
     color: var(--text-muted);
 }
 
-.tags-table td:first-child {
-    overflow-wrap: anywhere;
-}
-
-.tags-table th:nth-child(2),
-.tags-table .tag-count {
-    width: 1%;
-    text-align: right;
-}
-
-.tags-table .tag-actions {
-    width: 1%;
-    text-align: right;
-    white-space: nowrap;
-}
-
-.tag-action-buttons {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
+@media (max-width: 1150px) {
+    .tags-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
 }
 
 @media (max-width: 620px) {
-    .tags-table th,
-    .tags-table td {
-        padding-inline: 0.4rem;
-    }
-
-    .tag-edit {
-        width: 36px;
+    .tags-container {
         padding: 0;
     }
 
-    .tag-edit-label {
-        display: none;
+    .tags-container .page-heading-row {
+        padding-left: 4rem;
+    }
+
+    .tags-search {
+        flex-basis: 100%;
+        order: 1;
+        max-width: none;
+    }
+
+    .tags-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .tags-table {
+        --tag-indent: 0.75rem;
+    }
+}
+
+@media (pointer: coarse) {
+    .tag-actions .action-btn {
+        width: 44px;
+        min-height: 44px;
+    }
+
+    .tags-table .tag-actions {
+        width: 88px;
+    }
+
+    .tag-count {
+        min-width: 44px;
     }
 }
 

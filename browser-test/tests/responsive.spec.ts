@@ -158,7 +158,7 @@ test.describe('Responsive layout (iPad viewport)', () => {
       });
 
     const grid = await measure();
-    await page.locator('#view-table-btn').click();
+    await page.getByRole('button', { name: 'Table view', exact: true }).click();
     await expect(page.locator('.library-table')).toBeVisible();
     const table = await measure();
 

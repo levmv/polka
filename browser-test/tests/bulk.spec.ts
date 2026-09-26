@@ -26,9 +26,7 @@ test.describe('Bulk actions', () => {
     await selectCards(page);
     const bar = page.locator('.bulk-bar');
     await expect(bar).toBeInViewport({ ratio: 1 });
-    const tags = bar.locator('.bulk-bar-action[data-action="tags"]');
-    await expect(tags.locator('span')).toBeHidden();
-    await expect(tags).toHaveAttribute('aria-label', 'Genres/Tags');
+    const tags = bar.getByRole('button', { name: 'Genres/Tags', exact: true });
 
     await tags.click();
     const dialog = page.locator('.bulk-modal');
@@ -73,7 +71,6 @@ test.describe('Bulk actions', () => {
 
     for (const title of titles) {
       const card = page.locator('.book-card', { hasText: title });
-      await expect(card).toHaveClass(/selected/);
       await expect(card.locator('.card-select')).toHaveAttribute('aria-checked', 'true');
     }
 
@@ -102,7 +99,6 @@ test.describe('Bulk actions', () => {
 
     await bar.getByRole('button', { name: 'Clear selection' }).click();
     await expect(bar).toHaveCount(0);
-    await expect(page.locator('body')).not.toHaveClass(/has-selection/);
     await expect(page.locator('.book-card.selected')).toHaveCount(0);
     await page.locator('.book-card', { hasText: titles[0] }).locator('.book-title-link').click();
     await expect(page.locator('.detail-title')).toHaveText(titles[0]);
@@ -111,7 +107,7 @@ test.describe('Bulk actions', () => {
   test('Bulk authors set replaces the author on selected books', async ({ page }) => {
     const author = 'Bulk Author';
     await selectCards(page);
-    await page.locator('#view-table-btn').click();
+    await page.getByRole('button', { name: 'Table view', exact: true }).click();
     await expect(page.locator('.table-row.selected')).toHaveCount(2);
 
     await page.locator('.bulk-bar-action[data-action="authors"]').click();

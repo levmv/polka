@@ -77,19 +77,42 @@ func UpdateSearchIndex(tx *Tx, bookID int64) error {
 	return nil
 }
 
-// tagSearchKey keeps a whole tag in one bounded FTS token, including punctuation
-// and non-Latin text. Case/whitespace equivalence matches bookmeta.ParseTagList;
-// word tokenization must not turn "History" into "Art History" or "C++" into "C".
-// These keys are a disposable index projection, never catalog identifiers.
-func tagSearchKey(kind TagKind, tag string) string {
-	return fmt.Sprintf("%c%x", kind[0], sha256.Sum256([]byte(bookmeta.TagKey(tag))))
+// tagSearchToken encodes a normalized name as one bounded FTS token, preserving
+// punctuation and Unicode identity. These index keys are not catalog identifiers.
+func tagSearchToken(kind TagKind, nameKey string) string {
+	return fmt.Sprintf("%c%x", kind[0], sha256.Sum256([]byte(nameKey)))
 }
 
-// TagSearchKeys encodes whole names for exact genre and tag searches.
+// TagSearchKeys indexes canonical, unique direct memberships from the catalog
+// and their proper ancestors. Flat tags need only one token. Branch search and
+// shelf access match either the direct token or the ancestor token.
 func TagSearchKeys(kind TagKind, tags []string) string {
-	keys := make([]string, len(tags))
-	for i, tag := range tags {
-		keys[i] = tagSearchKey(kind, tag)
+	keys := make([]string, 0, len(tags))
+	var ancestors map[string]struct{}
+	for _, tag := range tags {
+		key := strings.ToLower(tag)
+		keys = append(keys, tagSearchToken(kind, key))
+		if !strings.Contains(key, ".") {
+			continue
+		}
+		parts := bookmeta.TagParts(key)
+		if len(parts) < 2 {
+			continue
+		}
+		if ancestors == nil {
+			ancestors = make(map[string]struct{})
+		}
+		var path string
+		for _, part := range parts[:len(parts)-1] {
+			if path != "" {
+				path += "."
+			}
+			path += part
+			if _, seen := ancestors[path]; !seen {
+				ancestors[path] = struct{}{}
+				keys = append(keys, "b"+tagSearchToken(kind, path))
+			}
+		}
 	}
 	return strings.Join(keys, " ")
 }
@@ -101,8 +124,10 @@ const (
 	searchAuthors
 	searchSeries
 	searchTags
+	searchTagBranch
 	searchExactTags
 	searchGenres
+	searchGenreBranch
 	searchExactGenres
 	searchTitle
 )
@@ -111,7 +136,7 @@ type searchTerm struct {
 	field      searchField
 	value      string
 	prefix     bool
-	start, end int // Rune offsets in the trimmed input, for exact tag renames.
+	start, end int // Rune offsets in the trimmed input, for tag path renames.
 }
 
 type searchFilterKind uint8
@@ -161,18 +186,26 @@ func (q parsedSearchQuery) ftsMatch() string {
 			value = "series:" + value
 		case searchTags:
 			value = "tags:" + value
+		case searchTagBranch, searchGenreBranch:
+			kind := TagKindTag
+			if term.field == searchGenreBranch {
+				kind = TagKindGenre
+			}
+			key := tagSearchToken(kind, bookmeta.TagKey(term.value))
+			value = `(tag_keys:"` + key + `" OR tag_keys:"b` + key + `")`
 		case searchExactTags:
-			value = `tag_keys:"` + tagSearchKey(TagKindTag, term.value) + `"`
+			value = `tag_keys:"` + tagSearchToken(TagKindTag, bookmeta.TagKey(term.value)) + `"`
 		case searchGenres:
 			value = "genres:" + value
 		case searchExactGenres:
-			value = `tag_keys:"` + tagSearchKey(TagKindGenre, term.value) + `"`
+			value = `tag_keys:"` + tagSearchToken(TagKindGenre, bookmeta.TagKey(term.value)) + `"`
 		case searchTitle:
 			value = "title:" + value
 		}
 		parts = append(parts, value)
 	}
-	return strings.Join(parts, " ")
+	// FTS5 does not insert implicit AND beside parenthesized expressions.
+	return strings.Join(parts, " AND ")
 }
 
 const (
@@ -230,12 +263,13 @@ func parseSearchQuery(q string, lenient bool) (parsedSearchQuery, error) {
 	var currentToken strings.Builder
 	inQuote := false
 	tokenQuoted := false
+	exactTag := false
 	var key string
 	tokenStart := 0
 
 	flushToken := func(end int) error {
 		before := len(parsed.terms)
-		err := parsed.addClause(key, currentToken.String(), tokenQuoted && !inQuote, lenient)
+		err := parsed.addClause(key, currentToken.String(), tokenQuoted && !inQuote, exactTag, lenient)
 		if len(parsed.terms) > before {
 			parsed.terms[before].start = tokenStart
 			parsed.terms[before].end = end
@@ -243,6 +277,7 @@ func parseSearchQuery(q string, lenient bool) (parsedSearchQuery, error) {
 		currentToken.Reset()
 		key = ""
 		tokenQuoted = false
+		exactTag = false
 		return err
 	}
 
@@ -278,6 +313,10 @@ func parseSearchQuery(q string, lenient bool) (parsedSearchQuery, error) {
 				continue
 			}
 		}
+		if r == '=' && !inQuote && !tokenQuoted && !exactTag && currentToken.Len() == 0 && (key == "tag" || key == "genre") {
+			exactTag = true
+			continue
+		}
 
 		currentToken.WriteRune(r)
 	}
@@ -301,7 +340,7 @@ func parseSearchQuery(q string, lenient bool) (parsedSearchQuery, error) {
 	return parsed, nil
 }
 
-func (q *parsedSearchQuery) addClause(key, value string, quoted, lenient bool) error {
+func (q *parsedSearchQuery) addClause(key, value string, quoted, exactTag, lenient bool) error {
 	if value == "" {
 		if key != "" && !lenient {
 			return fmt.Errorf("%s: requires a value", key)
@@ -318,11 +357,17 @@ func (q *parsedSearchQuery) addClause(key, value string, quoted, lenient bool) e
 	case "tag":
 		term.field = searchTags
 		if quoted {
+			term.field = searchTagBranch
+		}
+		if exactTag {
 			term.field = searchExactTags
 		}
 	case "genre":
 		term.field = searchGenres
 		if quoted {
+			term.field = searchGenreBranch
+		}
+		if exactTag {
 			term.field = searchExactGenres
 		}
 	case "title":

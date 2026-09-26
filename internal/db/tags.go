@@ -11,6 +11,8 @@ import (
 )
 
 var ErrTagNotFound = errors.New("tag not found")
+var ErrTagCycle = errors.New("a branch cannot be moved inside itself")
+var ErrTagPath = fmt.Errorf("use a path with non-empty parts and at most %d levels", bookmeta.MaxTagDepth)
 
 type TagKind string
 
@@ -25,11 +27,9 @@ type BookTags struct {
 	Tags   []string
 }
 
-type TagRow struct {
-	ID        int64
-	Name      string
-	Key       string
-	BookCount int
+type tagNode struct {
+	id   int64
+	name string
 }
 
 // TagsByBookIDs loads ordered, canonical names in bounded batches, including Trash.
@@ -77,139 +77,126 @@ func SetBookTags(tx *Tx, bookID int64, kind TagKind, names []string) error {
 		return err
 	}
 	for position, name := range names {
-		key := bookmeta.TagKey(name)
-		var id int64
-		err := tx.QueryRow("SELECT id FROM tags WHERE kind = ? AND name_key = ?", kind, key).Scan(&id)
-		if errors.Is(err, sql.ErrNoRows) {
-			err = tx.QueryRow("INSERT INTO tags (kind, name, name_key) VALUES (?, ?, ?) RETURNING id", kind, name, key).Scan(&id)
-		}
+		node, err := ensureTagPath(tx, kind, bookmeta.TagParts(name))
 		if err != nil {
 			return fmt.Errorf("resolve tag: %w", err)
 		}
-		if _, err := tx.Exec("INSERT INTO book_tags (book_id, tag_id, position) VALUES (?, ?, ?)", bookID, id, position); err != nil {
+		if _, err := tx.Exec("INSERT INTO book_tags (book_id, tag_id, position) VALUES (?, ?, ?)", bookID, node.id, position); err != nil {
 			return fmt.Errorf("link tag: %w", err)
 		}
 	}
 	return nil
 }
 
+// ensureTagPath finds or creates a path, keeping existing ancestors' spelling.
+// Only the returned node is linked to a book; ancestors belong to the dictionary.
+func ensureTagPath(tx *Tx, kind TagKind, parts []string) (tagNode, error) {
+	if len(parts) == 0 {
+		return tagNode{}, nil
+	}
+	node := tagNode{name: strings.Join(parts, ".")}
+	err := tx.QueryRow("SELECT id, name FROM tags WHERE kind = ? AND name_key = ?", kind, bookmeta.TagKey(node.name)).Scan(&node.id, &node.name)
+	if !errors.Is(err, sql.ErrNoRows) {
+		return node, err
+	}
+	parent, err := ensureTagPath(tx, kind, parts[:len(parts)-1])
+	if err != nil {
+		return tagNode{}, err
+	}
+	node.name = parts[len(parts)-1]
+	if parent.id != 0 {
+		node.name = parent.name + "." + node.name
+	}
+	err = tx.QueryRow("INSERT INTO tags (kind, name, name_key, parent_id) VALUES (?, ?, ?, ?) RETURNING id", kind, node.name, bookmeta.TagKey(node.name), sql.NullInt64{Int64: parent.id, Valid: parent.id != 0}).Scan(&node.id)
+	return node, err
+}
+
 func DeleteOrphanTags(execer Execer) error {
-	_, err := execer.Exec("DELETE FROM tags WHERE NOT EXISTS (SELECT 1 FROM book_tags bt WHERE bt.tag_id = tags.id)")
+	_, err := execer.Exec(`WITH RECURSIVE used(id) AS (
+   SELECT id FROM tags WHERE EXISTS (SELECT 1 FROM book_tags bt WHERE bt.tag_id = tags.id)
+   UNION
+   SELECT t.parent_id FROM tags t JOIN used ON used.id = t.id WHERE t.parent_id IS NOT NULL
+ ) DELETE FROM tags WHERE id NOT IN (SELECT id FROM used)`)
 	return err
 }
 
-// ListTags returns names used by visible live books for suggestions and OPDS.
-func ListTags(queryer Queryer, scope VisibilityScope, kind TagKind, q string, limit int) ([]string, error) {
-	rows, err := listTagRows(queryer, scope, kind, q, "", limit, false)
+// RenameOrMergeTag moves the whole branch, including trashed books. Overlapping
+// branches merge node by node, keeping the first position on each book.
+func RenameOrMergeTag(tx *Tx, tagID int64, newName string) ([]int64, error) {
+	nodes, kind, err := loadTagBranch(tx, tagID)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]string, 0, len(rows))
-	for _, row := range rows {
-		out = append(out, row.Name)
-	}
-	return out, nil
-}
-
-func ListTagCountsPage(queryer Queryer, scope VisibilityScope, kind TagKind, q, after string, limit int) ([]TagRow, error) {
-	return listTagRows(queryer, scope, kind, q, after, limit, true)
-}
-
-func listTagRows(queryer Queryer, scope VisibilityScope, kind TagKind, q, after string, limit int, counts bool) ([]TagRow, error) {
-	var withSQL string
-	var args []any
-	from := "tags t"
-	where := "t.kind = ? AND t.name_key > ?"
-	count := "0"
-	if scope.IsFull() {
-		liveLinks := `FROM book_tags bt JOIN books b ON b.id = bt.book_id
-   WHERE bt.tag_id = t.id AND b.deleted_at IS NULL`
-		where += " AND EXISTS (SELECT 1 " + liveLinks + ")"
-		if counts {
-			count = "(SELECT COUNT(*) " + liveLinks + ")"
-		}
-	} else {
-		// Start with visible books so a narrow grant never scans every tag's books.
-		withSQL = scope.visibleBooksCTE() + `, tag_counts AS (
-   SELECT bt.tag_id, COUNT(*) AS book_count FROM books b
-   JOIN book_tags bt ON bt.book_id = b.id
-   WHERE b.id IN (SELECT book_id FROM visible_scope) AND b.deleted_at IS NULL
-   GROUP BY bt.tag_id)`
-		from += " JOIN tag_counts c ON c.tag_id = t.id"
-		count = "c.book_count"
-		args = append(args, scope.UserID)
-	}
-	args = append(args, kind, after)
-	if key := bookmeta.TagKey(q); key != "" {
-		where += ` AND t.name_key LIKE ? ESCAPE '\'`
-		args = append(args, "%"+escapeLike(key)+"%")
-	}
-	query := withClause(withSQL) + "SELECT t.id, t.name, t.name_key, " + count + " FROM " + from + " WHERE " + where + " ORDER BY t.name_key"
-	if limit > 0 {
-		query += " LIMIT ?"
-		args = append(args, limit)
-	}
-	rows, err := queryer.Query(query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("list tags: %w", err)
-	}
-	defer rows.Close()
-	var out []TagRow
-	for rows.Next() {
-		var tag TagRow
-		if err := rows.Scan(&tag.ID, &tag.Name, &tag.Key, &tag.BookCount); err != nil {
-			return nil, err
-		}
-		out = append(out, tag)
-	}
-	return out, rows.Err()
-}
-
-// RenameOrMergeTag affects all memberships, including trashed books. Merging
-// keeps the first position when a book already has both tags.
-func RenameOrMergeTag(tx *Tx, tagID int64, name string) ([]int64, error) {
-	var oldName string
-	var kind TagKind
-	if err := tx.QueryRow("SELECT kind, name FROM tags WHERE id = ?", tagID).Scan(&kind, &oldName); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ErrTagNotFound
-		}
-		return nil, err
-	}
-	if oldName == name {
+	oldName := nodes[0].name
+	newName = bookmeta.NormalizeTagName(newName)
+	if oldName == newName {
 		return nil, nil
 	}
-	ids, err := bookIDsForTag(tx, tagID)
+	if len(bookmeta.TagParts(newName)) > 1 && strings.HasPrefix(bookmeta.TagKey(newName), bookmeta.TagKey(oldName)+".") {
+		return nil, ErrTagCycle
+	}
+	ids, err := bookIDsForTagBranch(tx, tagID)
 	if err != nil {
 		return nil, err
 	}
-	var targetID int64
-	var targetName string
-	err = tx.QueryRow("SELECT id, name FROM tags WHERE kind = ? AND name_key = ?", kind, bookmeta.TagKey(name)).Scan(&targetID, &targetName)
-	switch {
-	case errors.Is(err, sql.ErrNoRows), err == nil && targetID == tagID:
-		_, err = tx.Exec("UPDATE tags SET name = ?, name_key = ? WHERE id = ?", name, bookmeta.TagKey(name), tagID)
-		targetName = name
-	case err != nil:
-		return nil, err
-	default:
-		_, err = tx.Exec(`INSERT INTO book_tags (book_id, tag_id, position)
-   SELECT book_id, ?, position FROM book_tags WHERE tag_id = ?
-   ON CONFLICT (book_id, tag_id) DO UPDATE SET position = MIN(position, excluded.position)`, targetID, tagID)
-		if err == nil {
-			_, err = tx.Exec("DELETE FROM book_tags WHERE tag_id = ?", tagID)
+	renamed := make(map[string]string, len(nodes))
+	for _, node := range nodes {
+		destination := newName + strings.TrimPrefix(node.name, oldName)
+		parts := bookmeta.TagParts(destination)
+		// A descendant must remain a nested path. TagParts falls back to a
+		// literal name for empty components or excessive depth.
+		if node.id != tagID && len(parts) == 1 {
+			return nil, ErrTagPath
 		}
-		if err == nil {
-			_, err = tx.Exec("DELETE FROM tags WHERE id = ?", tagID)
+		canonicalName, err := moveTagNode(tx, kind, node.id, parts)
+		if err != nil {
+			return nil, err
 		}
+		renamed[bookmeta.TagKey(node.name)] = canonicalName
 	}
-	if err != nil {
+	if err := renameSavedTagQueries(tx, kind, renamed); err != nil {
 		return nil, err
 	}
-	if err := renameSavedTagQueries(tx, kind, oldName, targetName); err != nil {
+	if err := DeleteOrphanTags(tx); err != nil {
 		return nil, err
 	}
 	return ids, nil
+}
+
+// moveTagNode renames one node or merges it into an existing destination.
+// The caller visits parents before children and updates every descendant's path.
+func moveTagNode(tx *Tx, kind TagKind, sourceID int64, parts []string) (string, error) {
+	parent, err := ensureTagPath(tx, kind, parts[:len(parts)-1])
+	if err != nil {
+		return "", err
+	}
+	name := parts[len(parts)-1]
+	if parent.id != 0 {
+		name = parent.name + "." + name
+	}
+	var target tagNode
+	err = tx.QueryRow("SELECT id, name FROM tags WHERE kind = ? AND name_key = ?", kind, bookmeta.TagKey(name)).Scan(&target.id, &target.name)
+	if errors.Is(err, sql.ErrNoRows) || err == nil && target.id == sourceID {
+		_, err = tx.Exec("UPDATE tags SET name = ?, name_key = ?, parent_id = ? WHERE id = ?", name, bookmeta.TagKey(name), sql.NullInt64{Int64: parent.id, Valid: parent.id != 0}, sourceID)
+		return name, err
+	}
+	if err != nil {
+		return "", err
+	}
+
+	if _, err := tx.Exec(`INSERT INTO book_tags (book_id, tag_id, position)
+   SELECT book_id, ?, position FROM book_tags WHERE tag_id = ?
+   ON CONFLICT (book_id, tag_id) DO UPDATE SET position = MIN(position, excluded.position)`, target.id, sourceID); err != nil {
+		return "", err
+	}
+	if _, err := tx.Exec("UPDATE tags SET parent_id = ? WHERE parent_id = ?", target.id, sourceID); err != nil {
+		return "", err
+	}
+	if _, err := tx.Exec("DELETE FROM book_tags WHERE tag_id = ?", sourceID); err != nil {
+		return "", err
+	}
+	_, err = tx.Exec("DELETE FROM tags WHERE id = ?", sourceID)
+	return target.name, err
 }
 
 func DeleteTag(tx *Tx, tagID int64) ([]int64, error) {
@@ -220,21 +207,24 @@ func DeleteTag(tx *Tx, tagID int64) ([]int64, error) {
 		}
 		return nil, err
 	}
-	ids, err := bookIDsForTag(tx, tagID)
+	ids, err := bookIDsForTagBranch(tx, tagID)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := tx.Exec("DELETE FROM book_tags WHERE tag_id = ?", tagID); err != nil {
+	if _, err := tx.Exec("DELETE FROM book_tags WHERE tag_id IN ("+tagDescendantsSQL("?")+")", tagID); err != nil {
 		return nil, err
 	}
-	if _, err := tx.Exec("DELETE FROM tags WHERE id = ?", tagID); err != nil {
+	if _, err := tx.Exec("DELETE FROM tags WHERE id IN ("+tagDescendantsSQL("?")+")", tagID); err != nil {
+		return nil, err
+	}
+	if err := DeleteOrphanTags(tx); err != nil {
 		return nil, err
 	}
 	return ids, nil
 }
 
-func bookIDsForTag(queryer Queryer, tagID int64) ([]int64, error) {
-	rows, err := queryer.Query("SELECT book_id FROM book_tags WHERE tag_id = ?", tagID)
+func bookIDsForTagBranch(queryer Queryer, tagID int64) ([]int64, error) {
+	rows, err := queryer.Query("SELECT DISTINCT book_id FROM book_tags WHERE tag_id IN ("+tagDescendantsSQL("?")+")", tagID)
 	if err != nil {
 		return nil, err
 	}
@@ -248,6 +238,43 @@ func bookIDsForTag(queryer Queryer, tagID int64) ([]int64, error) {
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+func tagDescendantsSQL(root string) string {
+	return `WITH RECURSIVE branch(id) AS (
+   SELECT ` + root + `
+   UNION ALL
+   SELECT child.id FROM tags child JOIN branch ON child.parent_id = branch.id
+ ) SELECT id FROM branch`
+}
+
+// loadTagBranch returns the root first, followed by its descendants in depth order.
+func loadTagBranch(queryer Queryer, tagID int64) ([]tagNode, TagKind, error) {
+	rows, err := queryer.Query(`WITH RECURSIVE branch(id, depth) AS (
+   SELECT id, 0 FROM tags WHERE id = ?
+   UNION ALL
+   SELECT child.id, branch.depth + 1 FROM tags child JOIN branch ON child.parent_id = branch.id
+ ) SELECT t.id, t.name, t.kind FROM branch JOIN tags t ON t.id = branch.id ORDER BY branch.depth, t.name_key`, tagID)
+	if err != nil {
+		return nil, "", err
+	}
+	defer rows.Close()
+	var nodes []tagNode
+	var kind TagKind
+	for rows.Next() {
+		var node tagNode
+		if err := rows.Scan(&node.id, &node.name, &kind); err != nil {
+			return nil, "", err
+		}
+		nodes = append(nodes, node)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, "", err
+	}
+	if len(nodes) == 0 {
+		return nil, "", ErrTagNotFound
+	}
+	return nodes, kind, nil
 }
 
 // escapeLike escapes literal substring searches.

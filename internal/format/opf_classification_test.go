@@ -43,7 +43,7 @@ func TestEPUBClassificationWritebackRoundTrip(t *testing.T) {
 				{name: "content.opf", data: []byte(`<package xmlns="http://www.idpf.org/2007/opf" version="` + version + `"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Book</dc:title><dc:subject>Old</dc:subject>` + custom + `</metadata></package>`)},
 			})
 			for _, meta := range []Metadata{
-				{Title: "Book", Genres: []string{"History", "Научная фантастика"}, Tags: []string{"History", `Read & "reviewed"`}},
+				{Title: "Book", Genres: []string{"History", "Фантастика.Научная фантастика"}, Tags: []string{"History", `Reading.Read & "reviewed"`}},
 				{Title: "Book", Tags: []string{"Keep"}},
 				{Title: "Book", Genres: []string{"History"}},
 				{Title: "Book"},
