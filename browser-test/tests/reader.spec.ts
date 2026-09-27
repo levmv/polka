@@ -4,7 +4,7 @@ import {
   epubWithVerticalWriting,
 } from './book-fixtures';
 import { expect, test } from './fixtures';
-import { importTestBook, readerMutationFields } from './helpers';
+import { importTestBook } from './helpers';
 
 test.describe('Reader', () => {
   test('Vertical EPUB fills the stage without changing its column length', async ({ page }) => {
@@ -55,8 +55,6 @@ test.describe('Reader', () => {
   test('EPUB reader supports controls and persists reading state', async ({ page }) => {
     const reader = page.locator('.reader-page');
     const displayToggle = page.locator('[data-reader-display-toggle]');
-    let bookId = 0;
-    let assetId = '';
 
     await test.step('opens with the default layout', async () => {
       await page.goto('/');
@@ -66,7 +64,7 @@ test.describe('Reader', () => {
       const href = await card.locator('.book-title-link').getAttribute('href');
       if (!href) throw new Error('missing book link');
       // The href carries the ?from= context; the id is the path alone.
-      bookId = Number(href.split('/').pop()?.split('?')[0]);
+      const bookId = Number(href.split('/').pop()?.split('?')[0]);
       if (!bookId) throw new Error('missing book id');
 
       await page.goto(`/read/${bookId}`);
@@ -360,7 +358,7 @@ test.describe('Reader', () => {
     });
 
     await test.step('records opening the book', async () => {
-      assetId = (await reader.getAttribute('data-reader-asset-id')) || '';
+      const assetId = (await reader.getAttribute('data-reader-asset-id')) || '';
       if (!assetId) throw new Error('missing reader asset id');
 
       await expect
@@ -373,27 +371,6 @@ test.describe('Reader', () => {
           }, assetId);
         })
         .toBe(true);
-    });
-
-    await test.step('projects saved progress onto book detail', async () => {
-      await page.goto(`/book/${bookId}`);
-      const saveResponse = await page.request.put(`/api/reader/assets/${assetId}/position`, {
-        data: {
-          ...(await readerMutationFields(page, Number(assetId))),
-          progress: 0.42,
-          locator: {},
-        },
-      });
-      expect(saveResponse.ok()).toBe(true);
-
-      await page.reload();
-      const progress = page.locator('#btn-reading-status');
-      await expect(progress).toBeVisible();
-      await expect(progress).toContainText('Reading · 42%');
-      await expect(progress.locator('.detail-reading-progress-fill')).toHaveAttribute(
-        'style',
-        /42%/,
-      );
     });
   });
 

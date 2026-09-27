@@ -1,5 +1,5 @@
 import { addBookToShelf, fetchBookShelves, fetchCurrentUser, removeBookFromShelf } from '../api';
-import { notifyCatalogChanged, notifyShelvesChanged } from '../catalog-events';
+import { notifyCatalogChanged } from '../catalog-events';
 import { errorMessage } from '../errors';
 import { icon } from '../icons';
 import type { ManagedPopover } from '../popover';
@@ -183,11 +183,7 @@ function buildCreateRow(popover: ManagedPopover, bookId: number): HTMLElement {
         popover.close();
         try {
             const currentUser = await fetchCurrentUser();
-            const shelf = await openCreateShelfDialog({ currentUser, kind: 'manual' });
-            if (!shelf) return;
-            await addBookToShelf(shelf.id, bookId);
-            notifyShelvesChanged();
-            notifyCatalogChanged({ kind: 'shelf-membership', shelfId: shelf.id });
+            await openCreateShelfDialog({ currentUser, kind: 'manual', bookID: bookId });
         } catch (e) {
             console.error('Failed to create shelf:', e);
             showToast(errorMessage(e, 'Shelf update failed'), { type: 'error' });

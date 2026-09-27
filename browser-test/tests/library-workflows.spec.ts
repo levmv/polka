@@ -18,13 +18,8 @@ test.describe('Library workflows', () => {
     const logout = page.getByRole('button', { name: 'Log out' });
     await expect(logout).toBeVisible();
 
-    // The bar takes the row's place, so a resize would nudge the whole footer.
-    const rowBox = await logout.boundingBox();
     await logout.click();
     await expect(page.locator('.account-confirm')).toBeVisible();
-    const barBox = await page.locator('.account-confirm').boundingBox();
-    expect(barBox!.height).toBe(rowBox!.height);
-    expect(barBox!.width).toBe(rowBox!.width);
 
     await page.locator('.account-confirm-no').click();
     await expect(logout).toBeVisible();

@@ -515,6 +515,7 @@ func (s *Server) routes() (*http.ServeMux, error) {
 	s.route(mux, "DELETE /api/shelves/{id}/books/{bookID}", db.RoleReader, s.handleAPIShelfRemoveBook)
 	s.route(mux, "GET /api/series", db.RoleReader, s.handleAPISeries)
 	s.route(mux, "GET /api/tags/list", db.RoleReader, s.handleAPITagList)
+	s.route(mux, "GET /api/tags/{id}", db.RoleMember, s.handleAPITag)
 	s.route(mux, "PATCH /api/tags/{id}", db.RoleMember, s.handleAPITagRename)
 	s.route(mux, "DELETE /api/tags/{id}", db.RoleMember, s.handleAPITagDelete)
 	s.route(mux, "GET /api/authors", db.RoleReader, s.handleAPIAuthors)

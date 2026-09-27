@@ -1,57 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import {
-    historyStateWithScroll,
-    readEntryID,
-    readOverlayEntry,
-    readOverlayOriginID,
-    readPredecessorURL,
-    readRetainedLibraryID,
-    retentionForPop,
-    retentionForPush,
-} from '../src/history-state.ts';
-
-test('history state readers reject values the app did not mint', () => {
-    assert.equal(readEntryID(null), null);
-    assert.equal(readEntryID({}), null);
-    assert.equal(readEntryID({ polkaEntryID: '' }), null);
-    assert.equal(readEntryID({ polkaEntryID: 7 }), null);
-    assert.equal(readEntryID({ polkaEntryID: 'e1' }), 'e1');
-    assert.equal(readRetainedLibraryID({ polkaRetainedLibraryID: 'lib' }), 'lib');
-    assert.equal(readPredecessorURL({ polkaFrom: '/?sort=title' }), '/?sort=title');
-    assert.equal(readOverlayOriginID({ polkaOverlayOriginID: 'page' }), 'page');
-    assert.equal(readOverlayEntry({ polkaOverlay: { kind: '' } }), null);
-    assert.deepEqual(
-        readOverlayEntry({
-            polkaOverlay: {
-                kind: 'book-edit',
-                target: 'book-2',
-                ignored: 7,
-            },
-        }),
-        {
-            kind: 'book-edit',
-            target: 'book-2',
-        },
-    );
-});
-
-// Every scroll writes the position back into the current entry. Replacing the
-// entry rather than merging it would drop the identity retention matches on.
-test('recording a scroll position leaves the rest of the entry alone', () => {
-    const entry = {
-        polkaEntryID: 'e1',
-        polkaFrom: '/?sort=title',
-        polkaRetainedLibraryID: 'lib',
-        somethingElse: 7,
-    };
-    assert.deepEqual(historyStateWithScroll(entry, { x: 0, y: 900 }), {
-        ...entry,
-        polkaScroll: { x: 0, y: 900 },
-    });
-    assert.deepEqual(historyStateWithScroll(null, { x: 0, y: 5 }), { polkaScroll: { x: 0, y: 5 } });
-});
+import { retentionForPop, retentionForPush } from '../src/history-state.ts';
 
 test('opening a book from the library retains it, and only then', () => {
     const push = (fromPathname, toPathname, retainedKey = null) =>

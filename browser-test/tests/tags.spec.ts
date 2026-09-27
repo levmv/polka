@@ -85,6 +85,44 @@ test('Tags connect catalog filtering, saved shelves and shared edits', async ({ 
   await expect(page.getByText('No matching tags.', { exact: true })).toBeVisible();
 });
 
+test('Forward follows a merged genre through external rename and deletion', async ({
+  page,
+  browserErrors,
+}) => {
+  browserErrors.allow((message) => /404/.test(message));
+  const book = await findBook(page, 'Foundation');
+  const response = await page.request.patch(`/api/books/${book.id}`, {
+    data: { genres: 'Review.Source, Review.Target' },
+  });
+  expect(response.ok()).toBe(true);
+  await page.goto('/tags?kind=genre&branch=Review');
+  await page.getByRole('button', { name: 'Edit Review.Source', exact: true }).click();
+  const editor = page.getByRole('dialog', { name: 'Rename genre' });
+  const name = editor.getByRole('combobox', { name: 'Name', exact: true });
+  await name.fill('Review.Target');
+  await editor.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(editor).toBeHidden();
+  // The completed edit returns to the root, where the nested survivor is unloaded.
+  await expect(page).toHaveURL(/\/tags\?kind=genre$/);
+  const tags = await page.request.get('/api/tags/list?kind=genre&branch=Review');
+  const { id } = (await tags.json()).items[0];
+  const renamed = await page.request.patch(`/api/tags/${id}`, { data: { name: 'Review.Current' } });
+  expect(renamed.ok()).toBe(true);
+  await page.goForward();
+  await expect(name).toHaveValue('Review.Current');
+  await name.fill('Review.Third');
+  await editor.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(editor).toBeHidden();
+  const updated = await page.request.get(`/api/books/${book.id}`);
+  expect((await updated.json()).genres).toBe('Review.Third');
+  const deleted = await page.request.delete(`/api/tags/${id}`);
+  expect(deleted.ok()).toBe(true);
+  await page.goForward();
+  await expect(page.getByRole('alert')).toContainText('This item is no longer available.');
+  await expect(editor).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => Boolean(history.state.polkaOverlay))).toBe(false);
+});
+
 test('Genres and tags stay separate through editing and navigation', async ({ page }) => {
   const book = await findBook(page, 'Foundation');
   const other = await findBook(page, 'With Cover Book');
@@ -126,7 +164,7 @@ test('Genres and tags stay separate through editing and navigation', async ({ pa
     'History.France',
     'Travel.france',
   ]);
-  const adventure = tableRow.getByRole('button', { name: 'Adventure', exact: true });
+  const adventure = tableRow.getByRole('link', { name: 'Adventure', exact: true });
   await expect(adventure).toHaveAttribute('title', 'Fiction.Adventure');
   await adventure.click();
   await expect(page.locator('#search-input')).toHaveValue(
@@ -194,20 +232,13 @@ test('Collapsing a loading branch does not lose nested genres', async ({ page })
     data: { genres: 'Fiction.Science Fiction.Space Opera' },
   });
   expect(updated.ok()).toBe(true);
-  const response = await page.request.get('/api/tags/list?kind=genre&q=Science');
-  expect(response.ok()).toBe(true);
-  const { items } = await response.json();
-  const scienceID = items.find(
-    (tag: { name: string }) => tag.name === 'Fiction.Science Fiction',
-  ).id;
-
   let release!: () => void;
   const pending = new Promise<void>((resolve) => {
     release = resolve;
   });
   let loading = false;
   await page.route('**/api/tags/list?**', async (route) => {
-    if (new URL(route.request().url()).searchParams.get('parent') === String(scienceID)) {
+    if (new URL(route.request().url()).searchParams.get('branch') === 'Fiction.Science Fiction') {
       loading = true;
       await pending;
     }
@@ -246,10 +277,24 @@ test('Tag grid navigation and list expansion keep separate positions', async ({ 
     expect(response.ok()).toBe(true);
   }
   await page.goto('/tags');
-  await page.getByRole('button', { name: 'Open Fiction', exact: true }).click();
+  await page.getByRole('link', { name: 'Open Fiction', exact: true }).click();
   const path = page.getByRole('navigation', { name: 'Genre path' });
-  await page.getByRole('button', { name: 'Open Fiction.Science Fiction', exact: true }).click();
+  await page.getByRole('link', { name: 'Open Fiction.Science Fiction', exact: true }).click();
   await expect(page.getByRole('link', { name: 'Space Opera', exact: true })).toBeVisible();
+  const branchURL = page.url();
+  await page.goBack();
+  await expect(
+    page.getByRole('link', { name: 'Open Fiction.Science Fiction', exact: true }),
+  ).toBeVisible();
+  await page.goForward();
+  await expect(page.getByRole('link', { name: 'Space Opera', exact: true })).toBeVisible();
+  const direct = await page.context().newPage();
+  try {
+    await direct.goto(branchURL);
+    await expect(direct.getByRole('link', { name: 'Space Opera', exact: true })).toBeVisible();
+  } finally {
+    await direct.close();
+  }
 
   await page.getByRole('button', { name: 'List view', exact: true }).click();
   await expect(path).toBeHidden();
@@ -266,7 +311,7 @@ test('Tag grid navigation and list expansion keep separate positions', async ({ 
   await expect(page.getByRole('link', { name: 'Space Opera', exact: true })).toBeVisible();
 
   await page.getByRole('button', { name: 'Grid view', exact: true }).click();
-  await expect(path.getByRole('button', { name: 'Science Fiction', exact: true })).toHaveAttribute(
+  await expect(path.getByRole('link', { name: 'Science Fiction', exact: true })).toHaveAttribute(
     'aria-current',
     'page',
   );
@@ -276,7 +321,7 @@ test('Tag grid navigation and list expansion keep separate positions', async ({ 
   );
   await expect(page.locator('.book-card')).toHaveCount(1);
   await page.goBack();
-  await expect(path.getByRole('button', { name: 'Science Fiction', exact: true })).toBeVisible();
+  await expect(path.getByRole('link', { name: 'Science Fiction', exact: true })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Space Opera', exact: true })).toBeVisible();
 
   const search = page.getByRole('searchbox', { name: 'Search genres' });
@@ -284,8 +329,8 @@ test('Tag grid navigation and list expansion keep separate positions', async ({ 
   await expect(path).toBeHidden();
   await expect(page.getByRole('link', { name: 'Fiction.Fantasy', exact: true })).toBeVisible();
   await search.fill('');
-  await expect(path.getByRole('button', { name: 'Science Fiction', exact: true })).toBeVisible();
-  await path.getByRole('button', { name: 'All genres', exact: true }).click();
+  await expect(path.getByRole('link', { name: 'Science Fiction', exact: true })).toBeVisible();
+  await path.getByRole('link', { name: 'All genres', exact: true }).click();
   await page.getByRole('button', { name: 'List view', exact: true }).click();
   await expect(page.getByRole('link', { name: 'Space Opera', exact: true })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Medieval', exact: true })).toBeVisible();

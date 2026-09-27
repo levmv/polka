@@ -1,8 +1,9 @@
 import { emptyTrash, fetchCurrentUser, fetchTrash, purgeBook, restoreBook } from '../api';
 import { coverUrl } from '../cover';
-import { escapeHtml } from '../dom';
+import { escapeHtml, requiredElement } from '../dom';
 import { errorMessage } from '../errors';
 import { confirmModal } from '../modal';
+import type { RouteController } from '../router';
 import { showToast } from '../toast';
 import type { TrashedBook } from '../types';
 
@@ -18,10 +19,12 @@ export function renderTrashPage(): string {
     `;
 }
 
-export async function initTrash(root: HTMLElement, signal: AbortSignal): Promise<void> {
-    const container = root.querySelector<HTMLElement>('#trash-content');
-    if (!container) return;
+export function initTrash(root: HTMLElement, signal: AbortSignal): RouteController {
+    const container = requiredElement(root, '#trash-content');
+    return { ready: loadTrash(container, signal), destroy() {} };
+}
 
+async function loadTrash(container: HTMLElement, signal: AbortSignal): Promise<void> {
     // Role gates the irreversible "Delete permanently" action; the server
     // enforces it too, so a non-admin simply never sees the button.
     const currentUser = fetchCurrentUser().catch(() => null);
@@ -31,14 +34,19 @@ export async function initTrash(root: HTMLElement, signal: AbortSignal): Promise
         const me = await currentUser;
         if (signal.aborted) return;
         const isAdmin = me?.role === 'admin';
-        renderTrash(container, books, isAdmin);
+        renderTrash(container, books, isAdmin, signal);
     } catch (_e) {
         if (signal.aborted) return;
         container.innerHTML = `<p class="error">Failed to load trash</p>`;
     }
 }
 
-function renderTrash(container: HTMLElement, books: TrashedBook[], isAdmin: boolean): void {
+function renderTrash(
+    container: HTMLElement,
+    books: TrashedBook[],
+    isAdmin: boolean,
+    signal: AbortSignal,
+): void {
     if (books.length === 0) {
         container.innerHTML = `<p class="trash-empty">Trash is empty.</p>`;
         return;
@@ -47,18 +55,18 @@ function renderTrash(container: HTMLElement, books: TrashedBook[], isAdmin: bool
     const frag = document.createDocumentFragment();
     // The bulk "Empty trash" action is admin-only, mirroring the per-card purge.
     if (isAdmin) {
-        frag.appendChild(createTrashToolbar(container));
+        frag.appendChild(createTrashToolbar(container, signal));
     }
     const grid = document.createElement('div');
     grid.className = 'trash-grid';
     for (const b of books) {
-        grid.appendChild(createTrashCard(container, b, isAdmin));
+        grid.appendChild(createTrashCard(container, b, isAdmin, signal));
     }
     frag.appendChild(grid);
     container.replaceChildren(frag);
 }
 
-function createTrashToolbar(container: HTMLElement): HTMLElement {
+function createTrashToolbar(container: HTMLElement, signal: AbortSignal): HTMLElement {
     const bar = document.createElement('div');
     bar.className = 'trash-toolbar';
     bar.innerHTML = `<button class="btn-purge btn-empty-trash" type="button">Empty trash</button>`;
@@ -76,11 +84,13 @@ function createTrashToolbar(container: HTMLElement): HTMLElement {
                 confirmLabel: 'Empty trash',
                 danger: true,
             });
-            if (!ok) return;
+            if (!ok || signal.aborted) return;
             try {
                 await emptyTrash();
+                if (signal.aborted) return;
                 container.innerHTML = `<p class="trash-empty">Trash is empty.</p>`;
             } catch (e) {
+                if (signal.aborted) return;
                 console.error('Failed to empty trash:', e);
                 showToast(errorMessage(e, 'Failed to empty trash'), { type: 'error' });
             }
@@ -89,7 +99,12 @@ function createTrashToolbar(container: HTMLElement): HTMLElement {
     return bar;
 }
 
-function createTrashCard(container: HTMLElement, b: TrashedBook, isAdmin: boolean): HTMLElement {
+function createTrashCard(
+    container: HTMLElement,
+    b: TrashedBook,
+    isAdmin: boolean,
+    signal: AbortSignal,
+): HTMLElement {
     const el = document.createElement('div');
     el.className = 'trash-card';
 
@@ -116,9 +131,11 @@ function createTrashCard(container: HTMLElement, b: TrashedBook, isAdmin: boolea
             btn.disabled = true;
             try {
                 await restoreBook(b.id);
+                if (signal.aborted) return;
                 el.remove();
                 reflectEmptyState(container);
             } catch (e) {
+                if (signal.aborted) return;
                 console.error('Failed to restore book:', e);
                 showToast(errorMessage(e, 'Failed to restore book'), { type: 'error' });
                 btn.disabled = false;
@@ -133,12 +150,14 @@ function createTrashCard(container: HTMLElement, b: TrashedBook, isAdmin: boolea
             confirmLabel: 'Delete permanently',
             danger: true,
         });
-        if (!ok) return;
+        if (!ok || signal.aborted) return;
         try {
             await purgeBook(b.id);
+            if (signal.aborted) return;
             el.remove();
             reflectEmptyState(container);
         } catch (e) {
+            if (signal.aborted) return;
             console.error('Failed to permanently delete book:', e);
             showToast(errorMessage(e, 'Failed to permanently delete book'), { type: 'error' });
         }

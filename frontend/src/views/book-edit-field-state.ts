@@ -42,10 +42,10 @@ export function readEditForm(form: HTMLFormElement): BookUpdate {
     };
 }
 
-export function validateTitle(form: HTMLFormElement, uiID: string): boolean {
+export function validateTitle(form: HTMLFormElement): boolean {
     const titleInput = form.querySelector<HTMLInputElement>('input[name="title"]');
     const valid = !!titleInput?.value.trim();
-    const error = document.getElementById(`title-error-${uiID}`);
+    const error = form.querySelector<HTMLElement>('[data-edit-field="title"] .input-error');
     if (error) error.style.display = valid ? 'none' : 'block';
     return valid;
 }

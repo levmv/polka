@@ -1,6 +1,7 @@
 import {
     deleteTag,
     fetchCurrentUser,
+    fetchTag,
     fetchTagPage,
     renameTag,
     type TagKind,
@@ -9,25 +10,28 @@ import {
 } from '../api';
 import { attachTagAutocomplete } from '../components/book-metadata-autocomplete';
 import { type CollectionView, createCollectionControls } from '../components/collection-controls';
-import { debounce, escapeHtml } from '../dom';
+import { trackSearch } from '../components/search-history';
+import { escapeHtml, isPlainClick } from '../dom';
 import { errorMessage } from '../errors';
 import { icon } from '../icons';
 import { confirmModal, type ManagedModal, openModal } from '../modal';
+import { registerOverlayReopen } from '../navigation';
+import type { RouteController, RouteMountContext } from '../router';
 import { queryTerm } from '../search-query';
+import { tagParts } from '../tags';
 import { showToast } from '../toast';
 
-type TagLocation = Pick<TagSummary, 'id' | 'label'>;
+type TagLocation = Pick<TagSummary, 'name' | 'label'>;
 type TagsState = {
-    kind: TagKind;
     view: CollectionView;
-    sort: TagSort;
-    query: string;
     gridPath: TagLocation[];
     expanded: number[];
+    counts: Record<string, number>;
 };
 
 type Branch = {
-    parentID: number;
+    parent: string;
+    completion: Promise<void>;
     items: TagSummary[];
     cursor: string;
     loaded: boolean;
@@ -66,33 +70,51 @@ export function renderTagsPage(): string {
     </div>`;
 }
 
-export function initTags(root: HTMLElement, signal: AbortSignal): () => void {
+export function initTags(root: HTMLElement, context: RouteMountContext): RouteController {
+    const { signal, history } = context;
+    const params = new URLSearchParams(window.location.search);
     const kind = selectedKind();
     const label = kind === 'genre' ? 'Genre' : 'Tag';
     const search = root.querySelector<HTMLInputElement>('.tags-search')!;
     const content = root.querySelector<HTMLElement>('.tags-browser')!;
     const breadcrumbs = root.querySelector<HTMLElement>('.tags-path')!;
-    const saved = window.history.state?.polkaTags as TagsState | undefined;
-    const state = saved?.kind === kind ? saved : undefined;
+    const state = history.state as TagsState | undefined;
     let view: CollectionView =
-        state?.view ?? (localStorage.getItem('polka-tags-view') === 'table' ? 'table' : 'grid');
-    let sort: TagSort = state?.sort ?? 'books';
-    let query = state?.query ?? '';
-    let gridPath = state?.gridPath ?? [];
+        state?.view ??
+        (params.has('branch')
+            ? 'grid'
+            : localStorage.getItem('polka-tags-view') === 'table'
+              ? 'table'
+              : 'grid');
+    let sort: TagSort = params.get('sort') === 'name' ? 'name' : 'books';
+    let query = params.get('q') || '';
+    const parts = params.get('branch') ? tagParts(params.get('branch')!) : [];
+    let gridPath = parts.length
+        ? parts.map((label, index) => ({ label, name: parts.slice(0, index + 1).join('.') }))
+        : (state?.gridPath ?? []);
+    let savedCounts = state?.counts ?? {};
     const expanded = new Set(state?.expanded);
-    const branches = new Map<number, Branch>();
+    const branches = new Map<string, Branch>();
     let canEdit = false;
     let ready = false;
     let editor: ManagedModal | null = null;
 
     // Both views share pages. Collapsing a branch or switching views keeps its
     // pending request; changing the search/sort or leaving the page cancels it.
-    function getBranch(parentID: number): Branch {
-        let branch = branches.get(parentID);
+    function getBranch(parent: string): Branch {
+        let branch = branches.get(parent);
         if (!branch) {
-            branch = { parentID, items: [], cursor: '', loaded: false, request: null, error: '' };
-            branches.set(parentID, branch);
-            void loadBranch(branch);
+            branch = {
+                parent,
+                completion: Promise.resolve(),
+                items: [],
+                cursor: '',
+                loaded: false,
+                request: null,
+                error: '',
+            };
+            branches.set(parent, branch);
+            branch.completion = loadBranch(branch);
         }
         return branch;
     }
@@ -103,20 +125,22 @@ export function initTags(root: HTMLElement, signal: AbortSignal): () => void {
         branch.request = request;
         branch.error = '';
         try {
-            const page = await fetchTagPage(
-                kind,
-                {
-                    query,
-                    sort,
-                    parentID: branch.parentID,
-                    cursor: branch.cursor,
-                },
-                request.signal,
-            );
-            if (signal.aborted || request.signal.aborted) return;
-            branch.items.push(...page.items);
-            branch.cursor = page.next_cursor || '';
-            branch.loaded = true;
+            do {
+                const page = await fetchTagPage(
+                    kind,
+                    {
+                        query,
+                        sort,
+                        parentName: branch.parent,
+                        cursor: branch.cursor,
+                    },
+                    request.signal,
+                );
+                if (signal.aborted || request.signal.aborted) return;
+                branch.items.push(...page.items);
+                branch.cursor = page.next_cursor || '';
+                branch.loaded = true;
+            } while (branch.cursor && branch.items.length < (savedCounts[branch.parent] ?? 0));
         } catch (err) {
             if (signal.aborted || request.signal.aborted) return;
             branch.error = errorMessage(err, `Failed to load ${kind}s`);
@@ -133,6 +157,7 @@ export function initTags(root: HTMLElement, signal: AbortSignal): () => void {
     function reload(resetNavigation = false): void {
         cancelLoads();
         branches.clear();
+        savedCounts = {};
         if (resetNavigation) {
             gridPath = [];
             expanded.clear();
@@ -141,9 +166,31 @@ export function initTags(root: HTMLElement, signal: AbortSignal): () => void {
         renderResults();
     }
 
-    function saveState(): void {
-        const next: TagsState = { kind, view, sort, query, gridPath, expanded: [...expanded] };
-        window.history.replaceState({ ...window.history.state, polkaTags: next }, '');
+    function locationFor(nextQuery = query, path = gridPath): string {
+        const params = new URLSearchParams({ kind });
+        if (nextQuery) params.set('q', nextQuery);
+        if (view === 'grid' && path.length) params.set('branch', path[path.length - 1].name);
+        if (sort === 'name') params.set('sort', sort);
+        return `/tags?${params}`;
+    }
+
+    function snapshot(): TagsState {
+        const counts: Record<string, number> = {};
+        for (const [key, branch] of branches) counts[key] = branch.items.length;
+        return { view, gridPath, expanded: [...expanded], counts };
+    }
+
+    function followBranch(event: MouseEvent, path: TagLocation[]): void {
+        if (!isPlainClick(event)) return;
+        if (search.value.trim() !== query) return;
+        event.preventDefault();
+        searchHistory.finish();
+        history.push(locationFor(query, path));
+        gridPath = path;
+        renderNavigation();
+        renderResults();
+        if (breadcrumbs.hidden) search.focus();
+        else breadcrumbs.querySelector<HTMLElement>('[aria-current]')?.focus();
     }
 
     function renderNavigation(): void {
@@ -151,19 +198,13 @@ export function initTags(root: HTMLElement, signal: AbortSignal): () => void {
         breadcrumbs.hidden = view !== 'grid' || !!query || !gridPath.length;
         if (breadcrumbs.hidden) return;
         const crumb = (text: string, length: number) => {
-            const button = document.createElement('button');
-            button.type = 'button';
-            button.textContent = text;
-            if (length === gridPath.length) button.setAttribute('aria-current', 'page');
-            button.addEventListener('click', () => {
-                gridPath = gridPath.slice(0, length);
-                renderNavigation();
-                renderResults();
-                if (!breadcrumbs.hidden)
-                    breadcrumbs.querySelector<HTMLButtonElement>('[aria-current]')?.focus();
-                else search.focus();
-            });
-            return button;
+            const link = document.createElement('a');
+            link.href = locationFor(query, gridPath.slice(0, length));
+            link.textContent = text;
+            if (length === gridPath.length) link.setAttribute('aria-current', 'page');
+            const path = gridPath.slice(0, length);
+            link.addEventListener('click', (event) => followBranch(event, path));
+            return link;
         };
         breadcrumbs.append(crumb(`All ${kind}s`, 0));
         gridPath.forEach((tag, index) => {
@@ -182,7 +223,7 @@ export function initTags(root: HTMLElement, signal: AbortSignal): () => void {
         } else if (branch.loaded && !branch.items.length) {
             const message = query
                 ? `No matching ${kind}s.`
-                : branch.parentID
+                : branch.parent
                   ? `No ${kind}s here.`
                   : `No ${kind}s yet.${canEdit ? ` Add ${kind}s when editing a book.` : ''}`;
             status.innerHTML = `<p class="tags-empty">${message}</p>`;
@@ -190,12 +231,12 @@ export function initTags(root: HTMLElement, signal: AbortSignal): () => void {
         if (branch.error || branch.cursor) {
             const more = document.createElement('button');
             more.type = 'button';
-            more.id = `tag-more-${branch.parentID}`;
+            more.id = `tag-more-${branch.parent}`;
             more.className = 'load-more-btn';
             more.textContent = branch.error ? 'Retry' : 'Show more';
             more.disabled = !!branch.request;
             more.addEventListener('click', () => {
-                void loadBranch(branch);
+                branch.completion = loadBranch(branch);
                 renderResults();
             });
             status.append(more);
@@ -205,8 +246,8 @@ export function initTags(root: HTMLElement, signal: AbortSignal): () => void {
 
     function renderGrid(): DocumentFragment {
         const fragment = document.createDocumentFragment();
-        const parentID = query ? 0 : (gridPath[gridPath.length - 1]?.id ?? 0);
-        const branch = getBranch(parentID);
+        const parent = query ? '' : (gridPath[gridPath.length - 1]?.name ?? '');
+        const branch = getBranch(parent);
         const list = document.createElement('ul');
         list.className = 'tags-grid';
         list.setAttribute('aria-busy', String(!!branch.request));
@@ -222,12 +263,12 @@ export function initTags(root: HTMLElement, signal: AbortSignal): () => void {
         table.className = 'tags-table';
         table.innerHTML = `<thead><tr><th scope="col">Name</th><th scope="col" class="tag-count-cell">Books</th>${canEdit ? '<th scope="col" class="tag-actions" aria-label="Actions"></th>' : ''}</tr></thead><tbody></tbody>`;
         const body = table.querySelector('tbody')!;
-        const appendBranch = (parentID: number, depth: number) => {
-            const branch = getBranch(parentID);
+        const appendBranch = (parent: string, depth: number) => {
+            const branch = getBranch(parent);
             for (const tag of branch.items) {
                 body.append(makeRow(tag, depth));
                 if (!query && tag.has_children && expanded.has(tag.id))
-                    appendBranch(tag.id, depth + 1);
+                    appendBranch(tag.name, depth + 1);
             }
             const status = branchStatus(branch);
             if (status) {
@@ -239,13 +280,14 @@ export function initTags(root: HTMLElement, signal: AbortSignal): () => void {
                 cell.append(status);
             }
         };
-        appendBranch(0, 0);
+        appendBranch('', 0);
         return table;
     }
 
     function renderResults(): void {
         if (signal.aborted) return;
-        saveState();
+        history.replace(locationFor());
+        history.save();
         if (!ready) return;
         const active = document.activeElement;
         const focusID = active && content.contains(active) ? active.id : '';
@@ -256,10 +298,11 @@ export function initTags(root: HTMLElement, signal: AbortSignal): () => void {
                 ?.focus({ preventScroll: true });
     }
 
-    const openRename = (tag: TagSummary) => {
+    const openRename = (tag: Pick<TagSummary, 'id' | 'name'>) => {
         editor?.close();
         const { modal, root: dialog } = openModal({
             title: `Rename ${kind}`,
+            history: { kind: 'tag-rename', target: tag.id },
             modalClass: 'tag-rename-modal',
             body: `<form id="tag-rename-form">
                 <label for="tag-name">Name</label>
@@ -278,13 +321,13 @@ export function initTags(root: HTMLElement, signal: AbortSignal): () => void {
         const save = dialog.querySelector<HTMLButtonElement>('.tag-save')!;
         const message = dialog.querySelector<HTMLElement>('.error')!;
         const autocomplete = attachTagAutocomplete(input, kind);
-        dialog.querySelector('.tag-cancel')!.addEventListener('click', () => modal.close());
+        dialog.querySelector('.tag-cancel')!.addEventListener('click', () => void modal.dismiss());
         dialog.querySelector('form')!.addEventListener('submit', async (event) => {
             event.preventDefault();
             if (save.disabled) return;
             const name = input.value.trim();
             if (name === tag.name) {
-                modal.close();
+                void modal.dismiss();
                 return;
             }
             if (!name || name.includes(',')) {
@@ -297,7 +340,8 @@ export function initTags(root: HTMLElement, signal: AbortSignal): () => void {
             message.hidden = true;
             try {
                 const result = await renameTag(tag.id, name);
-                modal.close();
+                modal.updateHistory({ kind: 'tag-rename', target: result.tag.id });
+                await modal.dismiss();
                 if (signal.aborted) return;
                 showToast(
                     `${label} updated on ${result.affected} ${result.affected === 1 ? 'book' : 'books'}`,
@@ -313,6 +357,12 @@ export function initTags(root: HTMLElement, signal: AbortSignal): () => void {
         });
         modal.open(input);
     };
+
+    const releaseRename = registerOverlayReopen('tag-rename', async (entry, signal) => {
+        if (!canEdit || !entry.target) return null;
+        const tag = await fetchTag(Number(entry.target), signal);
+        return tag && tag.kind === kind ? () => openRename(tag) : null;
+    });
 
     const remove = async (tag: TagSummary) => {
         const confirmed = await confirmModal({
@@ -343,27 +393,28 @@ export function initTags(root: HTMLElement, signal: AbortSignal): () => void {
         const text = escapeHtml(query ? tag.name : tag.label);
         const branch = tag.has_children && !query;
         const action = view === 'grid' ? 'Open' : expanded.has(tag.id) ? 'Collapse' : 'Expand';
+        const path = [...gridPath, { name: tag.name, label: tag.label }];
+        const branchURL = locationFor(query, path);
         const main = branch
-            ? `<button type="button" id="tag-main-${tag.id}" class="tag-main" aria-label="${action} ${escapeHtml(tag.name)}" ${view === 'table' ? `aria-expanded="${expanded.has(tag.id)}"` : ''}><span>${text}</span>${icon('expand_more', 18, 'tag-chevron')}</button>`
+            ? view === 'grid'
+                ? `<a id="tag-main-${tag.id}" href="${escapeHtml(branchURL)}" class="tag-main" aria-label="Open ${escapeHtml(tag.name)}"><span>${text}</span>${icon('expand_more', 18, 'tag-chevron')}</a>`
+                : `<button type="button" id="tag-main-${tag.id}" class="tag-main" aria-label="${action} ${escapeHtml(tag.name)}" aria-expanded="${expanded.has(tag.id)}"><span>${text}</span>${icon('expand_more', 18, 'tag-chevron')}</button>`
             : `<a id="tag-main-${tag.id}" href="${escapeHtml(href)}" class="tag-main tag-name-link" data-nav><span>${text}</span></a>`;
         const count = `<a id="tag-count-${tag.id}" href="${escapeHtml(href)}" class="tag-count" data-nav aria-label="${tag.book_count} ${tag.book_count === 1 ? 'book' : 'books'}: ${escapeHtml(tag.name)}" title="View books${tag.has_children ? `, including nested ${kind}s` : ''}">${tag.book_count}</a>`;
         row.innerHTML =
             view === 'grid'
                 ? main + count
                 : `<td>${main}</td><td class="tag-count-cell">${count}</td>`;
-        if (branch) {
+        if (branch && view === 'table') {
             row.querySelector('.tag-main')!.addEventListener('click', () => {
-                if (view === 'grid') {
-                    gridPath = [...gridPath, { id: tag.id, label: tag.label }];
-                    renderNavigation();
-                    renderResults();
-                    breadcrumbs.querySelector<HTMLButtonElement>('[aria-current]')?.focus();
-                } else {
-                    if (expanded.has(tag.id)) expanded.delete(tag.id);
-                    else expanded.add(tag.id);
-                    renderResults();
-                }
+                if (expanded.has(tag.id)) expanded.delete(tag.id);
+                else expanded.add(tag.id);
+                renderResults();
             });
+        } else if (branch) {
+            row.querySelector<HTMLAnchorElement>('.tag-main')!.addEventListener('click', (event) =>
+                followBranch(event, path),
+            );
         }
         if (canEdit) {
             const actions = document.createElement(view === 'grid' ? 'div' : 'td');
@@ -391,41 +442,54 @@ export function initTags(root: HTMLElement, signal: AbortSignal): () => void {
             { value: 'books', label: 'Books' },
         ],
         onViewChange: (value) => {
+            searchHistory.finish();
             view = value;
             localStorage.setItem('polka-tags-view', view);
             renderNavigation();
             renderResults();
         },
         onSortChange: (value) => {
+            searchHistory.finish();
             sort = value as TagSort;
             reload();
         },
     });
     root.querySelector('.collection-controls')!.replaceWith(controls.el);
     search.value = query;
-    const handleSearchInput = debounce(() => {
-        query = search.value.trim();
+    const searchHistory = trackSearch(search, (newEntry) => {
+        const next = search.value.trim();
+        if (newEntry) history.push(locationFor(next));
+        query = next;
         reload();
-    }, 200);
-    search.addEventListener('input', handleSearchInput);
+    });
     renderNavigation();
-    void fetchCurrentUser()
-        .then((user) => {
+    const loaded = fetchCurrentUser()
+        .then(async (user) => {
             if (signal.aborted) return;
             canEdit = user.role !== 'reader';
             ready = true;
             renderResults();
+            while (!signal.aborted) {
+                const pending = [...branches.values()].filter((branch) => branch.request);
+                if (!pending.length) break;
+                await Promise.all(pending.map((branch) => branch.completion));
+            }
         })
         .catch((err) => {
             if (signal.aborted) return;
             showToast(errorMessage(err, `Failed to load ${kind}s`), { type: 'error' });
         });
 
-    return () => {
-        cancelLoads();
-        search.removeEventListener('input', handleSearchInput);
-        handleSearchInput.cancel();
-        controls.destroy();
-        editor?.close();
+    return {
+        ready: loaded,
+        snapshot,
+        beforeLeave: () => searchHistory.finish(),
+        destroy() {
+            releaseRename();
+            cancelLoads();
+            searchHistory.destroy();
+            controls.destroy();
+            editor?.close();
+        },
     };
 }

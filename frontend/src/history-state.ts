@@ -1,10 +1,9 @@
-// The polka-owned contents of a history entry, and the pure decisions taken
-// from them. Entry identity lives here because the router, the navigation
-// layer, and in-page Back controls all read it, and because these rules are
-// worth testing without a document.
+// History entry data and the pure policy for retaining a library behind a book.
 import type { Retention, ScrollPosition } from './router';
 
 export interface PolkaHistoryState {
+    polkaIndex?: number;
+    polkaView?: unknown;
     // Identity of this entry, independent of its URL. The same library URL can
     // occur in several entries with different live state, so retention can only
     // be matched by identity.
@@ -17,8 +16,7 @@ export interface PolkaHistoryState {
     // On a book entry: the entry ID of the library it was opened from, and so
     // the key of the retained instance that Back should resume.
     polkaRetainedLibraryID?: string;
-    // An overlay opened over the page this entry shares a URL with. Back
-    // dismisses the overlay and leaves the route alone; Forward reopens it.
+    // Back dismisses the overlay and leaves its page alone; Forward reopens it.
     polkaOverlay?: OverlayEntry;
     // The page entry immediately underneath an overlay. Pathnames are not
     // enough here: several distinct library surfaces legitimately share `/`.
@@ -31,7 +29,7 @@ export interface PolkaHistoryState {
 // identify what was being shown, such as a book id.
 export interface OverlayEntry {
     kind: string;
-    target?: string;
+    target?: unknown;
 }
 
 export function readOverlayEntry(state: unknown): OverlayEntry | null {
@@ -39,9 +37,7 @@ export function readOverlayEntry(state: unknown): OverlayEntry | null {
     if (!overlay || typeof overlay !== 'object') return null;
     const { kind, target } = overlay as OverlayEntry;
     if (typeof kind !== 'string' || !kind) return null;
-    const entry: OverlayEntry = { kind };
-    if (typeof target === 'string' && target) entry.target = target;
-    return entry;
+    return { kind, target };
 }
 
 export function isLibraryPath(pathname: string): boolean {
@@ -94,10 +90,6 @@ export function readScrollPosition(state: unknown): ScrollPosition | null {
     const scroll = readState(state)?.polkaScroll;
     if (!scroll || typeof scroll.x !== 'number' || typeof scroll.y !== 'number') return null;
     return scroll;
-}
-
-export function historyStateWithScroll(state: unknown, scroll: ScrollPosition): PolkaHistoryState {
-    return { ...(readState(state) ?? {}), polkaScroll: scroll };
 }
 
 // What opening a link should do with the retained slot. The library is retained

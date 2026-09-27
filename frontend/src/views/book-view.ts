@@ -34,14 +34,9 @@ import {
 import { beginGlobalLoading } from '../loading-indicator';
 import { createMenu, type MenuItem } from '../menu';
 import { confirmModal, openModal } from '../modal';
+import { navigateApp, type PageHistory, registerOverlayReopen } from '../navigation';
 import { createPopover } from '../popover';
-import {
-    navigateApp,
-    type RouteCleanup,
-    type RouteController,
-    type RouteMountContext,
-    replaceLocationURL,
-} from '../router';
+import type { RouteCleanup, RouteController, RouteMountContext } from '../router';
 import { queryTerm, seriesLibraryURL } from '../search-query';
 import { openSettingsModal } from '../settings';
 import { sendingSetting } from '../settings/state';
@@ -68,6 +63,7 @@ import { renderShelfPicker } from './book-shelf-picker';
 // belong to this instance. Two of them exist for a moment during a navigation,
 // and neither may write over the other's page.
 interface BookDetailView {
+    history: PageHistory;
     root: HTMLElement;
     phase: 'active' | 'destroyed';
     book: Book | null;
@@ -86,11 +82,10 @@ interface BookDetailView {
 // of the app about the change is not this: that goes through CATALOG_CHANGED.
 function hostFor(view: BookDetailView): BookDetailHost {
     const container = () => view.root.querySelector<HTMLElement>('#book-detail-container');
-    // While the editor is open this updates its entry; rerender after dismissal
-    // updates the underlying page entry.
+    // The navigation owner keeps the page and its editor on the same book.
     const syncLocation = () => {
         if (view.book && view.listContext) {
-            replaceLocationURL(bookURL(view.book.id, view.listContext));
+            view.history.replace(bookURL(view.book.id, view.listContext));
         }
     };
     return {
@@ -111,7 +106,6 @@ function hostFor(view: BookDetailView): BookDetailHost {
             const host = container();
             if (view.phase !== 'active' || !host || !view.book) return;
             renderBookDetail(view, host);
-            syncLocation();
         },
     };
 }
@@ -217,6 +211,7 @@ export function initBookDetail(
     context: RouteMountContext,
 ): RouteController {
     const view: BookDetailView = {
+        history: context.history,
         root,
         phase: 'active',
         book: null,
@@ -228,10 +223,15 @@ export function initBookDetail(
         takeFocus: context.clientNavigation,
     };
     const releaseEditorHost = registerActiveBookDetailHost(hostFor(view));
-    void loadBookDetail(view, bookId);
+    const releaseSend = registerOverlayReopen('send-book', () => () => {
+        if (view.book) openSendBookModal(view.book);
+    });
+    const ready = loadBookDetail(view, bookId);
     return {
+        ready,
         destroy(): void {
             releaseEditorHost();
+            releaseSend();
             view.phase = 'destroyed';
             view.abort.abort();
             view.pageCountRequest?.abort.abort();
@@ -247,9 +247,8 @@ export function initBookDetail(
 async function loadBookDetail(view: BookDetailView, bookId: number): Promise<void> {
     const container = view.root.querySelector<HTMLElement>('#book-detail-container');
     if (!container) return;
-    // The page marks itself busy for its own data, the way the library does.
-    // The router stops waiting for content once it holds this controller, so
-    // nothing else is left to say the page has not filled in yet.
+    // The page owns its loading feedback; ready tells navigation when content
+    // is available for restoring scroll and reopening an overlay.
     const finishGlobalLoading = beginGlobalLoading();
     try {
         const [b, me] = await Promise.all([
@@ -766,6 +765,7 @@ function openSendBookModal(book: Book): void {
 
     const { modal } = openModal({
         title: 'Send to device',
+        history: { kind: 'send-book' },
         body,
         bodyClass: 'modal-compact-body',
         modalClass: 'modal-flow modal-compact',
@@ -799,7 +799,7 @@ function openSendBookModal(book: Book): void {
                 asset_id: selection.plan.asset_id,
                 target: selection.plan.target,
             });
-            modal.close();
+            await modal.dismiss();
             showToast('Queued');
             pollDeliveryJob(job);
         } catch (err) {

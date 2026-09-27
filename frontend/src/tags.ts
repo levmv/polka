@@ -3,7 +3,7 @@ const MAX_TAG_DEPTH = 16;
 
 // Empty components or excessive depth make the whole name literal,
 // including names such as .NET and A..B.
-function tagParts(name: string): string[] {
+export function tagParts(name: string): string[] {
     if (!name.includes('.')) return [name];
     const parts = name.split('.', MAX_TAG_DEPTH + 1).map((part) => part.trim());
     return parts.length <= MAX_TAG_DEPTH && parts.every(Boolean) ? parts : [name];

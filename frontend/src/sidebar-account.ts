@@ -1,5 +1,5 @@
 import { fetchCurrentUser } from './api';
-import { textEl } from './dom';
+import { isPlainClick, textEl } from './dom';
 import { type IconName, iconElement } from './icons';
 import { openSettingsModal } from './settings';
 import type { CurrentUser } from './types';
@@ -22,14 +22,17 @@ export function initSidebarAccount(closeSidebar: () => void): void {
 }
 
 function renderSettingsRow(currentUser: CurrentUser, closeSidebar: () => void): HTMLElement {
-    const button = accountRow('settings', 18, 'Settings');
-    button.classList.add('account-settings');
-    button.addEventListener('click', () => {
-        // A modal, not a route: the router's close-on-navigate never runs.
+    const link = document.createElement('a');
+    link.href = '/?settings=general';
+    link.className = 'nav-item account-row account-settings';
+    link.append(iconElement('settings', 18), textEl('span', 'account-label', 'Settings'));
+    link.addEventListener('click', (event) => {
+        if (!isPlainClick(event)) return;
+        event.preventDefault();
         closeSidebar();
         openSettingsModal(currentUser);
     });
-    return button;
+    return link;
 }
 
 function renderLogoutRow(username: string): HTMLElement {

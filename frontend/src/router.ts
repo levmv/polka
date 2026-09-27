@@ -1,19 +1,10 @@
-// Small History-API router for authenticated app pages.
-//
-// Each route matches by pathname only; returning null means "not this route".
-// The router creates and owns one root element per mounted route, renders the
-// route skeleton into it, and hands it to mount(). Views own everything wired
-// beneath that root and return either a cleanup function or a controller.
-// Owning the root — rather than replacing #content wholesale — is what lets
-// a single route later be detached and kept alive across a navigation.
-// Cleanup always runs before the next route is mounted, so views can remove
-// global listeners and floating UI safely.
-// Returning the controller synchronously — starting the data load without
-// awaiting it — is the direction, and is what lets a later navigation cancel a
-// route's work rather than race its render. The library and book routes do
-// this. For the async form the remaining routes still use, mountSeq destroys a
-// result that resolves after a newer navigation; it cannot reach inside a
-// running mount, so those views still need local staleness guards.
+import type { PageHistory } from './navigation';
+
+// Routes match by pathname and own a root element plus its controller. One
+// instance can be detached and retained; others are destroyed before mounting
+// the next page. Navigation owns the history decisions behind those lifetimes.
+// Return a controller synchronously so cleanup is available while data loads.
+// Data loads through ready; the route's signal is aborted before destroy().
 export type RouteCleanup = () => void;
 
 export interface ScrollPosition {
@@ -24,6 +15,9 @@ export interface ScrollPosition {
 // What a mounted route hands back to the router. destroy() is final and must be
 // safe to call once; the router never calls it twice.
 export interface RouteController {
+    ready?: Promise<void>;
+    snapshot?(): unknown;
+    beforeLeave?(): void;
     // Called while the root is still in the document, before it is detached.
     // The instance closes its floating UI, stops acting on global events, and
     // captures whatever it needs to restore its own position later — geometry
@@ -48,15 +42,14 @@ export type Retention =
     // Default: the relationship is over and anything retained is destroyed.
     | { mode: 'release' };
 
-export type RouteMountResult = void | RouteCleanup | RouteController;
-
 export interface RouteMountContext {
+    history: PageHistory;
     // False for the mount that happens as the document loads. The browser
     // already announces a page it loaded itself and starts focus at the top; a
     // client navigation replaces the page silently, and that is the only case
     // where a view has to move focus deliberately.
     clientNavigation: boolean;
-    // Aborted as soon as this route is superseded or destroyed. Async mounts
+    // Aborted as soon as this route is destroyed. Views
     // pass it to their reads so an abandoned page cannot occupy a browser
     // connection or keep the global loading indicator alive.
     signal: AbortSignal;
@@ -75,25 +68,23 @@ export interface Route<TMatch> {
     render?: (match: TMatch) => string;
     // Wire the page inside its own root and return cleanup for listeners,
     // popovers, and state. Every DOM lookup belongs inside root.
-    mount: (
-        match: TMatch,
-        root: HTMLElement,
-        context: RouteMountContext,
-    ) => RouteMountResult | Promise<RouteMountResult>;
+    mount: (match: TMatch, root: HTMLElement, context: RouteMountContext) => RouteController;
 }
 
 export interface MountOptions {
+    history: PageHistory;
     retention?: Retention;
-    // Set by the navigation layer. The router's own first mount leaves it off.
+    // False for the initial document load.
     clientNavigation?: boolean;
 }
 
 export interface Router {
-    mount(pathname: string, opts?: MountOptions): Promise<boolean>;
+    snapshot(): unknown;
+    prepareToLeave(): void;
+    mount(pathname: string, opts: MountOptions): Promise<boolean>;
     canMount(pathname: string): boolean;
     // The key the retained slot currently holds, so the navigation layer can
-    // stay in step with what actually happened (a retain is a no-op when the
-    // outgoing route never finished mounting).
+    // stay in step with what actually happened.
     retainedKey(): string | null;
     destroy(): void;
 }
@@ -176,13 +167,15 @@ export function initRouter(routes: Route<unknown>[]): Router {
     };
 
     const router: Router = {
+        snapshot: () => activeController?.snapshot?.(),
+        prepareToLeave: () => activeController?.beforeLeave?.(),
         canMount(pathname: string): boolean {
             return matchRoute(routes, pathname) !== null;
         },
         retainedKey(): string | null {
             return retained?.key ?? null;
         },
-        async mount(pathname: string, opts: MountOptions = {}): Promise<boolean> {
+        async mount(pathname: string, opts: MountOptions): Promise<boolean> {
             const seq = ++mountSeq;
             const retention: Retention = opts.retention ?? { mode: 'release' };
             const host = document.getElementById(CONTENT_HOST_ID);
@@ -222,18 +215,14 @@ export function initRouter(routes: Route<unknown>[]): Router {
             activeAbort = abort;
 
             try {
-                const result = await matched.route.mount(matched.match, root, {
+                const controller = matched.route.mount(matched.match, root, {
                     clientNavigation: opts.clientNavigation ?? false,
                     signal: abort.signal,
+                    history: opts.history,
                 });
-                const controller = normalizeController(result);
-                if (destroyed || seq !== mountSeq) {
-                    abort.abort();
-                    controller?.destroy();
-                    return false;
-                }
                 activeController = controller;
-                return true;
+                await controller.ready;
+                return !destroyed && seq === mountSeq;
             } catch (error: unknown) {
                 if (abort.signal.aborted || destroyed || seq !== mountSeq) return false;
                 console.error('Failed to mount page:', error);
@@ -248,7 +237,6 @@ export function initRouter(routes: Route<unknown>[]): Router {
         },
     };
 
-    void router.mount(window.location.pathname);
     return router;
 }
 
@@ -276,34 +264,4 @@ function setMainClass(previous: string | undefined, next: string | undefined): v
 function setDocumentTitle<TMatch>(title: Route<TMatch>['title'], match: TMatch): void {
     if (!title) return;
     document.title = typeof title === 'function' ? title(match) : title;
-}
-
-function normalizeController(result: RouteMountResult): RouteController | null {
-    if (!result) return null;
-    if (typeof result === 'function') return { destroy: result };
-    return result;
-}
-
-// The app-level navigate, published so a view deep in the tree can make an
-// ordinary in-app navigation. A full page load would discard the retained route
-// this design exists to preserve, so the only places that should still assign
-// window.location are those leaving the app entirely.
-let appNavigate: ((href: string) => void) | null = null;
-
-export function setAppNavigate(navigate: (href: string) => void): void {
-    appNavigate = navigate;
-}
-
-export function navigateApp(href: string): void {
-    if (appNavigate) appNavigate(href);
-    else window.location.href = href;
-}
-
-// Rewriting the current entry's URL must not discard its history state: that
-// state carries the saved scroll position and the pathname the entry was pushed
-// from, both of which back-navigation depends on. Tidying a URL (dropping a
-// spent `q`, recording the browse offset, following the editor to the next
-// book) is not a new entry, so it merges rather than passing null.
-export function replaceLocationURL(url: string | URL): void {
-    window.history.replaceState(window.history.state, '', url);
 }

@@ -31,7 +31,6 @@ test.describe('Reading activity', () => {
 
     // A fresh page must keep the explicit UTC choice despite this browser's Tokyo zone.
     await page.reload();
-    await page.locator('.account-settings').click();
     await modal.getByRole('tab', { name: 'General' }).click();
     await expect(input).toHaveValue('UTC');
   });

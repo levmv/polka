@@ -29,6 +29,16 @@ export function textEl<K extends keyof HTMLElementTagNameMap>(
     return el;
 }
 
+// For elements guaranteed by an owned template. Optional content uses querySelector.
+export function requiredElement<T extends Element = HTMLElement>(
+    root: ParentNode,
+    selector: string,
+): T {
+    const element = root.querySelector<T>(selector);
+    if (!element) throw new Error(`Missing template element: ${selector}`);
+    return element;
+}
+
 export function formField(labelText: string, control: HTMLElement): HTMLLabelElement {
     const field = document.createElement('label');
     field.className = 'dialog-field';
@@ -36,6 +46,13 @@ export function formField(labelText: string, control: HTMLElement): HTMLLabelEle
     label.textContent = labelText;
     field.append(label, control);
     return field;
+}
+
+// Button and modifiers only; each handler decides whether to follow its link.
+export function isPlainClick(event: MouseEvent): boolean {
+    return (
+        event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey
+    );
 }
 
 export type Debounced<TArgs extends unknown[]> = ((...args: TArgs) => void) & {

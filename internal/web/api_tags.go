@@ -39,18 +39,11 @@ func (s *Server) handleAPITagList(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid sort", http.StatusBadRequest)
 		return
 	}
-	var parentID int64
-	if raw := r.URL.Query().Get("parent"); raw != "" {
-		parentID, err = strconv.ParseInt(raw, 10, 64)
-		if err != nil || parentID < 0 {
-			http.Error(w, "Invalid parent", http.StatusBadRequest)
-			return
-		}
-	}
+	branch := bookmeta.TagKey(r.URL.Query().Get("branch"))
 	if q != "" {
-		parentID = 0
+		branch = ""
 	}
-	filter := string(sort) + ":" + strconv.FormatInt(parentID, 10) + ":" + q
+	filter := string(sort) + ":" + strconv.Quote(branch) + ":" + q
 	limit, err := collectionPageSize(r)
 	if err != nil {
 		http.Error(w, "Invalid limit", http.StatusBadRequest)
@@ -70,7 +63,7 @@ func (s *Server) handleAPITagList(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	rows, err := db.ListTagCountsPage(s.db.Read(r.Context()), scope, db.TagListOptions{
-		Kind: kind, Query: q, ParentID: parentID, Sort: sort,
+		Kind: kind, Query: q, ParentName: branch, Sort: sort,
 		AfterName: cursor.Primary, AfterCount: afterCount, Limit: limit + 1,
 	})
 	if err != nil {
@@ -101,6 +94,26 @@ func (s *Server) handleAPITagList(w http.ResponseWriter, r *http.Request) {
 	}{Items: items, NextCursor: nextCursor})
 }
 
+func (s *Server) handleAPITag(w http.ResponseWriter, r *http.Request) {
+	if !s.requireFullCatalogScope(w, r) {
+		return
+	}
+	id, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	tag, err := db.GetTag(s.db.Read(r.Context()), id)
+	if errors.Is(err, db.ErrTagNotFound) {
+		http.Error(w, "Entry not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		serverError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, tag)
+}
+
 func (s *Server) handleAPITagRename(w http.ResponseWriter, r *http.Request) {
 	if !s.requireFullCatalogScope(w, r) {
 		return
@@ -120,7 +133,19 @@ func (s *Server) handleAPITagRename(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Enter one name without commas", http.StatusBadRequest)
 		return
 	}
-	s.mutateTag(w, r, func(tx *db.Tx) ([]int64, error) { return db.RenameOrMergeTag(tx, id, req.Name) })
+	var tag db.Tag
+	affected, ok := s.mutateTag(w, r, func(tx *db.Tx) ([]int64, error) {
+		var ids []int64
+		var err error
+		ids, tag, err = db.RenameOrMergeTag(tx, id, req.Name)
+		return ids, err
+	})
+	if ok {
+		writeJSON(w, http.StatusOK, struct {
+			Affected int    `json:"affected"`
+			Tag      db.Tag `json:"tag"`
+		}{affected, tag})
+	}
 }
 
 func (s *Server) handleAPITagDelete(w http.ResponseWriter, r *http.Request) {
@@ -131,14 +156,19 @@ func (s *Server) handleAPITagDelete(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	s.mutateTag(w, r, func(tx *db.Tx) ([]int64, error) { return db.DeleteTag(tx, id) })
+	affected, ok := s.mutateTag(w, r, func(tx *db.Tx) ([]int64, error) { return db.DeleteTag(tx, id) })
+	if ok {
+		writeJSON(w, http.StatusOK, struct {
+			Affected int `json:"affected"`
+		}{affected})
+	}
 }
 
-func (s *Server) mutateTag(w http.ResponseWriter, r *http.Request, apply func(*db.Tx) ([]int64, error)) {
+func (s *Server) mutateTag(w http.ResponseWriter, r *http.Request, apply func(*db.Tx) ([]int64, error)) (int, bool) {
 	release, err := s.storageQueue.Acquire(r.Context())
 	if err != nil {
 		serverError(w, r, err)
-		return
+		return 0, false
 	}
 	defer release()
 	var affected []int64
@@ -152,19 +182,17 @@ func (s *Server) mutateTag(w http.ResponseWriter, r *http.Request, apply func(*d
 	})
 	if errors.Is(err, db.ErrTagNotFound) {
 		http.Error(w, "Entry not found", http.StatusNotFound)
-		return
+		return 0, false
 	}
 	if errors.Is(err, db.ErrTagCycle) || errors.Is(err, db.ErrTagPath) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return 0, false
 	}
 	if err != nil {
 		serverError(w, r, err)
-		return
+		return 0, false
 	}
-	writeJSON(w, http.StatusOK, struct {
-		Affected int `json:"affected"`
-	}{len(affected)})
+	return len(affected), true
 }
 
 // Both suggestions and the dictionary page use the same explicit type.

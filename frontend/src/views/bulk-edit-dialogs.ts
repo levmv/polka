@@ -273,7 +273,7 @@ export function openBulkTagsDialog(books: BookSummary[], onApplied: OnApplied): 
         body.inert = true;
         field.el.inert = true;
         void runBulk(books, [activePanel().operation()], footer, onApplied, () =>
-            modal.close(),
+            modal.dismiss(),
         ).finally(() => {
             body.inert = false;
             field.el.inert = false;
@@ -282,6 +282,7 @@ export function openBulkTagsDialog(books: BookSummary[], onApplied: OnApplied): 
 
     const { modal } = openModal({
         header,
+        history: { kind: 'bulk-edit', target: 'tags' },
         ariaLabel: `Genres/Tags · ${books.length} books`,
         body,
         actions: footer.actions,
@@ -429,11 +430,12 @@ export function openBulkSeriesDialog(books: BookSummary[], onApplied: OnApplied)
                         : { mode: idxMode },
             };
         }
-        void runBulk(books, [op], footer, onApplied, () => modal.close());
+        void runBulk(books, [op], footer, onApplied, () => modal.dismiss());
     });
 
     const { modal } = openModal({
         title: `Series · ${books.length} books`,
+        history: { kind: 'bulk-edit', target: 'series' },
         body,
         actions: footer.actions,
         modalClass: 'bulk-modal',
@@ -488,11 +490,12 @@ export function openBulkAuthorsDialog(books: BookSummary[], onApplied: OnApplied
 
     footer.applyBtn.addEventListener('click', () => {
         const op: BulkOperation = { type: 'authors', mode: 'set', authors: input.value.trim() };
-        void runBulk(books, [op], footer, onApplied, () => modal.close());
+        void runBulk(books, [op], footer, onApplied, () => modal.dismiss());
     });
 
     const { modal } = openModal({
         title: `Authors · ${books.length} books`,
+        history: { kind: 'bulk-edit', target: 'authors' },
         body,
         actions: footer.actions,
         modalClass: 'bulk-modal',
@@ -585,7 +588,7 @@ export function openBulkShelvesDialog(
                 if (result.changed > 0)
                     notifyCatalogChanged({ kind: 'shelf-membership', shelfId: shelf.id });
                 onDone({ changed: result.changed, op, shelfName: shelf.name });
-                modal.close();
+                modal.dismiss();
             } catch (e) {
                 footer.status.textContent = e instanceof Error ? e.message : 'Shelf update failed';
                 footer.status.classList.add('is-error');
@@ -597,6 +600,7 @@ export function openBulkShelvesDialog(
 
     const { modal } = openModal({
         title: `Shelves · ${books.length} books`,
+        history: { kind: 'bulk-edit', target: 'shelves' },
         body,
         actions: footer.actions,
         modalClass: 'bulk-modal',

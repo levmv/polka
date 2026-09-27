@@ -1,7 +1,15 @@
-import { createShelf, updateShelf, validateSearchQuery } from './api';
+import {
+    addBookToShelf,
+    createShelf,
+    fetchCurrentUser,
+    updateShelf,
+    validateSearchQuery,
+} from './api';
+import { notifyCatalogChanged, notifyShelvesChanged } from './catalog-events';
 import { formField } from './dom';
 import { errorMessage } from './errors';
 import { openModal } from './modal';
+import { navigateApp, registerOverlayReopen } from './navigation';
 import { showToast } from './toast';
 import type { CurrentUser, Shelf, ShelfKind } from './types';
 
@@ -11,6 +19,8 @@ type CreateShelfDialogOptions = {
     initialName?: string;
     initialQuery?: string;
     defaultShared?: boolean;
+    bookID?: number;
+    navigateOnCreate?: boolean;
 };
 
 type EditShelfDialogOptions = {
@@ -29,6 +39,8 @@ export function openCreateShelfDialog(opts: CreateShelfDialogOptions): Promise<S
         initialName,
         initialQuery,
         defaultShared: opts.defaultShared === true,
+        bookID: opts.bookID,
+        navigateOnCreate: opts.navigateOnCreate,
     });
 }
 
@@ -52,7 +64,20 @@ type ShelfDialogState = {
     initialQuery: string;
     defaultShared: boolean;
     shelf?: Shelf;
+    bookID?: number;
+    navigateOnCreate?: boolean;
 };
+
+registerOverlayReopen('shelf', async (entry) => {
+    if (!entry.target) return null;
+    const currentUser = await fetchCurrentUser();
+    return () => {
+        void openShelfDialog({
+            ...(entry.target as Omit<ShelfDialogState, 'currentUser'>),
+            currentUser,
+        });
+    };
+});
 
 function openShelfDialog(opts: ShelfDialogState): Promise<Shelf | null> {
     return new Promise((resolve) => {
@@ -174,16 +199,40 @@ function openShelfDialog(opts: ShelfDialogState): Promise<Shelf | null> {
         };
 
         let settled = false;
-        const finish = (shelf: Shelf | null) => {
+        const finish = async (shelf: Shelf) => {
             if (settled) return;
             settled = true;
             if (queryValidationTimer !== undefined) window.clearTimeout(queryValidationTimer);
+            if (opts.mode === 'edit') {
+                modal.updateHistory({
+                    kind: 'shelf',
+                    target: {
+                        ...reopenState,
+                        shelf,
+                        initialName: shelf.name,
+                        initialQuery: shelf.query || '',
+                        defaultShared: shelf.visibility === 'shared',
+                    },
+                });
+            }
+            notifyShelvesChanged();
+            if (opts.bookID) {
+                try {
+                    await addBookToShelf(shelf.id, opts.bookID);
+                    notifyCatalogChanged({ kind: 'shelf-membership', shelfId: shelf.id });
+                } catch (err) {
+                    showToast(errorMessage(err, 'Shelf update failed'), { type: 'error' });
+                }
+            }
+            await modal.dismiss();
             resolve(shelf);
-            modal.close();
+            if (opts.navigateOnCreate) navigateApp(`/?shelf=${shelf.id}`);
         };
 
+        const { currentUser: _currentUser, ...reopenState } = opts;
         const { modal } = openModal({
             title: dialogTitle(opts.mode, opts.kind),
+            history: { kind: 'shelf', target: reopenState },
             body: form,
             bodyClass: 'modal-compact-body',
             modalClass: 'modal-flow modal-compact',
@@ -245,7 +294,7 @@ function openShelfDialog(opts: ShelfDialogState): Promise<Shelf | null> {
                                       : undefined,
                               shared: visibility?.shared(),
                           });
-                finish(shelf);
+                await finish(shelf);
             } catch (err) {
                 const fallback =
                     opts.mode === 'create' ? 'Create shelf failed' : 'Shelf update failed';

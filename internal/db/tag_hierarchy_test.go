@@ -87,7 +87,7 @@ func TestTagHierarchyBranchEdits(t *testing.T) {
 			if target == "" {
 				ids, err = DeleteTag(tx, id)
 			} else {
-				ids, err = RenameOrMergeTag(tx, id, target)
+				ids, _, err = RenameOrMergeTag(tx, id, target)
 			}
 			if err != nil {
 				return err
@@ -187,14 +187,8 @@ func TestTagHierarchyDictionary(t *testing.T) {
 		{"search across branches and levels", scoped, "Flat", "LEFT", []entry{{"A.Left", 1, true}, {"A.Left.Deep", 1, false}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			var parentID int64
-			if tc.parent != "" {
-				if err := database.Read(t.Context()).QueryRow("SELECT id FROM tags WHERE kind = 'tag' AND name = ?", tc.parent).Scan(&parentID); err != nil {
-					t.Fatal(err)
-				}
-			}
 			rows, err := ListTagCountsPage(database.Read(t.Context()), tc.scope, TagListOptions{
-				Kind: TagKindTag, Query: tc.query, ParentID: parentID,
+				Kind: TagKindTag, Query: tc.query, ParentName: tc.parent,
 			})
 			if err != nil {
 				t.Fatal(err)

@@ -6,7 +6,7 @@ import {
 } from '../api';
 import { parseAuthorList } from '../authors';
 import { coverImgHtml } from '../cover';
-import { escapeHtml } from '../dom';
+import { escapeHtml, requiredElement } from '../dom';
 import { errorMessage } from '../errors';
 import { icon } from '../icons';
 import { openModal } from '../modal';
@@ -66,6 +66,7 @@ export type CoverDraftController = {
 };
 
 export function createCoverDraftController(opts: {
+    root: HTMLElement;
     uiID: string;
     book: () => Book;
     draft: () => BookUpdate;
@@ -81,21 +82,20 @@ export function createCoverDraftController(opts: {
     let generatedVariants: GeneratedCoverVariantPreview[] = [];
     let showSavedReference = false;
 
-    const coverChooserBtn = document.getElementById(
-        `btn-edit-cover-chooser-${opts.uiID}`,
-    ) as HTMLButtonElement | null;
-    const coverSearchBtn = document.getElementById(
-        `btn-edit-cover-search-${opts.uiID}`,
-    ) as HTMLButtonElement | null;
-    const coverClickTarget = document.getElementById(
-        `edit-cover-container-${opts.uiID}`,
-    ) as HTMLElement | null;
-    const revertCoverBtn = document.getElementById(
-        `btn-edit-revert-cover-${opts.uiID}`,
-    ) as HTMLButtonElement | null;
-    const uploadInput = document.getElementById(
-        `edit-cover-upload-${opts.uiID}`,
-    ) as HTMLInputElement | null;
+    const coverChooserBtn = requiredElement<HTMLButtonElement>(
+        opts.root,
+        '[id^="btn-edit-cover-chooser-"]',
+    );
+    const coverSearchBtn = requiredElement<HTMLButtonElement>(
+        opts.root,
+        '[id^="btn-edit-cover-search-"]',
+    );
+    const coverContainer = requiredElement(opts.root, '.edit-cover-container');
+    const revertCoverBtn = requiredElement<HTMLButtonElement>(
+        opts.root,
+        '[id^="btn-edit-revert-cover-"]',
+    );
+    const uploadInput = requiredElement<HTMLInputElement>(opts.root, '[id^="edit-cover-upload-"]');
 
     const currentBook = () => opts.book();
     const notifyChange = () => opts.onChange();
@@ -177,7 +177,7 @@ export function createCoverDraftController(opts: {
         clearPendingCover();
         pendingCover = cover;
         showSavedReference = true;
-        renderPendingEditCover(opts.uiID, pendingCover);
+        renderPendingEditCover(coverContainer, pendingCover);
         if (optsSet.refreshChooser === false) {
             syncCoverChooserSurface();
         } else {
@@ -188,7 +188,7 @@ export function createCoverDraftController(opts: {
     const resetToStored = () => {
         clearPendingCover();
         showSavedReference = generatedVariants.length > 0;
-        renderStoredEditCover(currentBook(), opts.uiID);
+        renderStoredEditCover(coverContainer, currentBook());
         syncCoverChooserSurface();
     };
 
@@ -330,7 +330,7 @@ export function createCoverDraftController(opts: {
         );
 
         uploadBtn?.addEventListener('click', () => {
-            uploadInput?.click();
+            uploadInput.click();
         });
         generateBtn?.addEventListener('click', () => {
             void generateCoverVariants(generateBtn);
@@ -370,7 +370,7 @@ export function createCoverDraftController(opts: {
         });
     };
 
-    uploadInput?.addEventListener('change', (e: Event) => {
+    uploadInput.addEventListener('change', (e: Event) => {
         const input = e.target as HTMLInputElement;
         const file = input.files?.[0] || null;
         if (!file) return;
@@ -389,16 +389,16 @@ export function createCoverDraftController(opts: {
         notifyChange();
     });
 
-    coverChooserBtn?.addEventListener('click', () => {
+    coverChooserBtn.addEventListener('click', () => {
         openCoverChooser();
     });
-    coverClickTarget?.addEventListener('click', () => {
+    coverContainer.addEventListener('click', () => {
         openCoverChooser();
     });
-    coverSearchBtn?.addEventListener('click', () => {
+    coverSearchBtn.addEventListener('click', () => {
         openCoverSearch();
     });
-    revertCoverBtn?.addEventListener('click', () => {
+    revertCoverBtn.addEventListener('click', () => {
         revertCover();
     });
 
@@ -415,14 +415,14 @@ export function createCoverDraftController(opts: {
             });
         },
         renderPending: () => {
-            if (pendingCover) renderPendingEditCover(opts.uiID, pendingCover);
+            if (pendingCover) renderPendingEditCover(coverContainer, pendingCover);
         },
         resetToStored,
         syncControls: (disabled) => {
             const coverBusy = disabled || generatingCover;
-            if (coverChooserBtn) coverChooserBtn.disabled = coverBusy;
-            if (coverSearchBtn) coverSearchBtn.disabled = coverBusy;
-            syncCoverDraftControls(opts.uiID, pendingCover, revertCoverBtn);
+            coverChooserBtn.disabled = coverBusy;
+            coverSearchBtn.disabled = coverBusy;
+            syncCoverDraftControls(coverContainer, pendingCover, revertCoverBtn);
         },
         savePending: async (bookID) => {
             const cover = pendingCover;
@@ -440,7 +440,7 @@ export function createCoverDraftController(opts: {
                 return updated;
             } catch (err) {
                 showToast(`Cover save failed: ${errorMessage(err)}`, { type: 'error' });
-                renderPendingEditCover(opts.uiID, cover);
+                if (!opts.isClosed()) renderPendingEditCover(coverContainer, cover);
                 throw err;
             }
         },
@@ -456,16 +456,14 @@ export function createCoverDraftController(opts: {
     };
 }
 
-export function renderStoredEditCover(b: Book, uiID: string = String(b.id)): void {
-    const coverContainer = document.getElementById(`edit-cover-container-${uiID}`);
-    if (!coverContainer) return;
+export function renderStoredEditCover(coverContainer: HTMLElement, b: Book): void {
     coverContainer.classList.remove('is-fetched');
     coverContainer.classList.remove('is-dirty');
     coverContainer.removeAttribute('title');
     coverContainer.innerHTML = coverImgHtml(
         b.id,
         b.cover_version,
-        `edit-cover-image-${uiID}`,
+        undefined,
         'detail-cover-image edit-cover-image-small',
     );
 }
@@ -580,24 +578,20 @@ function renderGeneratedVariantGrid(
     `;
 }
 
-function renderPendingEditCover(uiID: string, cover: PendingCoverDraft): void {
-    const coverContainer = document.getElementById(`edit-cover-container-${uiID}`);
-    if (!coverContainer) return;
+function renderPendingEditCover(coverContainer: HTMLElement, cover: PendingCoverDraft): void {
     coverContainer.classList.toggle('is-fetched', cover.source === 'fetched');
     coverContainer.classList.toggle('is-dirty', cover.source !== 'fetched');
     coverContainer.title = pendingCoverTitle(cover);
-    coverContainer.innerHTML = `<img src="${escapeHtml(pendingCoverImageURL(cover))}" id="edit-cover-image-${uiID}" class="detail-cover-image edit-cover-image-small edit-cover-image-pending" alt="">`;
+    coverContainer.innerHTML = `<img src="${escapeHtml(pendingCoverImageURL(cover))}" class="detail-cover-image edit-cover-image-small edit-cover-image-pending" alt="">`;
 }
 
 function syncCoverDraftControls(
-    uiID: string,
+    coverContainer: HTMLElement,
     cover: PendingCoverDraft | null,
-    revertCoverBtn: HTMLButtonElement | null,
+    revertCoverBtn: HTMLButtonElement,
 ): void {
-    const coverContainer = document.getElementById(`edit-cover-container-${uiID}`);
-    coverContainer?.classList.toggle('is-fetched', cover?.source === 'fetched');
-    coverContainer?.classList.toggle('is-dirty', !!cover && cover.source !== 'fetched');
-    if (!revertCoverBtn) return;
+    coverContainer.classList.toggle('is-fetched', cover?.source === 'fetched');
+    coverContainer.classList.toggle('is-dirty', !!cover && cover.source !== 'fetched');
     revertCoverBtn.hidden = !cover;
     revertCoverBtn.title = cover ? 'Revert to stored cover' : '';
 }

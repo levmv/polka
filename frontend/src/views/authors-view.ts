@@ -1,7 +1,10 @@
 import { type AuthorOpResult, fetchAuthorPage, renameAuthor, setAuthorSortName } from '../api';
+import { requiredElement } from '../dom';
 import { errorMessage } from '../errors';
 import { icon } from '../icons';
 import { createMenu, type ManagedMenu } from '../menu';
+import type { PageHistory } from '../navigation';
+import type { RouteController, RouteMountContext } from '../router';
 import type { AuthorAdmin } from '../types';
 
 interface AuthorsViewState {
@@ -11,7 +14,9 @@ interface AuthorsViewState {
     // Only one row in this mount may be in edit mode at a time.
     activeEditCancel: (() => void) | null;
     authorMenus: ManagedMenu[];
-    destroyed: boolean;
+    signal: AbortSignal;
+    loadedCount: number;
+    history: PageHistory;
 }
 
 export function renderAuthorsPage(): string {
@@ -27,9 +32,9 @@ export function renderAuthorsPage(): string {
     `;
 }
 
-export async function initAuthors(root: HTMLElement, signal: AbortSignal) {
-    const container = root.querySelector<HTMLElement>('#authors-content');
-    if (!container) return;
+export function initAuthors(root: HTMLElement, context: RouteMountContext): RouteController {
+    const { signal, history } = context;
+    const container = requiredElement(root, '#authors-content');
 
     const state: AuthorsViewState = {
         root,
@@ -37,26 +42,37 @@ export async function initAuthors(root: HTMLElement, signal: AbortSignal) {
         statusTimeout: null,
         activeEditCancel: null,
         authorMenus: [],
-        destroyed: false,
+        signal,
+        loadedCount: (history.state as number | undefined) ?? 0,
+        history,
     };
 
     const reload = async () => {
         try {
-            const page = await fetchAuthorPage('', signal);
-            if (state.destroyed || signal.aborted) return;
-            renderAuthors(state, page.items, page.next_cursor || '', reload, signal);
+            const authors: AuthorAdmin[] = [];
+            let cursor = '';
+            do {
+                const page = await fetchAuthorPage(cursor, signal);
+                if (signal.aborted) return;
+                authors.push(...page.items);
+                cursor = page.next_cursor || '';
+            } while (cursor && authors.length < state.loadedCount);
+            state.loadedCount = 0;
+            renderAuthors(state, authors, cursor, reload);
         } catch (_err) {
-            if (state.destroyed || signal.aborted) return;
+            if (signal.aborted) return;
             container.innerHTML = `<p class="error">Failed to load authors</p>`;
         }
     };
 
-    await reload();
-    return () => cleanupAuthors(state);
+    return {
+        ready: reload(),
+        snapshot: () => state.loadedCount,
+        destroy: () => cleanupAuthors(state),
+    };
 }
 
 function cleanupAuthors(state: AuthorsViewState): void {
-    state.destroyed = true;
     state.activeEditCancel?.();
     state.activeEditCancel = null;
     destroyAuthorMenus(state);
@@ -74,7 +90,7 @@ function destroyAuthorMenus(state: AuthorsViewState): void {
 }
 
 function showStatus(state: AuthorsViewState, msg: string) {
-    if (state.destroyed) return;
+    if (state.signal.aborted) return;
     const statusEl = state.root.querySelector<HTMLElement>('#authors-status');
     if (!statusEl) return;
     statusEl.textContent = msg;
@@ -98,9 +114,8 @@ function renderAuthors(
     authors: AuthorAdmin[],
     initialNextCursor: string,
     reload: () => void,
-    signal: AbortSignal,
 ) {
-    const { container } = state;
+    const { container, signal } = state;
     state.activeEditCancel?.();
     state.activeEditCancel = null;
     destroyAuthorMenus(state);
@@ -145,6 +160,8 @@ function renderAuthors(
             fragment.appendChild(createAuthorRow(state, author, reload));
         }
         tbody.appendChild(fragment);
+        state.loadedCount += next.length;
+        state.history.save();
     };
     let nextCursor = initialNextCursor;
     loadMoreWrap.hidden = !nextCursor;
@@ -154,15 +171,15 @@ function renderAuthors(
         loadMoreBtn.textContent = 'Loading...';
         try {
             const page = await fetchAuthorPage(nextCursor, signal);
-            if (state.destroyed) return;
+            if (signal.aborted) return;
             appendAuthors(page.items);
             nextCursor = page.next_cursor || '';
             loadMoreWrap.hidden = !nextCursor;
         } catch {
-            if (state.destroyed || signal.aborted) return;
+            if (signal.aborted) return;
             showStatus(state, 'Failed to load more authors');
         } finally {
-            if (!state.destroyed) {
+            if (!signal.aborted) {
                 loadMoreBtn.disabled = false;
                 loadMoreBtn.textContent = 'Show more';
             }
@@ -350,12 +367,12 @@ function createAuthorRow(
 
             try {
                 const msg = await opts.onSave(value);
-                if (state.destroyed) return;
+                if (state.signal.aborted) return;
                 state.activeEditCancel = null;
                 showStatus(state, msg);
                 reload();
             } catch (err: unknown) {
-                if (state.destroyed) return;
+                if (state.signal.aborted) return;
                 input.disabled = saveBtn.disabled = cancelBtn.disabled = false;
                 errorDiv.textContent = errorMessage(err, 'Update failed');
                 errorDiv.hidden = false;

@@ -9,9 +9,7 @@ async function createQueryShelf(page: Page, name: string, query: string): Promis
 }
 
 async function openSettings(page: Page, tab: string): Promise<Locator> {
-  await page.goto('/');
-  await expect(page.locator('.account-settings')).toBeVisible();
-  await page.locator('.account-settings').click();
+  await page.goto('/?settings=general');
 
   const modal = page.locator('.settings-modal');
   await expect(modal).toBeVisible();
@@ -110,7 +108,6 @@ test.describe('Account settings', () => {
       hold.release();
       await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
       await page.reload();
-      await page.locator('.account-settings').click();
       await expect(zone).toHaveValue(initialZone);
       await expect(modal.getByLabel('Theme', { exact: true })).toContainText('Light');
     } finally {

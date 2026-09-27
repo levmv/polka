@@ -24,7 +24,7 @@ const (
 type TagListOptions struct {
 	Kind       TagKind
 	Query      string
-	ParentID   int64
+	ParentName string
 	Sort       TagSort
 	AfterName  string
 	AfterCount int
@@ -123,11 +123,11 @@ func ListTagCountsPage(queryer Queryer, scope VisibilityScope, opts TagListOptio
 	if key := bookmeta.TagKey(opts.Query); key != "" {
 		where += ` AND t.name_key LIKE ? ESCAPE '\'`
 		args = append(args, "%"+escapeLike(key)+"%")
-	} else if opts.ParentID == 0 {
-		where += " AND t.parent_id IS NULL"
+	} else if opts.ParentName != "" {
+		where += " AND t.parent_id = (SELECT id FROM tags WHERE kind = ? AND name_key = ?)"
+		args = append(args, opts.Kind, bookmeta.TagKey(opts.ParentName))
 	} else {
-		where += " AND t.parent_id = ?"
-		args = append(args, opts.ParentID)
+		where += " AND t.parent_id IS NULL"
 	}
 	selection := "SELECT t.id, t.name, t.name_key, " + count + " AS book_count, " + hasChildren + " AS has_children FROM " + from + " WHERE " + where
 	query := withClause(withSQL) + selection + " ORDER BY t.name_key"

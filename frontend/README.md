@@ -38,7 +38,7 @@ Each browser test gets its own library copy and server, managed by
 | --- | --- |
 | HTML layout, login/setup pages and reader shell | [internal/web/templates/](../internal/web/templates/) |
 | App shell and route registration | [src/main.ts](src/main.ts) |
-| Route lifecycle and history policy | [src/router.ts](src/router.ts), [src/history-state.ts](src/history-state.ts) |
+| Navigation, history and route lifecycle | [src/navigation.ts](src/navigation.ts), [src/router.ts](src/router.ts), [src/history-state.ts](src/history-state.ts) |
 | Page markup and behavior | [src/views/](src/views/) |
 | Settings modal and panels | [src/settings.ts](src/settings.ts), [src/settings/](src/settings/) |
 | API client, response types and catalog notifications | [src/api.ts](src/api.ts), [src/types.ts](src/types.ts), [src/catalog-events.ts](src/catalog-events.ts) |
@@ -59,17 +59,38 @@ server-rendered login and setup pages stay outside it.
 ## State and lifetimes
 
 Scope DOM queries and transient state to the mounted view's root. Module-level
-state is for deliberate sharing or persistence across mounts. Prefer returning
-cleanup or a controller synchronously while data loads in the background.
+state is for deliberate sharing or persistence across mounts. Every route returns
+a `RouteController` synchronously; its `ready` promise represents the initial
+data load. The router aborts the route's signal before calling `destroy()`.
 
 Views, panels and dialogs own their listeners, timers, subscriptions and
 floating UI. Release them on unmount or close; cancel obsolete reads and ignore
 late results.
 
-Opening book details retains the catalog instance so Back restores loaded
-pages, scroll, focus and selection. A suspended view must not affect the visible
-page or URL. `history-state.ts` owns this policy;
-[views/return-position.ts](src/views/return-position.ts) handles position.
+`navigation.ts` owns browser history. Views use their bound `PageHistory` to
+push a new location or replace the current one; suspended views cannot change
+another page's URL. Keep addressable locations in the URL and transient list
+state in the controller's `snapshot()`. Call `history.save()` when that state
+changes. A controller's `ready` promise lets navigation restore scroll only
+after the saved range has loaded. Live search uses `trackSearch()` to group one
+editing session into one history step and flush it before leaving.
+
+Opening book details retains one catalog instance so Back also restores focus
+and selection without fetching the list again. `history-state.ts` decides when
+to retain it; [views/return-position.ts](src/views/return-position.ts) handles
+its position. Other returns reconstruct the view from its snapshot.
+
+Standalone workflows declare a modal history descriptor and register how to
+reopen it. Reopeners load current data and return a function that opens the UI;
+navigation calls it only if no newer workflow or navigation has superseded it.
+Use `modal.updateHistory()` to change that modal's target; a closed modal cannot
+change another workflow's history. `modal.dismiss()` completes or cancels the
+workflow through history; `modal.close()` only removes its UI, for route teardown.
+Keep one modal through loading, form and error states so its history, focus and
+cancellation have one lifetime. Child dialogs share their parent's history step
+and close first.
+Settings also encode their section in the `settings` URL parameter, preserving
+the page underneath when a link is opened directly.
 
 ## Data boundaries
 

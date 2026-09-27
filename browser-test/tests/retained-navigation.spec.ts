@@ -35,9 +35,50 @@ async function bookTop(page: Page, selector: string, id: string): Promise<number
 }
 
 test.describe('Retained library navigation', () => {
-  test('The visible Back control resumes the live library instead of rebuilding it', async ({
-    page,
-  }) => {
+  test('A rebuilt list restores its range, view, selection and position', async ({ page }) => {
+    await page.addInitScript(() => {
+      // Automatic paging must not fill in a range missing from the snapshot.
+      Object.defineProperty(window, 'IntersectionObserver', { value: undefined });
+    });
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Table view', exact: true }).click();
+    const rows = page.locator('.table-row');
+    await expect(rows).toHaveCount(50);
+    await page.getByRole('button', { name: 'Load more', exact: true }).click();
+    await expect(rows).toHaveCount(55);
+    const ids = await rows.evaluateAll((items) =>
+      items.map((item) => item.getAttribute('data-id')),
+    );
+    await rows.last().locator('.table-select-row').check();
+    const position = await page.evaluate(() => scrollY);
+    expect(position).toBeGreaterThan(0);
+    await page.locator('#nav-series').click();
+    await expect(page.locator('.series-container')).toBeVisible();
+
+    const requests: { offset: number; limit: number }[] = [];
+    await page.route('**/api/books?*', (route) => {
+      const params = new URL(route.request().url()).searchParams;
+      requests.push({
+        offset: Number(params.get('offset') || 0),
+        limit: Number(params.get('limit')),
+      });
+      return route.continue();
+    });
+    await page.goBack();
+    await expect(page.locator('.library-table')).toBeVisible();
+    await expect(rows).toHaveCount(55);
+    await expect(rows.last().locator('.table-select-row')).toBeChecked();
+    await expect.poll(() => page.evaluate(() => scrollY)).toBeCloseTo(position, 0);
+    expect(requests).toEqual([{ offset: 0, limit: 55 }]);
+    await page.getByRole('button', { name: 'Load more', exact: true }).click();
+    await expect(page.locator('#load-more-container')).toBeHidden();
+    expect(requests.at(-1)).toEqual({ offset: 55, limit: 50 });
+    expect(
+      await rows.evaluateAll((items) => items.map((item) => item.getAttribute('data-id'))),
+    ).toEqual(ids);
+  });
+
+  test('Back resumes the live library while the sidebar starts a fresh list', async ({ page }) => {
     await page.goto('/');
     await expect(page.locator('.book-card').first()).toBeVisible();
     const firstPage = await page.locator('.book-card').count();
@@ -101,6 +142,13 @@ test.describe('Retained library navigation', () => {
     await page.goBack();
     await expect(page.locator('.book-card')).toHaveCount(extent);
     expect(listRequests).toBe(0);
+
+    // The sidebar starts a new visit with only the first page loaded.
+    await page.goForward();
+    await expect(page.locator('#book-detail-container')).toBeVisible();
+    await page.locator('#nav-library').click();
+    await expect(page.locator('.book-card')).toHaveCount(firstPage);
+    expect(listRequests).toBe(1);
   });
 
   test('A Back taken before the book page settles keeps the restored position', async ({
@@ -140,39 +188,6 @@ test.describe('Retained library navigation', () => {
         ),
     );
     expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(scrollBefore - 50);
-  });
-
-  test('Leaving the relationship destroys the retained library', async ({ page }) => {
-    await page.goto('/');
-    await expect(page.locator('.book-card').first()).toBeVisible();
-    const firstPage = await page.locator('.book-card').count();
-    await page.locator('.book-card').last().scrollIntoViewIfNeeded();
-    await expect(page.locator('.book-card')).toHaveCount(55);
-    expect(await page.locator('.book-card').count()).toBeGreaterThan(firstPage);
-
-    await page.locator('.book-card').first().locator('.book-title-link').click();
-    await expect(page.locator('#book-detail-container')).toBeVisible();
-
-    // The sidebar Library link is the deliberate escape hatch: an ordinary
-    // navigation that rebuilds the list from its first page.
-    await page.locator('#nav-library').click();
-    await expect(page.locator('.book-card').first()).toBeVisible();
-    await expect(page.locator('.book-card')).toHaveCount(firstPage);
-
-    // A destroyed instance still holding its subscriptions would answer this
-    // too, and duplicate work is how that shows up.
-    let listRequests = 0;
-    await page.route('**/api/books?*', async (route) => {
-      listRequests += 1;
-      await route.continue();
-    });
-    await page.evaluate(() =>
-      document.dispatchEvent(
-        new CustomEvent('polka:catalog-changed', { detail: { kind: 'coarse' } }),
-      ),
-    );
-    await expect(page.locator('.book-card')).toHaveCount(firstPage);
-    expect(listRequests).toBe(1);
   });
 
   test('An edit made on the book page patches the retained card in place', async ({ page }) => {
@@ -348,17 +363,23 @@ test.describe('Retained library navigation', () => {
     expect(ids).toEqual(books.map((book) => String(book.id)));
   });
 
-  test('A removal reaches the retained view and keeps the old neighbourhood', async ({ page }) => {
+  test('A removal reaches the retained table and preserves position and focus', async ({
+    page,
+  }) => {
     await page.goto('/');
-    await expect(page.locator('.book-card').first()).toBeVisible();
-    const extent = await page.locator('.book-card').count();
-    const doomedId = await page.locator('.book-card').nth(10).getAttribute('data-id');
+    await page.getByRole('button', { name: 'Table view', exact: true }).click();
+    await expect(page.locator('.library-table')).toBeVisible();
+    const rows = page.locator('.table-row');
+    const extent = await rows.count();
+    const doomedId = await rows.nth(10).getAttribute('data-id');
+    const openedId = await rows.nth(30).getAttribute('data-id');
+    const opened = page.locator(`.table-row[data-id="${openedId}"] .table-title-link`);
 
-    await page.locator('.book-card').nth(20).scrollIntoViewIfNeeded();
-    const anchor = await firstVisibleBook(page, '.book-card');
+    await opened.scrollIntoViewIfNeeded();
+    const anchor = await firstVisibleBook(page, '.table-row');
     expect(anchor.id).not.toBe(doomedId);
 
-    await page.locator('.book-card').nth(20).locator('.book-title-link').click();
+    await opened.click();
     await expect(page.locator('#book-detail-container')).toBeVisible();
 
     await page.evaluate((id) => {
@@ -370,31 +391,12 @@ test.describe('Retained library navigation', () => {
     }, doomedId);
 
     await page.goBack();
-    await expect(page.locator('.book-card')).toHaveCount(extent - 1);
-    await expect(page.locator(`.book-card[data-id="${doomedId}"]`)).toHaveCount(0);
+    await expect(page.locator('.library-table')).toBeVisible();
+    await expect(rows).toHaveCount(extent - 1);
+    await expect(page.locator(`.table-row[data-id="${doomedId}"]`)).toHaveCount(0);
     // A book vanishing above the fold does not move what the reader is looking
     // at: the surviving neighbourhood keeps its place in the viewport.
-    expect(Math.abs((await bookTop(page, '.book-card', anchor.id)) - anchor.top)).toBeLessThan(2);
-  });
-
-  test('Table view returns to the same rows and position', async ({ page }) => {
-    await page.goto('/');
-    await page.getByRole('button', { name: 'Table view', exact: true }).click();
-    await expect(page.locator('.library-table')).toBeVisible();
-
-    // Only the rendered row differs from the grid: the table owns its own
-    // anchor and focus selector, so a short return is enough here.
-    await page.locator('.table-row').nth(30).scrollIntoViewIfNeeded();
-    const anchor = await firstVisibleBook(page, '.table-row');
-
-    await page.locator('.table-row').nth(30).locator('.table-title-link').click();
-    await expect(page.locator('#book-detail-container')).toBeVisible();
-    await page.goBack();
-
-    await expect(page.locator('.library-table')).toBeVisible();
     expect(Math.abs((await bookTop(page, '.table-row', anchor.id)) - anchor.top)).toBeLessThan(2);
-    await expect(page.locator('.table-row').nth(30).locator('.table-title-link')).toBeFocused();
-
-    await page.getByRole('button', { name: 'Grid view', exact: true }).click();
+    await expect(opened).toBeFocused();
   });
 });

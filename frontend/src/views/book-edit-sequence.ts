@@ -1,5 +1,6 @@
 import { fetchBookSequence } from '../api';
 import type { BookListContext } from '../book-list-context';
+import { requiredElement } from '../dom';
 import type { BookSequenceItem, BookSequenceWindow } from '../types';
 
 export type SequenceDirection = 'previous' | 'next';
@@ -18,24 +19,18 @@ export type BookEditSequenceController = {
 };
 
 export function createBookEditSequenceController(opts: {
-    uiID: string;
+    root: HTMLElement;
     initialSequence?: BookSequenceWindow | null;
     listContext?: BookListContext | null;
     currentBookID: () => number;
-    isClosed: () => boolean;
+    signal: AbortSignal;
     isDirty: () => boolean;
     isBusy: () => boolean;
     onOpen: (target: BookSequenceItem | null) => void;
 }): BookEditSequenceController {
-    const actions = document.getElementById(
-        `edit-sequence-actions-${opts.uiID}`,
-    ) as HTMLElement | null;
-    const previousBtn = document.getElementById(
-        `btn-edit-previous-${opts.uiID}`,
-    ) as HTMLButtonElement | null;
-    const nextBtn = document.getElementById(
-        `btn-edit-next-${opts.uiID}`,
-    ) as HTMLButtonElement | null;
+    const actions = requiredElement(opts.root, '[id^="edit-sequence-actions-"]');
+    const previousBtn = requiredElement<HTMLButtonElement>(opts.root, '[id^="btn-edit-previous-"]');
+    const nextBtn = requiredElement<HTMLButtonElement>(opts.root, '[id^="btn-edit-next-"]');
 
     let sequence: BookSequenceWindow | null = normalizeInitialSequence(
         opts.initialSequence,
@@ -46,7 +41,7 @@ export function createBookEditSequenceController(opts: {
     const next = () => sequenceItemAt(sequence, (sequence?.current_index ?? -1) + 1);
 
     const syncVisibility = () => {
-        if (actions) actions.hidden = !previous() && !next();
+        actions.hidden = !previous() && !next();
     };
 
     const update = (dirty: boolean, busy: boolean) => {
@@ -55,11 +50,15 @@ export function createBookEditSequenceController(opts: {
     };
 
     const refresh = async () => {
-        if (!opts.listContext || !actions) return;
+        if (!opts.listContext) return;
         const requestedID = opts.currentBookID();
         try {
-            const nextSequence = await fetchBookSequence(requestedID, opts.listContext);
-            if (opts.isClosed() || opts.currentBookID() !== requestedID) return;
+            const nextSequence = await fetchBookSequence(
+                requestedID,
+                opts.listContext,
+                opts.signal,
+            );
+            if (opts.signal.aborted || opts.currentBookID() !== requestedID) return;
             if (nextSequence.current_index < 0 || nextSequence.items.length === 0) {
                 if (!sequence) actions.hidden = true;
                 return;
@@ -68,6 +67,7 @@ export function createBookEditSequenceController(opts: {
             syncVisibility();
             update(opts.isDirty(), opts.isBusy());
         } catch (e) {
+            if (opts.signal.aborted || opts.currentBookID() !== requestedID) return;
             console.error('Failed to fetch book sequence:', e);
             if (!sequence) actions.hidden = true;
         }
@@ -81,10 +81,10 @@ export function createBookEditSequenceController(opts: {
         void refresh();
     };
 
-    previousBtn?.addEventListener('click', () => {
+    previousBtn.addEventListener('click', () => {
         opts.onOpen(previous());
     });
-    nextBtn?.addEventListener('click', () => {
+    nextBtn.addEventListener('click', () => {
         opts.onOpen(next());
     });
 
@@ -125,14 +125,13 @@ export function createBookEditSequenceController(opts: {
 }
 
 function updateSequenceButton(
-    button: HTMLButtonElement | null,
+    button: HTMLButtonElement,
     item: BookSequenceItem | null | undefined,
     dirty: boolean,
     saving: boolean,
     cleanLabel: string,
     dirtyLabel: string,
 ): void {
-    if (!button) return;
     const label = dirty ? dirtyLabel : cleanLabel;
     button.disabled = saving || !item;
     const accessibleLabel = item ? `${label}: ${item.title}` : label;

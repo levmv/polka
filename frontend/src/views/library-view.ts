@@ -5,27 +5,17 @@ import {
     libraryBookListContext,
     parseShelfID,
 } from '../book-list-context';
-import {
-    CATALOG_CHANGED,
-    type CatalogChange,
-    type CatalogField,
-    notifyShelvesChanged,
-} from '../catalog-events';
+import { CATALOG_CHANGED, type CatalogChange, type CatalogField } from '../catalog-events';
 import { createBookCard } from '../components/book-card';
 import { type CollectionView, createCollectionControls } from '../components/collection-controls';
+import { trackSearch } from '../components/search-history';
 import { coverUrl } from '../cover';
-import { debounce, escapeHtml } from '../dom';
+import { escapeHtml } from '../dom';
 import { errorMessage } from '../errors';
-import { readScrollPosition } from '../history-state';
 import { icon } from '../icons';
 import { beginGlobalLoading } from '../loading-indicator';
-import {
-    navigateApp,
-    type RouteCleanup,
-    type RouteController,
-    replaceLocationURL,
-    type ScrollPosition,
-} from '../router';
+import { navigateApp, type PageHistory } from '../navigation';
+import type { RouteCleanup, RouteController, RouteMountContext, ScrollPosition } from '../router';
 import { queryTerm, seriesLibraryURL } from '../search-query';
 import { openSettingsModal } from '../settings';
 import { loadPersonalSettings, type PersonalSettings, writebackSetting } from '../settings/state';
@@ -41,7 +31,7 @@ import { createReturnPosition, type ReturnPosition } from './return-position';
 const PAGE_SIZE = 50;
 // Must not exceed maxBooksLimit in internal/web/api_books.go: a shorter
 // response is interpreted as the end of the list.
-const REFRESH_PAGE_SIZE = 1000;
+const MAX_PAGE_SIZE = 1000;
 const BROWSE_SORT_OPTIONS = [
     { value: 'added', label: 'Recently added' },
     { value: 'title', label: 'Title' },
@@ -64,7 +54,14 @@ interface LibraryReplacement {
     refresh: boolean;
 }
 
+interface LibrarySnapshot {
+    view: CollectionView;
+    count: number;
+    selected: number[];
+}
+
 interface LibraryViewState {
+    history: PageHistory;
     // Router-owned route root. Every lookup this view makes is scoped to it.
     root: HTMLElement;
     // 'suspended' means the root is detached: state and DOM are intact, but this
@@ -149,20 +146,19 @@ export function renderLibraryPage(): string {
     `;
 }
 
-export function initLibrary(root: HTMLElement): RouteController {
-    // Capture before loading: the empty page can clamp to the top and save that
-    // position into history before the books arrive.
-    const initialScroll = readScrollPosition(window.history.state);
+export function initLibrary(root: HTMLElement, context: RouteMountContext): RouteController {
+    const saved = context.history.state as LibrarySnapshot | undefined;
     const searchInput = root.querySelector<HTMLInputElement>('#search-input');
     const params = new URLSearchParams(window.location.search);
     const initialQuery = params.get('q') || '';
     let shelfId = parseShelfID(params.get('shelf'));
     if (searchInput) searchInput.value = initialQuery;
     const state: LibraryViewState = {
+        history: context.history,
         root,
         phase: 'active',
         books: [],
-        view: readLibraryViewMode(),
+        view: saved?.view ?? readLibraryViewMode(),
         current: { query: '', sort: '', shelfId, offset: 0 },
         replacement: null,
         dependencies: null,
@@ -204,15 +200,17 @@ export function initLibrary(root: HTMLElement): RouteController {
     let sortOverridden = requestedSort !== '' && requestedSort === sortValue;
     const initialOffset = initialLibraryOffset(params, sortValue, state.current.shelfId);
 
-    const reload = (offset = 0) => {
+    const reload = (offset = 0, newEntry = false, count = PAGE_SIZE) => {
         if (state.phase !== 'active') return;
         const query = searchInput?.value.trim() || '';
         if (query) shelfId = 0;
         const next = { query, sort: sortValue, shelfId, offset };
-        updateLibraryBrowseURL({ ...next, sort: sortOverridden ? sortValue : '' });
+        const url = libraryBrowseURL({ ...next, sort: sortOverridden ? sortValue : '' });
+        if (newEntry) context.history.push(url);
+        else context.history.replace(url);
         return loadBooks(state, {
             query: next,
-            count: PAGE_SIZE,
+            count,
             refresh: false,
         });
     };
@@ -234,20 +232,19 @@ export function initLibrary(root: HTMLElement): RouteController {
         addCleanup(() => state.loadMoreObserver?.disconnect());
     }
 
-    // Held so suspend() can unschedule a pending search: a debounce that fired
-    // from a detached library would rewrite the book page's URL.
-    let cancelPendingSearch: (() => void) | null = null;
     const controls = createCollectionControls({
         view: state.view,
         sort: sortValue,
         sortOptions: sortOptions(searching),
         sortLabel: 'Sort books',
         onViewChange: (view) => {
+            searchHistory?.finish();
             state.view = view;
             localStorage.setItem('polka-view-mode', view);
             renderBooks(state, state.books);
         },
         onSortChange: (value) => {
+            searchHistory?.finish();
             sortValue = value;
             sortOverridden = true;
             reload();
@@ -269,17 +266,15 @@ export function initLibrary(root: HTMLElement): RouteController {
         controls.setSort(sortValue, sortOptions(searching));
     };
 
+    const searchHistory = searchInput
+        ? trackSearch(searchInput, (newEntry) => {
+              if (state.phase !== 'active') return;
+              syncSearchSort();
+              void reload(0, newEntry);
+          })
+        : null;
     if (searchInput) {
-        const handleSearchInput = debounce((_e: Event) => {
-            syncSearchSort();
-            reload();
-        }, 250);
-        cancelPendingSearch = () => handleSearchInput.cancel();
-        searchInput.addEventListener('input', handleSearchInput);
-        addCleanup(() => {
-            searchInput.removeEventListener('input', handleSearchInput);
-            handleSearchInput.cancel();
-        });
+        addCleanup(() => searchHistory?.destroy());
         addCleanup(setupLibrarySearchShortcuts(state, searchInput));
         addCleanup(setupSaveSearchButton(root, searchInput));
     }
@@ -290,6 +285,7 @@ export function initLibrary(root: HTMLElement): RouteController {
             container: libraryGrid,
             getBooks: () => state.books,
             canWriteback: () => state.canWriteback,
+            onChange: () => context.history.save(),
         });
         addCleanup(() => state.selection?.destroy());
     }
@@ -418,19 +414,21 @@ export function initLibrary(root: HTMLElement): RouteController {
             /* main bootstrap keeps the default theme/settings behavior */
         });
 
-    // Mount stays synchronous so the router holds this route's cleanup before
-    // anything is awaited; awaiting here would leave the global subscriptions
-    // above live on whatever page the reader moved to next. The saved scroll is
-    // re-applied once the grid actually has content to scroll.
-    void reload(initialOffset)?.then((loaded) => {
-        // Only while this instance is the page on screen: a first load that
-        // lands after the reader has already opened a book would otherwise
-        // scroll the book page to the list's saved position.
-        if (loaded && state.phase === 'active' && initialScroll) {
-            window.scrollTo(initialScroll.x, initialScroll.y);
+    const ready = reload(initialOffset, false, saved?.count ?? PAGE_SIZE)?.then((loaded) => {
+        if (loaded && state.phase === 'active' && saved) {
+            state.selection?.restore(saved.selected);
         }
     });
     return {
+        ready,
+        beforeLeave: () => searchHistory?.finish(),
+        snapshot: (): LibrarySnapshot => ({
+            view: state.view,
+            count: state.replacement
+                ? PAGE_SIZE
+                : Math.max(PAGE_SIZE, state.nextOffset - state.current.offset),
+            selected: state.selection?.selectedIDs() ?? [],
+        }),
         // Everything this instance owns outside its own root is handed back to
         // the page that is about to replace it.
         suspend(): void {
@@ -438,7 +436,6 @@ export function initLibrary(root: HTMLElement): RouteController {
             state.phase = 'suspended';
             state.loadMoreObserver?.disconnect();
             state.returnPosition.capture();
-            cancelPendingSearch?.();
             controls.close();
             state.selection?.setActive(false);
             document.body.classList.remove('has-library-jump-rail');
@@ -502,29 +499,14 @@ function initialLibraryOffset(params: URLSearchParams, sort: string, shelfId: nu
     return Number.isSafeInteger(value) && value >= 0 ? value : 0;
 }
 
-function updateLibraryBrowseURL({ query, sort, shelfId, offset }: LibraryQuery): void {
-    const url = new URL(window.location.href);
-    if (query) {
-        url.searchParams.set('q', query);
-    } else {
-        url.searchParams.delete('q');
-    }
-    if (shelfId) {
-        url.searchParams.set('shelf', String(shelfId));
-    } else {
-        url.searchParams.delete('shelf');
-    }
-    if (!sort) {
-        url.searchParams.delete('sort');
-    } else {
-        url.searchParams.set('sort', sort);
-    }
-    if (offset > 0) {
-        url.searchParams.set('offset', String(offset));
-    } else {
-        url.searchParams.delete('offset');
-    }
-    replaceLocationURL(url);
+function libraryBrowseURL({ query, sort, shelfId, offset }: LibraryQuery): string {
+    const params = new URLSearchParams();
+    if (query) params.set('q', query);
+    if (shelfId) params.set('shelf', String(shelfId));
+    if (sort) params.set('sort', sort);
+    if (offset > 0) params.set('offset', String(offset));
+    const search = params.toString();
+    return search ? `/?${search}` : '/';
 }
 
 function setupLibrarySearchShortcuts(
@@ -584,13 +566,12 @@ function setupSaveSearchButton(
                 kind: 'query',
                 initialQuery: query,
                 defaultShared: shared,
+                navigateOnCreate: true,
             });
             if (!shelf) {
                 btn.disabled = false;
                 return;
             }
-            notifyShelvesChanged();
-            navigateApp(`/?shelf=${shelf.id}`);
         } catch (e) {
             console.error('Failed to save search shelf:', e);
             showToast(errorMessage(e, 'Save search failed'), { type: 'error' });
@@ -655,12 +636,10 @@ async function loadBooks(state: LibraryViewState, request: LibraryReplacement): 
         let dependencies: string[] | null = null;
         // Bound each response and commit the complete browsed range together.
         do {
-            const limit = request.refresh
-                ? Math.min(
-                      REFRESH_PAGE_SIZE,
-                      Math.max(PAGE_SIZE, request.count - (nextOffset - offset)),
-                  )
-                : PAGE_SIZE;
+            const limit = Math.min(
+                MAX_PAGE_SIZE,
+                Math.max(PAGE_SIZE, request.count - (nextOffset - offset)),
+            );
             const page = await fetchBooks(query, sort, limit, nextOffset, shelfId, abort.signal);
             if (state.phase !== 'active' || state.booksAbort !== abort) return false;
             nextOffset += page.books.length;
@@ -970,7 +949,7 @@ function renderBookJumpRail(state: LibraryViewState): void {
         button.addEventListener('click', () => {
             if (jump.offset === state.current.offset || state.replacement) return;
             const query = { ...state.current, offset: jump.offset };
-            updateLibraryBrowseURL(query);
+            state.history.replace(libraryBrowseURL(query));
             window.scrollTo({ top: 0, behavior: 'auto' });
             void loadBooks(state, {
                 query,
@@ -1174,29 +1153,29 @@ function createLibraryEmptyState(state: LibraryViewState): HTMLElement {
 
 const TABLE_GENRE_LIMIT = 3;
 
-// Add a table filter to the current search without repeating it.
-function applyTableFilter(state: LibraryViewState, token: string): void {
-    const input = state.root.querySelector<HTMLInputElement>('#search-input');
-    if (!input) return;
-    const current = input.value.trim();
-    const next = !current ? token : current.includes(token) ? current : `${current} ${token}`;
-    if (next === input.value) return;
-    input.value = next;
-    input.dispatchEvent(new Event('input'));
+function tableFilterURL(state: LibraryViewState, token: string): string {
+    const current = state.current.query;
+    const query = !current ? token : current.includes(token) ? current : `${current} ${token}`;
+    return libraryBrowseURL({
+        query,
+        sort: new URLSearchParams(window.location.search).get('sort') || '',
+        shelfId: 0,
+        offset: 0,
+    });
 }
 
-function authorCellHtml(b: BookSummary): string {
+function authorCellHtml(state: LibraryViewState, b: BookSummary): string {
     const names = b.authors_list.map((author) => author.name).filter(Boolean);
     if (names.length === 0) return '';
     return names
         .map(
             (n) =>
-                `<span class="table-author-link" role="button" tabindex="0" data-filter="${escapeHtml(queryTerm('author', n))}">${escapeHtml(n)}</span>`,
+                `<a class="table-author-link" href="${escapeHtml(tableFilterURL(state, queryTerm('author', n)))}">${escapeHtml(n)}</a>`,
         )
         .join(' &amp; ');
 }
 
-function genresCellHtml(b: BookSummary): string {
+function genresCellHtml(state: LibraryViewState, b: BookSummary): string {
     const genres = b.genres
         ? b.genres
               .split(',')
@@ -1210,7 +1189,7 @@ function genresCellHtml(b: BookSummary): string {
     const sep = ' <span class="table-genre-sep">·</span> ';
     let html = '<span class="table-genres-text">';
     for (const [index, name] of genres.entries()) {
-        const genre = `<span class="table-genre-text" role="button" tabindex="0" data-filter="${escapeHtml(queryTerm('genre', name))}" title="${escapeHtml(name)}">${escapeHtml(labels[index])}</span>`;
+        const genre = `<a class="table-genre-text" href="${escapeHtml(tableFilterURL(state, queryTerm('genre', name)))}" title="${escapeHtml(name)}">${escapeHtml(labels[index])}</a>`;
         if (index >= TABLE_GENRE_LIMIT) {
             html += `<span class="table-genre-hidden" hidden>${sep}${genre}</span>`;
         } else {
@@ -1254,10 +1233,10 @@ function createBookRow(state: LibraryViewState, b: BookSummary): HTMLTableRowEle
         <td class="col-select"><label class="table-select-label"><input type="checkbox" class="table-select-row" aria-label="Select ${escapeHtml(b.title)}"></label></td>
         <td class="col-cover">${coverHtml}</td>
         <td class="col-title"><a href="${href}" class="table-title-link">${escapeHtml(b.title)}</a></td>
-        <td class="col-author">${authorCellHtml(b)}</td>
+        <td class="col-author">${authorCellHtml(state, b)}</td>
         <td class="col-series">${seriesHtml}</td>
         <td class="col-year">${escapeHtml(b.year || '')}</td>
-        <td class="col-genres">${genresCellHtml(b)}</td>
+        <td class="col-genres">${genresCellHtml(state, b)}</td>
         <td class="col-format">${formats}</td>
         <td class="col-actions">
             <button class="btn-quick-edit" title="Quick Edit" aria-label="Quick Edit">
@@ -1265,17 +1244,6 @@ function createBookRow(state: LibraryViewState, b: BookSummary): HTMLTableRowEle
             </button>
         </td>
     `;
-    for (const el of tr.querySelectorAll<HTMLElement>('[data-filter]')) {
-        const token = el.dataset.filter!;
-        el.addEventListener('click', () => applyTableFilter(state, token));
-        el.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                applyTableFilter(state, token);
-            }
-        });
-    }
-
     const moreBtn = tr.querySelector('.table-genre-more');
     moreBtn?.addEventListener('click', () => {
         for (const el of tr.querySelectorAll<HTMLElement>('.table-genre-hidden')) {

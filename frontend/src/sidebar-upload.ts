@@ -3,7 +3,7 @@ import { bookURL } from './book-list-context';
 import { notifyCatalogChanged } from './catalog-events';
 import { errorMessage } from './errors';
 import { createImportResult } from './import-result';
-import { navigateApp } from './router';
+import { navigateApp } from './navigation';
 import { showToast } from './toast';
 import type { BookImportResult, CurrentUser } from './types';
 

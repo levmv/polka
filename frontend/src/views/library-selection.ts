@@ -5,6 +5,7 @@ import { notifyCatalogChanged } from '../catalog-events';
 import { errorMessage } from '../errors';
 import { icon } from '../icons';
 import { confirmModal } from '../modal';
+import { registerOverlayReopen } from '../navigation';
 import { showToast } from '../toast';
 import type { BookSummary, BulkEditResult } from '../types';
 import {
@@ -16,6 +17,8 @@ import {
 } from './bulk-edit-dialogs';
 
 export interface LibrarySelection {
+    selectedIDs(): number[];
+    restore(ids: number[]): void;
     // Turn selection on/off for the current user (catalog curators only). When
     // disabled the checkboxes stay hidden and any selection is dropped.
     setEnabled(on: boolean): void;
@@ -37,6 +40,7 @@ export interface SelectionOptions {
     container: HTMLElement;
     getBooks(): BookSummary[];
     canWriteback(): boolean;
+    onChange(): void;
 }
 
 export function createLibrarySelection(opts: SelectionOptions): LibrarySelection {
@@ -77,6 +81,19 @@ export function createLibrarySelection(opts: SelectionOptions): LibrarySelection
         }
         showToast(message);
     };
+
+    const openBulkEditor = (action: string | undefined) => {
+        const books = selectedBooks();
+        if (!active || !enabled || !books.length) return;
+        if (action === 'authors') openBulkAuthorsDialog(books, handleApplied);
+        else if (action === 'tags') openBulkTagsDialog(books, handleApplied);
+        else if (action === 'series') openBulkSeriesDialog(books, handleApplied);
+        else if (action === 'shelves') openBulkShelvesDialog(books, handleShelved);
+    };
+    const releaseBulkEditor = registerOverlayReopen(
+        'bulk-edit',
+        (entry) => () => openBulkEditor(entry.target as string),
+    );
 
     // Soft-delete the selection: confirm, move to Trash (reversible, files kept),
     // then drop the trashed rows from the view.
@@ -146,14 +163,9 @@ export function createLibrarySelection(opts: SelectionOptions): LibrarySelection
             btn.addEventListener('click', () => {
                 const books = selectedBooks();
                 if (books.length === 0) return;
-                if (btn.dataset.action === 'authors') openBulkAuthorsDialog(books, handleApplied);
-                else if (btn.dataset.action === 'tags') openBulkTagsDialog(books, handleApplied);
-                else if (btn.dataset.action === 'series')
-                    openBulkSeriesDialog(books, handleApplied);
-                else if (btn.dataset.action === 'shelves')
-                    openBulkShelvesDialog(books, handleShelved);
-                else if (btn.dataset.action === 'writeback') void runWriteback(books);
+                if (btn.dataset.action === 'writeback') void runWriteback(books);
                 else if (btn.dataset.action === 'delete') void runTrash(books);
+                else openBulkEditor(btn.dataset.action);
             });
         }
         countEl = el.querySelector('[data-count]');
@@ -207,6 +219,7 @@ export function createLibrarySelection(opts: SelectionOptions): LibrarySelection
         } else {
             removeBar();
         }
+        if (active) opts.onChange();
     }
 
     function setSelected(id: number, on: boolean): void {
@@ -299,6 +312,11 @@ export function createLibrarySelection(opts: SelectionOptions): LibrarySelection
     document.addEventListener('keydown', onKeydown);
 
     return {
+        selectedIDs: () => [...selected],
+        restore(ids) {
+            for (const id of ids) selected.add(id);
+            syncAfterRender();
+        },
         setEnabled: (on) => {
             enabled = on;
             if (active) document.body.classList.toggle('can-curate', on);
@@ -318,6 +336,7 @@ export function createLibrarySelection(opts: SelectionOptions): LibrarySelection
             updateUI();
         },
         destroy: () => {
+            releaseBulkEditor();
             opts.container.removeEventListener('click', onClick, true);
             opts.container.removeEventListener('change', onChange);
             document.removeEventListener('keydown', onKeydown);

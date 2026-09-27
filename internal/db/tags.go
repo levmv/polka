@@ -21,6 +21,22 @@ const (
 	TagKindGenre TagKind = "genre"
 )
 
+// Tag identifies a current dictionary entry independently of loaded list pages.
+type Tag struct {
+	ID   int64   `json:"id"`
+	Kind TagKind `json:"kind"`
+	Name string  `json:"name"`
+}
+
+func GetTag(queryer Queryer, id int64) (Tag, error) {
+	var tag Tag
+	err := queryer.QueryRow("SELECT id, kind, name FROM tags WHERE id = ?", id).Scan(&tag.ID, &tag.Kind, &tag.Name)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Tag{}, ErrTagNotFound
+	}
+	return tag, err
+}
+
 // BookTags holds the two independently ordered parts of the shared dictionary.
 type BookTags struct {
 	Genres []string
@@ -122,22 +138,23 @@ func DeleteOrphanTags(execer Execer) error {
 
 // RenameOrMergeTag moves the whole branch, including trashed books. Overlapping
 // branches merge node by node, keeping the first position on each book.
-func RenameOrMergeTag(tx *Tx, tagID int64, newName string) ([]int64, error) {
+func RenameOrMergeTag(tx *Tx, tagID int64, newName string) ([]int64, Tag, error) {
 	nodes, kind, err := loadTagBranch(tx, tagID)
 	if err != nil {
-		return nil, err
+		return nil, Tag{}, err
 	}
 	oldName := nodes[0].name
+	target := Tag{ID: tagID, Kind: kind, Name: oldName}
 	newName = bookmeta.NormalizeTagName(newName)
 	if oldName == newName {
-		return nil, nil
+		return nil, target, nil
 	}
 	if len(bookmeta.TagParts(newName)) > 1 && strings.HasPrefix(bookmeta.TagKey(newName), bookmeta.TagKey(oldName)+".") {
-		return nil, ErrTagCycle
+		return nil, Tag{}, ErrTagCycle
 	}
 	ids, err := bookIDsForTagBranch(tx, tagID)
 	if err != nil {
-		return nil, err
+		return nil, Tag{}, err
 	}
 	renamed := make(map[string]string, len(nodes))
 	for _, node := range nodes {
@@ -146,29 +163,32 @@ func RenameOrMergeTag(tx *Tx, tagID int64, newName string) ([]int64, error) {
 		// A descendant must remain a nested path. TagParts falls back to a
 		// literal name for empty components or excessive depth.
 		if node.id != tagID && len(parts) == 1 {
-			return nil, ErrTagPath
+			return nil, Tag{}, ErrTagPath
 		}
-		canonicalName, err := moveTagNode(tx, kind, node.id, parts)
+		moved, err := moveTagNode(tx, kind, node.id, parts)
 		if err != nil {
-			return nil, err
+			return nil, Tag{}, err
 		}
-		renamed[bookmeta.TagKey(node.name)] = canonicalName
+		if node.id == tagID {
+			target.ID, target.Name = moved.id, moved.name
+		}
+		renamed[bookmeta.TagKey(node.name)] = moved.name
 	}
 	if err := renameSavedTagQueries(tx, kind, renamed); err != nil {
-		return nil, err
+		return nil, Tag{}, err
 	}
 	if err := DeleteOrphanTags(tx); err != nil {
-		return nil, err
+		return nil, Tag{}, err
 	}
-	return ids, nil
+	return ids, target, nil
 }
 
 // moveTagNode renames one node or merges it into an existing destination.
 // The caller visits parents before children and updates every descendant's path.
-func moveTagNode(tx *Tx, kind TagKind, sourceID int64, parts []string) (string, error) {
+func moveTagNode(tx *Tx, kind TagKind, sourceID int64, parts []string) (tagNode, error) {
 	parent, err := ensureTagPath(tx, kind, parts[:len(parts)-1])
 	if err != nil {
-		return "", err
+		return tagNode{}, err
 	}
 	name := parts[len(parts)-1]
 	if parent.id != 0 {
@@ -178,25 +198,25 @@ func moveTagNode(tx *Tx, kind TagKind, sourceID int64, parts []string) (string, 
 	err = tx.QueryRow("SELECT id, name FROM tags WHERE kind = ? AND name_key = ?", kind, bookmeta.TagKey(name)).Scan(&target.id, &target.name)
 	if errors.Is(err, sql.ErrNoRows) || err == nil && target.id == sourceID {
 		_, err = tx.Exec("UPDATE tags SET name = ?, name_key = ?, parent_id = ? WHERE id = ?", name, bookmeta.TagKey(name), sql.NullInt64{Int64: parent.id, Valid: parent.id != 0}, sourceID)
-		return name, err
+		return tagNode{id: sourceID, name: name}, err
 	}
 	if err != nil {
-		return "", err
+		return tagNode{}, err
 	}
 
 	if _, err := tx.Exec(`INSERT INTO book_tags (book_id, tag_id, position)
    SELECT book_id, ?, position FROM book_tags WHERE tag_id = ?
    ON CONFLICT (book_id, tag_id) DO UPDATE SET position = MIN(position, excluded.position)`, target.id, sourceID); err != nil {
-		return "", err
+		return tagNode{}, err
 	}
 	if _, err := tx.Exec("UPDATE tags SET parent_id = ? WHERE parent_id = ?", target.id, sourceID); err != nil {
-		return "", err
+		return tagNode{}, err
 	}
 	if _, err := tx.Exec("DELETE FROM book_tags WHERE tag_id = ?", sourceID); err != nil {
-		return "", err
+		return tagNode{}, err
 	}
 	_, err = tx.Exec("DELETE FROM tags WHERE id = ?", sourceID)
-	return target.name, err
+	return target, err
 }
 
 func DeleteTag(tx *Tx, tagID int64) ([]int64, error) {

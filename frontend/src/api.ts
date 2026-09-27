@@ -786,15 +786,15 @@ export async function writebackBook(bookId: number): Promise<BookWritebackResult
 export async function fetchBookSequence(
     bookId: number,
     context: BookListContext,
-    before = 25,
-    after = 25,
+    signal?: AbortSignal,
 ): Promise<BookSequenceWindow> {
     const params = bookListContextParams(context);
-    params.set('before', String(before));
-    params.set('after', String(after));
+    params.set('before', '25');
+    params.set('after', '25');
     return await fetchJSON<BookSequenceWindow>(
         `/api/books/${bookId}/sequence?${params.toString()}`,
         'Failed to fetch book sequence',
+        { signal },
     );
 }
 
@@ -1262,10 +1262,13 @@ export async function fetchAuthorPage(
 // fetchAuthorInfo returns one author's sort_name and book count by exact name,
 // or null when no such author exists (404). Book edit uses the count for
 // author-sort scope hints and conservative rename convergence prompts.
-export async function fetchAuthorInfo(name: string): Promise<AuthorAdmin | null> {
+export async function fetchAuthorInfo(
+    name: string,
+    signal?: AbortSignal,
+): Promise<AuthorAdmin | null> {
     return await requestResult(
         `/api/authors/info?name=${encodeURIComponent(name)}`,
-        undefined,
+        { signal },
         async (res) => {
             if (res.status === 404) return null;
             if (!res.ok) throw await responseError(res, 'Failed to fetch author');
@@ -1313,13 +1316,18 @@ export type TagSort = 'name' | 'books';
 
 export async function fetchTagPage(
     kind: TagKind,
-    options: { query: string; cursor: string; parentID: number; sort: TagSort },
+    options: {
+        query: string;
+        cursor: string;
+        parentName: string;
+        sort: TagSort;
+    },
     signal?: AbortSignal,
 ): Promise<CursorPage<TagSummary>> {
     const params = new URLSearchParams({ kind });
     if (options.query) params.set('q', options.query);
     if (options.cursor) params.set('cursor', options.cursor);
-    if (options.parentID) params.set('parent', String(options.parentID));
+    if (options.parentName) params.set('branch', options.parentName);
     if (options.sort !== 'name') params.set('sort', options.sort);
     return fetchJSON<CursorPage<TagSummary>>(
         `/api/tags/list?${params}`,
@@ -1330,8 +1338,22 @@ export async function fetchTagPage(
     );
 }
 
-export async function renameTag(id: number, name: string): Promise<{ affected: number }> {
-    const result = await fetchJSON<{ affected: number }>(
+export interface Tag {
+    id: number;
+    kind: TagKind;
+    name: string;
+}
+
+export async function fetchTag(id: number, signal?: AbortSignal): Promise<Tag | null> {
+    return requestResult(`/api/tags/${id}`, { signal }, async (res) => {
+        if (res.status === 404) return null;
+        if (!res.ok) throw await responseError(res, 'Failed to fetch tag');
+        return await res.json();
+    });
+}
+
+export async function renameTag(id: number, name: string): Promise<{ affected: number; tag: Tag }> {
+    const result = await fetchJSON<{ affected: number; tag: Tag }>(
         `/api/tags/${id}`,
         'Rename failed',
         jsonBody('PATCH', { name }),

@@ -178,6 +178,51 @@ test.describe('Book editor', () => {
     await expect(modal.locator('.save-indicator')).toContainText('1 unsaved change');
   });
 
+  test('A delayed author rename offer cannot reopen a closed editor workflow', async ({ page }) => {
+    const book = await findBook(page, 'No Cover Book');
+    const other = await findBook(page, 'With Cover Book');
+    const author = 'Shared History Author';
+    for (const id of [book.id, other.id]) {
+      const response = await page.request.patch(`/api/books/${id}`, { data: { authors: author } });
+      expect(response.ok()).toBe(true);
+    }
+    await page.goto(`/book/${book.id}`);
+    await page.evaluate((name) => {
+      const nativeFetch = window.fetch.bind(window);
+      window.fetch = async (input, init) => {
+        const value = input instanceof Request ? input.url : input.toString();
+        const url = new URL(value, location.href);
+        if (url.pathname !== '/api/authors/info' || url.searchParams.get('name') !== name) {
+          return nativeFetch(input, init);
+        }
+        const response = await nativeFetch(input, { ...init, signal: undefined });
+        document.documentElement.dataset.authorCountLoaded = 'true';
+        await new Promise<void>((resolve) =>
+          window.addEventListener('release-author-count', () => resolve(), { once: true }),
+        );
+        return response;
+      };
+    }, author);
+
+    await page.locator('#btn-edit-book').click();
+    const editor = page.locator('.edit-modal');
+    await editor.locator('input[name="authors"]').fill('Renamed History Author');
+    await editor.locator('.edit-save-btn').click();
+    await expect(page.locator('html')).toHaveAttribute('data-author-count-loaded', 'true');
+    await expect(editor.locator('.edit-save-btn')).toBeDisabled();
+    await editor.getByRole('button', { name: 'Close', exact: true }).click();
+    await expect(editor).toHaveCount(0);
+    await page.locator('#btn-edit-book').click();
+    const title = editor.locator('input[name="title"]');
+    await title.fill('Draft in the reopened editor');
+    await page.evaluate(() => window.dispatchEvent(new Event('release-author-count')));
+    await expect(page.getByRole('heading', { name: 'Apply to other books?' })).toHaveCount(0);
+    await expect(title).toHaveValue('Draft in the reopened editor');
+    await expect(title).toBeFocused();
+    const unchanged = await page.request.get(`/api/books/${other.id}`);
+    expect((await unchanged.json()).authors_list[0].name).toBe(author);
+  });
+
   test('Book detail edit Next switches inside the same modal', async ({ page }) => {
     await page.goto('/');
     const firstCard = page.locator('.book-card').first();

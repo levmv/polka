@@ -11,6 +11,7 @@ import { textEl } from '../dom';
 import { errorMessage } from '../errors';
 import { iconElement } from '../icons';
 import { createMenu } from '../menu';
+import { navigateApp } from '../navigation';
 import type { Annotation, Book } from '../types';
 
 const PAGE_SIZE = 40;
@@ -152,8 +153,7 @@ export function createBookAnnotations(book: Book) {
             },
             onClose: finishEdit,
             onRead: asset?.can_read
-                ? (saved) =>
-                      window.location.assign(`/read/asset/${saved.asset_id}#annotation=${saved.id}`)
+                ? (saved) => navigateApp(`/read/asset/${saved.asset_id}#annotation=${saved.id}`)
                 : undefined,
         });
         editor.el.classList.add('book-annotation-editor');

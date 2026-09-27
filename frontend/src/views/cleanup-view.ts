@@ -1,9 +1,10 @@
 import { dismissCleanupDuplicates, fetchCleanup, mergeCleanupDuplicates } from '../api';
 import { bookURL } from '../book-list-context';
 import { coverUrl } from '../cover';
-import { escapeHtml } from '../dom';
+import { escapeHtml, requiredElement } from '../dom';
 import { errorMessage } from '../errors';
 import { confirmModal } from '../modal';
+import type { RouteController } from '../router';
 import { showToast } from '../toast';
 import type { Asset, BookSummary, Cleanup, DuplicateGroup } from '../types';
 
@@ -18,19 +19,18 @@ export function renderCleanupPage(): string {
     `;
 }
 
-export async function initCleanup(root: HTMLElement, signal: AbortSignal) {
-    const container = root.querySelector<HTMLElement>('#cleanup-content');
-    if (!container) return;
-    await loadCleanup(container, signal);
+export function initCleanup(root: HTMLElement, signal: AbortSignal): RouteController {
+    const container = requiredElement(root, '#cleanup-content');
+    return { ready: loadCleanup(container, signal), destroy() {} };
 }
 
-async function loadCleanup(container: HTMLElement, signal?: AbortSignal): Promise<void> {
+async function loadCleanup(container: HTMLElement, signal: AbortSignal): Promise<void> {
     try {
         const cleanup = await fetchCleanup(signal);
-        if (signal?.aborted) return;
-        renderCleanup(container, cleanup);
+        if (signal.aborted) return;
+        renderCleanup(container, cleanup, signal);
     } catch (err) {
-        if (signal?.aborted) return;
+        if (signal.aborted) return;
         console.error('Failed to load cleanup items:', err);
         container.innerHTML = `<p class="error">Failed to load cleanup items</p>`;
     }
@@ -41,7 +41,7 @@ function cleanupSearchURL(query: string): string {
     return `/?${params.toString()}`;
 }
 
-function renderCleanup(container: HTMLElement, cleanup: Cleanup): void {
+function renderCleanup(container: HTMLElement, cleanup: Cleanup, signal: AbortSignal): void {
     container.innerHTML = '';
     let totalCount = 0;
 
@@ -83,7 +83,7 @@ function renderCleanup(container: HTMLElement, cleanup: Cleanup): void {
         containerDiv.className = 'duplicate-groups-container';
 
         cleanup.possible_duplicates.groups.forEach((group, index) => {
-            containerDiv.appendChild(createDuplicateGroup(container, group, index));
+            containerDiv.appendChild(createDuplicateGroup(container, group, index, signal));
         });
 
         if (cleanup.possible_duplicates.groups.length === 0) {
@@ -107,6 +107,7 @@ function createDuplicateGroup(
     pageContainer: HTMLElement,
     group: DuplicateGroup,
     index: number,
+    signal: AbortSignal,
 ): HTMLElement {
     const groupDiv = document.createElement('div');
     groupDiv.className = 'duplicate-group';
@@ -154,20 +155,22 @@ function createDuplicateGroup(
             body: `Keep "${survivor.title}" and move ${group.books.length - 1} duplicate ${group.books.length === 2 ? 'book' : 'books'} to Trash.`,
             confirmLabel: 'Merge',
         });
-        if (!ok) return;
+        if (!ok || signal.aborted) return;
         setDuplicateGroupBusy(groupDiv, true);
         try {
             const result = await mergeCleanupDuplicates(
                 selected,
                 group.books.map((book) => book.id),
             );
+            if (signal.aborted) return;
             const message =
                 result.relayout_warnings > 0
                     ? 'Merged duplicates; file relayout needs attention'
                     : 'Merged duplicates';
             showToast(message, result.relayout_warnings > 0 ? { type: 'error' } : undefined);
-            await loadCleanup(pageContainer);
+            await loadCleanup(pageContainer, signal);
         } catch (err) {
+            if (signal.aborted) return;
             console.error('Failed to merge duplicates:', err);
             showToast(errorMessage(err, 'Failed to merge duplicates'), { type: 'error' });
             setDuplicateGroupBusy(groupDiv, false);
@@ -178,9 +181,11 @@ function createDuplicateGroup(
         setDuplicateGroupBusy(groupDiv, true);
         try {
             await dismissCleanupDuplicates(group.books.map((book) => book.id));
+            if (signal.aborted) return;
             showToast('Dismissed duplicate group');
-            await loadCleanup(pageContainer);
+            await loadCleanup(pageContainer, signal);
         } catch (err) {
+            if (signal.aborted) return;
             console.error('Failed to dismiss duplicate group:', err);
             showToast(errorMessage(err, 'Failed to dismiss duplicate group'), { type: 'error' });
             setDuplicateGroupBusy(groupDiv, false);

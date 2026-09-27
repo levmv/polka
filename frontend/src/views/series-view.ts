@@ -1,7 +1,7 @@
 import { fetchSeriesPage } from '../api';
 import { coverUrl } from '../cover';
-import { escapeHtml } from '../dom';
-import type { RouteCleanup } from '../router';
+import { escapeHtml, requiredElement } from '../dom';
+import type { RouteController, RouteMountContext } from '../router';
 import { seriesLibraryURL } from '../search-query';
 import type { SeriesSummary } from '../types';
 
@@ -19,17 +19,14 @@ export function renderSeriesPage(): string {
     `;
 }
 
-export async function initSeries(
-    root: HTMLElement,
-    signal: AbortSignal,
-): Promise<RouteCleanup | undefined> {
-    const grid = root.querySelector<HTMLElement>('#series-grid');
-    const loadMoreWrap = root.querySelector<HTMLElement>('#series-load-more');
-    const loadMoreButton = root.querySelector('#series-load-more-btn');
-    if (!grid || !loadMoreWrap || !(loadMoreButton instanceof HTMLButtonElement)) return;
+export function initSeries(root: HTMLElement, context: RouteMountContext): RouteController {
+    const { signal, history } = context;
+    const grid = requiredElement(root, '#series-grid');
+    const loadMoreWrap = requiredElement(root, '#series-load-more');
+    const loadMoreButton = requiredElement<HTMLButtonElement>(root, '#series-load-more-btn');
 
     let nextCursor = '';
-    let destroyed = false;
+    let loadedCount = 0;
 
     const appendPage = (series: SeriesSummary[]) => {
         const fragment = document.createDocumentFragment();
@@ -37,6 +34,8 @@ export async function initSeries(
             fragment.appendChild(createSeriesCard(item));
         }
         grid.appendChild(fragment);
+        loadedCount += series.length;
+        history.save();
     };
 
     const loadMore = async () => {
@@ -45,40 +44,43 @@ export async function initSeries(
         loadMoreButton.textContent = 'Loading...';
         try {
             const page = await fetchSeriesPage(nextCursor, '', undefined, signal);
-            if (destroyed || signal.aborted) return;
+            if (signal.aborted) return;
             appendPage(page.items);
             nextCursor = page.next_cursor || '';
             loadMoreWrap.hidden = !nextCursor;
         } catch (error) {
-            if (destroyed || signal.aborted) return;
+            if (signal.aborted) return;
             console.error('Failed to load more series:', error);
         } finally {
-            if (!destroyed) {
+            if (!signal.aborted) {
                 loadMoreButton.disabled = false;
                 loadMoreButton.textContent = 'Show more';
             }
         }
     };
-    loadMoreButton.addEventListener('click', () => void loadMore());
+    loadMoreButton.addEventListener('click', () => void loadMore(), { signal });
 
-    try {
-        const page = await fetchSeriesPage('', '', undefined, signal);
-        if (destroyed || signal.aborted) return;
-        if (page.items.length === 0) {
-            grid.innerHTML = `<p class="series-grid-message">No series yet.</p>`;
-        } else {
-            appendPage(page.items);
+    const loadInitial = async () => {
+        try {
+            do {
+                const page = await fetchSeriesPage(nextCursor, '', undefined, signal);
+                if (signal.aborted) return;
+                appendPage(page.items);
+                nextCursor = page.next_cursor || '';
+            } while (nextCursor && loadedCount < ((history.state as number | undefined) ?? 0));
+            if (!loadedCount) grid.innerHTML = `<p class="series-grid-message">No series yet.</p>`;
+            loadMoreWrap.hidden = !nextCursor;
+        } catch (e) {
+            if (signal.aborted) return;
+            console.error('Failed to load series:', e);
+            grid.innerHTML = `<p class="series-grid-message error">Failed to load series</p>`;
         }
-        nextCursor = page.next_cursor || '';
-        loadMoreWrap.hidden = !nextCursor;
-    } catch (e) {
-        if (destroyed || signal.aborted) return;
-        console.error('Failed to load series:', e);
-        grid.innerHTML = `<p class="series-grid-message error">Failed to load series</p>`;
-    }
+    };
 
-    return () => {
-        destroyed = true;
+    return {
+        ready: loadInitial(),
+        snapshot: () => loadedCount,
+        destroy() {},
     };
 }
 

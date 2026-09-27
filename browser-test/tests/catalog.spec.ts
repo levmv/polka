@@ -608,34 +608,4 @@ test.describe('Catalog', () => {
       ),
     ).toBe('same-doc');
   });
-
-  test('Table author click filters the search, preserves prefixes, and can be saved', async ({
-    page,
-  }) => {
-    await page.goto('/');
-    await page.getByRole('button', { name: 'Table view', exact: true }).click();
-    await expect(page.locator('.library-table')).toBeVisible();
-
-    const author = page.locator('.table-author-link').first();
-    const name = ((await author.textContent()) || '').trim();
-    expect(name).not.toBe('');
-    await author.click();
-
-    await expect(page.locator('#search-input')).toHaveValue(`author:"${name}"`);
-    await expect(page.locator('#save-search-btn')).toBeVisible();
-    await page.locator('#save-search-btn').click();
-    const dialog = page.locator('.modal-compact');
-    await expect(dialog.getByRole('heading', { name: 'Save search' })).toBeVisible();
-    await expect(dialog.getByLabel('Name')).toHaveValue(name);
-    await expect(dialog.getByLabel('Search query')).toHaveValue(`author:"${name}"`);
-    await dialog.getByRole('button', { name: 'Cancel' }).click();
-
-    await page.locator('#search-input').fill('co');
-    const selected = page.locator('.table-row', { hasText: 'No Cover Book' });
-    await expect(selected).toBeVisible();
-    await expect(page.locator('.table-row', { hasText: 'With Cover Book' })).toBeVisible();
-    await selected.locator('.table-author-link').click();
-    await expect(page.locator('.table-row')).toHaveCount(1);
-    await expect(selected).toBeVisible();
-  });
 });

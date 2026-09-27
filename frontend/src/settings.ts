@@ -1,10 +1,13 @@
+import { fetchCurrentUser } from './api';
+import { isPlainClick } from './dom';
 import { openModal } from './modal';
+import { registerOverlayReopen } from './navigation';
 import { createAppsPanel } from './settings/apps';
 import { createDevicesPanel } from './settings/devices';
 import { createGeneralPanel } from './settings/general';
 import { sendingSetting } from './settings/state';
 import { createStoragePanel } from './settings/storage';
-import { buttonEl, type SettingsPanel } from './settings/ui';
+import type { SettingsPanel } from './settings/ui';
 import { createUsersPanel } from './settings/users';
 import type { CurrentUser } from './types';
 
@@ -19,12 +22,28 @@ const TAB_LABELS: Record<SettingsTab, string> = {
     devices: 'Email delivery',
 };
 
+registerOverlayReopen(
+    'settings',
+    async (entry) => {
+        const user = await fetchCurrentUser();
+        return () => openSettingsModal(user, entry.target as SettingsDestination);
+    },
+    { urlParam: 'settings' },
+);
+
 export function openSettingsModal(
     currentUser: CurrentUser,
     destination: SettingsDestination = 'general',
 ): void {
     const initialTab = destination === 'email-recipients' ? 'devices' : destination;
+    const availableTabs: SettingsTab[] = ['general'];
+    if (currentUser.role === 'admin') availableTabs.push('storage');
+    availableTabs.push('apps', 'users');
+    // Admins can enable email delivery; other roles see it only when enabled.
+    if (sendingSetting().value || currentUser.role === 'admin') availableTabs.push('devices');
+    let activeTab: SettingsTab = availableTabs.includes(initialTab) ? initialTab : 'general';
     const { modal, root } = openModal({
+        history: { kind: 'settings', target: activeTab },
         body: `
             <div class="settings-sidebar">
                 <div class="settings-sidebar-title" id="settings-title">Settings</div>
@@ -58,13 +77,6 @@ export function openSettingsModal(
         devices: createDevicesPanel(currentUser, destination === 'email-recipients'),
     };
 
-    const availableTabs: SettingsTab[] = ['general'];
-    if (currentUser.role === 'admin') availableTabs.push('storage');
-    availableTabs.push('apps', 'users');
-    // Admins can enable email delivery; other roles see it only when enabled.
-    if (sendingSetting().value || currentUser.role === 'admin') availableTabs.push('devices');
-    let activeTab: SettingsTab = availableTabs.includes(initialTab) ? initialTab : 'general';
-
     // Per-tab containers keep late async renders from overwriting the active tab.
     const containers = new Map<SettingsTab, HTMLElement>();
     const renderPanel = () => {
@@ -85,19 +97,20 @@ export function openSettingsModal(
         });
     };
 
-    const tabButtons = renderTabs(tabs, availableTabs, activeTab, (tab) => {
+    const tabLinks = renderTabs(tabs, availableTabs, activeTab, (tab) => {
         if (tab === activeTab) return;
         panels[activeTab].unmount?.();
         activeTab = tab;
-        updateTabSelection(tabButtons, activeTab);
+        modal.updateHistory({ kind: 'settings', target: tab });
+        updateTabSelection(tabLinks, activeTab);
         renderPanel();
         if (tab === 'storage') refreshStorageSilently();
     });
 
     renderPanel();
-    const initialTabButton = tabButtons.get(activeTab);
-    modal.open(initialTabButton);
-    initialTabButton?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    const initialTabLink = tabLinks.get(activeTab);
+    modal.open(initialTabLink);
+    initialTabLink?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 }
 
 function renderTabs(
@@ -105,24 +118,34 @@ function renderTabs(
     tabs: SettingsTab[],
     activeTab: SettingsTab,
     onSelect: (tab: SettingsTab) => void,
-): Map<SettingsTab, HTMLButtonElement> {
+): Map<SettingsTab, HTMLAnchorElement> {
     root.replaceChildren();
-    const buttons = new Map<SettingsTab, HTMLButtonElement>();
+    const links = new Map<SettingsTab, HTMLAnchorElement>();
     for (const tab of tabs) {
-        const button = buttonEl('settings-tab', TAB_LABELS[tab], () => onSelect(tab));
-        button.setAttribute('role', 'tab');
-        button.setAttribute('aria-selected', String(tab === activeTab));
-        root.appendChild(button);
-        buttons.set(tab, button);
+        const link = document.createElement('a');
+        const url = new URL(window.location.href);
+        url.searchParams.set('settings', tab);
+        link.href = url.href;
+        link.className = 'settings-tab';
+        link.textContent = TAB_LABELS[tab];
+        link.setAttribute('role', 'tab');
+        link.setAttribute('aria-selected', String(tab === activeTab));
+        link.addEventListener('click', (event) => {
+            if (!isPlainClick(event)) return;
+            event.preventDefault();
+            onSelect(tab);
+        });
+        root.appendChild(link);
+        links.set(tab, link);
     }
-    return buttons;
+    return links;
 }
 
 function updateTabSelection(
-    buttons: Map<SettingsTab, HTMLButtonElement>,
+    links: Map<SettingsTab, HTMLAnchorElement>,
     activeTab: SettingsTab,
 ): void {
-    for (const [tab, button] of buttons) {
-        button.setAttribute('aria-selected', String(tab === activeTab));
+    for (const [tab, link] of links) {
+        link.setAttribute('aria-selected', String(tab === activeTab));
     }
 }

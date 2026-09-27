@@ -111,6 +111,80 @@ func TestAPITagRenameMergeDelete(t *testing.T) {
 	assertBooks(scope, "")
 }
 
+func TestAPITagEditorIdentity(t *testing.T) {
+	database, dir := setupTestDB(t)
+	defer database.Close()
+	member := mustUser(t, database, "member", db.RoleMember)
+	restricted := mustUser(t, database, "restricted", db.RoleReader)
+	if _, err := database.UpdateUserAccess(t.Context(), restricted.ID, db.UserAccess{
+		Role: db.RoleReader, ContentScope: db.ContentScopeShelves,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	mustSetTags(t, database, 1, "Review.Source, Review.Target")
+	var sourceID, targetID int64
+	if err := database.Read(t.Context()).QueryRow("SELECT id FROM tags WHERE name = 'Review.Source'").Scan(&sourceID); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Read(t.Context()).QueryRow("SELECT id FROM tags WHERE name = 'Review.Target'").Scan(&targetID); err != nil {
+		t.Fatal(err)
+	}
+	s := newTestServer(t, database, dir)
+	handler := testRoutes(t, s)
+	for _, tc := range []struct {
+		name string
+		want db.Tag
+	}{
+		{"Review.Source", db.Tag{ID: sourceID, Kind: db.TagKindTag, Name: "Review.Source"}},
+		{"review.Renamed", db.Tag{ID: sourceID, Kind: db.TagKindTag, Name: "Review.Renamed"}},
+		{"review.target", db.Tag{ID: targetID, Kind: db.TagKindTag, Name: "Review.Target"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, jsonRequest(t, s, member.ID, http.MethodPatch, fmt.Sprintf("/api/tags/%d", sourceID), map[string]string{"name": tc.name}))
+			var result struct {
+				Tag db.Tag `json:"tag"`
+			}
+			if w.Code != http.StatusOK {
+				t.Fatalf("rename: %d %s", w.Code, w.Body.String())
+			}
+			if err := json.UnmarshalRead(w.Body, &result); err != nil {
+				t.Fatal(err)
+			}
+			if result.Tag != tc.want {
+				t.Fatalf("target = %+v; want %+v", result.Tag, tc.want)
+			}
+			w = httptest.NewRecorder()
+			handler.ServeHTTP(w, jsonRequest(t, s, member.ID, http.MethodGet, fmt.Sprintf("/api/tags/%d", result.Tag.ID), nil))
+			var got db.Tag
+			if w.Code != http.StatusOK {
+				t.Fatalf("get: %d %s", w.Code, w.Body.String())
+			}
+			if err := json.UnmarshalRead(w.Body, &got); err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want {
+				t.Fatalf("current tag = %+v; want %+v", got, tc.want)
+			}
+		})
+	}
+	for _, tc := range []struct {
+		userID int64
+		tagID  int64
+		want   int
+	}{
+		{member.ID, sourceID, http.StatusNotFound},
+		{restricted.ID, targetID, http.StatusForbidden},
+		{restricted.ID, sourceID, http.StatusForbidden},
+	} {
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, jsonRequest(t, s, tc.userID, http.MethodGet, fmt.Sprintf("/api/tags/%d", tc.tagID), nil))
+		if w.Code != tc.want {
+			t.Fatalf("get user=%d tag=%d: %d %s; want %d", tc.userID, tc.tagID, w.Code, w.Body.String(), tc.want)
+		}
+	}
+}
+
 func TestAPITagListVisibleCountsAndPagination(t *testing.T) {
 	database, dir := setupTestDB(t)
 	defer database.Close()
@@ -163,7 +237,7 @@ func TestAPITagListVisibleCountsAndPagination(t *testing.T) {
 	if len(full.Items) != 2 || full.Items[0].Name != "Shared" || full.Items[1].Name != "Shared.Hidden" {
 		t.Fatalf("search results = %+v", full)
 	}
-	children := get(reader.ID, fmt.Sprintf("parent=%d", first.Items[0].ID))
+	children := get(reader.ID, "branch=alpha")
 	if len(children.Items) != 1 || children.Items[0].Name != "Alpha.One" || children.Items[0].Label != "One" {
 		t.Fatalf("visible children = %+v", children)
 	}
@@ -195,7 +269,7 @@ func TestAPITagListVisibleCountsAndPagination(t *testing.T) {
 		})
 	}
 	for _, query := range []string{
-		fmt.Sprintf("parent=%d&cursor=%s", first.Items[0].ID, url.QueryEscape(first.NextCursor)),
+		"branch=alpha&cursor=" + url.QueryEscape(first.NextCursor),
 		"sort=books&cursor=" + url.QueryEscape(first.NextCursor),
 	} {
 		w := httptest.NewRecorder()

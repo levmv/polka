@@ -4,7 +4,7 @@ import { notifyShelvesChanged, SHELVES_CHANGED } from './catalog-events';
 import { errorMessage } from './errors';
 import { icon } from './icons';
 import { createMenu, type ManagedMenu, type MenuItem } from './menu';
-import { navigateApp } from './router';
+import { navigateApp } from './navigation';
 import { openCreateShelfDialog, openEditShelfDialog } from './shelf-dialog';
 import { showToast } from './toast';
 import type { CurrentUser, Shelf } from './types';
@@ -51,9 +51,7 @@ export function initSidebarShelves(): void {
     newBtn?.addEventListener('click', async () => {
         try {
             const me = currentUser || (await fetchCurrentUser());
-            const shelf = await openCreateShelfDialog({ currentUser: me, kind: 'manual' });
-            if (!shelf) return;
-            notifyShelvesChanged();
+            await openCreateShelfDialog({ currentUser: me, kind: 'manual' });
         } catch (e) {
             console.error('Failed to create shelf:', e);
             showToast(errorMessage(e, 'Create shelf failed'), { type: 'error' });
@@ -159,9 +157,7 @@ function renderShelfRow(
 
     async function editShelf(target: Shelf): Promise<void> {
         try {
-            const updated = await openEditShelfDialog({ currentUser, shelf: target });
-            if (!updated) return;
-            notifyShelvesChanged();
+            await openEditShelfDialog({ currentUser, shelf: target });
         } catch (e) {
             console.error('Failed to update shelf:', e);
             showToast(errorMessage(e, 'Shelf update failed'), { type: 'error' });

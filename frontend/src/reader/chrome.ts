@@ -1,3 +1,5 @@
+import { closeReaderHistory } from '../reader-history';
+
 const READER_CHROME_AUTO_HIDE_MS = 3_000;
 
 function eventTargetElement(event: Event): Element | null {
@@ -56,11 +58,11 @@ export function closeReader(page: HTMLElement, beforeClose?: () => Promise<boole
     const closeLink = page.querySelector<HTMLAnchorElement>('.reader-close[href]');
     if (!closeLink) return;
     if (!beforeClose) {
-        window.location.href = closeLink.href;
+        closeReaderHistory(closeLink.href);
         return;
     }
     void beforeClose().then((ready) => {
-        if (ready) window.location.href = closeLink.href;
+        if (ready) closeReaderHistory(closeLink.href);
     });
 }
 

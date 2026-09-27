@@ -3361,7 +3361,10 @@ body.has-library-jump-rail #content {
 }
 
 .settings-tab {
+    box-sizing: border-box;
+    display: flex;
     min-height: 38px;
+    align-items: center;
     padding: 0.45rem 0.6rem;
     color: var(--text-main);
     background: transparent;
@@ -3377,6 +3380,7 @@ body.has-library-jump-rail #content {
 .settings-tab[aria-selected="true"] {
     background: var(--surface-hover);
     outline: 0;
+    text-decoration: none;
 }
 
 .settings-panel {
@@ -4351,7 +4355,11 @@ body.has-library-jump-rail #content {
     display: none;
 }
 
-.tags-path button {
+.tags-path a {
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    text-decoration: none;
     min-height: 2.75rem;
     padding: 0.35rem;
     border: 0;
@@ -4363,11 +4371,11 @@ body.has-library-jump-rail #content {
     overflow-wrap: anywhere;
 }
 
-.tags-path button[aria-current] {
+.tags-path a[aria-current] {
     color: var(--text-main);
 }
 
-.tags-path button:hover {
+.tags-path a:hover {
     background: var(--surface-hover);
 }
 
@@ -4451,7 +4459,7 @@ body.has-library-jump-rail #content {
 
 .tag-main:focus-visible,
 .tag-count:focus-visible,
-.tags-path button:focus-visible {
+.tags-path a:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: -2px;
 }
