@@ -101,7 +101,7 @@ func TestDetectFormatMOBIFamilyRequiresMOBIContainer(t *testing.T) {
 		{name: "palm.prc", want: FormatPRC},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			data := testfixture.MinimalMOBI()
+			data := testfixture.MOBIHeaderOnly()
 			r := bytes.NewReader(data)
 			if got := DetectFormat(tt.name, r, r.Size()); got != tt.want {
 				t.Fatalf("DetectFormat = %v; want %v", got, tt.want)
@@ -166,6 +166,40 @@ func TestDetectFormatDJVURejectsExtensionOnlyFiles(t *testing.T) {
 			data := []byte("not a djvu")
 			r := bytes.NewReader(data)
 			if got := DetectFormat(name, r, r.Size()); got != FormatUnknown {
+				t.Fatalf("DetectFormat = %v; want FormatUnknown", got)
+			}
+		})
+	}
+}
+
+func TestDetectFormatPalmDOC(t *testing.T) {
+	data := testfixture.PalmDOC("Libmobi test sample")
+	for _, name := range []string{"book.pdb", "book.mobi", "book.prc"} {
+		t.Run(name, func(t *testing.T) {
+			r := bytes.NewReader(data)
+			if got := DetectFormat(name, r, r.Size()); got != FormatPDB {
+				t.Fatalf("DetectFormat = %v; want FormatPDB", got)
+			}
+		})
+	}
+}
+
+func TestDetectFormatPDBRejectsNonPalmDOC(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		data []byte
+	}{
+		{name: "not a palm database", data: []byte("not a pdb")},
+		{name: "wrong type creator", data: testfixture.PalmDB("Calendar", "DATAAPP1", testfixture.PalmDOCHeader(2))},
+		{name: "wrong extension", data: testfixture.PalmDOC("Palm Doc")},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			filename := "book.pdb"
+			if tt.name == "wrong extension" {
+				filename = "book.txt"
+			}
+			r := bytes.NewReader(tt.data)
+			if got := DetectFormat(filename, r, r.Size()); got != FormatUnknown {
 				t.Fatalf("DetectFormat = %v; want FormatUnknown", got)
 			}
 		})

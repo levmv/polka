@@ -1,15 +1,16 @@
-package format
+package mobi
 
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 )
 
 const (
-	kindlePalmDBContainerMOBI    = "bookmobi"
-	kindlePalmDBContainerPalmDOC = "palmdoc"
+	ContainerMOBI    = "bookmobi"
+	ContainerPalmDOC = "palmdoc"
 
 	mobiCompressionNone     = 1
 	mobiCompressionPalmDOC  = 2
@@ -17,15 +18,13 @@ const (
 	mobiTypeDictionary      = 0x206
 )
 
-// KindleInspection is a cheap header/resource-table diagnostic for
-// MOBI/AZW/AZW3/AZW4/PRC/PDB-family files. It deliberately does not parse MOBI
-// text records or KF8 flows; callers use it to classify sources before choosing
-// a real parser path.
-type KindleInspection struct {
+// Inspection holds header, resource and index information for diagnostics and
+// content extraction. Text records are not decompressed during inspection.
+type Inspection struct {
 	SourceClass              string
 	Container                string
 	TypeCreator              string
-	MOBIKind                 MOBIKind
+	Kind                     Kind
 	RecordCount              int
 	Compression              uint16
 	CompressionName          string
@@ -55,20 +54,20 @@ type KindleInspection struct {
 	SkeletonIndex            uint32
 	GuideIndex               uint32
 	BoundaryIndex            uint32
-	ResourceCounts           KindleResourceCounts
-	FDSTSections             []KindleFDSTSection
-	KF8Skeletons             []KindleKF8Skeleton
-	KF8Fragments             []KindleKF8Fragment
+	ResourceCounts           ResourceCounts
+	FDSTSections             []FDSTSection
+	KF8Skeletons             []KF8Skeleton
+	KF8Fragments             []KF8Fragment
 	AZW4PDF                  bool
 	UnsupportedFeatures      []string
 }
 
-type KindleFDSTSection struct {
+type FDSTSection struct {
 	Start uint32
 	End   uint32
 }
 
-type KindleKF8Skeleton struct {
+type KF8Skeleton struct {
 	Index         int
 	Name          string
 	FragmentCount uint32
@@ -76,7 +75,7 @@ type KindleKF8Skeleton struct {
 	Length        uint32
 }
 
-type KindleKF8Fragment struct {
+type KF8Fragment struct {
 	InsertOffset uint32
 	Selector     string
 	FileNumber   uint32
@@ -85,7 +84,7 @@ type KindleKF8Fragment struct {
 	Length       uint32
 }
 
-type KindleResourceCounts struct {
+type ResourceCounts struct {
 	Images   int
 	Fonts    int
 	HUFF     int
@@ -105,81 +104,118 @@ type KindleResourceCounts struct {
 	Other    int
 }
 
-// InspectKindle reads a bounded set of PalmDB/MOBI header facts and resource
-// signatures for Kindle-family diagnostics. A nil result means the input is not
-// a recognized PalmDB Kindle-family container.
-func InspectKindle(r io.ReaderAt, size int64, kind Format) (*KindleInspection, error) {
-	pdb, ok := readPalmDB(r, size)
-	if !ok {
+// Inspect reads MOBI/PalmDOC headers, resource signatures and indexes.
+// A nil result means the input is not a recognized PalmDB ebook container.
+func Inspect(r io.ReaderAt, size int64) (*Inspection, error) {
+	return inspect(r, size, false)
+}
+
+func inspect(r io.ReaderAt, size int64, printReplica bool) (*Inspection, error) {
+	pdb, err := readPalmDB(r, size)
+	if errors.Is(err, ErrUnsupportedSource) {
 		return nil, nil
+	}
+	if err != nil {
+		return nil, err
 	}
 
 	typeCreator := string(pdb.header[60:68])
-	switch {
-	case bytes.Equal(pdb.header[60:68], palmDOCTypeCreator):
-		return inspectPalmDOC(r, size, pdb)
-	case bytes.Equal(pdb.header[60:68], []byte("BOOKMOBI")):
-		return inspectBookMOBI(r, size, pdb, typeCreator, kind)
-	default:
-		return nil, nil
+	switch typeCreator {
+	case string(palmDOCTypeCreator):
+		if !printReplica {
+			return inspectPalmDOC(r, size, pdb)
+		}
+	case "BOOKMOBI":
+		return inspectBookMOBI(r, size, pdb, printReplica)
 	}
+	return nil, nil
 }
 
-func inspectPalmDOC(r io.ReaderAt, size int64, pdb palmDB) (*KindleInspection, error) {
-	record0Offset, _, ok := pdb.record0Bounds(r, size)
-	if !ok || record0Offset+palmDOCHeader > size {
-		return nil, fmt.Errorf("invalid PalmDOC record table")
+func inspectPalmDOC(r io.ReaderAt, size int64, pdb palmDB) (*Inspection, error) {
+	record0Offset, record0End, err := pdb.record0Bounds(r, size)
+	if err != nil {
+		return nil, err
+	}
+	if record0End-record0Offset < palmDOCHeader {
+		return nil, fmt.Errorf("%w: invalid PalmDOC record table", ErrUnsupportedSource)
 	}
 	record0 := make([]byte, palmDOCHeader)
 	if _, err := r.ReadAt(record0, record0Offset); err != nil {
 		return nil, fmt.Errorf("read PalmDOC record 0: %w", err)
 	}
 
-	info := &KindleInspection{
-		Container:   kindlePalmDBContainerPalmDOC,
+	info := &Inspection{
+		Container:   ContainerPalmDOC,
 		TypeCreator: string(pdb.header[60:68]),
-		MOBIKind:    MOBIKindPalmDOC,
+		Kind:        KindPalmDOC,
 		RecordCount: pdb.records,
 	}
 	applyPalmDOCHeader(info, record0)
-	info.SourceClass = "palmdoc"
-	if info.Encrypted {
-		info.SourceClass = "encrypted-palmdoc"
-	}
+	info.SourceClass = kindleSourceClass(info, false)
 	info.UnsupportedFeatures = kindleUnsupportedFeatures(info)
 	return info, nil
 }
 
-func inspectBookMOBI(r io.ReaderAt, size int64, pdb palmDB, typeCreator string, kind Format) (*KindleInspection, error) {
-	ranges, ok := pdb.recordRanges(r, size, 20)
-	if !ok || len(ranges) == 0 {
-		return nil, fmt.Errorf("invalid MOBI record table")
+func inspectBookMOBI(r io.ReaderAt, size int64, pdb palmDB, printReplica bool) (*Inspection, error) {
+	ranges, err := pdb.recordRanges(r, size, 20)
+	if err != nil {
+		return nil, err
 	}
-	record0, ok := mobiReadRecord(r, ranges[0], maxMOBIRecord0Bytes)
-	if !ok || len(record0) < 20 {
-		return nil, fmt.Errorf("invalid MOBI record 0")
+	record0, err := mobiReadRecord(r, ranges[0], maxMOBIRecord0Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("read MOBI record 0: %w", err)
 	}
 
-	info := &KindleInspection{
-		Container:   kindlePalmDBContainerMOBI,
-		TypeCreator: typeCreator,
-		MOBIKind:    DetectMOBIKind(r, size),
-		RecordCount: len(ranges),
+	info, err := parseMOBIHeader(record0, len(ranges), printReplica)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrUnsupportedSource, err)
 	}
-	applyPalmDOCHeader(info, record0)
-	if bytes.Equal(record0[16:20], []byte("MOBI")) {
-		applyMOBIHeader(info, record0)
+	combo, err := kindleHasComboBoundary(r, ranges, info.BoundaryIndex)
+	if err != nil {
+		return nil, err
+	}
+	if combo {
+		info.Kind = KindCombo
 	}
 	applyKindleRecordSetDiagnostics(info, r, ranges)
-	if kind == FormatAZW4 {
-		info.AZW4PDF = HasAZW4PDF(r, size)
+	if printReplica {
+		info.AZW4PDF = HasPDF(r, size)
 	}
-	info.SourceClass = kindleSourceClass(info, kind)
+	info.SourceClass = kindleSourceClass(info, printReplica)
 	info.UnsupportedFeatures = kindleUnsupportedFeatures(info)
 	return info, nil
 }
 
-func applyPalmDOCHeader(info *KindleInspection, record0 []byte) {
+// parseMOBIHeader reads the fixed header and optional EXTH metadata for
+// diagnostics and text extraction. Print Replica needs only the PalmDOC prefix.
+func parseMOBIHeader(record0 []byte, records int, printReplica bool) (*Inspection, error) {
+	info := &Inspection{Container: ContainerMOBI, TypeCreator: "BOOKMOBI", RecordCount: records}
+	if len(record0) < palmDOCHeader {
+		return info, fmt.Errorf("truncated PalmDOC header")
+	}
+	applyPalmDOCHeader(info, record0)
+	if len(record0) < 24 || !bytes.Equal(record0[16:20], []byte("MOBI")) {
+		if printReplica {
+			return info, nil
+		}
+		return info, fmt.Errorf("invalid MOBI header signature")
+	}
+	applyMOBIHeader(info, record0)
+	info.Dictionary = info.MOBIType == mobiTypeDictionary
+	if len(record0) < 0x6c {
+		if printReplica {
+			return info, nil
+		}
+		return info, fmt.Errorf("truncated MOBI header")
+	}
+	info.Kind = KindMOBI6
+	if info.MOBIVersion == 8 && info.HeaderLength >= 0x100 && info.FragmentIndex > 0 {
+		info.Kind = KindKF8
+	}
+	return info, nil
+}
+
+func applyPalmDOCHeader(info *Inspection, record0 []byte) {
 	if len(record0) < palmDOCHeader {
 		return
 	}
@@ -192,7 +228,7 @@ func applyPalmDOCHeader(info *KindleInspection, record0 []byte) {
 	info.Encrypted = info.Encryption != 0
 }
 
-func applyMOBIHeader(info *KindleInspection, record0 []byte) {
+func applyMOBIHeader(info *Inspection, record0 []byte) {
 	info.HeaderLength = kindleUint32(record0, 20)
 	info.MOBIType = kindleUint32(record0, 24)
 	info.Codepage = mobiCodepage(record0)
@@ -205,9 +241,11 @@ func applyMOBIHeader(info *KindleInspection, record0 []byte) {
 	if info.HasEXTH {
 		info.EXTHTypes = mobiEXTHTypes(record0)
 		info.CDEType = mobiEXTHString(record0, 501, info.Codepage)
+		if boundary, ok := mobiEXTHUint32(record0, 121); ok && boundary != mobiNoImageIndex {
+			info.BoundaryIndex = boundary
+		}
 		info.PrimaryWritingMode = mobiEXTHString(record0, 525, info.Codepage)
 		info.PageProgressionDirection = mobiEXTHString(record0, 527, info.Codepage)
-		info.BoundaryIndex = kindleEXTHRecordIndex(record0, 121)
 	}
 	info.NCXIndex = kindleMOBIHeaderRecordIndex(record0, info.HeaderLength, 0xf4)
 	info.FDSTIndex = kindleMOBIHeaderRecordIndex(record0, info.HeaderLength, 0xc0)
@@ -217,7 +255,7 @@ func applyMOBIHeader(info *KindleInspection, record0 []byte) {
 	info.GuideIndex = kindleMOBIHeaderRecordIndex(record0, info.HeaderLength, 0x104)
 }
 
-func applyKindleRecordSetDiagnostics(info *KindleInspection, r io.ReaderAt, ranges []mobiRecordRange) {
+func applyKindleRecordSetDiagnostics(info *Inspection, r io.ReaderAt, ranges []mobiRecordRange) {
 	info.ResourceCounts = kindleCountResourceRecords(r, ranges, kindleFirstResourceRecord(info))
 	info.Dictionary = info.MOBIType == mobiTypeDictionary || info.ResourceCounts.INFL > 0 || info.ResourceCounts.ORTH > 0
 	if info.FDSTIndex > 0 && info.FDSTCount > 0 {
@@ -273,20 +311,8 @@ func mobiEXTHString(record0 []byte, want uint32, codepage uint32) string {
 	return value
 }
 
-func kindleEXTHRecordIndex(record0 []byte, want uint32) uint32 {
-	value, ok := mobiEXTHUint32(record0, want)
-	if !ok || value == mobiNoImageIndex {
-		return 0
-	}
-	return value
-}
-
-func kindleLooksDictionary(info *KindleInspection) bool {
-	return info.Dictionary
-}
-
-func kindleSourceClass(info *KindleInspection, kind Format) string {
-	if info.Container == kindlePalmDBContainerPalmDOC {
+func kindleSourceClass(info *Inspection, printReplica bool) string {
+	if info.Container == ContainerPalmDOC {
 		if info.Encrypted {
 			return "encrypted-palmdoc"
 		}
@@ -295,7 +321,7 @@ func kindleSourceClass(info *KindleInspection, kind Format) string {
 	if info.Encrypted {
 		return "encrypted"
 	}
-	if kind == FormatAZW4 || info.AZW4PDF {
+	if printReplica {
 		if info.AZW4PDF {
 			return "azw4-pdf-wrapper"
 		}
@@ -304,36 +330,36 @@ func kindleSourceClass(info *KindleInspection, kind Format) string {
 	if info.CDEType == "EBSP" {
 		return "sample-book"
 	}
-	if kindleLooksDictionary(info) {
+	if info.Dictionary {
 		return "dictionary"
 	}
-	switch info.MOBIKind {
-	case MOBIKindMOBI6:
-		return string(MOBIKindMOBI6)
-	case MOBIKindKF8Standalone:
-		return string(MOBIKindKF8Standalone)
-	case MOBIKindCombo:
-		return string(MOBIKindCombo)
+	switch info.Kind {
+	case KindMOBI6:
+		return string(KindMOBI6)
+	case KindKF8:
+		return string(KindKF8)
+	case KindCombo:
+		return string(KindCombo)
 	default:
 		return "unknown"
 	}
 }
 
-func kindleUnsupportedFeatures(info *KindleInspection) []string {
+func kindleUnsupportedFeatures(info *Inspection) []string {
 	var out []string
 	if info.Encrypted {
 		out = append(out, "encrypted")
 	}
 	switch info.Compression {
-	case 0, mobiCompressionNone, mobiCompressionPalmDOC:
+	case mobiCompressionNone, mobiCompressionPalmDOC:
 	case mobiCompressionHUFFCDIC:
-		if !kindleHUFFCDICAvailable(info) {
+		if !huffCDICAvailable(info) {
 			out = append(out, "huff-cdic-compression")
 		}
 	default:
 		out = append(out, "unknown-compression")
 	}
-	if kindleLooksDictionary(info) {
+	if info.Dictionary {
 		out = append(out, "dictionary-indexes")
 	}
 	if info.AZW4PDF {
@@ -342,7 +368,7 @@ func kindleUnsupportedFeatures(info *KindleInspection) []string {
 	return out
 }
 
-func kindleFirstResourceRecord(info *KindleInspection) int {
+func kindleFirstResourceRecord(info *Inspection) int {
 	if info.FirstResourceIndex > 0 && info.FirstResourceIndex < uint32(info.RecordCount) {
 		return int(info.FirstResourceIndex)
 	}
@@ -352,8 +378,8 @@ func kindleFirstResourceRecord(info *KindleInspection) int {
 	return 1
 }
 
-func kindleCountResourceRecords(r io.ReaderAt, ranges []mobiRecordRange, start int) KindleResourceCounts {
-	var counts KindleResourceCounts
+func kindleCountResourceRecords(r io.ReaderAt, ranges []mobiRecordRange, start int) ResourceCounts {
+	var counts ResourceCounts
 	if start < 1 {
 		start = 1
 	}

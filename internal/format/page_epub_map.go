@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"golang.org/x/net/html"
+
+	"github.com/levmv/polka/internal/bookmeta"
 )
 
 const maxPageMapLocations = 65536
@@ -46,7 +48,7 @@ func readEPUBPageMaps(ctx context.Context, files *zipEntryIndex, opf epubOPFRead
 			if file == nil {
 				continue
 			}
-			raw, err := readZipFileLimited(file, maxOPFDocumentBytes)
+			raw, err := readZipFileLimited(file, bookmeta.MaxOPFDocumentBytes)
 			if err != nil {
 				continue
 			}
@@ -85,7 +87,7 @@ func readEPUBPageMap(ctx context.Context, files *zipEntryIndex, base string, raw
 			return nil
 		}
 		z := html.NewTokenizer(bytes.NewReader(decoded))
-		z.SetMaxBuf(maxOPFDocumentBytes)
+		z.SetMaxBuf(bookmeta.MaxOPFDocumentBytes)
 		navDepth := 0
 		var label strings.Builder
 		href, inLink := "", false

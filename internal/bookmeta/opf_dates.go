@@ -1,23 +1,21 @@
-package format
+package bookmeta
 
 import (
 	"encoding/xml"
 	"strings"
-
-	"github.com/levmv/polka/internal/bookmeta"
 )
 
-type opfDateRecord struct {
+type OPFDateRecord struct {
 	Text  string
 	Event string
 }
 
 const (
-	opfDateOther = iota
-	opfDatePublication
-	opfDateUnqualified
-	opfDateOriginalPublication
-	opfDateOPSPublication
+	OPFDateOther = iota
+	OPFDatePublication
+	OPFDateUnqualified
+	OPFDateOriginalPublication
+	OPFDateOPSPublication
 )
 
 func opfDateEvent(attrs []xml.Attr) string {
@@ -38,30 +36,30 @@ func opfDateEvent(attrs []xml.Attr) string {
 
 // The same publication categories govern import and explicit date edits.
 // Unknown events and technical dates never stand in for a publication date.
-func opfDatePriority(event string) int {
+func OPFDatePriority(event string) int {
 	switch strings.ToLower(strings.TrimSpace(event)) {
 	case "publication":
-		return opfDatePublication
+		return OPFDatePublication
 	case "":
-		return opfDateUnqualified
+		return OPFDateUnqualified
 	case "original-publication":
-		return opfDateOriginalPublication
+		return OPFDateOriginalPublication
 	case "ops-publication":
-		return opfDateOPSPublication
+		return OPFDateOPSPublication
 	default:
-		return opfDateOther
+		return OPFDateOther
 	}
 }
 
-func opfDate(dates []opfDateRecord) string {
+func OPFPublicationDate(dates []OPFDateRecord) string {
 	var best string
 	var bestPriority int
 	for _, record := range dates {
-		priority := opfDatePriority(record.Event)
-		if priority == opfDateOther || best != "" && priority >= bestPriority {
+		priority := OPFDatePriority(record.Event)
+		if priority == OPFDateOther || best != "" && priority >= bestPriority {
 			continue
 		}
-		if date := bookmeta.NormalizeMetadataDate(record.Text); date != "" {
+		if date := NormalizeMetadataDate(record.Text); date != "" {
 			best, bestPriority = date, priority
 		}
 	}

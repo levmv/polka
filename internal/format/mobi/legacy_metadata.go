@@ -1,4 +1,4 @@
-package format
+package mobi
 
 import (
 	"encoding/binary"
@@ -18,23 +18,23 @@ const maxMOBIMetadataText = 64 << 10
 // accept only the complete producer shape, including its placeholder block and
 // copyright line. Ordinary prose must never become catalog metadata merely
 // because three nearby paragraphs happen to look like a title and author.
-func mobiApplyLegacyTitlePageMetadata(meta *Metadata, r io.ReaderAt, size int64, record0 []byte, codepage uint32) {
+func mobiApplyLegacyTitlePageMetadata(meta *bookmeta.Metadata, r io.ReaderAt, size int64, record0 []byte, codepage uint32) {
 	if meta == nil || len(record0) < palmDOCHeader || binary.BigEndian.Uint16(record0[12:14]) != 0 {
 		return
 	}
-	ranges, ok := mobiRecordRanges(r, size)
-	if !ok || len(ranges) < 2 || binary.BigEndian.Uint16(record0[8:10]) == 0 {
+	ranges, err := mobiRecordRanges(r, size)
+	if err != nil || len(ranges) < 2 || binary.BigEndian.Uint16(record0[8:10]) == 0 {
 		return
 	}
-	raw, ok := mobiReadRecord(r, ranges[1], maxMOBIMetadataText)
-	if !ok {
+	raw, err := mobiReadRecord(r, ranges[1], maxMOBIMetadataText)
+	if err != nil {
 		return
 	}
 	trailingFlags := uint16(0)
 	if len(record0) >= 0xf4 {
 		trailingFlags = binary.BigEndian.Uint16(record0[0xf2:0xf4])
 	}
-	raw, err := mobiTrimTrailingEntries(raw, trailingFlags)
+	raw, err = mobiTrimTrailingEntries(raw, trailingFlags)
 	if err != nil {
 		return
 	}

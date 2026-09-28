@@ -217,7 +217,7 @@ func rewriteFB2XMLBytes(raw []byte, meta bookmeta.Metadata) ([]byte, error) {
 			}
 		case "custom-info":
 			tag := region[:opfTagEnd(region, 0)]
-			if meta.PageCount == 0 || !isCanonicalPageCountKey(opfAttrs(string(tag))["info-type"]) {
+			if meta.PageCount == 0 || !bookmeta.IsCanonicalPageCountKey(opfAttrs(string(tag))["info-type"]) {
 				customInfos = append(customInfos, region)
 			}
 		default:

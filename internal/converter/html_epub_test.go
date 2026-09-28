@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/levmv/polka/internal/format"
+	"github.com/levmv/polka/internal/format/mobi"
 )
 
 func TestHTMLPublicationPreservesDiagramsEquationsAndStructure(t *testing.T) {
@@ -53,10 +54,10 @@ func TestHTMLPublicationPreservesDiagramsEquationsAndStructure(t *testing.T) {
 			var err error
 			opts := ConversionOptions{OnWarning: func(message string) { t.Errorf("unexpected warning: %s", message) }}
 			if source == "kindle" {
-				err = convertKindleDocumentToEPUB(context.Background(), &out, &format.KindleDocument{
+				err = convertMOBIDocumentToEPUB(context.Background(), &out, &mobi.Document{
 					Metadata:  &format.Metadata{Title: "Publication", Language: "en"},
-					Flows:     []format.KindleTextFlow{{MediaType: "text/html", Data: raw}},
-					Resources: []format.KindleResource{{ID: "picture", Href: "images/picture.png", MediaType: "image/png", Data: converterTinyPNG, EmbedIndex: 1}},
+					Flows:     []mobi.TextFlow{{MediaType: "text/html", Data: raw}},
+					Resources: []mobi.Resource{{ID: "picture", Href: "images/picture.png", MediaType: "image/png", Data: converterTinyPNG, EmbedIndex: 1}},
 				}, opts)
 			} else {
 				kind := format.FormatHTML

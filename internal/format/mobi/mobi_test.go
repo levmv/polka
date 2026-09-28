@@ -1,4 +1,4 @@
-package format
+package mobi
 
 import (
 	"bytes"
@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/levmv/polka/internal/testfixture"
 )
 
 func TestKindleResourceBudgetBoundsAggregateDataAndCount(t *testing.T) {
@@ -36,30 +38,30 @@ func TestKindleResourceBudgetBoundsAggregateDataAndCount(t *testing.T) {
 			if err := tt.budget.add(tt.first); err != nil {
 				t.Fatalf("first resource: %v", err)
 			}
-			if err := tt.budget.add(tt.second); !errors.Is(err, ErrKindleResourceLimit) {
-				t.Fatalf("second resource error = %v; want ErrKindleResourceLimit", err)
+			if err := tt.budget.add(tt.second); !errors.Is(err, ErrResourceLimit) {
+				t.Fatalf("second resource error = %v; want ErrResourceLimit", err)
 			}
 		})
 	}
 }
 
 func TestExtractMOBIMetadataFromHeaderAndEXTH(t *testing.T) {
-	data := testMOBIFile(65001, "Short PDB Title", []testEXTHRecord{
-		{typ: 503, value: []byte("Long Kindle Title")},
-		{typ: 100, value: []byte("Doe, Jane")},
-		{typ: 101, value: []byte("MOBI Press")},
-		{typ: 103, value: []byte("A short description.")},
-		{typ: 104, value: []byte("9780306406157")},
-		{typ: 105, value: []byte("Sci-Fi, Classics;\nSpace Adventure; Sci-Fi, Classics")},
-		{typ: 106, value: []byte("2020-05-03T00:00:00Z")},
-		{typ: 113, value: []byte("B000TESTID")},
-		{typ: 524, value: []byte("eng")},
+	data := testfixture.MOBIWithMetadata(65001, "Short PDB Title", []testfixture.MOBIEXTHRecord{
+		{Type: 503, Value: []byte("Long Kindle Title")},
+		{Type: 100, Value: []byte("Doe, Jane")},
+		{Type: 101, Value: []byte("MOBI Press")},
+		{Type: 103, Value: []byte("A short description.")},
+		{Type: 104, Value: []byte("9780306406157")},
+		{Type: 105, Value: []byte("Sci-Fi, Classics;\nSpace Adventure; Sci-Fi, Classics")},
+		{Type: 106, Value: []byte("2020-05-03T00:00:00Z")},
+		{Type: 113, Value: []byte("B000TESTID")},
+		{Type: 524, Value: []byte("eng")},
 	})
 	r := bytes.NewReader(data)
 
-	meta, err := ExtractMOBIMetadata(r, r.Size())
+	meta, err := ExtractMetadata(r, r.Size())
 	if err != nil {
-		t.Fatalf("ExtractMOBIMetadata: %v", err)
+		t.Fatalf("ExtractMetadata: %v", err)
 	}
 	if meta.Title != "Long Kindle Title" {
 		t.Fatalf("Title = %q; want EXTH long title", meta.Title)
@@ -88,12 +90,12 @@ func TestExtractMOBIMetadataFromHeaderAndEXTH(t *testing.T) {
 }
 
 func TestExtractMOBIMetadataHeaderFallbackAndCP1252(t *testing.T) {
-	data := testMOBIFile(1252, "Caf\xe9 MOBI", nil)
+	data := testfixture.MOBIWithMetadata(1252, "Caf\xe9 MOBI", nil)
 	r := bytes.NewReader(data)
 
-	meta, err := ExtractMOBIMetadata(r, r.Size())
+	meta, err := ExtractMetadata(r, r.Size())
 	if err != nil {
-		t.Fatalf("ExtractMOBIMetadata: %v", err)
+		t.Fatalf("ExtractMetadata: %v", err)
 	}
 	if meta.Title != "Café MOBI" {
 		t.Fatalf("Title = %q; want CP1252 decoded title", meta.Title)
@@ -104,18 +106,18 @@ func TestExtractMOBIMetadataHeaderFallbackAndCP1252(t *testing.T) {
 }
 
 func TestExtractMOBIMetadataCleansEXTHText(t *testing.T) {
-	data := testMOBIFile(65001, "Short PDB Title", []testEXTHRecord{
-		{typ: 503, value: []byte("Tom &amp; Jerry &#x2019; Caf&#xE9;\x01")},
-		{typ: 100, value: []byte("O&#39;Brien, Anne\x02")},
-		{typ: 101, value: []byte("Unknown")},
-		{typ: 103, value: []byte("A &lt;b&gt;short&lt;/b&gt; description.")},
-		{typ: 105, value: []byte("Drama &amp; Comedy; Old&#x20;Books")},
+	data := testfixture.MOBIWithMetadata(65001, "Short PDB Title", []testfixture.MOBIEXTHRecord{
+		{Type: 503, Value: []byte("Tom &amp; Jerry &#x2019; Caf&#xE9;\x01")},
+		{Type: 100, Value: []byte("O&#39;Brien, Anne\x02")},
+		{Type: 101, Value: []byte("Unknown")},
+		{Type: 103, Value: []byte("A &lt;b&gt;short&lt;/b&gt; description.")},
+		{Type: 105, Value: []byte("Drama &amp; Comedy; Old&#x20;Books")},
 	})
 	r := bytes.NewReader(data)
 
-	meta, err := ExtractMOBIMetadata(r, r.Size())
+	meta, err := ExtractMetadata(r, r.Size())
 	if err != nil {
-		t.Fatalf("ExtractMOBIMetadata: %v", err)
+		t.Fatalf("ExtractMetadata: %v", err)
 	}
 	if meta.Title != "Tom & Jerry ’ Café" {
 		t.Fatalf("Title = %q; want decoded entities and stripped controls", meta.Title)
@@ -130,7 +132,7 @@ func TestExtractMOBIMetadataCleansEXTHText(t *testing.T) {
 		t.Fatalf("Description = %q; want decoded EXTH description", meta.Description)
 	}
 	wantGenres := []string{"Drama & Comedy", "Old Books"}
-	if !equalStrings(meta.Genres, wantGenres) {
+	if !slices.Equal(meta.Genres, wantGenres) {
 		t.Fatalf("Genres = %+v; want %+v", meta.Genres, wantGenres)
 	}
 }
@@ -138,21 +140,21 @@ func TestExtractMOBIMetadataCleansEXTHText(t *testing.T) {
 func TestExtractMOBIMetadataPalmDBTitleFallback(t *testing.T) {
 	for _, tt := range []struct {
 		name  string
-		title string
+		Title string
 		want  string
 	}{
-		{name: "useful name", title: "Palm DB Title", want: "Palm DB Title"},
-		{name: "generic name", title: "Unknown"},
+		{name: "useful name", Title: "Palm DB Title", want: "Palm DB Title"},
+		{name: "generic name", Title: "Unknown"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			data := testMOBIFileWithOptions(testMOBIOptions{
-				codepage:   1252,
-				palmDBName: tt.title,
+			data := testfixture.BuildMOBI(testfixture.MOBIOptions{
+				Codepage:   1252,
+				PalmDBName: tt.Title,
 			})
 			r := bytes.NewReader(data)
-			meta, err := ExtractMOBIMetadata(r, r.Size())
+			meta, err := ExtractMetadata(r, r.Size())
 			if err != nil {
-				t.Fatalf("ExtractMOBIMetadata: %v", err)
+				t.Fatalf("ExtractMetadata: %v", err)
 			}
 			if meta.Title != tt.want {
 				t.Fatalf("Title = %q; want %q", meta.Title, tt.want)
@@ -164,54 +166,54 @@ func TestExtractMOBIMetadataPalmDBTitleFallback(t *testing.T) {
 func TestExtractMOBICoverSelection(t *testing.T) {
 	for _, tt := range []struct {
 		name      string
-		options   testMOBIOptions
+		options   testfixture.MOBIOptions
 		wantCover bool
 	}{
 		{
 			name: "EXTH cover offset",
-			options: testMOBIOptions{
-				firstImageIndex: 2,
-				records:         []testEXTHRecord{{typ: 201, value: testMOBIUint32(1)}},
-				extraRecords:    [][]byte{[]byte("not the cover"), tinyPNG},
+			options: testfixture.MOBIOptions{
+				FirstImageIndex: 2,
+				EXTH:            []testfixture.MOBIEXTHRecord{{Type: 201, Value: testfixture.MOBIUint32(1)}},
+				ExtraRecords:    [][]byte{[]byte("not the cover"), tinyPNG},
 			},
 			wantCover: true,
 		},
 		{
 			name: "first image fallback",
-			options: testMOBIOptions{
-				firstImageIndex: 2,
-				extraRecords:    [][]byte{tinyPNG},
+			options: testfixture.MOBIOptions{
+				FirstImageIndex: 2,
+				ExtraRecords:    [][]byte{tinyPNG},
 			},
 			wantCover: true,
 		},
 		{
 			name: "invalid image",
-			options: testMOBIOptions{
-				firstImageIndex: 2,
-				extraRecords:    [][]byte{[]byte("not an image")},
+			options: testfixture.MOBIOptions{
+				FirstImageIndex: 2,
+				ExtraRecords:    [][]byte{[]byte("not an image")},
 			},
 		},
 		{
 			name: "fake cover marker",
-			options: testMOBIOptions{
-				firstImageIndex: 2,
-				records: []testEXTHRecord{
-					{typ: 201, value: testMOBIUint32(0)},
-					{typ: 203, value: testMOBIUint32(1)},
+			options: testfixture.MOBIOptions{
+				FirstImageIndex: 2,
+				EXTH: []testfixture.MOBIEXTHRecord{
+					{Type: 201, Value: testfixture.MOBIUint32(0)},
+					{Type: 203, Value: testfixture.MOBIUint32(1)},
 				},
-				extraRecords: [][]byte{tinyPNG},
+				ExtraRecords: [][]byte{tinyPNG},
 			},
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			tt.options.codepage = 65001
-			tt.options.title = "MOBI cover test"
-			data := testMOBIFileWithOptions(tt.options)
+			tt.options.Codepage = 65001
+			tt.options.Title = "MOBI cover test"
+			data := testfixture.BuildMOBI(tt.options)
 			r := bytes.NewReader(data)
 
-			got, ext, err := ExtractMOBICover(r, r.Size())
+			got, ext, err := ExtractCover(r, r.Size())
 			if err != nil {
-				t.Fatalf("ExtractMOBICover: %v", err)
+				t.Fatalf("ExtractCover: %v", err)
 			}
 			if tt.wantCover {
 				if !bytes.Equal(got, tinyPNG) || ext != ".png" {
@@ -224,97 +226,105 @@ func TestExtractMOBICoverSelection(t *testing.T) {
 	}
 }
 
-func TestDetectMOBIKind(t *testing.T) {
+func TestInspectMOBIKind(t *testing.T) {
 	for _, tt := range []struct {
 		name string
 		data []byte
-		want MOBIKind
+		want Kind
 	}{
 		{
 			name: "mobi6",
-			data: testMOBIFile(65001, "MOBI6 Book", nil),
-			want: MOBIKindMOBI6,
+			data: testfixture.MOBIWithMetadata(65001, "MOBI6 Book", nil),
+			want: KindMOBI6,
 		},
 		{
 			name: "kf8 standalone",
-			data: testMOBIRecord0Uint32(t,
-				testMOBIRecord0Uint32(t, testMOBIFile(65001, "KF8 Book", nil), 20, 0x108),
+			data: testfixture.SetMOBIRecord0Uint32(t,
+				testfixture.BuildMOBI(testfixture.MOBIOptions{Title: "KF8 Book", MOBIVersion: 8}),
 				0xf8,
 				2,
 			),
-			want: MOBIKindKF8Standalone,
+			want: KindKF8,
 		},
 		{
 			name: "combo",
-			data: testMOBIFileWithOptions(testMOBIOptions{
-				codepage: 65001,
-				title:    "Combo Book",
-				records: []testEXTHRecord{
-					{typ: 121, value: testMOBIUint32(3)},
+			data: testfixture.BuildMOBI(testfixture.MOBIOptions{
+				Codepage: 65001,
+				Title:    "Combo Book",
+				EXTH: []testfixture.MOBIEXTHRecord{
+					{Type: 121, Value: testfixture.MOBIUint32(3)},
 				},
-				extraRecords: [][]byte{
+				ExtraRecords: [][]byte{
 					[]byte("BOUNDARY"),
 					[]byte("kf8 placeholder"),
 				},
 			}),
-			want: MOBIKindCombo,
+			want: KindCombo,
 		},
 		{
 			name: "palmdoc",
-			data: testPalmDOCFile("PalmDOC Book"),
-			want: MOBIKindPalmDOC,
+			data: testfixture.PalmDOC("PalmDOC Book"),
+			want: KindPalmDOC,
 		},
 		{
 			name: "unknown",
 			data: []byte("not mobi"),
-			want: MOBIKindUnknown,
+			want: KindUnknown,
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			r := bytes.NewReader(tt.data)
-			if got := DetectMOBIKind(r, r.Size()); got != tt.want {
-				t.Fatalf("DetectMOBIKind = %q; want %q", got, tt.want)
+			info, err := Inspect(r, r.Size())
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := KindUnknown
+			if info != nil {
+				got = info.Kind
+			}
+			if got != tt.want {
+				t.Fatalf("Kind = %q; want %q", got, tt.want)
 			}
 		})
 	}
 }
 
 func TestInspectKindleMOBIHeaderSignals(t *testing.T) {
-	data := testMOBIFileWithOptions(testMOBIOptions{
-		codepage:        65001,
-		title:           "Combo Book",
-		headerLength:    0x108,
-		firstImageIndex: 2,
-		records: []testEXTHRecord{
-			{typ: 121, value: testMOBIUint32(3)},
-			{typ: 501, value: []byte("EBOK")},
-			{typ: 525, value: []byte("horizontal-lr")},
-			{typ: 527, value: []byte("ltr")},
+	data := testfixture.BuildMOBI(testfixture.MOBIOptions{
+		Codepage:        65001,
+		Title:           "Combo Book",
+		HeaderLength:    0x108,
+		FirstImageIndex: 2,
+		EXTH: []testfixture.MOBIEXTHRecord{
+			{Type: 121, Value: testfixture.MOBIUint32(3)},
+			{Type: 501, Value: []byte("EBOK")},
+			{Type: 525, Value: []byte("horizontal-lr")},
+			{Type: 527, Value: []byte("ltr")},
 		},
-		extraRecords: [][]byte{
+		ExtraRecords: [][]byte{
 			[]byte("BOUNDARY"),
 			[]byte("OTTO font"),
 			tinyPNG,
 			[]byte("INDX index"),
 		},
 	})
-	data = testMOBIRecord0Uint32(t, data, 0xf4, 4)
-	data = testMOBIRecord0Uint32(t, data, 0xc0, 5)
-	data = testMOBIRecord0Uint32(t, data, 0xc4, 2)
-	data = testMOBIRecord0Uint32(t, data, 0xf8, 6)
-	data = testMOBIRecord0Uint32(t, data, 0xfc, 7)
-	data = testMOBIRecord0Uint32(t, data, 0x104, 8)
+	data = testfixture.SetMOBIRecord0Uint32(t, data, 0xf4, 4)
+	data = testfixture.SetMOBIRecord0Uint32(t, data, 0xc0, 5)
+	data = testfixture.SetMOBIRecord0Uint32(t, data, 0xc4, 2)
+	data = testfixture.SetMOBIRecord0Uint32(t, data, 0xf8, 6)
+	data = testfixture.SetMOBIRecord0Uint32(t, data, 0xfc, 7)
+	data = testfixture.SetMOBIRecord0Uint32(t, data, 0x104, 8)
 	r := bytes.NewReader(data)
 
-	info, err := InspectKindle(r, r.Size(), FormatAZW3)
+	info, err := Inspect(r, r.Size())
 	if err != nil {
-		t.Fatalf("InspectKindle: %v", err)
+		t.Fatalf("Inspect: %v", err)
 	}
 	if info == nil {
-		t.Fatal("InspectKindle returned nil")
+		t.Fatal("Inspect returned nil")
 	}
-	if info.SourceClass != "mobi6+kf8-combo" || info.MOBIKind != MOBIKindCombo {
-		t.Fatalf("class = %q, kind = %q; want combo", info.SourceClass, info.MOBIKind)
+	if info.SourceClass != "mobi6+kf8-combo" || info.Kind != KindCombo {
+		t.Fatalf("class = %q, kind = %q; want combo", info.SourceClass, info.Kind)
 	}
 	if info.Container != "bookmobi" || info.TypeCreator != "BOOKMOBI" {
 		t.Fatalf("container = %q, type/creator = %q", info.Container, info.TypeCreator)
@@ -340,23 +350,23 @@ func TestInspectKindleMOBIHeaderSignals(t *testing.T) {
 }
 
 func TestInspectKindleReadsFDSTSections(t *testing.T) {
-	data := testMOBIFileWithOptions(testMOBIOptions{
-		codepage:    65001,
-		title:       "FDST Book",
-		mobiVersion: 8,
-		extraRecords: [][]byte{
+	data := testfixture.BuildMOBI(testfixture.MOBIOptions{
+		Codepage:    65001,
+		Title:       "FDST Book",
+		MOBIVersion: 8,
+		ExtraRecords: [][]byte{
 			testKindleFDSTRecord([2]uint32{0, 10}, [2]uint32{10, 25}),
 		},
 	})
-	data = testMOBIRecord0Uint32(t, data, 0xc0, 2)
-	data = testMOBIRecord0Uint32(t, data, 0xc4, 2)
+	data = testfixture.SetMOBIRecord0Uint32(t, data, 0xc0, 2)
+	data = testfixture.SetMOBIRecord0Uint32(t, data, 0xc4, 2)
 	r := bytes.NewReader(data)
 
-	info, err := InspectKindle(r, r.Size(), FormatAZW3)
+	info, err := Inspect(r, r.Size())
 	if err != nil {
-		t.Fatalf("InspectKindle: %v", err)
+		t.Fatalf("Inspect: %v", err)
 	}
-	if got, want := info.FDSTSections, []KindleFDSTSection{{Start: 0, End: 10}, {Start: 10, End: 25}}; !equalFDSTSections(got, want) {
+	if got, want := info.FDSTSections, []FDSTSection{{Start: 0, End: 10}, {Start: 10, End: 25}}; !equalFDSTSections(got, want) {
 		t.Fatalf("FDSTSections = %+v; want %+v", got, want)
 	}
 }
@@ -364,22 +374,22 @@ func TestInspectKindleReadsFDSTSections(t *testing.T) {
 func TestInspectKindleReadsKF8SkeletonAndFragmentTables(t *testing.T) {
 	skelRecords := testKindleSKELRecords()
 	fragRecords := testKindleFragmentRecords()
-	data := testMOBIFileWithOptions(testMOBIOptions{
-		codepage:     65001,
-		title:        "KF8 Structure",
-		headerLength: 0x108,
-		mobiVersion:  8,
-		extraRecords: append(skelRecords, fragRecords...),
+	data := testfixture.BuildMOBI(testfixture.MOBIOptions{
+		Codepage:     65001,
+		Title:        "KF8 Structure",
+		HeaderLength: 0x108,
+		MOBIVersion:  8,
+		ExtraRecords: append(skelRecords, fragRecords...),
 	})
-	data = testMOBIRecord0Uint32(t, data, 0xfc, 2)
-	data = testMOBIRecord0Uint32(t, data, 0xf8, 4)
+	data = testfixture.SetMOBIRecord0Uint32(t, data, 0xfc, 2)
+	data = testfixture.SetMOBIRecord0Uint32(t, data, 0xf8, 4)
 	r := bytes.NewReader(data)
 
-	info, err := InspectKindle(r, r.Size(), FormatAZW3)
+	info, err := Inspect(r, r.Size())
 	if err != nil {
-		t.Fatalf("InspectKindle: %v", err)
+		t.Fatalf("Inspect: %v", err)
 	}
-	if got, want := info.KF8Skeletons, []KindleKF8Skeleton{{
+	if got, want := info.KF8Skeletons, []KF8Skeleton{{
 		Index:         0,
 		Name:          "SKEL0000000000",
 		FragmentCount: 1,
@@ -388,7 +398,7 @@ func TestInspectKindleReadsKF8SkeletonAndFragmentTables(t *testing.T) {
 	}}; !equalKF8Skeletons(got, want) {
 		t.Fatalf("KF8Skeletons = %+v; want %+v", got, want)
 	}
-	if got, want := info.KF8Fragments, []KindleKF8Fragment{{
+	if got, want := info.KF8Fragments, []KF8Fragment{{
 		InsertOffset: 42,
 		Selector:     "body > p:nth-of-type(1)",
 		FileNumber:   0,
@@ -409,8 +419,8 @@ func TestParseKindleFDSTRecordRejectsMalformedData(t *testing.T) {
 		data []byte
 	}{
 		{name: "missing magic", data: []byte("NOPE")},
-		{name: "bad offset", data: append(append([]byte("FDST"), testMOBIUint32(16)...), testMOBIUint32(0)...)},
-		{name: "truncated table", data: append(append([]byte("FDST"), testMOBIUint32(12)...), testMOBIUint32(1)...)},
+		{name: "bad offset", data: append(append([]byte("FDST"), testfixture.MOBIUint32(16)...), testfixture.MOBIUint32(0)...)},
+		{name: "truncated table", data: append(append([]byte("FDST"), testfixture.MOBIUint32(12)...), testfixture.MOBIUint32(1)...)},
 		{name: "inverted section", data: testKindleFDSTRecord([2]uint32{10, 2})},
 		{name: "overlap", data: testKindleFDSTRecord([2]uint32{0, 10}, [2]uint32{9, 20})},
 		{name: "trailing data", data: append(testKindleFDSTRecord([2]uint32{0, 10}), 1)},
@@ -427,70 +437,70 @@ func TestInspectKindleClassifiesSpecialCases(t *testing.T) {
 	for _, tt := range []struct {
 		name        string
 		data        []byte
-		kind        Format
+		azw4        bool
 		wantClass   string
 		wantFeature string
 	}{
 		{
 			name: "huff cdic",
-			data: testMOBIFileWithOptions(testMOBIOptions{
-				codepage:    65001,
-				title:       "Compressed",
-				compression: mobiCompressionHUFFCDIC,
+			data: testfixture.BuildMOBI(testfixture.MOBIOptions{
+				Codepage:    65001,
+				Title:       "Compressed",
+				Compression: mobiCompressionHUFFCDIC,
 			}),
-			kind:        FormatMOBI,
 			wantClass:   "mobi6",
 			wantFeature: "huff-cdic-compression",
 		},
 		{
 			name: "dictionary",
-			data: testMOBIFileWithOptions(testMOBIOptions{
-				codepage:        65001,
-				title:           "Dictionary",
-				firstImageIndex: 2,
-				extraRecords:    [][]byte{[]byte("INFL index")},
+			data: testfixture.BuildMOBI(testfixture.MOBIOptions{
+				Codepage:        65001,
+				Title:           "Dictionary",
+				FirstImageIndex: 2,
+				ExtraRecords:    [][]byte{[]byte("INFL index")},
 			}),
-			kind:        FormatMOBI,
 			wantClass:   "dictionary",
 			wantFeature: "dictionary-indexes",
 		},
 		{
 			name: "sample book",
-			data: testMOBIFileWithOptions(testMOBIOptions{
-				codepage: 65001,
-				title:    "Sample",
-				records:  []testEXTHRecord{{typ: 501, value: []byte("EBSP")}},
+			data: testfixture.BuildMOBI(testfixture.MOBIOptions{
+				Codepage: 65001,
+				Title:    "Sample",
+				EXTH:     []testfixture.MOBIEXTHRecord{{Type: 501, Value: []byte("EBSP")}},
 			}),
-			kind:      FormatMOBI,
 			wantClass: "sample-book",
 		},
 		{
 			name:        "azw4 pdf",
-			data:        append(testMOBIFile(65001, "Print Replica", nil), []byte("%PDF-1.7\nbody\n%%EOF")...),
-			kind:        FormatAZW4,
+			data:        append(testfixture.MOBIWithMetadata(65001, "Print Replica", nil), []byte("%PDF-1.7\nbody\n%%EOF")...),
+			azw4:        true,
 			wantClass:   "azw4-pdf-wrapper",
 			wantFeature: "azw4-print-replica",
 		},
 		{
 			name: "encrypted",
-			data: testMOBIFileWithOptions(testMOBIOptions{
-				codepage:   65001,
-				title:      "DRM",
-				encryption: 1,
+			data: testfixture.BuildMOBI(testfixture.MOBIOptions{
+				Codepage:   65001,
+				Title:      "DRM",
+				Encryption: 1,
 			}),
-			kind:        FormatMOBI,
 			wantClass:   "encrypted",
 			wantFeature: "encrypted",
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			r := bytes.NewReader(tt.data)
-			info, err := InspectKindle(r, r.Size(), tt.kind)
+			inspect := Inspect
+			if tt.azw4 {
+				inspect = InspectAZW4
+			}
+			info, err := inspect(r, r.Size())
 			if err != nil {
-				t.Fatalf("InspectKindle: %v", err)
+				t.Fatalf("Inspect: %v", err)
 			}
 			if info == nil {
-				t.Fatal("InspectKindle returned nil")
+				t.Fatal("Inspect returned nil")
 			}
 			if info.SourceClass != tt.wantClass {
 				t.Fatalf("SourceClass = %q; want %q", info.SourceClass, tt.wantClass)
@@ -503,14 +513,14 @@ func TestInspectKindleClassifiesSpecialCases(t *testing.T) {
 }
 
 func TestInspectKindleDictionarySignalsAreStructural(t *testing.T) {
-	exthSubject := testMOBIFileWithOptions(testMOBIOptions{
-		codepage: 65001,
-		title:    "Novel About Dictionaries",
-		records: []testEXTHRecord{
-			{typ: 105, value: []byte("Dictionaries")},
+	exthSubject := testfixture.BuildMOBI(testfixture.MOBIOptions{
+		Codepage: 65001,
+		Title:    "Novel About Dictionaries",
+		EXTH: []testfixture.MOBIEXTHRecord{
+			{Type: 105, Value: []byte("Dictionaries")},
 		},
 	})
-	mobiType := testMOBIRecord0Uint32(t, testMOBIFile(65001, "Old Dictionary", nil), 24, mobiTypeDictionary)
+	mobiType := testfixture.SetMOBIRecord0Uint32(t, testfixture.MOBIWithMetadata(65001, "Old Dictionary", nil), 24, mobiTypeDictionary)
 
 	for _, tt := range []struct {
 		name       string
@@ -522,12 +532,12 @@ func TestInspectKindleDictionarySignalsAreStructural(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			r := bytes.NewReader(tt.data)
-			info, err := InspectKindle(r, r.Size(), FormatMOBI)
+			info, err := Inspect(r, r.Size())
 			if err != nil {
-				t.Fatalf("InspectKindle: %v", err)
+				t.Fatalf("Inspect: %v", err)
 			}
 			if info == nil {
-				t.Fatal("InspectKindle returned nil")
+				t.Fatal("Inspect returned nil")
 			}
 			if info.Dictionary != tt.dictionary {
 				t.Fatalf("Dictionary = %v; want %v", info.Dictionary, tt.dictionary)
@@ -543,19 +553,19 @@ func TestInspectKindleDictionarySignalsAreStructural(t *testing.T) {
 }
 
 func TestInspectKindlePalmDOCIncludesEncryptedShape(t *testing.T) {
-	record0 := testPalmDOCRecord0(2)
+	record0 := testfixture.PalmDOCHeader(2)
 	binary.BigEndian.PutUint16(record0[12:14], 1)
-	data := testPalmDBFile("DRM PalmDOC", "TEXtREAd", record0)
+	data := testfixture.PalmDB("DRM PalmDOC", "TEXtREAd", record0)
 	r := bytes.NewReader(data)
 
-	info, err := InspectKindle(r, r.Size(), FormatPDB)
+	info, err := Inspect(r, r.Size())
 	if err != nil {
-		t.Fatalf("InspectKindle: %v", err)
+		t.Fatalf("Inspect: %v", err)
 	}
 	if info == nil {
-		t.Fatal("InspectKindle returned nil")
+		t.Fatal("Inspect returned nil")
 	}
-	if info.SourceClass != "encrypted-palmdoc" || info.Container != "palmdoc" || info.MOBIKind != MOBIKindPalmDOC {
+	if info.SourceClass != "encrypted-palmdoc" || info.Container != "palmdoc" || info.Kind != KindPalmDOC {
 		t.Fatalf("unexpected PalmDOC info: %+v", info)
 	}
 	if !containsString(info.UnsupportedFeatures, "encrypted") {
@@ -565,12 +575,12 @@ func TestInspectKindlePalmDOCIncludesEncryptedShape(t *testing.T) {
 
 func TestInspectKindleUnknownContainer(t *testing.T) {
 	r := bytes.NewReader([]byte("not a PalmDB file"))
-	info, err := InspectKindle(r, r.Size(), FormatUnknown)
+	info, err := Inspect(r, r.Size())
 	if err != nil {
-		t.Fatalf("InspectKindle: %v", err)
+		t.Fatalf("Inspect: %v", err)
 	}
 	if info != nil {
-		t.Fatalf("InspectKindle = %+v; want nil", info)
+		t.Fatalf("Inspect = %+v; want nil", info)
 	}
 }
 
@@ -578,27 +588,27 @@ func TestExtractKindleDocumentMOBI6PalmDOC(t *testing.T) {
 	for _, label := range []string{"EBOK", "PDOC"} {
 		t.Run(label, func(t *testing.T) {
 			text := []byte(`<html><body><p>Hello Kindle</p><img recindex="00001"></body></html>`)
-			data := testMOBIFileWithOptions(testMOBIOptions{
-				codepage:        65001,
-				title:           "Readable MOBI",
-				compression:     mobiCompressionPalmDOC,
-				headerLength:    0xe4,
-				textRecords:     [][]byte{text},
-				textLength:      uint32(len(text)),
-				mobiVersion:     6,
-				firstImageIndex: 2,
-				records: []testEXTHRecord{
-					{typ: 100, value: []byte("Doe, Jane")},
-					{typ: 201, value: testMOBIUint32(0)},
-					{typ: 501, value: []byte(label)},
+			data := testfixture.BuildMOBI(testfixture.MOBIOptions{
+				Codepage:        65001,
+				Title:           "Readable MOBI",
+				Compression:     mobiCompressionPalmDOC,
+				HeaderLength:    0xe4,
+				TextRecords:     [][]byte{text},
+				TextLength:      uint32(len(text)),
+				MOBIVersion:     6,
+				FirstImageIndex: 2,
+				EXTH: []testfixture.MOBIEXTHRecord{
+					{Type: 100, Value: []byte("Doe, Jane")},
+					{Type: 201, Value: testfixture.MOBIUint32(0)},
+					{Type: 501, Value: []byte(label)},
 				},
-				extraRecords: [][]byte{tinyPNG, []byte("FLIS control")},
+				ExtraRecords: [][]byte{tinyPNG, []byte("FLIS control")},
 			})
 			r := bytes.NewReader(data)
 
-			doc, err := ExtractKindleDocument(r, r.Size(), FormatMOBI)
+			doc, err := ExtractDocument(r, r.Size())
 			if err != nil {
-				t.Fatalf("ExtractKindleDocument: %v", err)
+				t.Fatalf("ExtractDocument: %v", err)
 			}
 			if doc.Metadata == nil || doc.Metadata.Title != "Readable MOBI" || len(doc.Metadata.Authors) != 1 || doc.Metadata.Authors[0].Name != "Jane Doe" {
 				t.Fatalf("metadata = %+v; want title and EXTH author", doc.Metadata)
@@ -616,8 +626,8 @@ func TestExtractKindleDocumentMOBI6PalmDOC(t *testing.T) {
 			if res.EmbedIndex != 1 || res.MediaType != "image/png" || !bytes.Equal(res.Data, tinyPNG) {
 				t.Fatalf("resource = %+v; want the PNG referenced by recindex 1", res)
 			}
-			if !res.Cover || res.ID == "" || doc.CoverResourceID != res.ID {
-				t.Fatalf("cover ID = %q; want the extracted cover resource %+v", doc.CoverResourceID, res)
+			if !res.Cover || res.ID == "" {
+				t.Fatalf("resource = %+v; want the extracted cover", res)
 			}
 		})
 	}
@@ -625,19 +635,19 @@ func TestExtractKindleDocumentMOBI6PalmDOC(t *testing.T) {
 
 func TestExtractKindleDocumentMOBI6Uncompressed(t *testing.T) {
 	raw := []byte("<html><body><p>Caf\xe9 Kindle</p></body></html>")
-	data := testMOBIFileWithOptions(testMOBIOptions{
-		codepage:    1252,
-		title:       "Uncompressed MOBI",
-		compression: mobiCompressionNone,
-		textRecords: [][]byte{raw},
-		textLength:  uint32(len(raw)),
-		mobiVersion: 6,
+	data := testfixture.BuildMOBI(testfixture.MOBIOptions{
+		Codepage:    1252,
+		Title:       "Uncompressed MOBI",
+		Compression: mobiCompressionNone,
+		TextRecords: [][]byte{raw},
+		TextLength:  uint32(len(raw)),
+		MOBIVersion: 6,
 	})
 	r := bytes.NewReader(data)
 
-	doc, err := ExtractKindleDocument(r, r.Size(), FormatMOBI)
+	doc, err := ExtractDocument(r, r.Size())
 	if err != nil {
-		t.Fatalf("ExtractKindleDocument: %v", err)
+		t.Fatalf("ExtractDocument: %v", err)
 	}
 	if got, want := string(doc.Flows[0].Data), "<html><body><p>Café Kindle</p></body></html>"; got != want {
 		t.Fatalf("flow text = %q; want %q", got, want)
@@ -648,14 +658,14 @@ func TestExtractKindleDocumentMOBI6MediaResources(t *testing.T) {
 	text := []byte(`<html><body><img recindex="00001"><video mediarecindex="00002">Video fallback</video><audio mediarecindex="00003">Audio fallback</audio></body></html>`)
 	video := []byte{0, 0, 0, 20, 'f', 't', 'y', 'p', 'i', 's', 'o', 'm'}
 	audio := []byte("ID3\x04\x00\x00tiny mp3")
-	data := testMOBIFileWithOptions(testMOBIOptions{
-		codepage:        65001,
-		title:           "MOBI Media",
-		mobiVersion:     6,
-		textRecords:     [][]byte{text},
-		textLength:      uint32(len(text)),
-		firstImageIndex: 2,
-		extraRecords: [][]byte{
+	data := testfixture.BuildMOBI(testfixture.MOBIOptions{
+		Codepage:        65001,
+		Title:           "MOBI Media",
+		MOBIVersion:     6,
+		TextRecords:     [][]byte{text},
+		TextLength:      uint32(len(text)),
+		FirstImageIndex: 2,
+		ExtraRecords: [][]byte{
 			tinyPNG,
 			testKindleMediaRecord("VIDE", video),
 			testKindleMediaRecord("AUDI", audio),
@@ -663,9 +673,9 @@ func TestExtractKindleDocumentMOBI6MediaResources(t *testing.T) {
 	})
 	r := bytes.NewReader(data)
 
-	doc, err := ExtractKindleDocument(r, r.Size(), FormatMOBI)
+	doc, err := ExtractDocument(r, r.Size())
 	if err != nil {
-		t.Fatalf("ExtractKindleDocument: %v", err)
+		t.Fatalf("ExtractDocument: %v", err)
 	}
 	if len(doc.Resources) != 3 {
 		t.Fatalf("resources = %+v; want image, video, and audio", doc.Resources)
@@ -689,53 +699,50 @@ func TestExtractKindleDocumentMOBI6MediaResources(t *testing.T) {
 
 func TestExtractKindleDocumentRejectsInvalidMediaEnvelope(t *testing.T) {
 	text := []byte(`<html><body><audio mediarecindex="00001">Fallback</audio></body></html>`)
-	data := testMOBIFileWithOptions(testMOBIOptions{
-		codepage:        65001,
-		title:           "Broken MOBI Media",
-		mobiVersion:     6,
-		textRecords:     [][]byte{text},
-		textLength:      uint32(len(text)),
-		firstImageIndex: 2,
-		extraRecords:    [][]byte{testKindleMediaRecord("AUDI", []byte("not an MP3"))},
+	data := testfixture.BuildMOBI(testfixture.MOBIOptions{
+		Codepage:        65001,
+		Title:           "Broken MOBI Media",
+		MOBIVersion:     6,
+		TextRecords:     [][]byte{text},
+		TextLength:      uint32(len(text)),
+		FirstImageIndex: 2,
+		ExtraRecords:    [][]byte{testKindleMediaRecord("AUDI", []byte("not an MP3"))},
 	})
 	r := bytes.NewReader(data)
 
-	_, err := ExtractKindleDocument(r, r.Size(), FormatMOBI)
-	if !errors.Is(err, ErrUnsupportedKindleSource) {
-		t.Fatalf("ExtractKindleDocument error = %v; want ErrUnsupportedKindleSource", err)
+	_, err := ExtractDocument(r, r.Size())
+	if !errors.Is(err, ErrUnsupportedSource) {
+		t.Fatalf("ExtractDocument error = %v; want ErrUnsupportedSource", err)
 	}
 }
 
 func TestExtractKindleDocumentPalmDOC(t *testing.T) {
 	for _, tt := range []struct {
 		name        string
-		compression uint16
+		Compression uint16
 		text        []byte
 		want        string
 	}{
 		{
 			name:        "uncompressed",
-			compression: mobiCompressionNone,
+			Compression: mobiCompressionNone,
 			text:        []byte("Palm text\nCaf\xe9"),
 			want:        "Palm text\nCafé",
 		},
 		{
 			name:        "palmdoc compression",
-			compression: mobiCompressionPalmDOC,
+			Compression: mobiCompressionPalmDOC,
 			text:        []byte("Compressed Palm text"),
 			want:        "Compressed Palm text",
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			data := testPalmDOCFileWithText("Palm Export", tt.compression, [][]byte{tt.text}, uint32(len(tt.text)))
+			data := testfixture.PalmDOCWithText("Palm Export", tt.Compression, [][]byte{tt.text}, uint32(len(tt.text)))
 			r := bytes.NewReader(data)
 
-			doc, err := ExtractKindleDocument(r, r.Size(), FormatPDB)
+			doc, err := ExtractDocument(r, r.Size())
 			if err != nil {
-				t.Fatalf("ExtractKindleDocument: %v", err)
-			}
-			if doc.SourceClass != "palmdoc" || doc.MOBIKind != MOBIKindPalmDOC {
-				t.Fatalf("class = %q, kind = %q; want PalmDOC", doc.SourceClass, doc.MOBIKind)
+				t.Fatalf("ExtractDocument: %v", err)
 			}
 			if doc.Metadata == nil || doc.Metadata.Title != "Palm Export" {
 				t.Fatalf("metadata = %+v; want Palm database title", doc.Metadata)
@@ -760,7 +767,7 @@ func TestExtractKindleDocumentPalmDOCOEBHTML(t *testing.T) {
 <dc:Language>pt</dc:Language><dc:Publisher>Example Press</dc:Publisher>
 </dc-metadata></metadata><GUIDE><REFERENCE TYPE="toc" TITLE="Contents" filepos="0000000042"></GUIDE></HEAD>
 <BODY><p>Structured <b>book text</b>.</p><img src="BMP" recindex="00001"></BODY></HTML>`)
-	data := testPalmDOCFileWithTextAndResources(
+	data := testfixture.PalmDOCWithResources(
 		"Database Fallback",
 		mobiCompressionPalmDOC,
 		[][]byte{text},
@@ -769,9 +776,9 @@ func TestExtractKindleDocumentPalmDOCOEBHTML(t *testing.T) {
 	)
 	r := bytes.NewReader(data)
 
-	doc, err := ExtractKindleDocument(r, r.Size(), FormatPDB)
+	doc, err := ExtractDocument(r, r.Size())
 	if err != nil {
-		t.Fatalf("ExtractKindleDocument: %v", err)
+		t.Fatalf("ExtractDocument: %v", err)
 	}
 	if doc.Metadata == nil || doc.Metadata.Title != "Structured PalmDOC" || len(doc.Metadata.Authors) != 1 || doc.Metadata.Authors[0].Name != "Example Author" || doc.Metadata.Publisher != "Example Press" || doc.Metadata.Language != "pt" {
 		t.Fatalf("metadata = %+v; want embedded OEB metadata", doc.Metadata)
@@ -805,24 +812,24 @@ func TestExtractKindleDocumentKF8Standalone(t *testing.T) {
 			extraRecords = append(extraRecords, fragRecords...)
 			navIndex := uint32(2 + len(extraRecords))
 			extraRecords = append(extraRecords, testMOBINCXRecordsWithPositions(12, 15)...)
-			data := testMOBIFileWithOptions(testMOBIOptions{
-				codepage:     65001,
-				title:        "KF8 Export",
-				headerLength: 0x108,
-				mobiVersion:  8,
-				textRecords:  [][]byte{text},
-				textLength:   uint32(len(text)),
-				extraRecords: extraRecords,
-				records:      []testEXTHRecord{{typ: 501, value: []byte(label)}},
+			data := testfixture.BuildMOBI(testfixture.MOBIOptions{
+				Codepage:     65001,
+				Title:        "KF8 Export",
+				HeaderLength: 0x108,
+				MOBIVersion:  8,
+				TextRecords:  [][]byte{text},
+				TextLength:   uint32(len(text)),
+				ExtraRecords: extraRecords,
+				EXTH:         []testfixture.MOBIEXTHRecord{{Type: 501, Value: []byte(label)}},
 			})
-			data = testMOBIRecord0Uint32(t, data, 0xfc, 2)
-			data = testMOBIRecord0Uint32(t, data, 0xf8, 4)
-			data = testMOBIRecord0Uint32(t, data, 0xf4, navIndex)
+			data = testfixture.SetMOBIRecord0Uint32(t, data, 0xfc, 2)
+			data = testfixture.SetMOBIRecord0Uint32(t, data, 0xf8, 4)
+			data = testfixture.SetMOBIRecord0Uint32(t, data, 0xf4, navIndex)
 			r := bytes.NewReader(data)
 
-			doc, err := ExtractKindleDocument(r, r.Size(), FormatAZW3)
+			doc, err := ExtractDocument(r, r.Size())
 			if err != nil {
-				t.Fatalf("ExtractKindleDocument: %v", err)
+				t.Fatalf("ExtractDocument: %v", err)
 			}
 			if doc.Metadata == nil || doc.Metadata.Title != "KF8 Export" {
 				t.Fatalf("metadata = %+v; want KF8 title", doc.Metadata)
@@ -852,59 +859,25 @@ func TestExtractKindleDocumentKF8Standalone(t *testing.T) {
 }
 
 func TestExtractKindleDocumentComboKF8(t *testing.T) {
-	for _, label := range []string{"EBOK", "PDOC"} {
-		t.Run(label, func(t *testing.T) {
-			prefix := []byte("<html><body><p>")
-			suffix := []byte(`</p><img src="kindle:embed:0001?mime=image/png"><video src="kindle:embed:0002?mime=video/mp4"></video><audio src="kindle:embed:0003?mime=audio/mpeg"></audio></body></html>`)
-			skeleton := append(append([]byte(nil), prefix...), suffix...)
-			fragment := []byte("Hello Combo KF8")
-			text := append(append([]byte(nil), skeleton...), fragment...)
-			skelRecords := testKindleSKELRecordsWith(1, 0, uint32(len(skeleton)))
-			fragRecords := testKindleFragmentRecordsWith(uint32(len(prefix)), "body > p", 0, 0, 0, uint32(len(fragment)))
-			kf8ExtraRecords := append([][]byte{}, skelRecords...)
-			kf8ExtraRecords = append(kf8ExtraRecords, fragRecords...)
-			kf8NavIndex := uint32(2 + len(kf8ExtraRecords))
-			kf8ExtraRecords = append(kf8ExtraRecords, testMOBINCXRecordsWithPositions(12, 18)...)
-			kf8 := testMOBIFileWithOptions(testMOBIOptions{
-				codepage:     65001,
-				title:        "KF8 Part",
-				headerLength: 0x108,
-				mobiVersion:  8,
-				textRecords:  [][]byte{text},
-				textLength:   uint32(len(text)),
-				extraRecords: kf8ExtraRecords,
-				records:      []testEXTHRecord{{typ: 501, value: []byte(label)}},
-			})
-			kf8 = testMOBIRecord0Uint32(t, kf8, 0xfc, 2)
-			kf8 = testMOBIRecord0Uint32(t, kf8, 0xf8, 4)
-			kf8 = testMOBIRecord0Uint32(t, kf8, 0xf4, kf8NavIndex)
-			kf8Records := testPalmDBRecordBodies(t, kf8)
-			video := []byte{0, 0, 0, 20, 'f', 't', 'y', 'p', 'i', 's', 'o', 'm'}
-			audio := []byte("ID3\x04\x00\x00tiny mp3")
-			extraRecords := [][]byte{
-				tinyPNG,
-				testKindleMediaRecord("VIDE", video),
-				testKindleMediaRecord("AUDI", audio),
-				[]byte("BOUNDARY"),
+	for _, tc := range []struct {
+		label            string
+		compression      uint16
+		badSecondaryEXTH bool
+	}{{"EBOK", 1, false}, {"PDOC", 1, false}, {"EBOK", 99, false}, {"EBOK", 1, true}} {
+		t.Run(fmt.Sprintf("%s/primary-compression-%d/bad-secondary-EXTH-%t", tc.label, tc.compression, tc.badSecondaryEXTH), func(t *testing.T) {
+			data := testComboKF8(t, tc.label)
+			start := int(binary.BigEndian.Uint32(data[78:82]))
+			binary.BigEndian.PutUint16(data[start:start+2], tc.compression)
+			if tc.badSecondaryEXTH {
+				// Optional EXTH damage must not hide usable KF8 text and indexes.
+				secondary := int(binary.BigEndian.Uint32(data[78+6*8:]))
+				binary.BigEndian.PutUint32(data[secondary+20:], 0xffff)
 			}
-			extraRecords = append(extraRecords, kf8Records...)
-			data := testMOBIFileWithOptions(testMOBIOptions{
-				codepage:        65001,
-				title:           "Combo Export",
-				mobiVersion:     6,
-				textRecords:     [][]byte{[]byte("<html><body>Legacy MOBI6</body></html>")},
-				firstImageIndex: 2,
-				records: []testEXTHRecord{
-					{typ: 121, value: testMOBIUint32(6)},
-					{typ: 501, value: []byte(label)},
-				},
-				extraRecords: extraRecords,
-			})
 			r := bytes.NewReader(data)
 
-			doc, err := ExtractKindleDocument(r, r.Size(), FormatMOBI)
+			doc, err := ExtractDocument(r, r.Size())
 			if err != nil {
-				t.Fatalf("ExtractKindleDocument: %v", err)
+				t.Fatalf("ExtractDocument: %v", err)
 			}
 			if doc.Metadata == nil || doc.Metadata.Title != "Combo Export" {
 				t.Fatalf("metadata = %+v; want primary MOBI title", doc.Metadata)
@@ -921,8 +894,8 @@ func TestExtractKindleDocumentComboKF8(t *testing.T) {
 			for i, want := range []struct {
 				mediaType string
 				data      []byte
-			}{{"image/png", tinyPNG}, {"video/mp4", video}, {"audio/mpeg", audio}} {
-				index := slices.IndexFunc(doc.Resources, func(res KindleResource) bool { return res.EmbedIndex == i+1 })
+			}{{"image/png", tinyPNG}, {"video/mp4", []byte{0, 0, 0, 20, 'f', 't', 'y', 'p', 'i', 's', 'o', 'm'}}, {"audio/mpeg", []byte("ID3\x04\x00\x00tiny mp3")}} {
+				index := slices.IndexFunc(doc.Resources, func(res Resource) bool { return res.EmbedIndex == i+1 })
 				if index < 0 {
 					t.Fatalf("missing shared resource for kindle:embed:%04d", i+1)
 				}
@@ -930,8 +903,8 @@ func TestExtractKindleDocumentComboKF8(t *testing.T) {
 				if res.MediaType != want.mediaType || !bytes.Equal(res.Data, want.data) {
 					t.Fatalf("resource %d = %+v; want original %s payload", i+1, res, want.mediaType)
 				}
-				if i == 0 && (!res.Cover || res.ID == "" || doc.CoverResourceID != res.ID) {
-					t.Fatalf("cover ID = %q; want the shared image resource %+v", doc.CoverResourceID, res)
+				if i == 0 && (!res.Cover || res.ID == "") {
+					t.Fatalf("resource = %+v; want the shared cover image", res)
 				}
 			}
 			if len(doc.Navigation) != 1 {
@@ -961,24 +934,24 @@ func TestExtractKindleDocumentKF8CSSFlowResources(t *testing.T) {
 		[2]uint32{0, uint32(len(skeleton))},
 		[2]uint32{uint32(len(skeleton)), uint32(len(raw))},
 	)
-	data := testMOBIFileWithOptions(testMOBIOptions{
-		codepage:     65001,
-		title:        "KF8 CSS",
-		headerLength: 0x108,
-		mobiVersion:  8,
-		textRecords:  [][]byte{raw},
-		textLength:   uint32(len(raw)),
-		extraRecords: append(append(skelRecords, testKindleFragmentRecordsWith(0, "body", 0, 0, 0, 0)...), fdstRecord),
+	data := testfixture.BuildMOBI(testfixture.MOBIOptions{
+		Codepage:     65001,
+		Title:        "KF8 CSS",
+		HeaderLength: 0x108,
+		MOBIVersion:  8,
+		TextRecords:  [][]byte{raw},
+		TextLength:   uint32(len(raw)),
+		ExtraRecords: append(append(skelRecords, testKindleFragmentRecordsWith(0, "body", 0, 0, 0, 0)...), fdstRecord),
 	})
-	data = testMOBIRecord0Uint32(t, data, 0xfc, 2)
-	data = testMOBIRecord0Uint32(t, data, 0xf8, 4)
-	data = testMOBIRecord0Uint32(t, data, 0xc0, 7)
-	data = testMOBIRecord0Uint32(t, data, 0xc4, 2)
+	data = testfixture.SetMOBIRecord0Uint32(t, data, 0xfc, 2)
+	data = testfixture.SetMOBIRecord0Uint32(t, data, 0xf8, 4)
+	data = testfixture.SetMOBIRecord0Uint32(t, data, 0xc0, 7)
+	data = testfixture.SetMOBIRecord0Uint32(t, data, 0xc4, 2)
 	r := bytes.NewReader(data)
 
-	doc, err := ExtractKindleDocument(r, r.Size(), FormatAZW3)
+	doc, err := ExtractDocument(r, r.Size())
 	if err != nil {
-		t.Fatalf("ExtractKindleDocument: %v", err)
+		t.Fatalf("ExtractDocument: %v", err)
 	}
 	if len(doc.Resources) != 1 {
 		t.Fatalf("Resources = %+v; want one CSS resource", doc.Resources)
@@ -998,24 +971,24 @@ func TestExtractKindleDocumentKF8SVGFlowResource(t *testing.T) {
 		[2]uint32{0, uint32(len(skeleton))},
 		[2]uint32{uint32(len(skeleton)), uint32(len(raw))},
 	)
-	data := testMOBIFileWithOptions(testMOBIOptions{
-		codepage:     65001,
-		title:        "KF8 SVG",
-		headerLength: 0x108,
-		mobiVersion:  8,
-		textRecords:  [][]byte{raw},
-		textLength:   uint32(len(raw)),
-		extraRecords: append(append(skelRecords, testKindleFragmentRecordsWith(0, "body", 0, 0, 0, 0)...), fdstRecord),
+	data := testfixture.BuildMOBI(testfixture.MOBIOptions{
+		Codepage:     65001,
+		Title:        "KF8 SVG",
+		HeaderLength: 0x108,
+		MOBIVersion:  8,
+		TextRecords:  [][]byte{raw},
+		TextLength:   uint32(len(raw)),
+		ExtraRecords: append(append(skelRecords, testKindleFragmentRecordsWith(0, "body", 0, 0, 0, 0)...), fdstRecord),
 	})
-	data = testMOBIRecord0Uint32(t, data, 0xfc, 2)
-	data = testMOBIRecord0Uint32(t, data, 0xf8, 4)
-	data = testMOBIRecord0Uint32(t, data, 0xc0, 7)
-	data = testMOBIRecord0Uint32(t, data, 0xc4, 2)
+	data = testfixture.SetMOBIRecord0Uint32(t, data, 0xfc, 2)
+	data = testfixture.SetMOBIRecord0Uint32(t, data, 0xf8, 4)
+	data = testfixture.SetMOBIRecord0Uint32(t, data, 0xc0, 7)
+	data = testfixture.SetMOBIRecord0Uint32(t, data, 0xc4, 2)
 	r := bytes.NewReader(data)
 
-	doc, err := ExtractKindleDocument(r, r.Size(), FormatAZW3)
+	doc, err := ExtractDocument(r, r.Size())
 	if err != nil {
-		t.Fatalf("ExtractKindleDocument: %v", err)
+		t.Fatalf("ExtractDocument: %v", err)
 	}
 	if len(doc.Resources) != 1 {
 		t.Fatalf("Resources = %+v; want one SVG resource", doc.Resources)
@@ -1041,23 +1014,23 @@ func TestExtractKindleDocumentKF8FontResource(t *testing.T) {
 	fontRecordIndex := uint32(2 + len(extraRecords))
 	fontData := []byte("\x00\x01\x00\x00tiny ttf")
 	extraRecords = append(extraRecords, testKindleFONTRecord(t, fontData))
-	data := testMOBIFileWithOptions(testMOBIOptions{
-		codepage:        65001,
-		title:           "KF8 Font",
-		headerLength:    0x108,
-		mobiVersion:     8,
-		textRecords:     [][]byte{text},
-		textLength:      uint32(len(text)),
-		firstImageIndex: fontRecordIndex,
-		extraRecords:    extraRecords,
+	data := testfixture.BuildMOBI(testfixture.MOBIOptions{
+		Codepage:        65001,
+		Title:           "KF8 Font",
+		HeaderLength:    0x108,
+		MOBIVersion:     8,
+		TextRecords:     [][]byte{text},
+		TextLength:      uint32(len(text)),
+		FirstImageIndex: fontRecordIndex,
+		ExtraRecords:    extraRecords,
 	})
-	data = testMOBIRecord0Uint32(t, data, 0xfc, 2)
-	data = testMOBIRecord0Uint32(t, data, 0xf8, 4)
+	data = testfixture.SetMOBIRecord0Uint32(t, data, 0xfc, 2)
+	data = testfixture.SetMOBIRecord0Uint32(t, data, 0xf8, 4)
 	r := bytes.NewReader(data)
 
-	doc, err := ExtractKindleDocument(r, r.Size(), FormatAZW3)
+	doc, err := ExtractDocument(r, r.Size())
 	if err != nil {
-		t.Fatalf("ExtractKindleDocument: %v", err)
+		t.Fatalf("ExtractDocument: %v", err)
 	}
 	if len(doc.Resources) != 1 {
 		t.Fatalf("Resources = %+v; want one font resource", doc.Resources)
@@ -1079,27 +1052,27 @@ func TestExtractKindleDocumentMOBI6InlineGuide(t *testing.T) {
 <reference type="toc" title="Duplicate Contents" filepos=0000000010 />
 <reference type="ignored" />
 </guide></head><body id="cover"><p>Hello Kindle</p></body></html>`)
-	data := testMOBIFileWithOptions(testMOBIOptions{
-		codepage:    65001,
-		title:       "Guided MOBI",
-		compression: mobiCompressionPalmDOC,
-		textRecords: [][]byte{text},
-		textLength:  uint32(len(text)),
-		mobiVersion: 6,
-		records: []testEXTHRecord{
-			{typ: 501, value: []byte("EBOK")},
+	data := testfixture.BuildMOBI(testfixture.MOBIOptions{
+		Codepage:    65001,
+		Title:       "Guided MOBI",
+		Compression: mobiCompressionPalmDOC,
+		TextRecords: [][]byte{text},
+		TextLength:  uint32(len(text)),
+		MOBIVersion: 6,
+		EXTH: []testfixture.MOBIEXTHRecord{
+			{Type: 501, Value: []byte("EBOK")},
 		},
 	})
 	r := bytes.NewReader(data)
 
-	doc, err := ExtractKindleDocument(r, r.Size(), FormatMOBI)
+	doc, err := ExtractDocument(r, r.Size())
 	if err != nil {
-		t.Fatalf("ExtractKindleDocument: %v", err)
+		t.Fatalf("ExtractDocument: %v", err)
 	}
 	if len(doc.Guide) != 3 {
 		t.Fatalf("Guide = %+v; want three unique references", doc.Guide)
 	}
-	want := []KindleGuideReference{
+	want := []GuideReference{
 		{Type: "toc", Title: "Contents", Href: "text/flow-0001.html#filepos10"},
 		{Type: "text", Title: "text", Href: "text/flow-0001.html#filepos20"},
 		{Type: "cover", Title: "Cover & Start", Href: "text/flow-0001.html#cover"},
@@ -1117,25 +1090,25 @@ func TestExtractKindleDocumentMOBI6InlineGuide(t *testing.T) {
 func TestExtractKindleDocumentMOBI6NCXNavigation(t *testing.T) {
 	text := []byte("<html><body><p>Hello Kindle</p></body></html>")
 	navRecords := testMOBI6NCXRecords()
-	data := testMOBIFileWithOptions(testMOBIOptions{
-		codepage:    65001,
-		title:       "NCX MOBI",
-		compression: mobiCompressionPalmDOC,
-		textRecords: [][]byte{text},
-		textLength:  uint32(len(text)),
-		mobiVersion: 6,
-		extraRecords: [][]byte{
+	data := testfixture.BuildMOBI(testfixture.MOBIOptions{
+		Codepage:    65001,
+		Title:       "NCX MOBI",
+		Compression: mobiCompressionPalmDOC,
+		TextRecords: [][]byte{text},
+		TextLength:  uint32(len(text)),
+		MOBIVersion: 6,
+		ExtraRecords: [][]byte{
 			navRecords[0],
 			navRecords[1],
 			navRecords[2],
 		},
 	})
-	data = testMOBIRecord0Uint32(t, data, 0xf4, 2)
+	data = testfixture.SetMOBIRecord0Uint32(t, data, 0xf4, 2)
 	r := bytes.NewReader(data)
 
-	doc, err := ExtractKindleDocument(r, r.Size(), FormatMOBI)
+	doc, err := ExtractDocument(r, r.Size())
 	if err != nil {
-		t.Fatalf("ExtractKindleDocument: %v", err)
+		t.Fatalf("ExtractDocument: %v", err)
 	}
 	if len(doc.Navigation) != 1 {
 		t.Fatalf("Navigation = %+v; want one root", doc.Navigation)
@@ -1158,21 +1131,21 @@ func TestExtractKindleDocumentPalmDOCDecompression(t *testing.T) {
 	// back-reference that repeats "abc".
 	compressed := []byte{4, 'C', 'a', 'f', 0xe9, 0xe9, 'a', 'b', 'c', 0x80, 0x1b}
 	text := "Café iabcabc"
-	data := testMOBIFileWithOptions(testMOBIOptions{
-		codepage:    1252,
-		title:       "Compressed Text",
-		compression: mobiCompressionPalmDOC,
-		textRecords: [][]byte{
+	data := testfixture.BuildMOBI(testfixture.MOBIOptions{
+		Codepage:    1252,
+		Title:       "Compressed Text",
+		Compression: mobiCompressionPalmDOC,
+		TextRecords: [][]byte{
 			compressed,
 		},
-		textLength:  uint32(len([]byte("Caf\xe9 iabcabc"))),
-		mobiVersion: 6,
+		TextLength:  uint32(len([]byte("Caf\xe9 iabcabc"))),
+		MOBIVersion: 6,
 	})
 	r := bytes.NewReader(data)
 
-	doc, err := ExtractKindleDocument(r, r.Size(), FormatMOBI)
+	doc, err := ExtractDocument(r, r.Size())
 	if err != nil {
-		t.Fatalf("ExtractKindleDocument: %v", err)
+		t.Fatalf("ExtractDocument: %v", err)
 	}
 	if got := string(doc.Flows[0].Data); got != text {
 		t.Fatalf("text = %q; want %q", got, text)
@@ -1180,20 +1153,20 @@ func TestExtractKindleDocumentPalmDOCDecompression(t *testing.T) {
 }
 
 func TestExtractKindleDocumentTrimsTrailingEntries(t *testing.T) {
-	data := testMOBIFileWithOptions(testMOBIOptions{
-		codepage:      65001,
-		title:         "Trailing Text",
-		compression:   mobiCompressionPalmDOC,
-		textRecords:   [][]byte{[]byte("plain\x00\x81")},
-		textLength:    5,
-		mobiVersion:   6,
-		trailingFlags: 3,
+	data := testfixture.BuildMOBI(testfixture.MOBIOptions{
+		Codepage:      65001,
+		Title:         "Trailing Text",
+		Compression:   mobiCompressionPalmDOC,
+		TextRecords:   [][]byte{[]byte("plain\x00\x81")},
+		TextLength:    5,
+		MOBIVersion:   6,
+		TrailingFlags: 3,
 	})
 	r := bytes.NewReader(data)
 
-	doc, err := ExtractKindleDocument(r, r.Size(), FormatMOBI)
+	doc, err := ExtractDocument(r, r.Size())
 	if err != nil {
-		t.Fatalf("ExtractKindleDocument: %v", err)
+		t.Fatalf("ExtractDocument: %v", err)
 	}
 	if got := string(doc.Flows[0].Data); got != "plain" {
 		t.Fatalf("text = %q; want trailing bytes removed", got)
@@ -1203,53 +1176,53 @@ func TestExtractKindleDocumentTrimsTrailingEntries(t *testing.T) {
 func TestExtractKindleDocumentRejectsUnsupportedSources(t *testing.T) {
 	for _, tt := range []struct {
 		name   string
-		opts   testMOBIOptions
+		opts   testfixture.MOBIOptions
 		reason string
 	}{
 		{
 			name: "encrypted personal document",
-			opts: testMOBIOptions{
-				encryption: 1,
-				records:    []testEXTHRecord{{typ: 501, value: []byte("PDOC")}},
+			opts: testfixture.MOBIOptions{
+				Encryption: 1,
+				EXTH:       []testfixture.MOBIEXTHRecord{{Type: 501, Value: []byte("PDOC")}},
 			},
 			reason: "encrypted",
 		},
 		{
 			name: "dictionary personal document",
-			opts: testMOBIOptions{
-				firstImageIndex: 2,
-				records:         []testEXTHRecord{{typ: 501, value: []byte("PDOC")}},
-				extraRecords:    [][]byte{[]byte("INFL index")},
+			opts: testfixture.MOBIOptions{
+				FirstImageIndex: 2,
+				EXTH:            []testfixture.MOBIEXTHRecord{{Type: 501, Value: []byte("PDOC")}},
+				ExtraRecords:    [][]byte{[]byte("INFL index")},
 			},
 			reason: "dictionary",
 		},
 		{
 			name:   "sample book",
-			opts:   testMOBIOptions{records: []testEXTHRecord{{typ: 501, value: []byte("EBSP")}}},
-			reason: "sample-book",
+			opts:   testfixture.MOBIOptions{EXTH: []testfixture.MOBIEXTHRecord{{Type: 501, Value: []byte("EBSP")}}},
+			reason: "cdetype EBSP",
 		},
 		{
 			name:   "missing HUFF CDIC tables",
-			opts:   testMOBIOptions{compression: mobiCompressionHUFFCDIC},
-			reason: "huff-cdic-compression",
+			opts:   testfixture.MOBIOptions{Compression: mobiCompressionHUFFCDIC},
+			reason: "HUFF/CDIC",
 		},
 		{
 			name: "malformed combo KF8 header",
-			opts: testMOBIOptions{
-				records:      []testEXTHRecord{{typ: 121, value: testMOBIUint32(3)}},
-				extraRecords: [][]byte{[]byte("BOUNDARY"), []byte("kf8 placeholder")},
+			opts: testfixture.MOBIOptions{
+				EXTH:         []testfixture.MOBIEXTHRecord{{Type: 121, Value: testfixture.MOBIUint32(3)}},
+				ExtraRecords: [][]byte{[]byte("BOUNDARY"), []byte("kf8 placeholder")},
 			},
 			reason: "invalid combo KF8 header",
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			tt.opts.codepage = 65001
-			tt.opts.mobiVersion = 6
-			tt.opts.textRecords = [][]byte{[]byte("<html><body>Readable fallback</body></html>")}
-			r := bytes.NewReader(testMOBIFileWithOptions(tt.opts))
-			doc, err := ExtractKindleDocument(r, r.Size(), FormatMOBI)
-			if !errors.Is(err, ErrUnsupportedKindleSource) || !strings.Contains(err.Error(), tt.reason) {
-				t.Fatalf("ExtractKindleDocument error = %v; want unsupported source because of %q", err, tt.reason)
+			tt.opts.Codepage = 65001
+			tt.opts.MOBIVersion = 6
+			tt.opts.TextRecords = [][]byte{[]byte("<html><body>Readable fallback</body></html>")}
+			r := bytes.NewReader(testfixture.BuildMOBI(tt.opts))
+			doc, err := ExtractDocument(r, r.Size())
+			if !errors.Is(err, ErrUnsupportedSource) || !strings.Contains(err.Error(), tt.reason) {
+				t.Fatalf("ExtractDocument error = %v; want unsupported source because of %q", err, tt.reason)
 			}
 			if doc != nil {
 				t.Fatal("rejected source returned a partial document")
@@ -1259,163 +1232,31 @@ func TestExtractKindleDocumentRejectsUnsupportedSources(t *testing.T) {
 }
 
 func TestExtractKindleDocumentRejectsMalformedPalmDOCCompression(t *testing.T) {
-	data := testMOBIFileWithOptions(testMOBIOptions{
-		codepage:    65001,
-		title:       "Broken",
-		compression: mobiCompressionPalmDOC,
-		textRecords: [][]byte{
+	data := testfixture.BuildMOBI(testfixture.MOBIOptions{
+		Codepage:    65001,
+		Title:       "Broken",
+		Compression: mobiCompressionPalmDOC,
+		TextRecords: [][]byte{
 			{0x80},
 		},
-		textLength:  1,
-		mobiVersion: 6,
+		TextLength:  1,
+		MOBIVersion: 6,
 	})
 	r := bytes.NewReader(data)
 
-	_, err := ExtractKindleDocument(r, r.Size(), FormatMOBI)
-	if err == nil || !strings.Contains(err.Error(), "back-reference overruns record") {
-		t.Fatalf("ExtractKindleDocument error = %v; want malformed PalmDOC error", err)
+	_, err := ExtractDocument(r, r.Size())
+	if !errors.Is(err, ErrUnsupportedSource) || !strings.Contains(err.Error(), "back-reference overruns record") {
+		t.Fatalf("ExtractDocument error = %v; want malformed PalmDOC error", err)
 	}
-}
-
-type testEXTHRecord struct {
-	typ   uint32
-	value []byte
-}
-
-func testMOBIFile(codepage uint32, title string, records []testEXTHRecord) []byte {
-	return testMOBIFileWithOptions(testMOBIOptions{
-		codepage: codepage,
-		title:    title,
-		records:  records,
-	})
-}
-
-type testMOBIOptions struct {
-	codepage        uint32
-	palmDBName      string
-	title           string
-	compression     uint16
-	encryption      uint16
-	headerLength    uint32
-	mobiVersion     uint32
-	trailingFlags   uint16
-	textLength      uint32
-	textRecords     [][]byte
-	records         []testEXTHRecord
-	firstImageIndex uint32
-	extraRecords    [][]byte
-}
-
-func testMOBIFileWithOptions(opts testMOBIOptions) []byte {
-	mobiHeaderLength := opts.headerLength
-	if mobiHeaderLength == 0 {
-		mobiHeaderLength = 0xe8
-	}
-	exth := testEXTH(opts.records)
-	titleOffset := 16 + int(mobiHeaderLength) + len(exth)
-	titleBytes := []byte(opts.title)
-	firstImageIndex := opts.firstImageIndex
-	if firstImageIndex == 0 {
-		firstImageIndex = mobiNoImageIndex
-	}
-	compression := opts.compression
-	if compression == 0 {
-		compression = mobiCompressionNone
-	}
-	textRecords := opts.textRecords
-	if len(textRecords) == 0 {
-		textRecords = [][]byte{[]byte("dummy text record")}
-	}
-	textLength := opts.textLength
-	if textLength == 0 {
-		for _, record := range textRecords {
-			textLength += uint32(len(record))
-		}
-	}
-	mobiVersion := opts.mobiVersion
-	if mobiVersion == 0 {
-		mobiVersion = 8
-	}
-
-	record0 := make([]byte, titleOffset+len(titleBytes))
-	binary.BigEndian.PutUint16(record0[0:2], compression)
-	binary.BigEndian.PutUint32(record0[4:8], textLength)
-	binary.BigEndian.PutUint16(record0[8:10], uint16(len(textRecords)))
-	binary.BigEndian.PutUint16(record0[10:12], 4096)
-	binary.BigEndian.PutUint16(record0[12:14], opts.encryption)
-	copy(record0[16:20], "MOBI")
-	binary.BigEndian.PutUint32(record0[20:24], mobiHeaderLength)
-	binary.BigEndian.PutUint32(record0[28:32], opts.codepage)
-	binary.BigEndian.PutUint32(record0[0x54:0x58], uint32(titleOffset))
-	binary.BigEndian.PutUint32(record0[0x58:0x5c], uint32(len(titleBytes)))
-	binary.BigEndian.PutUint32(record0[0x5c:0x60], 0x09) // English primary language id.
-	binary.BigEndian.PutUint32(record0[0x68:0x6c], mobiVersion)
-	binary.BigEndian.PutUint32(record0[0x6c:0x70], firstImageIndex)
-	binary.BigEndian.PutUint16(record0[0xf2:0xf4], opts.trailingFlags)
-	if len(opts.records) > 0 {
-		binary.BigEndian.PutUint32(record0[0x80:0x84], 0x40)
-		copy(record0[16+mobiHeaderLength:], exth)
-	}
-	copy(record0[titleOffset:], titleBytes)
-
-	header := make([]byte, palmDBHeaderSize)
-	copy(header[:palmDBNameBytes], []byte(opts.palmDBName))
-	copy(header[60:68], "BOOKMOBI")
-	recordBodies := append([][]byte{record0}, textRecords...)
-	recordBodies = append(recordBodies, opts.extraRecords...)
-	binary.BigEndian.PutUint16(header[76:78], uint16(len(recordBodies)))
-
-	offset := palmDBHeaderSize + len(recordBodies)*palmDBRecordSize
-	table := make([]byte, len(recordBodies)*palmDBRecordSize)
-	for i, body := range recordBodies {
-		binary.BigEndian.PutUint32(table[i*palmDBRecordSize:i*palmDBRecordSize+4], uint32(offset))
-		offset += len(body)
-	}
-
-	out := append(header, table...)
-	for _, body := range recordBodies {
-		out = append(out, body...)
-	}
-	return out
-}
-
-func testPalmDBRecordBodies(t *testing.T, data []byte) [][]byte {
-	t.Helper()
-	if len(data) < palmDBHeaderSize {
-		t.Fatalf("PalmDB fixture too short")
-	}
-	count := int(binary.BigEndian.Uint16(data[76:78]))
-	if count < 1 || len(data) < palmDBHeaderSize+count*palmDBRecordSize {
-		t.Fatalf("invalid PalmDB record table")
-	}
-	records := make([][]byte, 0, count)
-	for i := range count {
-		start := int(binary.BigEndian.Uint32(data[palmDBHeaderSize+i*palmDBRecordSize : palmDBHeaderSize+i*palmDBRecordSize+4]))
-		end := len(data)
-		if i+1 < count {
-			end = int(binary.BigEndian.Uint32(data[palmDBHeaderSize+(i+1)*palmDBRecordSize : palmDBHeaderSize+(i+1)*palmDBRecordSize+4]))
-		}
-		if start < palmDBHeaderSize+count*palmDBRecordSize || start > end || end > len(data) {
-			t.Fatalf("invalid PalmDB record %d bounds %d..%d", i, start, end)
-		}
-		records = append(records, append([]byte(nil), data[start:end]...))
-	}
-	return records
-}
-
-func testMOBIUint32(value uint32) []byte {
-	buf := make([]byte, 4)
-	binary.BigEndian.PutUint32(buf, value)
-	return buf
 }
 
 func testKindleFDSTRecord(sections ...[2]uint32) []byte {
 	out := []byte("FDST")
-	out = append(out, testMOBIUint32(12)...)
-	out = append(out, testMOBIUint32(uint32(len(sections)))...)
+	out = append(out, testfixture.MOBIUint32(12)...)
+	out = append(out, testfixture.MOBIUint32(uint32(len(sections)))...)
 	for _, section := range sections {
-		out = append(out, testMOBIUint32(section[0])...)
-		out = append(out, testMOBIUint32(section[1])...)
+		out = append(out, testfixture.MOBIUint32(section[0])...)
+		out = append(out, testfixture.MOBIUint32(section[1])...)
 	}
 	return out
 }
@@ -1436,11 +1277,11 @@ func testKindleFONTRecord(t *testing.T, payload []byte) []byte {
 		fontData[i] ^= key[i%len(key)]
 	}
 	out := []byte("FONT")
-	out = append(out, testMOBIUint32(uint32(len(payload)))...)
-	out = append(out, testMOBIUint32(0x0003)...)
-	out = append(out, testMOBIUint32(uint32(24+len(key)))...)
-	out = append(out, testMOBIUint32(uint32(len(key)))...)
-	out = append(out, testMOBIUint32(24)...)
+	out = append(out, testfixture.MOBIUint32(uint32(len(payload)))...)
+	out = append(out, testfixture.MOBIUint32(0x0003)...)
+	out = append(out, testfixture.MOBIUint32(uint32(24+len(key)))...)
+	out = append(out, testfixture.MOBIUint32(uint32(len(key)))...)
+	out = append(out, testfixture.MOBIUint32(24)...)
 	out = append(out, key...)
 	out = append(out, fontData...)
 	return out
@@ -1448,7 +1289,7 @@ func testKindleFONTRecord(t *testing.T, payload []byte) []byte {
 
 func testKindleMediaRecord(magic string, payload []byte) []byte {
 	out := []byte(magic)
-	out = append(out, testMOBIUint32(12)...)
+	out = append(out, testfixture.MOBIUint32(12)...)
 	out = append(out, 0, 0, 0, 0)
 	out = append(out, payload...)
 	return out
@@ -1491,7 +1332,7 @@ func testKindleFragmentRecordsWith(insertOffset uint32, selector string, fileNum
 	return [][]byte{master, entryRecord, cncx}
 }
 
-func equalFDSTSections(a, b []KindleFDSTSection) bool {
+func equalFDSTSections(a, b []FDSTSection) bool {
 	if len(a) != len(b) {
 		return false
 	}
@@ -1503,7 +1344,7 @@ func equalFDSTSections(a, b []KindleFDSTSection) bool {
 	return true
 }
 
-func equalKF8Skeletons(a, b []KindleKF8Skeleton) bool {
+func equalKF8Skeletons(a, b []KF8Skeleton) bool {
 	if len(a) != len(b) {
 		return false
 	}
@@ -1515,7 +1356,7 @@ func equalKF8Skeletons(a, b []KindleKF8Skeleton) bool {
 	return true
 }
 
-func equalKF8Fragments(a, b []KindleKF8Fragment) bool {
+func equalKF8Fragments(a, b []KF8Fragment) bool {
 	if len(a) != len(b) {
 		return false
 	}
@@ -1525,20 +1366,6 @@ func equalKF8Fragments(a, b []KindleKF8Fragment) bool {
 		}
 	}
 	return true
-}
-
-func testMOBIRecord0Uint32(t *testing.T, data []byte, offset int, value uint32) []byte {
-	t.Helper()
-	out := append([]byte(nil), data...)
-	if len(out) < palmDBHeaderSize+palmDBRecordSize {
-		t.Fatalf("MOBI fixture too short")
-	}
-	record0Offset := int(binary.BigEndian.Uint32(out[palmDBHeaderSize : palmDBHeaderSize+4]))
-	if record0Offset+offset+4 > len(out) {
-		t.Fatalf("record0 offset %x outside fixture length %d", offset, len(out))
-	}
-	binary.BigEndian.PutUint32(out[record0Offset+offset:record0Offset+offset+4], value)
-	return out
 }
 
 func testMOBI6NCXRecords() [][]byte {
@@ -1645,30 +1472,6 @@ func testKindleVarLen(value uint32) []byte {
 	return out
 }
 
-func testEXTH(records []testEXTHRecord) []byte {
-	if len(records) == 0 {
-		return nil
-	}
-	var body []byte
-	for _, rec := range records {
-		buf := make([]byte, 8+len(rec.value))
-		binary.BigEndian.PutUint32(buf[0:4], rec.typ)
-		binary.BigEndian.PutUint32(buf[4:8], uint32(len(buf)))
-		copy(buf[8:], rec.value)
-		body = append(body, buf...)
-	}
-	length := 12 + len(body)
-	exth := make([]byte, length)
-	copy(exth[0:4], "EXTH")
-	binary.BigEndian.PutUint32(exth[4:8], uint32(length))
-	binary.BigEndian.PutUint32(exth[8:12], uint32(len(records)))
-	copy(exth[12:], body)
-	for len(exth)%4 != 0 {
-		exth = append(exth, 0)
-	}
-	return exth
-}
-
 func equalUint32s(a, b []uint32) bool {
 	if len(a) != len(b) {
 		return false
@@ -1683,4 +1486,67 @@ func equalUint32s(a, b []uint32) bool {
 
 func containsString(values []string, want string) bool {
 	return slices.Contains(values, want)
+}
+
+var tinyPNG = []byte{
+	0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+	0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+	0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+	0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
+	0xde, 0x00, 0x00, 0x00, 0x0c, 0x49, 0x44, 0x41,
+	0x54, 0x08, 0xd7, 0x63, 0xf8, 0xff, 0xff, 0x3f,
+	0x00, 0x05, 0xfe, 0x02, 0xfe, 0xdc, 0xcc, 0x59,
+	0xe7, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e,
+	0x44, 0xae, 0x42, 0x60, 0x82,
+}
+
+func testComboKF8(t *testing.T, label string) []byte {
+	t.Helper()
+	prefix := []byte("<html><body><p>")
+	suffix := []byte(`</p><img src="kindle:embed:0001?mime=image/png"><video src="kindle:embed:0002?mime=video/mp4"></video><audio src="kindle:embed:0003?mime=audio/mpeg"></audio></body></html>`)
+	skeleton := append(append([]byte(nil), prefix...), suffix...)
+	fragment := []byte("Hello Combo KF8")
+	text := append(append([]byte(nil), skeleton...), fragment...)
+	skelRecords := testKindleSKELRecordsWith(1, 0, uint32(len(skeleton)))
+	fragRecords := testKindleFragmentRecordsWith(uint32(len(prefix)), "body > p", 0, 0, 0, uint32(len(fragment)))
+	kf8ExtraRecords := append([][]byte{}, skelRecords...)
+	kf8ExtraRecords = append(kf8ExtraRecords, fragRecords...)
+	kf8NavIndex := uint32(2 + len(kf8ExtraRecords))
+	kf8ExtraRecords = append(kf8ExtraRecords, testMOBINCXRecordsWithPositions(12, 18)...)
+	kf8 := testfixture.BuildMOBI(testfixture.MOBIOptions{
+		Codepage:     65001,
+		Title:        "KF8 Part",
+		HeaderLength: 0x108,
+		MOBIVersion:  8,
+		TextRecords:  [][]byte{text},
+		TextLength:   uint32(len(text)),
+		ExtraRecords: kf8ExtraRecords,
+		EXTH:         []testfixture.MOBIEXTHRecord{{Type: 501, Value: []byte(label)}},
+	})
+	kf8 = testfixture.SetMOBIRecord0Uint32(t, kf8, 0xfc, 2)
+	kf8 = testfixture.SetMOBIRecord0Uint32(t, kf8, 0xf8, 4)
+	kf8 = testfixture.SetMOBIRecord0Uint32(t, kf8, 0xf4, kf8NavIndex)
+	kf8Records := testfixture.PalmDBRecordBodies(t, kf8)
+	video := []byte{0, 0, 0, 20, 'f', 't', 'y', 'p', 'i', 's', 'o', 'm'}
+	audio := []byte("ID3\x04\x00\x00tiny mp3")
+	extraRecords := [][]byte{
+		tinyPNG,
+		testKindleMediaRecord("VIDE", video),
+		testKindleMediaRecord("AUDI", audio),
+		[]byte("BOUNDARY"),
+	}
+	extraRecords = append(extraRecords, kf8Records...)
+	data := testfixture.BuildMOBI(testfixture.MOBIOptions{
+		Codepage:        65001,
+		Title:           "Combo Export",
+		MOBIVersion:     6,
+		TextRecords:     [][]byte{[]byte("<html><body>Legacy MOBI6</body></html>")},
+		FirstImageIndex: 2,
+		EXTH: []testfixture.MOBIEXTHRecord{
+			{Type: 121, Value: testfixture.MOBIUint32(6)},
+			{Type: 501, Value: []byte(label)},
+		},
+		ExtraRecords: extraRecords,
+	})
+	return data
 }

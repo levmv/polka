@@ -22,6 +22,8 @@ import (
 	"github.com/levmv/polka/internal/bookmeta"
 	"github.com/levmv/polka/internal/epubtest"
 	"github.com/levmv/polka/internal/format"
+	"github.com/levmv/polka/internal/format/mobi"
+	"github.com/levmv/polka/internal/testfixture"
 	"github.com/levmv/polka/internal/xmlutil"
 )
 
@@ -41,23 +43,78 @@ func TestConvertContextCanceled(t *testing.T) {
 }
 
 func TestConvertContextStopsRandomReadsAfterCancellation(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	src := testZip(t, map[string][]byte{
-		"mimetype": []byte("application/epub+zip"),
-	})
-	reader := &cancelAfterFirstReaderAt{
-		reader: bytes.NewReader(src),
-		cancel: cancel,
-	}
+	for _, tc := range []struct {
+		format format.Format
+		data   []byte
+	}{
+		{format.FormatEPUB, testZip(t, map[string][]byte{"mimetype": []byte("application/epub+zip")})},
+		{format.FormatMOBI, testfixture.MOBI(0)},
+	} {
+		t.Run(format.FormatKey(tc.format), func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			reader := &cancelAfterFirstReaderAt{
+				reader: bytes.NewReader(tc.data),
+				cancel: cancel,
+			}
 
-	var out bytes.Buffer
-	err := ConvertContext(ctx, &out, reader, format.FormatEPUB, int64(len(src)), TargetEPUB)
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("ConvertContext error = %v; want context.Canceled", err)
+			var out bytes.Buffer
+			err := ConvertContext(ctx, &out, reader, tc.format, int64(len(tc.data)), TargetEPUB)
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("ConvertContext error = %v; want context.Canceled", err)
+			}
+			if reader.reads != 1 {
+				t.Fatalf("source reads = %d; want exactly the read that triggered cancellation", reader.reads)
+			}
+			if out.Len() != 0 {
+				t.Fatalf("conversion wrote %d bytes after cancellation", out.Len())
+			}
+		})
 	}
-	if reader.reads != 1 {
-		t.Fatalf("source reads = %d; want exactly the read that triggered cancellation", reader.reads)
+}
+
+func TestConvertMOBIPreservesReadErrors(t *testing.T) {
+	src := testfixture.BuildMOBI(testfixture.MOBIOptions{
+		Title: "Read failures", TextRecords: [][]byte{[]byte(`<p>Text</p><img recindex="00001">`)},
+		FirstImageIndex: 2, ExtraRecords: [][]byte{converterTinyPNG},
+	})
+	for _, record := range []struct {
+		name   string
+		offset int64
+	}{
+		{"PalmDB header", 0},
+		{"record table", 78},
+		{"MOBI header", int64(binary.BigEndian.Uint32(src[78:82]))},
+		{"text", int64(binary.BigEndian.Uint32(src[86:90]))},
+		{"image", int64(binary.BigEndian.Uint32(src[94:98]))},
+	} {
+		for _, cause := range []error{io.ErrClosedPipe, context.Canceled, context.DeadlineExceeded} {
+			t.Run(record.name+"/"+cause.Error(), func(t *testing.T) {
+				reader := failingMOBIReaderAt{r: bytes.NewReader(src), offset: record.offset, err: cause}
+				var out bytes.Buffer
+				err := ConvertContext(t.Context(), &out, reader, format.FormatMOBI, int64(len(src)), TargetEPUB)
+				if !errors.Is(err, cause) || errors.Is(err, ErrUnsupportedContent) {
+					t.Fatalf("conversion error = %v; want original read error %v", err, cause)
+				}
+				if out.Len() != 0 {
+					t.Fatalf("conversion wrote %d bytes after a read failure", out.Len())
+				}
+			})
+		}
 	}
+}
+
+type failingMOBIReaderAt struct {
+	r      io.ReaderAt
+	offset int64
+	err    error
+}
+
+func (r failingMOBIReaderAt) ReadAt(p []byte, offset int64) (int, error) {
+	if offset >= r.offset {
+		return 0, r.err
+	}
+	return r.r.ReadAt(p, offset)
 }
 
 type cancelAfterFirstReaderAt struct {
@@ -1430,7 +1487,7 @@ func TestConvertEPUBToKEPUB(t *testing.T) {
 	if !strings.Contains(opf, `id="cover-image" href="cover.png" media-type="image/png" properties="cover-image"`) {
 		t.Fatalf("content.opf did not mark cover-image manifest item:\n%s", opf)
 	}
-	meta, err := format.ParseOPF(strings.NewReader(opf))
+	meta, err := bookmeta.ParseOPF(strings.NewReader(opf))
 	if err != nil || meta.PageCount != 37 || strings.Count(opf, "schema:numberOfPages") != 1 || strings.Contains(opf, "#pages") || strings.Contains(opf, "bookorbit:page_count") {
 		t.Fatalf("KEPUB page-count metadata = %s, %v", opf, err)
 	}
@@ -1574,7 +1631,7 @@ trailing producer junk`)
 				t.Fatalf("rebuilt OPF retained trailing junk or unstable ending:\n%s", got)
 			}
 			rebuiltOPF := zipEntry(t, out.Bytes(), "OPS/package.opf")
-			meta, err := format.ParseOPF(strings.NewReader(rebuiltOPF))
+			meta, err := bookmeta.ParseOPF(strings.NewReader(rebuiltOPF))
 			if err != nil || meta.PageCount != 55 || strings.Count(rebuiltOPF, "schema:numberOfPages") != 1 || strings.Contains(rebuiltOPF, "#pages") || strings.Contains(rebuiltOPF, "bookorbit:page_count") || !strings.Contains(rebuiltOPF, "#review") || !strings.Contains(rebuiltOPF, "Keep") {
 				t.Fatalf("rebuilt page-count metadata = %s, %v", rebuiltOPF, err)
 			}
@@ -2867,19 +2924,19 @@ func TestConvertPalmDOCOEBHTMLToEPUB(t *testing.T) {
 func TestConvertKindleDocumentToEPUB(t *testing.T) {
 	video := []byte{0, 0, 0, 20, 'f', 't', 'y', 'p', 'i', 's', 'o', 'm'}
 	audio := []byte("ID3\x04\x00\x00tiny mp3")
-	doc := &format.KindleDocument{
+	doc := &mobi.Document{
 		Metadata: &format.Metadata{
 			Title:    "Kindle Export",
 			Language: "en",
 			Authors:  []bookmeta.AuthorMeta{{Name: "Jane Doe"}},
 		},
-		Flows: []format.KindleTextFlow{{
+		Flows: []mobi.TextFlow{{
 			ID:        "flow-0001",
 			Href:      "text/flow-0001.html",
 			MediaType: "text/html",
 			Data:      []byte("<html><body><p>Chapter \x12body</p><p><a filepos=0000000012>Go</a><img src=\"BMP\" recindex=\"00001\"><img src=\"kindle:embed:0001?mime=image/png\" alt=\"embed\"><img src=\"kindle:flow:0003?mime=image/svg+xml\" alt=\"svg\"></p><video src=\"kindle:embed:0003?mime=video/mpeg\" title=\"Test video\">Video fallback</video><audio mediarecindex=\"00004\" title=\"Test audio\">Audio fallback</audio></body></html>"),
 		}},
-		Resources: []format.KindleResource{{
+		Resources: []mobi.Resource{{
 			ID:         "res-00001",
 			Href:       "images/00001.png",
 			MediaType:  "image/png",
@@ -2916,19 +2973,19 @@ func TestConvertKindleDocumentToEPUB(t *testing.T) {
 			MediaType: "text/css",
 			Data:      []byte("@font-face { src: url(kindle:embed:0002); }\n.figure { background: url(\"kindle:flow:0003?mime=image/svg+xml\"); }\np { color: red; }\n"),
 		}},
-		Navigation: []format.KindleNavItem{{
+		Navigation: []mobi.NavItem{{
 			Label: "Chapter",
 			Href:  "text/flow-0001.html#filepos12",
 		}},
 	}
 	// KF8 assembly can concatenate complete HTML documents into one text flow.
 	secondOffset := len(doc.Flows[0].Data) + len("<html><head><title>Hidden document title</title></head><body>")
-	doc.Navigation[0].Children = []format.KindleNavItem{{Label: "Second chapter", Href: fmt.Sprintf("text/flow-0001.html#filepos%d", secondOffset)}}
+	doc.Navigation[0].Children = []mobi.NavItem{{Label: "Second chapter", Href: fmt.Sprintf("text/flow-0001.html#filepos%d", secondOffset)}}
 	doc.Flows[0].Data = append(doc.Flows[0].Data, []byte(`<html><head><title>Hidden document title</title></head><body><p>Second chapter.</p></body></html>`)...)
 
 	var out bytes.Buffer
-	if err := convertKindleDocumentToEPUB(context.Background(), &out, doc, ConversionOptions{}); err != nil {
-		t.Fatalf("convertKindleDocumentToEPUB: %v", err)
+	if err := convertMOBIDocumentToEPUB(context.Background(), &out, doc, ConversionOptions{}); err != nil {
+		t.Fatalf("convertMOBIDocumentToEPUB: %v", err)
 	}
 	xhtml := zipEntry(t, out.Bytes(), "OEBPS/text.xhtml")
 	for _, want := range []string{

@@ -1,4 +1,4 @@
-package format
+package mobi
 
 import (
 	"bytes"
@@ -10,7 +10,7 @@ func TestKindleHUFFCDICDecoder(t *testing.T) {
 	huff := testKindleHUFFRecord()
 	cdic := testKindleCDICRecord([][]byte{[]byte("A"), []byte("B")})
 	data, ranges := testKindleRecords([]byte("record0"), huff, cdic)
-	info := &KindleInspection{
+	info := &Inspection{
 		HUFFCDICIndex:       1,
 		HUFFCDICRecordCount: 2,
 	}
@@ -29,7 +29,7 @@ func TestKindleHUFFCDICDecoder(t *testing.T) {
 }
 
 func TestKindleUnsupportedFeaturesAllowsAvailableHUFFCDIC(t *testing.T) {
-	info := &KindleInspection{
+	info := &Inspection{
 		Compression:         mobiCompressionHUFFCDIC,
 		HUFFCDICIndex:       1,
 		HUFFCDICRecordCount: 2,

@@ -3,6 +3,7 @@ package testfixture
 import (
 	"archive/zip"
 	"bytes"
+	"compress/gzip"
 	"encoding/binary"
 	"fmt"
 	"testing"
@@ -62,21 +63,34 @@ func EPUB(t testing.TB, opf []byte, entries map[string][]byte) []byte {
 	return buf.Bytes()
 }
 
-// MinimalMOBI returns the smallest PalmDB/MOBI structure used by format
-// detection tests. It contains no book content or metadata.
-func MinimalMOBI() []byte {
-	const (
-		palmDBHeaderSize = 78
-		palmDBRecordSize = 8
-		record0Offset    = palmDBHeaderSize + palmDBRecordSize
-	)
-
-	data := make([]byte, record0Offset+32)
-	copy(data[60:68], "BOOKMOBI")
-	binary.BigEndian.PutUint16(data[76:78], 1)
-	binary.BigEndian.PutUint32(data[78:82], record0Offset)
-	copy(data[record0Offset+16:record0Offset+20], "MOBI")
-	return data
+// FB2Gzip generates a book with embedded metadata and a body of the requested
+// size. Stored DEFLATE blocks let IO tests grow the compressed input as well as
+// the document, without keeping a large fixture in the repository.
+func FB2Gzip(t testing.TB, bodyBytes int) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	w, err := gzip.NewWriterLevel(&buf, gzip.NoCompression)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write := func(data []byte) {
+		t.Helper()
+		if _, err := w.Write(data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write([]byte(`<FictionBook><description><title-info><book-title>Embedded FB2 title</book-title><lang>en</lang></title-info></description><body><section><p>`))
+	block := bytes.Repeat([]byte("a"), 4096)
+	for bodyBytes > 0 {
+		n := min(bodyBytes, len(block))
+		write(block[:n])
+		bodyBytes -= n
+	}
+	write([]byte(`</p></section></body></FictionBook>`))
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
 }
 
 // MinimalDJVU returns a minimal IFF form with the requested DjVu form type.

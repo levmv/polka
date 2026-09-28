@@ -38,10 +38,6 @@ func commaSemicolonNewlineTabSeparator(r rune) bool {
 	return r == ',' || r == ';' || r == '\n' || r == '\r' || r == '\t'
 }
 
-func semicolonNewlineTabSeparator(r rune) bool {
-	return r == ';' || r == '\n' || r == '\r' || r == '\t'
-}
-
 func commaSemicolonNewlineSeparator(r rune) bool {
 	return r == ',' || r == ';' || r == '\n' || r == '\r'
 }

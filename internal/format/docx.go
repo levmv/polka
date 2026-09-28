@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/levmv/polka/internal/bookmeta"
+	"github.com/levmv/polka/internal/imagecodec"
 )
 
 const (
@@ -353,7 +354,7 @@ func docxCoverImageInfo(raw []byte) (string, int, int, bool) {
 	if err != nil {
 		return "", 0, 0, false
 	}
-	ext, ok := coverImageExtensionFromFormatName(formatName)
+	ext, ok := imagecodec.CoverExtension(formatName)
 	if !ok {
 		return "", 0, 0, false
 	}
@@ -405,7 +406,7 @@ func docxMergeAppProperties(meta *Metadata, raw []byte) {
 	if company := strings.TrimSpace(props.Company); company != "" {
 		meta.Publisher = company
 	}
-	meta.PageCount = positivePageCount(props.Pages)
+	meta.PageCount = bookmeta.PositivePageCount(props.Pages)
 }
 
 func docxDefaultLanguage(raw []byte) string {

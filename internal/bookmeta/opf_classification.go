@@ -1,23 +1,21 @@
-package format
+package bookmeta
 
 import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
-
-	"github.com/levmv/polka/internal/bookmeta"
 )
 
 // A recognized Calibre #genre column makes subjects a tag list. Otherwise
 // subjects are genres, and extra_tags carries tags. Explicit empty lists
 // distinguish cleared values from missing metadata when applying a sidecar.
-func opfClassification(metadata opfMetadata) (genres, tags []string) {
-	subjects := bookmeta.NormalizeTags(metadata.Subject)
+func opfClassification(metadata OPFMetadata) (genres, tags []string) {
+	subjects := NormalizeTags(metadata.Subject)
 	var calibreGenres, extraTags []string
 	var hasCalibreGenres, hasExtraTags bool
 	for _, m := range metadata.Meta {
-		name, value := opfMetaName(m.Name), m.Content
+		name, value := OPFMetaName(m.Name), m.Content
 		if name == "" {
-			name, value = opfMetaName(m.Property), m.Text
+			name, value = OPFMetaName(m.Property), m.Text
 		}
 		switch name {
 		case "calibre:user_metadata:#genre", "calibre:user_metadata:#extra_tags":
@@ -43,10 +41,10 @@ func opfClassification(metadata opfMetadata) (genres, tags []string) {
 		}
 	}
 	if hasCalibreGenres {
-		return nonNilTagList(calibreGenres), nonNilTagList(bookmeta.NormalizeTags(append(subjects, extraTags...)))
+		return nonNilTagList(calibreGenres), nonNilTagList(NormalizeTags(append(subjects, extraTags...)))
 	}
 	if hasExtraTags {
-		return nonNilTagList(subjects), nonNilTagList(bookmeta.NormalizeTags(extraTags))
+		return nonNilTagList(subjects), nonNilTagList(NormalizeTags(extraTags))
 	}
 	return subjects, nil
 }
@@ -66,11 +64,11 @@ func calibreColumnValues(raw jsontext.Value) ([]string, bool) {
 func opfStringList(raw string) ([]string, bool) {
 	var values []string
 	if json.Unmarshal([]byte(raw), &values) == nil {
-		return bookmeta.NormalizeTags(values), true
+		return NormalizeTags(values), true
 	}
 	var value string
 	if json.Unmarshal([]byte(raw), &value) == nil {
-		return bookmeta.ParseTagList(value), true
+		return ParseTagList(value), true
 	}
 	return nil, false
 }

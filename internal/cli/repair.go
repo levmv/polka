@@ -113,7 +113,6 @@ func runRepair(parent context.Context, dataDir string, args []string) (retErr er
 		{"Unrecoverable:", assetRepair.Missing},
 		{"Hash mismatches:", assetRepair.HashMismatches},
 		{"Formats:", assetRepair.Formats},
-		{"Reader capabilities:", assetRepair.ReaderCapabilities},
 		{"Writes finalized:", writebackRepair.Finalized},
 		{"Temporary files recovered:", writebackRepair.Replaced},
 		{"Stale attempts cleared:", writebackRepair.Cleared},
@@ -160,7 +159,6 @@ type assetRepairResult struct {
 	Missing                int
 	HashMismatches         int
 	Formats                int
-	ReaderCapabilities     int
 	VerifiedHashes         map[int64]struct{}
 }
 
@@ -296,22 +294,20 @@ func repairAssets(ctx context.Context, database *db.DB, root storage.Root, templ
 			summary.SizeBackfilled++
 		}
 		summary.VerifiedHashes[asset.ID] = struct{}{}
-		capability, err := detectAssetReaderCapability(canonicalPath, finalAbsPath)
+		kind, err := detectAssetFormat(ctx, canonicalPath, finalAbsPath)
 		if err != nil {
-			fmt.Printf("Failed to recompute reader capability for %d: %v\n", asset.ID, err)
+			if cause := context.Cause(ctx); cause != nil {
+				return summary, cause
+			}
+			fmt.Printf("Failed to detect format for %d: %v\n", asset.ID, err)
 			continue
 		}
-		if capability.Format != asset.Format || capability.CanRead != asset.CanRead {
-			if _, err := writer.Exec("UPDATE assets SET format = ?, can_read = ?, updated_at = unixepoch() WHERE id = ?", format.FormatKey(capability.Format), capability.CanRead, asset.ID); err != nil {
-				fmt.Printf("Failed to repair format/capability for %d: %v\n", asset.ID, err)
+		if kind != asset.Format {
+			if _, err := writer.Exec("UPDATE assets SET format = ?, updated_at = unixepoch() WHERE id = ?", format.FormatKey(kind), asset.ID); err != nil {
+				fmt.Printf("Failed to repair format for %d: %v\n", asset.ID, err)
 				continue
 			}
-			if capability.Format != asset.Format {
-				summary.Formats++
-			}
-			if capability.CanRead != asset.CanRead {
-				summary.ReaderCapabilities++
-			}
+			summary.Formats++
 		}
 		if !asset.OriginalSize.Valid && bytes.Equal(asset.OriginalHash, currentHash) {
 			if _, err := writer.Exec("UPDATE assets SET original_size = ?, updated_at = unixepoch() WHERE id = ?", currentSize, asset.ID); err != nil {

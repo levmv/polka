@@ -1,9 +1,10 @@
-package format
+package mobi
 
 import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 )
@@ -38,7 +39,7 @@ func TestExtractAZW4PDF(t *testing.T) {
 			data = append(data, tt.suffix...)
 
 			var out bytes.Buffer
-			if err := ExtractAZW4PDFContext(context.Background(), &out, bytes.NewReader(data), int64(len(data))); err != nil {
+			if err := ExtractPDF(context.Background(), &out, bytes.NewReader(data), int64(len(data))); err != nil {
 				t.Fatalf("ExtractAZW4PDF: %v", err)
 			}
 			if !bytes.Equal(out.Bytes(), tt.pdf) {
@@ -51,9 +52,21 @@ func TestExtractAZW4PDF(t *testing.T) {
 func TestExtractAZW4PDFNoEmbeddedPDF(t *testing.T) {
 	data := []byte("azw4 wrapper without pdf")
 	var out bytes.Buffer
-	err := ExtractAZW4PDFContext(context.Background(), &out, bytes.NewReader(data), int64(len(data)))
-	if !errors.Is(err, ErrAZW4PDFNotFound) {
-		t.Fatalf("ExtractAZW4PDF error = %v; want ErrAZW4PDFNotFound", err)
+	err := ExtractPDF(context.Background(), &out, bytes.NewReader(data), int64(len(data)))
+	if !errors.Is(err, ErrPDFNotFound) {
+		t.Fatalf("ExtractAZW4PDF error = %v; want ErrPDFNotFound", err)
+	}
+}
+
+func TestExtractAZW4PDFRejectsShortRead(t *testing.T) {
+	data := []byte("%PDF-1.7\nbody\n%%EOF")
+	var out bytes.Buffer
+	err := ExtractPDF(t.Context(), &out, bytes.NewReader(data), int64(len(data)+1))
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("ExtractPDF error = %v; want source read error", err)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("ExtractPDF wrote %d bytes after a short source read", out.Len())
 	}
 }
 
@@ -63,11 +76,11 @@ func TestExtractAZW4PDFContextCanceled(t *testing.T) {
 	data := []byte("%PDF-1.7\nbody\n%%EOF")
 	var out bytes.Buffer
 
-	err := ExtractAZW4PDFContext(ctx, &out, bytes.NewReader(data), int64(len(data)))
+	err := ExtractPDF(ctx, &out, bytes.NewReader(data), int64(len(data)))
 	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("ExtractAZW4PDFContext error = %v; want context.Canceled", err)
+		t.Fatalf("ExtractPDF error = %v; want context.Canceled", err)
 	}
 	if out.Len() != 0 {
-		t.Fatalf("ExtractAZW4PDFContext wrote %d bytes after cancellation", out.Len())
+		t.Fatalf("ExtractPDF wrote %d bytes after cancellation", out.Len())
 	}
 }

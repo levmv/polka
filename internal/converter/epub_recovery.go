@@ -48,7 +48,7 @@ func prepareEPUBConversion(ctx context.Context, zr *zip.Reader, opfPath string, 
 	}
 	next := opts.rewriteOPF(raw)
 	var packageDoc rebuildOPFDoc
-	if err := format.DecodeOPFXML(raw, &packageDoc); err != nil {
+	if err := bookmeta.DecodeOPFXML(raw, &packageDoc); err != nil {
 		return nil, nil, err
 	}
 	fonts := make(map[*zip.File]bool)
@@ -191,7 +191,7 @@ func epubFontKeys(raw []byte) map[string]bookmeta.Identifier {
 			} `xml:"identifier"`
 		} `xml:"metadata"`
 	}
-	if format.DecodeOPFXML(raw, &doc) != nil {
+	if bookmeta.DecodeOPFXML(raw, &doc) != nil {
 		return keys
 	}
 	for _, id := range doc.Metadata.IDs {
@@ -260,7 +260,7 @@ func (r *epubRecovery) finishOPF(zr *zip.Reader, opfPath string, raw []byte) ([]
 		return nil, fmt.Errorf("EPUB package %q cannot be safely copied: %w", opfPath, ErrUnsupportedContent)
 	}
 	var doc rebuildOPFDoc
-	if err := format.DecodeOPFXML(raw, &doc); err != nil {
+	if err := bookmeta.DecodeOPFXML(raw, &doc); err != nil {
 		return nil, err
 	}
 	removedIDs := make(map[string]bool)

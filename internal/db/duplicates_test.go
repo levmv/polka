@@ -126,10 +126,10 @@ func TestMergeDuplicateBooksMovesAssetsShelvesAndSafeFillIns(t *testing.T) {
 	mustExec(t, database, "UPDATE books SET description = NULL, cover_version = 0 WHERE id = 1")
 	mustExec(t, database, "UPDATE books SET description = 'Loser description', cover_version = 2 WHERE id = 2")
 	mustExec(t, database, `
-		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, can_read, created_at, original_hash, current_hash)
+		INSERT INTO assets (id, book_id, storage_path, filename, extension, format, is_primary, created_at, original_hash, current_hash)
 		VALUES
-			(1, 1, 'A/Foundation/asset_epub.epub', 'asset_epub.epub', '.epub', 'epub', 1, 0, 10, randomblob(16), randomblob(16)),
-			(2, 2, 'A/Foundation/asset_pdf.pdf', 'asset_pdf.pdf', '.pdf', 'pdf', 1, 1, 20, randomblob(16), randomblob(16))
+			(1, 1, 'A/Foundation/asset_epub.epub', 'asset_epub.epub', '.epub', 'unknown', 1, 10, randomblob(16), randomblob(16)),
+			(2, 2, 'A/Foundation/asset_pdf.pdf', 'asset_pdf.pdf', '.pdf', 'pdf', 1, 20, randomblob(16), randomblob(16))
 	`)
 	mustExec(t, database, "INSERT INTO shelves (id, name, kind, owner_id, position) VALUES (2, 'Shelf', 'manual', ?, 1)", user.ID)
 	mustExec(t, database, "INSERT INTO shelf_books (shelf_id, book_id, position) VALUES (2, 2, 5)")

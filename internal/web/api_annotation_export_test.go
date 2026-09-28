@@ -135,7 +135,7 @@ func TestAPIAnnotationExportIsStandaloneEscapedAndUserScoped(t *testing.T) {
 	mustExec(t, database, `
 		UPDATE books SET title = 'A/B: <Book>' WHERE id = 1;
 		UPDATE authors SET name = 'Writer & <script>Co</script>' WHERE id = 1;
-		UPDATE assets SET format = 'epub', can_read = 1, is_primary = 1 WHERE id = 1;
+		UPDATE assets SET format = 'epub', is_primary = 1 WHERE id = 1;
 	`)
 
 	ann, err := database.CreateAnnotation(t.Context(), alice.ID, 1, db.AnnotationCreate{

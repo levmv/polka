@@ -166,12 +166,14 @@ func assetDTO(row db.AssetRow) Asset {
 		PageCount:            row.PageCount,
 		PageCountApproximate: format.IsPageCountApproximate(row.Format),
 		IsPrimary:            row.IsPrimary,
-		CanRead:              row.CanRead,
+		CanRead:              format.CanRead(row.Format),
 		DownloadAs:           downloadAsOptions(row.Format),
 	}
 }
 
 func downloadAsOptions(sourceFormat format.Format) []DownloadAsOption {
+	// Catalog options are candidates by format. Conversion validates the opened
+	// asset's bytes when requested; building a catalog never opens book files.
 	specs := converter.TargetSpecsForFormat(sourceFormat)
 	if len(specs) == 0 {
 		return nil

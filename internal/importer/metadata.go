@@ -305,7 +305,7 @@ func readSidecarOPF(ctx context.Context, src Source) *bookmeta.Metadata {
 		return nil
 	}
 	defer f.Close()
-	meta, err := format.ParseOPF(contextReader{ctx: ctx, r: f})
+	meta, err := bookmeta.ParseOPF(contextReader{ctx: ctx, r: f})
 	if err != nil {
 		return nil
 	}

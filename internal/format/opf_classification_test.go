@@ -7,32 +7,9 @@ import (
 	"strings"
 	"testing"
 	"time"
-)
 
-func TestOPFClassification(t *testing.T) {
-	for _, tc := range []struct {
-		name, subjects, extra string
-		genres, tags          []string
-	}{
-		{"subjects", "Fiction, History", "", []string{"Fiction", "History"}, nil},
-		{"calibre columns", "Favourite", `<meta name="calibre:user_metadata:#genre" content='{ "#value#": ["Fiction", "fiction"] }'/><meta name="calibre:user_metadata:#extra_tags" content='{ "#value#": ["Read", "favourite"] }'/>`, []string{"Fiction"}, []string{"Favourite", "Read"}},
-		{"calibre aggregate", "Favourite", `<meta property="calibre:user_metadata">{"#genre":{"#value#":"Fiction"},"#extra_tags":{"#value#":["Read"]},"#rating":{"#value#":4}}</meta>`, []string{"Fiction"}, []string{"Favourite", "Read"}},
-		{"extra tags only", "Fiction", `<meta name="calibre:user_metadata:#extra_tags" content='{"#value#":["Favourite"]}'/>`, []string{"Fiction"}, []string{"Favourite"}},
-		{"empty genre column", "Favourite", `<meta name="calibre:user_metadata:#genre" content='{"#value#":null}'/>`, nil, []string{"Favourite"}},
-		{"malformed column", "Fiction", `<meta name="calibre:user_metadata:#genre" content='{"#value#":42}'/>`, []string{"Fiction"}, nil},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			opf := `<metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:subject>` + tc.subjects + `</dc:subject>` + tc.extra + `</metadata>`
-			meta, err := ParseOPF(strings.NewReader(opf))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !slices.Equal(meta.Genres, tc.genres) || !slices.Equal(meta.Tags, tc.tags) {
-				t.Fatalf("genres/tags = %v / %v; want %v / %v", meta.Genres, meta.Tags, tc.genres, tc.tags)
-			}
-		})
-	}
-}
+	"github.com/levmv/polka/internal/bookmeta"
+)
 
 func TestEPUBClassificationWritebackRoundTrip(t *testing.T) {
 	const custom = `<meta name="foreign:note" content="Keep this record"/>`
@@ -68,7 +45,7 @@ func TestEPUBClassificationWritebackRoundTrip(t *testing.T) {
 				if !reflect.DeepEqual(foreign, wantForeign) {
 					t.Fatalf("foreign columns = %v; want %v", foreign, wantForeign)
 				}
-				got, err := ParseOPF(strings.NewReader(opf))
+				got, err := bookmeta.ParseOPF(strings.NewReader(opf))
 				if err != nil || !slices.Equal(got.Genres, meta.Genres) || !slices.Equal(got.Tags, meta.Tags) {
 					t.Fatalf("roundtrip = %+v, %v; want %+v", got, err, meta)
 				}
@@ -81,7 +58,7 @@ func TestEPUBClassificationWritebackRoundTrip(t *testing.T) {
 func testOPFCalibreColumns(t *testing.T, raw []byte) map[string]any {
 	t.Helper()
 	var doc opfDoc
-	if err := decodeOPFBytes(raw, &doc); err != nil {
+	if err := bookmeta.DecodeOPFXML(raw, &doc); err != nil {
 		t.Fatal(err)
 	}
 	columns := make(map[string]any)

@@ -7,110 +7,10 @@ import (
 	"encoding/json/v2"
 	"encoding/xml"
 	"fmt"
-	"strconv"
 	"strings"
+
+	"github.com/levmv/polka/internal/bookmeta"
 )
-
-var calibrePageColumns = []string{"#pages", "#pagecount", "#page_count"}
-
-func positivePageCount(value string) int {
-	n, err := strconv.ParseInt(strings.TrimSpace(value), 10, 32)
-	if err != nil || n <= 0 {
-		return 0
-	}
-	return int(n)
-}
-
-func isCalibrePageColumn(key string) bool {
-	for _, alias := range calibrePageColumns {
-		if key == alias {
-			return true
-		}
-	}
-	return false
-}
-
-func calibreColumnPages(raw string) int {
-	var column struct {
-		Value jsontext.Value `json:"#value#"`
-	}
-	if json.Unmarshal([]byte(raw), &column) != nil {
-		return 0
-	}
-	value := string(column.Value)
-	if strings.HasPrefix(value, `"`) {
-		if json.Unmarshal(column.Value, &value) != nil {
-			return 0
-		}
-	}
-	return positivePageCount(value)
-}
-
-// Prefer schema:numberOfPages, then Calibre columns, then BookOrbit.
-// These declarations remain estimates, including after our own writeback.
-func opfDeclaredPageCount(metas []opfMeta) int {
-	values := make(map[string]int)
-	for _, meta := range metas {
-		if strings.TrimSpace(meta.Refines) != "" {
-			continue
-		}
-		key, value := opfMetaName(meta.Name), meta.Content
-		if meta.Property != "" {
-			key, value = opfMetaName(meta.Property), meta.Text
-		}
-		var count int
-		switch {
-		case key == "schema:numberofpages", key == "bookorbit:page_count":
-			count = positivePageCount(value)
-		case strings.HasPrefix(key, "calibre:user_metadata:"):
-			key = strings.TrimPrefix(key, "calibre:user_metadata:")
-			if isCalibrePageColumn(key) {
-				count = calibreColumnPages(value)
-			}
-		case key == "calibre:user_metadata":
-			var columns map[string]jsontext.Value
-			if json.Unmarshal([]byte(value), &columns) == nil {
-				for _, alias := range calibrePageColumns {
-					if n := calibreColumnPages(string(columns[alias])); n > 0 && values[alias] == 0 {
-						values[alias] = n
-					}
-				}
-			}
-		}
-		if count > 0 && values[key] == 0 {
-			values[key] = count
-		}
-	}
-	if values["schema:numberofpages"] > 0 {
-		return values["schema:numberofpages"]
-	}
-	for _, key := range calibrePageColumns {
-		if values[key] > 0 {
-			return values[key]
-		}
-	}
-	return values["bookorbit:page_count"]
-}
-
-func isCanonicalPageCountKey(key string) bool {
-	return opfMetaName(key) == "schema:numberofpages"
-}
-
-func pageCountKeyPriority(key string) int {
-	key = opfMetaName(key)
-	if key == "schema:numberofpages" {
-		return 1
-	}
-	for i, column := range calibrePageColumns {
-		if key == "calibre:user_metadata:"+column {
-			return i + 2
-		}
-	}
-	if key == "bookorbit:page_count" {
-		return len(calibrePageColumns) + 2
-	}
-	return 0
-}
 
 // NormalizeEPUBPageCountMetadata consolidates counts during EPUB repair or
 // KEPUB conversion, which retain the book's reading content. Other source
@@ -121,10 +21,10 @@ func NormalizeEPUBPageCountMetadata(zr *zip.Reader, opfPath string, raw []byte) 
 		return raw, nil
 	}
 	var doc opfDoc
-	if err := DecodeOPFXML(raw, &doc); err != nil {
+	if err := bookmeta.DecodeOPFXML(raw, &doc); err != nil {
 		return nil, err
 	}
-	pages := opfDeclaredPageCount(doc.Metadata.Meta)
+	pages := bookmeta.OPFDeclaredPageCount(doc.Metadata.Meta)
 	if fixed := epubFixedPageCount(&zipEntryIndex{files: zr.File}, epubOPFRead{path: opfPath, doc: doc}); fixed > 0 {
 		pages = fixed
 	}
@@ -170,7 +70,7 @@ func NormalizeEPUBPageCountMetadata(zr *zip.Reader, opfPath string, raw []byte) 
 		if child.local != "meta" {
 			continue
 		}
-		if pageCountKeyPriority(child.attrs["name"]) > 0 || pageCountKeyPriority(child.attrs["property"]) > 0 {
+		if bookmeta.PageCountKeyPriority(child.attrs["name"]) > 0 || bookmeta.PageCountKeyPriority(child.attrs["property"]) > 0 {
 			removeID(child.attrs["id"])
 			child.raw = nil
 			if pages > 0 && !written {
@@ -215,15 +115,15 @@ func NormalizeEPUBPageCountMetadata(zr *zip.Reader, opfPath string, raw []byte) 
 // Preserve unrelated Calibre columns even when page-count aliases share the
 // same JSON object. An unreadable object remains foreign metadata.
 func withoutCalibrePageColumns(child opfMetadataChild) []byte {
-	key, raw := opfMetaName(child.attrs["property"]), ""
+	key, raw := bookmeta.OPFMetaName(child.attrs["property"]), ""
 	if key == "" {
-		key, raw = opfMetaName(child.attrs["name"]), child.attrs["content"]
+		key, raw = bookmeta.OPFMetaName(child.attrs["name"]), child.attrs["content"]
 	}
 	if key != "calibre:user_metadata" || child.attrs["refines"] != "" {
 		return child.raw
 	}
 	if child.attrs["property"] != "" {
-		var meta opfMeta
+		var meta bookmeta.OPFMeta
 		if xml.Unmarshal(child.raw, &meta) != nil {
 			return child.raw
 		}
@@ -234,10 +134,10 @@ func withoutCalibrePageColumns(child opfMetadataChild) []byte {
 		return child.raw
 	}
 	changed := false
-	for _, alias := range calibrePageColumns {
-		if _, exists := columns[alias]; exists {
+	for key := range columns {
+		if bookmeta.IsCalibrePageColumn(key) {
 			changed = true
-			delete(columns, alias)
+			delete(columns, key)
 		}
 	}
 	if !changed {

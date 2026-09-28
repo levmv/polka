@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"path"
 	"strings"
+
+	"github.com/levmv/polka/internal/bookmeta"
 )
 
 type containerDoc struct {
@@ -228,7 +230,7 @@ func readEPUBOPFFile(opfFile *zip.File) (opfDoc, error) {
 	if err != nil {
 		return opfDoc{}, err
 	}
-	rawOPF, err := io.ReadAll(io.LimitReader(rcOPF, maxOPFDocumentBytes+1))
+	rawOPF, err := io.ReadAll(io.LimitReader(rcOPF, bookmeta.MaxOPFDocumentBytes+1))
 	closeErr := rcOPF.Close()
 	if err == nil {
 		err = closeErr
@@ -236,11 +238,11 @@ func readEPUBOPFFile(opfFile *zip.File) (opfDoc, error) {
 	if err != nil {
 		return opfDoc{}, err
 	}
-	if len(rawOPF) > maxOPFDocumentBytes {
-		return opfDoc{}, fmt.Errorf("%s exceeds %d bytes", opfFile.Name, maxOPFDocumentBytes)
+	if len(rawOPF) > bookmeta.MaxOPFDocumentBytes {
+		return opfDoc{}, fmt.Errorf("%s exceeds %d bytes", opfFile.Name, bookmeta.MaxOPFDocumentBytes)
 	}
 	var opf opfDoc
-	err = decodeOPFBytes(rawOPF, &opf)
+	err = bookmeta.DecodeOPFXML(rawOPF, &opf)
 	if err != nil {
 		return opfDoc{}, epubOPFParseError{
 			err: fmt.Errorf("parse EPUB OPF %s: %w", opfFile.Name, err),

@@ -1,5 +1,5 @@
-// Package imagecodec owns raster decoders that are shared across format
-// inspection and cover processing.
+// Package imagecodec owns shared raster decoders and SVG resource preparation
+// used by format inspection, conversion and cover processing.
 package imagecodec
 
 import (
@@ -10,12 +10,30 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
+	"strings"
 
 	"github.com/gen2brain/avif"
 	_ "golang.org/x/image/webp"
 )
 
 const sniffBytes = 4096
+
+// CoverExtension returns the extension for raster cover formats preserved by
+// book parsers, using the format name returned by image.DecodeConfig.
+func CoverExtension(formatName string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(formatName)) {
+	case "jpeg":
+		return ".jpg", true
+	case "png":
+		return ".png", true
+	case "gif":
+		return ".gif", true
+	case "webp":
+		return ".webp", true
+	default:
+		return "", false
+	}
+}
 
 // IsAVIF reports whether data starts with an ISO BMFF file-type box that names
 // AVIF as either its major or a compatible brand.

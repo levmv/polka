@@ -145,11 +145,11 @@ func ExtractHTMLZMetadata(r io.ReaderAt, size int64) (*Metadata, error) {
 		return nil, err
 	}
 	if opf := FirstRootOPF(zr); opf != nil {
-		raw, err := readZipFileLimited(opf, maxOPFDocumentBytes)
+		raw, err := readZipFileLimited(opf, bookmeta.MaxOPFDocumentBytes)
 		if err != nil {
 			return nil, err
 		}
-		return ParseOPF(bytes.NewReader(raw))
+		return bookmeta.ParseOPF(bytes.NewReader(raw))
 	}
 	entry := HTMLZIndexEntry(zr)
 	if entry == nil {
@@ -186,12 +186,12 @@ func ExtractHTMLZCover(r io.ReaderAt, size int64) ([]byte, string, error) {
 		return nil, "", err
 	}
 	if opf := FirstRootOPF(zr); opf != nil {
-		raw, err := readZipFileLimited(opf, maxOPFDocumentBytes)
+		raw, err := readZipFileLimited(opf, bookmeta.MaxOPFDocumentBytes)
 		if err != nil {
 			return nil, "", err
 		}
 		var doc opfDoc
-		if err := decodeOPFBytes(raw, &doc); err != nil {
+		if err := bookmeta.DecodeOPFXML(raw, &doc); err != nil {
 			return nil, "", fmt.Errorf("parse HTMLZ OPF %s: %w", opf.Name, err)
 		}
 		if cover, ext, err := epubCoverFromOPF(zr, NormalizeZipName(opf.Name), doc); err != nil || len(cover) > 0 {

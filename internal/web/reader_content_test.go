@@ -34,7 +34,7 @@ func TestPinnedReaderNeverLabelsReplacementAsOpenedContent(t *testing.T) {
 		t.Fatal(err)
 	}
 	hash := storage.Sum(original)
-	mustExec(t, database, "UPDATE assets SET format='epub',can_read=1,current_hash=? WHERE id=1", hash[:])
+	mustExec(t, database, "UPDATE assets SET format='epub',current_hash=? WHERE id=1", hash[:])
 	request := func(digest []byte) *httptest.ResponseRecorder {
 		t.Helper()
 		w := httptest.NewRecorder()

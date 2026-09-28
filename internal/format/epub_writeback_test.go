@@ -705,7 +705,7 @@ func TestRewriteOPFMetadataPreservesUnchangedCreatorRoles(t *testing.T) {
 			if primaryRole == "" {
 				primaryRole = "aut"
 			}
-			extracted, err := ParseOPF(bytes.NewReader(out))
+			extracted, err := bookmeta.ParseOPF(bytes.NewReader(out))
 			if err != nil || extracted.Title != meta.Title || len(extracted.Authors) != 1 ||
 				extracted.Authors[0].Name != tc.author.Name || extracted.Authors[0].SortName != tc.author.SortName || extracted.Authors[0].Role != primaryRole {
 				t.Fatalf("catalog metadata changed: %+v, %v", extracted, err)

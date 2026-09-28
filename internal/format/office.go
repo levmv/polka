@@ -18,8 +18,10 @@ import (
 	"strings"
 	"unicode/utf16"
 
-	"github.com/levmv/polka/internal/bookmeta"
 	"golang.org/x/text/encoding/charmap"
+
+	"github.com/levmv/polka/internal/bookmeta"
+	"github.com/levmv/polka/internal/imagecodec"
 )
 
 const (
@@ -149,7 +151,7 @@ func metadataFromODTMeta(raw []byte) *Metadata {
 	}
 	odt := doc.Meta
 	meta := &Metadata{
-		PageCount:   positivePageCount(odt.Statistics.Pages),
+		PageCount:   bookmeta.PositivePageCount(odt.Statistics.Pages),
 		Title:       cleanXMLText(odt.Title),
 		Description: cleanXMLText(odt.Description),
 		Date:        bookmeta.NormalizeMetadataDate(cleanXMLText(odt.Date)),
@@ -288,7 +290,7 @@ func odtReadCoverCandidate(zr *zip.Reader, candidate odtCoverCandidate) ([]byte,
 	if err != nil {
 		return nil, "", 0, 0, false, nil
 	}
-	ext, ok := coverImageExtensionFromFormatName(formatName)
+	ext, ok := imagecodec.CoverExtension(formatName)
 	if !ok {
 		return nil, "", 0, 0, false, nil
 	}

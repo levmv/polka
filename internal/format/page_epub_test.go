@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/levmv/polka/internal/bookmeta"
 )
 
 type pageMapTestLink struct {
@@ -166,7 +168,7 @@ func TestEPUBPageMapParsingIsBounded(t *testing.T) {
 	if maps := readEPUBPageMaps(ctx, files, opf); len(maps.candidates) != 0 {
 		t.Fatal("cancelled parsing produced a map")
 	}
-	zipEntryByName(zr, "pages.xhtml").UncompressedSize64 = maxOPFDocumentBytes + 1
+	zipEntryByName(zr, "pages.xhtml").UncompressedSize64 = bookmeta.MaxOPFDocumentBytes + 1
 	if maps := readEPUBPageMaps(t.Context(), files, opf); len(maps.candidates) != 0 {
 		t.Fatal("oversized document produced a map")
 	}

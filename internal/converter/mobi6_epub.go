@@ -18,6 +18,7 @@ import (
 
 	"golang.org/x/net/html"
 
+	"github.com/levmv/polka/internal/bookmeta"
 	"github.com/levmv/polka/internal/format"
 	"github.com/levmv/polka/internal/imagecodec"
 	"github.com/levmv/polka/internal/xmlutil"
@@ -72,10 +73,10 @@ func convertEPUBToMOBI6(ctx context.Context, w io.Writer, src io.ReaderAt, size 
 	}
 	zr.File = slices.DeleteFunc(zr.File, func(file *zip.File) bool { return recovery.omitted[file.Name] })
 	var opf rebuildOPFDoc
-	if err := format.DecodeOPFXML(pkg.opfBytes, &opf); err != nil {
+	if err := bookmeta.DecodeOPFXML(pkg.opfBytes, &opf); err != nil {
 		return fmt.Errorf("parse EPUB package: %w", err)
 	}
-	meta, err := format.ParseOPF(bytes.NewReader(pkg.opfBytes))
+	meta, err := bookmeta.ParseOPF(bytes.NewReader(pkg.opfBytes))
 	if err != nil {
 		opts.warn("Could not read EPUB metadata: %v", err)
 		meta = &format.Metadata{}

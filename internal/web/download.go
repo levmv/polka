@@ -163,10 +163,6 @@ func (s *Server) handleConvertedDownload(w http.ResponseWriter, r *http.Request,
 			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 			return
 		}
-		if errors.Is(err, format.ErrAZW4PDFNotFound) {
-			http.Error(w, "Asset cannot be converted to "+string(target), http.StatusUnprocessableEntity)
-			return
-		}
 		serverError(w, r, err)
 		return
 	}
@@ -233,7 +229,6 @@ type assetFileRow struct {
 	Filename     string
 	Extension    string
 	Format       format.Format
-	CanRead      bool
 	CurrentHash  []byte
 	KOReaderHash string
 	Title        string
@@ -251,9 +246,8 @@ type assetFileRow struct {
 func (s *Server) assetFile(ctx context.Context, assetID int64) (assetFileRow, error) {
 	var a assetFileRow
 	var formatKey string
-	var canRead int
 	err := s.db.Read(ctx).QueryRow(`
-		SELECT a.storage_path, a.book_id, a.filename, a.extension, a.format, a.can_read,
+		SELECT a.storage_path, a.book_id, a.filename, a.extension, a.format,
 		       a.current_hash,
 		       COALESCE(a.koreader_hash, ''),
 		       b.title, b.sort_title, COALESCE(b.language, ''),
@@ -265,12 +259,11 @@ func (s *Server) assetFile(ctx context.Context, assetID int64) (assetFileRow, er
 		JOIN books b ON b.id = a.book_id
 		WHERE a.id = ?
 	`, assetID).Scan(
-		&a.StoragePath, &a.BookID, &a.Filename, &a.Extension, &formatKey, &canRead, &a.CurrentHash, &a.KOReaderHash,
+		&a.StoragePath, &a.BookID, &a.Filename, &a.Extension, &formatKey, &a.CurrentHash, &a.KOReaderHash,
 		&a.Title, &a.SortTitle, &a.Language, &a.Description, &a.Publisher,
 		&a.Date, &a.Identifier, &a.Series, &a.SeriesIndex, &a.UpdatedAt,
 	)
 	a.Format = format.FormatFromKey(formatKey)
-	a.CanRead = canRead == 1
 	return a, err
 }
 

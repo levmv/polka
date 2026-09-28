@@ -5,6 +5,8 @@ import (
 	"encoding/xml"
 	"image"
 	"strings"
+
+	"github.com/levmv/polka/internal/bookmeta"
 )
 
 // The XML decoder reuses this value for every body, including notes.
@@ -73,8 +75,8 @@ func (b *fb2PageBody) UnmarshalXML(dec *xml.Decoder, start xml.StartElement) err
 func fb2PageCount(doc *fb2Doc) int {
 	declared, priority := 0, 0
 	for _, info := range doc.Description.CustomInfo {
-		if p := pageCountKeyPriority(info.Type); p > 0 && (priority == 0 || p < priority) {
-			if count := positivePageCount(info.Text); count > 0 {
+		if p := bookmeta.PageCountKeyPriority(info.Type); p > 0 && (priority == 0 || p < priority) {
+			if count := bookmeta.PositivePageCount(info.Text); count > 0 {
 				declared, priority = count, p
 			}
 		}

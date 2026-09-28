@@ -63,7 +63,7 @@ func (s *Server) handleRead(w http.ResponseWriter, r *http.Request) {
 	}
 
 	reader := format.ReaderForFormat(asset.Format)
-	if !asset.CanRead || reader == format.ReaderNone {
+	if reader == format.ReaderNone {
 		http.Error(w, "Primary asset is not readable", http.StatusUnprocessableEntity)
 		return
 	}
@@ -90,7 +90,7 @@ func (s *Server) handleReadAssetPage(w http.ResponseWriter, r *http.Request) {
 		serverError(w, r, err)
 		return
 	}
-	if !asset.CanRead || format.ReaderForFormat(asset.Format) == format.ReaderNone {
+	if format.ReaderForFormat(asset.Format) == format.ReaderNone {
 		http.Error(w, "Asset is not readable", http.StatusUnprocessableEntity)
 		return
 	}
@@ -227,7 +227,7 @@ func (s *Server) handleReadAsset(w http.ResponseWriter, r *http.Request) {
 		serverError(w, r, err)
 		return
 	}
-	if !asset.CanRead || format.ReaderForFormat(asset.Format) == format.ReaderNone {
+	if format.ReaderForFormat(asset.Format) == format.ReaderNone {
 		http.Error(w, "Asset is not readable", http.StatusUnprocessableEntity)
 		return
 	}

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/levmv/polka/internal/format/djvu"
+	"github.com/levmv/polka/internal/format/mobi"
 	"github.com/levmv/polka/internal/format/pdf"
 )
 
@@ -165,7 +166,6 @@ var bookFormats = []bookFormat{
 		Label:      "PDB",
 		Extensions: []string{".pdb"},
 		MediaTypes: map[string]string{".pdb": "application/vnd.palm"},
-		Verify:     isPalmDOC,
 	},
 	{
 		Format:     FormatCBZ,
@@ -476,6 +476,30 @@ func CanRead(format Format) bool {
 	return ReaderForFormat(format) != ReaderNone
 }
 
+// Prefer reflowable books for ordinary browser reading, then image archives
+// (ZIP before formats needing repackaging), then fixed-page documents.
+// Delivery and conversion-source preferences are separate policies.
+var readingFormatPreference = []Format{
+	FormatEPUB, FormatKEPUB, FormatFB2, FormatAZW3, FormatMOBI,
+	FormatCBZ, FormatCBR, FormatCB7, FormatPDF, FormatDJVU,
+}
+
+// ReadingPriority ranks formats for a book's default file; lower is better.
+// This describes format preference, not whether a particular file will open.
+// Unranked readable formats precede formats without a browser reader.
+func ReadingPriority(kind Format) int {
+	if !CanRead(kind) {
+		return len(readingFormatPreference) + 1
+	}
+	if kind == FormatAZW || kind == FormatPRC {
+		kind = FormatMOBI
+	}
+	if rank := slices.Index(readingFormatPreference, kind); rank >= 0 {
+		return rank
+	}
+	return len(readingFormatPreference)
+}
+
 func FB2ContainerForExtension(ext string) FB2Container {
 	if format, ext, ok := bookFormatByExtension(ext); ok {
 		return format.FB2Containers[ext]
@@ -529,13 +553,18 @@ func DetectFormat(p string, r io.ReaderAt, size int64) Format {
 				return FormatFB2
 			}
 		}
-	case FormatMOBI, FormatAZW, FormatAZW3, FormatAZW4, FormatPRC:
-		if isMOBI(r, size) {
-			return kind
+	case FormatMOBI, FormatAZW, FormatAZW3, FormatAZW4, FormatPRC, FormatPDB:
+		switch mobi.DetectContainer(r) {
+		case mobi.ContainerMOBI:
+			if kind != FormatPDB {
+				return kind
+			}
+		case mobi.ContainerPalmDOC:
+			if kind == FormatPDB || kind == FormatMOBI || kind == FormatPRC {
+				return FormatPDB
+			}
 		}
-		if (kind == FormatMOBI || kind == FormatPRC) && isPalmDOC(r, size) {
-			return FormatPDB
-		}
+		return FormatUnknown
 	}
 	if formatInfo.Verify != nil && formatInfo.Verify(r, size) {
 		return kind
@@ -608,11 +637,6 @@ func isZippedFB2(r io.ReaderAt, size int64) bool {
 		return false
 	}
 	_, err = SingleFB2ZipEntry(zr)
-	return err == nil
-}
-
-func isGzipFB2(r io.ReaderAt, size int64) bool {
-	err := validateFB2Gzip(r, size)
 	return err == nil
 }
 

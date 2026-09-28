@@ -1,4 +1,4 @@
-package format
+package mobi
 
 import (
 	"encoding/binary"
@@ -35,31 +35,31 @@ type kindleHUFFCDICDecoder struct {
 	dictionary []kindleHUFFDictionaryEntry
 }
 
-func kindleHUFFCDICAvailable(info *KindleInspection) bool {
+func huffCDICAvailable(info *Inspection) bool {
 	return info.HUFFCDICIndex > 0 && info.HUFFCDICRecordCount > 1
 }
 
-func newKindleHUFFCDICDecoder(r io.ReaderAt, ranges []mobiRecordRange, info *KindleInspection) (*kindleHUFFCDICDecoder, error) {
-	if !kindleHUFFCDICAvailable(info) {
-		return nil, fmt.Errorf("%w: missing HUFF/CDIC records", ErrUnsupportedKindleSource)
+func newKindleHUFFCDICDecoder(r io.ReaderAt, ranges []mobiRecordRange, info *Inspection) (*kindleHUFFCDICDecoder, error) {
+	if !huffCDICAvailable(info) {
+		return nil, fmt.Errorf("%w: missing HUFF/CDIC records", ErrUnsupportedSource)
 	}
 	start := int(info.HUFFCDICIndex)
 	count := int(info.HUFFCDICRecordCount)
 	if start <= 0 || count < 2 || start+count > len(ranges) {
-		return nil, fmt.Errorf("%w: invalid HUFF/CDIC record range", ErrUnsupportedKindleSource)
+		return nil, fmt.Errorf("%w: invalid HUFF/CDIC record range", ErrUnsupportedSource)
 	}
-	huff, ok := mobiReadRecord(r, ranges[start], maxKindleHUFFCDICRecordBytes)
-	if !ok {
-		return nil, fmt.Errorf("read HUFF record")
+	huff, err := mobiReadRecord(r, ranges[start], maxKindleHUFFCDICRecordBytes)
+	if err != nil {
+		return nil, fmt.Errorf("read HUFF record: %w", err)
 	}
 	decoder, err := parseKindleHUFFRecord(huff)
 	if err != nil {
 		return nil, err
 	}
 	for i := 1; i < count; i++ {
-		cdic, ok := mobiReadRecord(r, ranges[start+i], maxKindleHUFFCDICRecordBytes)
-		if !ok {
-			return nil, fmt.Errorf("read CDIC record %d", i)
+		cdic, err := mobiReadRecord(r, ranges[start+i], maxKindleHUFFCDICRecordBytes)
+		if err != nil {
+			return nil, fmt.Errorf("read CDIC record %d: %w", i, err)
 		}
 		if err := decoder.appendCDICRecord(cdic); err != nil {
 			return nil, fmt.Errorf("parse CDIC record %d: %w", i, err)
@@ -70,12 +70,12 @@ func newKindleHUFFCDICDecoder(r io.ReaderAt, ranges []mobiRecordRange, info *Kin
 
 func parseKindleHUFFRecord(record []byte) (*kindleHUFFCDICDecoder, error) {
 	if len(record) < 16 || string(record[0:4]) != "HUFF" {
-		return nil, fmt.Errorf("invalid HUFF record")
+		return nil, fmt.Errorf("%w: invalid HUFF record", ErrUnsupportedSource)
 	}
 	offset1 := binary.BigEndian.Uint32(record[8:12])
 	offset2 := binary.BigEndian.Uint32(record[12:16])
 	if uint64(offset1)+256*4 > uint64(len(record)) || uint64(offset2)+32*8 > uint64(len(record)) {
-		return nil, fmt.Errorf("invalid HUFF table bounds")
+		return nil, fmt.Errorf("%w: invalid HUFF table bounds", ErrUnsupportedSource)
 	}
 	table1Offset := int(offset1)
 	table2Offset := int(offset2)
@@ -101,16 +101,16 @@ func parseKindleHUFFRecord(record []byte) (*kindleHUFFCDICDecoder, error) {
 
 func (d *kindleHUFFCDICDecoder) appendCDICRecord(record []byte) error {
 	if len(record) < 16 || string(record[0:4]) != "CDIC" {
-		return fmt.Errorf("invalid CDIC record")
+		return fmt.Errorf("%w: invalid CDIC record", ErrUnsupportedSource)
 	}
 	headerLength := int(binary.BigEndian.Uint32(record[4:8]))
 	numEntries := int(binary.BigEndian.Uint32(record[8:12]))
 	codeLength := binary.BigEndian.Uint32(record[12:16])
 	if headerLength < 16 || headerLength > len(record) || codeLength >= 31 {
-		return fmt.Errorf("invalid CDIC header")
+		return fmt.Errorf("%w: invalid CDIC header", ErrUnsupportedSource)
 	}
 	if numEntries < len(d.dictionary) || numEntries > maxKindleHUFFDictionaryEntries {
-		return fmt.Errorf("invalid CDIC entry count")
+		return fmt.Errorf("%w: invalid CDIC entry count", ErrUnsupportedSource)
 	}
 	perRecord := 1 << codeLength
 	remaining := numEntries - len(d.dictionary)
@@ -119,18 +119,18 @@ func (d *kindleHUFFCDICDecoder) appendCDICRecord(record []byte) error {
 	}
 	buffer := record[headerLength:]
 	if perRecord > len(buffer)/2 {
-		return fmt.Errorf("invalid CDIC offset table")
+		return fmt.Errorf("%w: invalid CDIC offset table", ErrUnsupportedSource)
 	}
 	for i := range perRecord {
 		offset := int(binary.BigEndian.Uint16(buffer[i*2 : i*2+2]))
 		if offset < perRecord*2 || offset+2 > len(buffer) {
-			return fmt.Errorf("invalid CDIC entry offset")
+			return fmt.Errorf("%w: invalid CDIC entry offset", ErrUnsupportedSource)
 		}
 		prefix := binary.BigEndian.Uint16(buffer[offset : offset+2])
 		length := int(prefix & 0x7fff)
 		end := offset + 2 + length
 		if end > len(buffer) {
-			return fmt.Errorf("invalid CDIC entry length")
+			return fmt.Errorf("%w: invalid CDIC entry length", ErrUnsupportedSource)
 		}
 		d.dictionary = append(d.dictionary, kindleHUFFDictionaryEntry{
 			data:         slices.Clone(buffer[offset+2 : end]),
@@ -157,12 +157,12 @@ func (d *kindleHUFFCDICDecoder) decompressBytes(data []byte, maxBytes int64) ([]
 				codeLength++
 			}
 			if codeLength == 0 || codeLength > 32 {
-				return nil, fmt.Errorf("invalid HUFF code")
+				return nil, fmt.Errorf("%w: invalid HUFF code", ErrUnsupportedSource)
 			}
 			value = d.table2[codeLength].value
 		}
 		if codeLength == 0 || codeLength > 32 {
-			return nil, fmt.Errorf("invalid HUFF code length")
+			return nil, fmt.Errorf("%w: invalid HUFF code length", ErrUnsupportedSource)
 		}
 		bit += int(codeLength)
 		if bit > bitLength {
@@ -170,7 +170,7 @@ func (d *kindleHUFFCDICDecoder) decompressBytes(data []byte, maxBytes int64) ([]
 		}
 		prefix := bits >> (32 - codeLength)
 		if value < prefix {
-			return nil, fmt.Errorf("invalid HUFF dictionary code")
+			return nil, fmt.Errorf("%w: invalid HUFF dictionary code", ErrUnsupportedSource)
 		}
 		code := int(value - prefix)
 		chunk, err := d.dictionaryEntryData(code, maxBytes)
@@ -178,7 +178,7 @@ func (d *kindleHUFFCDICDecoder) decompressBytes(data []byte, maxBytes int64) ([]
 			return nil, err
 		}
 		if int64(len(out))+int64(len(chunk)) > maxBytes {
-			return nil, fmt.Errorf("HUFF/CDIC text exceeds limit (%d bytes): %w", maxBytes, ErrTextTooLarge)
+			return nil, fmt.Errorf("HUFF/CDIC text exceeds limit (%d bytes): %w", maxBytes, ErrTextLimit)
 		}
 		out = append(out, chunk...)
 	}
@@ -187,14 +187,14 @@ func (d *kindleHUFFCDICDecoder) decompressBytes(data []byte, maxBytes int64) ([]
 
 func (d *kindleHUFFCDICDecoder) dictionaryEntryData(code int, maxBytes int64) ([]byte, error) {
 	if code < 0 || code >= len(d.dictionary) {
-		return nil, fmt.Errorf("HUFF dictionary code %d outside dictionary", code)
+		return nil, fmt.Errorf("%w: HUFF dictionary code %d outside dictionary", ErrUnsupportedSource, code)
 	}
 	entry := &d.dictionary[code]
 	if entry.decompressed {
 		return entry.data, nil
 	}
 	if entry.visiting {
-		return nil, fmt.Errorf("recursive HUFF dictionary entry %d", code)
+		return nil, fmt.Errorf("%w: recursive HUFF dictionary entry %d", ErrUnsupportedSource, code)
 	}
 	entry.visiting = true
 	data, err := d.decompressBytes(entry.data, maxBytes)

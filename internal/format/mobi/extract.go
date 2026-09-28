@@ -1,4 +1,4 @@
-package format
+package mobi
 
 import (
 	"bytes"
@@ -13,10 +13,13 @@ import (
 	"strings"
 
 	"golang.org/x/net/html"
+
+	"github.com/levmv/polka/internal/bookmeta"
+	"github.com/levmv/polka/internal/imagecodec"
 )
 
 const (
-	maxKindleExtractTextBytes     int64 = 128 << 20
+	maxExtractTextBytes           int64 = 128 << 20
 	maxKindleExtractResourceBytes int64 = 256 << 20
 	maxKindleExtractResources           = 4096
 	maxKindleGuideReferences            = 128
@@ -24,13 +27,15 @@ const (
 
 var kindleFlowReferenceRE = regexp.MustCompile(`(?i)kindle:flow:([0-9A-V]+)\?mime=([a-z0-9.+-]+/[a-z0-9.+-]+)`)
 
-// ErrUnsupportedKindleSource marks a Kindle-family source that the native
-// extraction layer intentionally refuses instead of returning partial content.
-var ErrUnsupportedKindleSource = errors.New("unsupported Kindle source")
+// ErrUnsupportedSource marks unsupported or malformed Kindle-family content
+// that cannot be extracted without returning partial or incorrect content.
+var ErrUnsupportedSource = errors.New("unsupported Kindle source")
 
-// ErrKindleResourceLimit marks a structurally valid Kindle container whose
-// combined retained resources exceed the native extraction boundary.
-var ErrKindleResourceLimit = errors.New("Kindle resources exceed extraction limit")
+// ErrResourceLimit marks a record or retained resources that exceed extraction limits.
+var ErrResourceLimit = errors.New("Kindle resources exceed extraction limit")
+
+// ErrTextLimit marks content that exceeds the native text extraction budget.
+var ErrTextLimit = errors.New("text input exceeds size limit")
 
 type kindleResourceBudget struct {
 	maxBytes     int64
@@ -51,39 +56,33 @@ func (b *kindleResourceBudget) add(data []byte) error {
 		return nil
 	}
 	if b.resources >= b.maxResources {
-		return fmt.Errorf("Kindle resource count exceeds limit (%d): %w", b.maxResources, ErrKindleResourceLimit)
+		return fmt.Errorf("Kindle resource count exceeds limit (%d): %w", b.maxResources, ErrResourceLimit)
 	}
 	if int64(len(data)) > b.maxBytes-b.bytes {
-		return fmt.Errorf("Kindle resource data exceeds limit (%d bytes): %w", b.maxBytes, ErrKindleResourceLimit)
+		return fmt.Errorf("Kindle resource data exceeds limit (%d bytes): %w", b.maxBytes, ErrResourceLimit)
 	}
 	b.resources++
 	b.bytes += int64(len(data))
 	return nil
 }
 
-// KindleDocument is the internal read model produced by native Kindle-family
-// extraction. It is intentionally independent of EPUB writing so parser and
-// writer support can mature in small slices.
-type KindleDocument struct {
-	SourceClass         string
-	MOBIKind            MOBIKind
-	Metadata            *Metadata
-	Flows               []KindleTextFlow
-	Resources           []KindleResource
-	CoverResourceID     string
-	Navigation          []KindleNavItem
-	Guide               []KindleGuideReference
-	UnsupportedFeatures []string
+// Document holds extracted Kindle-family content independently of EPUB writing.
+type Document struct {
+	Metadata   *bookmeta.Metadata
+	Flows      []TextFlow
+	Resources  []Resource
+	Navigation []NavItem
+	Guide      []GuideReference
 }
 
-type KindleTextFlow struct {
+type TextFlow struct {
 	ID        string
 	Href      string
 	MediaType string
 	Data      []byte
 }
 
-type KindleResource struct {
+type Resource struct {
 	ID          string
 	Href        string
 	MediaType   string
@@ -94,52 +93,51 @@ type KindleResource struct {
 	Cover       bool
 }
 
-type KindleNavItem struct {
+type NavItem struct {
 	Label    string
 	Href     string
-	Children []KindleNavItem
+	Children []NavItem
 }
 
-type KindleGuideReference struct {
+type GuideReference struct {
 	Type  string
 	Title string
 	Href  string
 }
 
-// ExtractKindleDocument extracts the currently supported native Kindle read
-// model. Supported slices stay narrow and fail closed when a source needs
-// structure Polka does not yet parse.
-func ExtractKindleDocument(r io.ReaderAt, size int64, kind Format) (*KindleDocument, error) {
-	info, err := InspectKindle(r, size, kind)
+// ExtractDocument reads text, resources, navigation and metadata for conversion.
+// It rejects unsupported structures that would leave content missing or incorrect.
+func ExtractDocument(r io.ReaderAt, size int64) (*Document, error) {
+	info, err := Inspect(r, size)
 	if err != nil {
 		return nil, err
 	}
 	if info == nil {
-		return nil, fmt.Errorf("%w: unrecognized Kindle container", ErrUnsupportedKindleSource)
+		return nil, fmt.Errorf("%w: unrecognized Kindle container", ErrUnsupportedSource)
 	}
 	if err := kindleExtractionSupportError(info); err != nil {
 		return nil, err
 	}
-	if info.Container == kindlePalmDBContainerPalmDOC {
+	if info.Container == ContainerPalmDOC {
 		return extractPalmDOCDocument(r, size, info)
 	}
-	if info.SourceClass == string(MOBIKindCombo) {
+	if info.Kind == KindCombo {
 		return extractComboKF8Document(r, size, info)
 	}
-	if info.SourceClass == string(MOBIKindKF8Standalone) {
+	if info.Kind == KindKF8 {
 		return extractKF8StandaloneDocument(r, size, info)
 	}
 
-	ranges, ok := mobiRecordRanges(r, size)
-	if !ok || len(ranges) == 0 {
-		return nil, fmt.Errorf("invalid MOBI record table")
+	ranges, err := mobiRecordRanges(r, size)
+	if err != nil {
+		return nil, err
 	}
-	record0, ok := mobiReadRecord(r, ranges[0], maxMOBIRecord0Bytes)
-	if !ok {
-		return nil, fmt.Errorf("invalid MOBI record 0")
+	record0, err := mobiReadRecord(r, ranges[0], maxMOBIRecord0Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("read MOBI record 0: %w", err)
 	}
 
-	meta, err := ExtractMOBIMetadata(r, size)
+	meta, err := ExtractMetadata(r, size)
 	if err != nil {
 		return nil, err
 	}
@@ -147,7 +145,7 @@ func ExtractKindleDocument(r io.ReaderAt, size int64, kind Format) (*KindleDocum
 	if err != nil {
 		return nil, err
 	}
-	resources, coverID, err := extractMOBIResources(r, ranges, record0, info, 0, newKindleResourceBudget())
+	resources, err := extractMOBIResources(r, ranges, record0, info, 0, newKindleResourceBudget())
 	if err != nil {
 		return nil, err
 	}
@@ -156,123 +154,66 @@ func ExtractKindleDocument(r io.ReaderAt, size int64, kind Format) (*KindleDocum
 		return nil, fmt.Errorf("extract MOBI NCX navigation: %w", err)
 	}
 
-	return &KindleDocument{
-		SourceClass:         info.SourceClass,
-		MOBIKind:            info.MOBIKind,
-		Metadata:            meta,
-		Flows:               []KindleTextFlow{text},
-		Resources:           resources,
-		CoverResourceID:     coverID,
-		Navigation:          nav,
-		Guide:               extractMOBI6GuideReferences(text),
-		UnsupportedFeatures: slices.Clone(info.UnsupportedFeatures),
+	return &Document{
+		Metadata:   meta,
+		Flows:      []TextFlow{text},
+		Resources:  resources,
+		Navigation: nav,
+		Guide:      extractMOBI6GuideReferences(text),
 	}, nil
 }
 
-func kindleExtractionSupportError(info *KindleInspection) error {
-	if info.Container != kindlePalmDBContainerMOBI && info.Container != kindlePalmDBContainerPalmDOC {
-		return fmt.Errorf("%w: container %s", ErrUnsupportedKindleSource, info.Container)
+func kindleExtractionSupportError(info *Inspection) error {
+	if info.Encrypted {
+		return fmt.Errorf("%w: Kindle content is encrypted", ErrUnsupportedSource)
 	}
-	switch info.SourceClass {
-	case string(MOBIKindMOBI6), string(MOBIKindPalmDOC):
-	case string(MOBIKindKF8Standalone):
-		return kindleKF8ExtractionSupportError(info)
-	case string(MOBIKindCombo):
-		return kindleComboExtractionSupportError(info)
-	default:
-		return fmt.Errorf("%w: source class %s", ErrUnsupportedKindleSource, info.SourceClass)
+	if info.Dictionary {
+		return fmt.Errorf("%w: dictionary indexes", ErrUnsupportedSource)
 	}
-	if err := kindleCommonSupportError(info); err != nil {
-		return err
-	}
-	if info.TextRecords == 0 {
-		return fmt.Errorf("%w: no MOBI text records", ErrUnsupportedKindleSource)
-	}
-	if info.TextLength > uint32(maxKindleExtractTextBytes) {
-		return fmt.Errorf("MOBI text exceeds limit (%d bytes): %w", maxKindleExtractTextBytes, ErrTextTooLarge)
-	}
-	if info.ResourceCounts.Fonts > 0 {
-		return fmt.Errorf("%w: font resources", ErrUnsupportedKindleSource)
-	}
-	return nil
-}
-
-func kindleKF8ExtractionSupportError(info *KindleInspection) error {
-	if err := kindleCommonSupportError(info); err != nil {
-		return err
-	}
-	if info.TextRecords == 0 {
-		return fmt.Errorf("%w: no KF8 text records", ErrUnsupportedKindleSource)
-	}
-	if info.TextLength > uint32(maxKindleExtractTextBytes) {
-		return fmt.Errorf("KF8 text exceeds limit (%d bytes): %w", maxKindleExtractTextBytes, ErrTextTooLarge)
-	}
-	if len(info.KF8Skeletons) == 0 {
-		return fmt.Errorf("%w: missing KF8 skeleton table", ErrUnsupportedKindleSource)
-	}
-	return nil
-}
-
-func kindleComboExtractionSupportError(info *KindleInspection) error {
-	if err := kindleCommonSupportError(info); err != nil {
-		return err
-	}
-	if info.BoundaryIndex == 0 {
-		return fmt.Errorf("%w: missing combo KF8 boundary", ErrUnsupportedKindleSource)
-	}
-	return nil
-}
-
-func kindleUnsupportedFeatureError(info *KindleInspection) error {
-	if len(info.UnsupportedFeatures) == 0 {
-		return nil
-	}
-	return fmt.Errorf("%w: %s", ErrUnsupportedKindleSource, strings.Join(info.UnsupportedFeatures, ", "))
-}
-
-// kindleCommonSupportError applies the fail-closed checks shared by every
-// supported Kindle source class: unsupported feature flags, text compression,
-// and cdetype.
-func kindleCommonSupportError(info *KindleInspection) error {
-	if err := kindleUnsupportedFeatureError(info); err != nil {
-		return err
-	}
-	if err := kindleTextCompressionSupportError(info); err != nil {
-		return err
-	}
-	if err := kindleCDETypeSupportError(info); err != nil {
-		return err
-	}
-	return nil
-}
-
-func kindleTextCompressionSupportError(info *KindleInspection) error {
-	switch info.Compression {
-	case mobiCompressionNone, mobiCompressionPalmDOC, mobiCompressionHUFFCDIC:
-		return nil
-	default:
-		compressionName := info.CompressionName
-		if compressionName == "" {
-			compressionName = fmt.Sprintf("%d", info.Compression)
-		}
-		return fmt.Errorf("%w: compression %s", ErrUnsupportedKindleSource, compressionName)
-	}
-}
-
-func kindleCDETypeSupportError(info *KindleInspection) error {
-	// Personal documents use the same supported MOBI6/KF8 structures as ebooks.
 	if info.CDEType != "" && info.CDEType != "EBOK" && info.CDEType != "PDOC" {
-		return fmt.Errorf("%w: cdetype %s", ErrUnsupportedKindleSource, info.CDEType)
+		return fmt.Errorf("%w: cdetype %s", ErrUnsupportedSource, info.CDEType)
+	}
+	if info.Kind == KindCombo {
+		// The primary supplies metadata and shared resources. Its unused text
+		// may use unsupported compression; the KF8 record set is checked later.
+		return nil
+	}
+	switch info.Compression {
+	case mobiCompressionNone, mobiCompressionPalmDOC:
+	case mobiCompressionHUFFCDIC:
+		if !huffCDICAvailable(info) {
+			return fmt.Errorf("%w: HUFF/CDIC dictionary records are not declared", ErrUnsupportedSource)
+		}
+	default:
+		return fmt.Errorf("%w: compression %d", ErrUnsupportedSource, info.Compression)
+	}
+	if info.TextRecords == 0 {
+		return fmt.Errorf("%w: no text records", ErrUnsupportedSource)
+	}
+	if info.TextLength > uint32(maxExtractTextBytes) {
+		return ErrTextLimit
+	}
+	switch info.Kind {
+	case KindKF8:
+		if len(info.KF8Skeletons) == 0 {
+			return fmt.Errorf("%w: missing KF8 skeleton table", ErrUnsupportedSource)
+		}
+	case KindMOBI6, KindPalmDOC:
+		if info.ResourceCounts.Fonts > 0 {
+			return fmt.Errorf("%w: font resources", ErrUnsupportedSource)
+		}
+	default:
+		return fmt.Errorf("%w: Kindle kind %s", ErrUnsupportedSource, info.Kind)
 	}
 	return nil
 }
 
-func extractPalmDOCDocument(r io.ReaderAt, size int64, info *KindleInspection) (*KindleDocument, error) {
-	ranges, ok := palmDBRecordRanges(r, size, palmDOCHeader)
-	if !ok || len(ranges) == 0 {
-		return nil, fmt.Errorf("invalid PalmDOC record table")
+func extractPalmDOCDocument(r io.ReaderAt, size int64, info *Inspection) (*Document, error) {
+	ranges, err := palmDBRecordRanges(r, size, palmDOCHeader)
+	if err != nil {
+		return nil, err
 	}
-	meta, err := ExtractPDBMetadata(r, size)
+	meta, err := ExtractPalmDOCMetadata(r, size)
 	if err != nil {
 		return nil, err
 	}
@@ -280,8 +221,8 @@ func extractPalmDOCDocument(r io.ReaderAt, size int64, info *KindleInspection) (
 	if err != nil {
 		return nil, err
 	}
-	var resources []KindleResource
-	var guide []KindleGuideReference
+	var resources []Resource
+	var guide []GuideReference
 	if palmDOCFlowIsHTML(text.Data) {
 		text.Href = "text/flow-0001.html"
 		text.MediaType = "text/html"
@@ -292,27 +233,27 @@ func extractPalmDOCDocument(r io.ReaderAt, size int64, info *KindleInspection) (
 			return nil, err
 		}
 	}
-	return &KindleDocument{
-		SourceClass:         info.SourceClass,
-		MOBIKind:            info.MOBIKind,
-		Metadata:            meta,
-		Flows:               []KindleTextFlow{text},
-		Resources:           resources,
-		Guide:               guide,
-		UnsupportedFeatures: slices.Clone(info.UnsupportedFeatures),
+	return &Document{
+		Metadata:  meta,
+		Flows:     []TextFlow{text},
+		Resources: resources,
+		Guide:     guide,
 	}, nil
 }
 
-func extractPalmDOCImageResources(r io.ReaderAt, ranges []mobiRecordRange, info *KindleInspection, budget *kindleResourceBudget) ([]KindleResource, error) {
+func extractPalmDOCImageResources(r io.ReaderAt, ranges []mobiRecordRange, info *Inspection, budget *kindleResourceBudget) ([]Resource, error) {
 	start := 1 + int(info.TextRecords)
 	if start >= len(ranges) {
 		return nil, nil
 	}
-	var resources []KindleResource
+	var resources []Resource
 	for i := start; i < len(ranges); i++ {
-		raw, ok := mobiReadRecord(r, ranges[i], maxMOBICoverBytes)
-		if !ok {
+		raw, err := mobiReadRecord(r, ranges[i], maxMOBICoverBytes)
+		if errors.Is(err, ErrResourceLimit) {
 			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read PalmDOC resource %d: %w", i, err)
 		}
 		data, ext, mediaType, ok := palmDOCImageResource(raw)
 		if !ok {
@@ -321,7 +262,7 @@ func extractPalmDOCImageResources(r io.ReaderAt, ranges []mobiRecordRange, info 
 		if err := budget.add(data); err != nil {
 			return nil, err
 		}
-		resources = append(resources, KindleResource{
+		resources = append(resources, Resource{
 			ID:          fmt.Sprintf("res-%05d", i),
 			Href:        kindleResourceHref(i, ext, mediaType),
 			MediaType:   mediaType,
@@ -333,86 +274,66 @@ func extractPalmDOCImageResources(r io.ReaderAt, ranges []mobiRecordRange, info 
 	return resources, nil
 }
 
-func extractKF8StandaloneDocument(r io.ReaderAt, size int64, info *KindleInspection) (*KindleDocument, error) {
-	ranges, ok := mobiRecordRanges(r, size)
-	if !ok || len(ranges) == 0 {
-		return nil, fmt.Errorf("invalid MOBI record table")
-	}
-	record0, ok := mobiReadRecord(r, ranges[0], maxMOBIRecord0Bytes)
-	if !ok {
-		return nil, fmt.Errorf("invalid MOBI record 0")
-	}
-	meta, err := ExtractMOBIMetadata(r, size)
+func extractKF8StandaloneDocument(r io.ReaderAt, size int64, info *Inspection) (*Document, error) {
+	ranges, err := mobiRecordRanges(r, size)
 	if err != nil {
 		return nil, err
 	}
-	return extractKF8DocumentFromRanges(r, ranges, record0, info, meta, info.SourceClass, info.MOBIKind, 0, newKindleResourceBudget())
-}
-
-func extractComboKF8Document(r io.ReaderAt, size int64, info *KindleInspection) (*KindleDocument, error) {
-	ranges, ok := mobiRecordRanges(r, size)
-	if !ok || len(ranges) == 0 {
-		return nil, fmt.Errorf("invalid MOBI record table")
+	record0, err := mobiReadRecord(r, ranges[0], maxMOBIRecord0Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("read MOBI record 0: %w", err)
 	}
-	start := int(info.BoundaryIndex)
-	if start <= 0 || start >= len(ranges) {
-		return nil, fmt.Errorf("%w: invalid combo KF8 boundary", ErrUnsupportedKindleSource)
-	}
-	boundary, ok := mobiReadRecord(r, ranges[start-1], 64)
-	if !ok || !bytes.Equal(boundary, []byte("BOUNDARY")) {
-		return nil, fmt.Errorf("%w: invalid combo KF8 boundary", ErrUnsupportedKindleSource)
-	}
-	kf8Ranges := ranges[start:]
-	kf8Record0, ok := mobiReadRecord(r, kf8Ranges[0], maxMOBIRecord0Bytes)
-	if !ok || len(kf8Record0) < 20 || !bytes.Equal(kf8Record0[16:20], []byte("MOBI")) {
-		return nil, fmt.Errorf("%w: invalid combo KF8 header", ErrUnsupportedKindleSource)
-	}
-	kf8Info := inspectKF8RecordSet(r, kf8Ranges, kf8Record0, info.TypeCreator)
-	if err := kindleKF8ExtractionSupportError(kf8Info); err != nil {
+	meta, err := ExtractMetadata(r, size)
+	if err != nil {
 		return nil, err
 	}
-	meta, err := ExtractMOBIMetadata(r, size)
+	return extractKF8DocumentFromRanges(r, ranges, record0, info, meta, 0, newKindleResourceBudget())
+}
+
+func extractComboKF8Document(r io.ReaderAt, size int64, info *Inspection) (*Document, error) {
+	ranges, err := mobiRecordRanges(r, size)
+	if err != nil {
+		return nil, err
+	}
+	start := int(info.BoundaryIndex)
+	kf8Ranges := ranges[start:]
+	kf8Record0, err := mobiReadRecord(r, kf8Ranges[0], maxMOBIRecord0Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("read combo KF8 header: %w", err)
+	}
+	kf8Info, err := parseMOBIHeader(kf8Record0, len(kf8Ranges), false)
+	if err != nil {
+		return nil, fmt.Errorf("%w: invalid combo KF8 header: %v", ErrUnsupportedSource, err)
+	}
+	kf8Info.Kind = KindKF8
+	applyKindleRecordSetDiagnostics(kf8Info, r, kf8Ranges)
+	if err := kindleExtractionSupportError(kf8Info); err != nil {
+		return nil, err
+	}
+	meta, err := ExtractMetadata(r, size)
 	if err != nil {
 		return nil, err
 	}
 	resourceBudget := newKindleResourceBudget()
-	primaryRecord0, ok := mobiReadRecord(r, ranges[0], maxMOBIRecord0Bytes)
-	if !ok {
-		return nil, fmt.Errorf("invalid combo MOBI record 0")
+	primaryRecord0, err := mobiReadRecord(r, ranges[0], maxMOBIRecord0Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("read combo MOBI record 0: %w", err)
 	}
 	// Combo files may keep the resource table in the primary record set while
 	// KF8 markup after BOUNDARY still addresses it by embed index.
-	sharedResources, sharedCoverID, err := extractMOBIResources(r, ranges[:start-1], primaryRecord0, info, 0, resourceBudget)
+	sharedResources, err := extractMOBIResources(r, ranges[:start-1], primaryRecord0, info, 0, resourceBudget)
 	if err != nil {
 		return nil, err
 	}
-	doc, err := extractKF8DocumentFromRanges(r, kf8Ranges, kf8Record0, kf8Info, meta, info.SourceClass, info.MOBIKind, start, resourceBudget)
+	doc, err := extractKF8DocumentFromRanges(r, kf8Ranges, kf8Record0, kf8Info, meta, start, resourceBudget)
 	if err != nil {
 		return nil, err
 	}
 	doc.Resources = append(sharedResources, doc.Resources...)
-	if sharedCoverID != "" {
-		doc.CoverResourceID = sharedCoverID
-	}
 	return doc, nil
 }
 
-func inspectKF8RecordSet(r io.ReaderAt, ranges []mobiRecordRange, record0 []byte, typeCreator string) *KindleInspection {
-	info := &KindleInspection{
-		Container:   kindlePalmDBContainerMOBI,
-		TypeCreator: typeCreator,
-		MOBIKind:    MOBIKindKF8Standalone,
-		RecordCount: len(ranges),
-		SourceClass: string(MOBIKindKF8Standalone),
-	}
-	applyPalmDOCHeader(info, record0)
-	applyMOBIHeader(info, record0)
-	applyKindleRecordSetDiagnostics(info, r, ranges)
-	info.UnsupportedFeatures = kindleUnsupportedFeatures(info)
-	return info
-}
-
-func extractKF8DocumentFromRanges(r io.ReaderAt, ranges []mobiRecordRange, record0 []byte, info *KindleInspection, meta *Metadata, sourceClass string, mobiKind MOBIKind, recordIndexBase int, resourceBudget *kindleResourceBudget) (*KindleDocument, error) {
+func extractKF8DocumentFromRanges(r io.ReaderAt, ranges []mobiRecordRange, record0 []byte, info *Inspection, meta *bookmeta.Metadata, recordIndexBase int, resourceBudget *kindleResourceBudget) (*Document, error) {
 	raw, err := extractPalmTextData(r, ranges, info)
 	if err != nil {
 		return nil, err
@@ -421,7 +342,7 @@ func extractKF8DocumentFromRanges(r io.ReaderAt, ranges []mobiRecordRange, recor
 	if err != nil {
 		return nil, err
 	}
-	resources, coverID, err := extractMOBIResources(r, ranges, record0, info, recordIndexBase, resourceBudget)
+	resources, err := extractMOBIResources(r, ranges, record0, info, recordIndexBase, resourceBudget)
 	if err != nil {
 		return nil, err
 	}
@@ -434,25 +355,21 @@ func extractKF8DocumentFromRanges(r io.ReaderAt, ranges []mobiRecordRange, recor
 	if err != nil {
 		return nil, fmt.Errorf("extract KF8 NCX navigation: %w", err)
 	}
-	return &KindleDocument{
-		SourceClass:         sourceClass,
-		MOBIKind:            mobiKind,
-		Metadata:            meta,
-		Flows:               []KindleTextFlow{text},
-		Resources:           resources,
-		CoverResourceID:     coverID,
-		Navigation:          nav,
-		UnsupportedFeatures: slices.Clone(info.UnsupportedFeatures),
+	return &Document{
+		Metadata:   meta,
+		Flows:      []TextFlow{text},
+		Resources:  resources,
+		Navigation: nav,
 	}, nil
 }
 
-func extractKF8FlowResources(raw []byte, info *KindleInspection, text KindleTextFlow, budget *kindleResourceBudget) ([]KindleResource, error) {
+func extractKF8FlowResources(raw []byte, info *Inspection, text TextFlow, budget *kindleResourceBudget) ([]Resource, error) {
 	if len(raw) == 0 || len(info.FDSTSections) < 2 || len(text.Data) == 0 {
 		return nil, nil
 	}
 	referenced := kindleFlowReferences(text.Data, info)
 	processed := make(map[int]bool)
-	var resources []KindleResource
+	var resources []Resource
 	for {
 		added := false
 		for flow := 1; flow < len(info.FDSTSections); flow++ {
@@ -490,7 +407,7 @@ func extractKF8FlowResources(raw []byte, info *KindleInspection, text KindleText
 	return resources, nil
 }
 
-func kindleFlowReferences(data []byte, info *KindleInspection) map[int]string {
+func kindleFlowReferences(data []byte, info *Inspection) map[int]string {
 	referenced := make(map[int]string)
 	for _, match := range kindleFlowReferenceRE.FindAllSubmatch(data, -1) {
 		if len(match) != 3 {
@@ -515,10 +432,10 @@ func kindleSupportedFDSTFlowMediaType(mediaType string) bool {
 	}
 }
 
-func kindleFDSTFlowResource(flow int, mediaType string, data []byte) (KindleResource, bool) {
+func kindleFDSTFlowResource(flow int, mediaType string, data []byte) (Resource, bool) {
 	switch strings.ToLower(strings.TrimSpace(mediaType)) {
 	case "text/css":
-		return KindleResource{
+		return Resource{
 			ID:        fmt.Sprintf("style-%04d", flow),
 			Href:      fmt.Sprintf("styles/flow-%04d.css", flow),
 			MediaType: "text/css",
@@ -527,29 +444,29 @@ func kindleFDSTFlowResource(flow int, mediaType string, data []byte) (KindleReso
 		}, true
 	case "image/svg+xml":
 		href := fmt.Sprintf("images/flow-%04d.svg", flow)
-		svg, mediaType, _, ok := EPUBImageResource(data, href)
-		if !ok || mediaType != "image/svg+xml" {
-			return KindleResource{}, false
+		svg, ok := imagecodec.PrepareSVG(data, href)
+		if !ok {
+			return Resource{}, false
 		}
-		return KindleResource{
+		return Resource{
 			ID:        fmt.Sprintf("svg-%04d", flow),
 			Href:      href,
-			MediaType: mediaType,
+			MediaType: "image/svg+xml",
 			Data:      svg,
 			FlowIndex: flow,
 		}, true
 	default:
-		return KindleResource{}, false
+		return Resource{}, false
 	}
 }
 
-func extractPalmTextFlow(r io.ReaderAt, ranges []mobiRecordRange, info *KindleInspection, id, href, mediaType string) (KindleTextFlow, error) {
+func extractPalmTextFlow(r io.ReaderAt, ranges []mobiRecordRange, info *Inspection, id, href, mediaType string) (TextFlow, error) {
 	data, err := extractPalmTextData(r, ranges, info)
 	if err != nil {
-		return KindleTextFlow{}, err
+		return TextFlow{}, err
 	}
 	text := mobiDecode(data, info.Codepage)
-	return KindleTextFlow{
+	return TextFlow{
 		ID:        id,
 		Href:      href,
 		MediaType: mediaType,
@@ -557,10 +474,10 @@ func extractPalmTextFlow(r io.ReaderAt, ranges []mobiRecordRange, info *KindleIn
 	}, nil
 }
 
-func extractPalmTextData(r io.ReaderAt, ranges []mobiRecordRange, info *KindleInspection) ([]byte, error) {
+func extractPalmTextData(r io.ReaderAt, ranges []mobiRecordRange, info *Inspection) ([]byte, error) {
 	end := 1 + int(info.TextRecords)
 	if end > len(ranges) {
-		return nil, fmt.Errorf("Palm text records exceed record table")
+		return nil, fmt.Errorf("%w: Palm text records exceed record table", ErrUnsupportedSource)
 	}
 	var huff *kindleHUFFCDICDecoder
 	if info.Compression == mobiCompressionHUFFCDIC {
@@ -572,24 +489,26 @@ func extractPalmTextData(r io.ReaderAt, ranges []mobiRecordRange, info *KindleIn
 	}
 	var out bytes.Buffer
 	for i := 1; i < end; i++ {
-		raw, ok := mobiReadRecord(r, ranges[i], maxKindleExtractTextBytes)
-		if !ok {
-			return nil, fmt.Errorf("read MOBI text record %d", i)
+		raw, err := mobiReadRecord(r, ranges[i], maxExtractTextBytes)
+		if errors.Is(err, ErrResourceLimit) {
+			return nil, ErrTextLimit
 		}
-		var err error
+		if err != nil {
+			return nil, fmt.Errorf("read MOBI text record %d: %w", i, err)
+		}
 		raw, err = mobiTrimTrailingEntries(raw, info.TrailingFlags)
 		if err != nil {
 			return nil, fmt.Errorf("trim MOBI text record %d: %w", i, err)
 		}
-		remaining := maxKindleExtractTextBytes - int64(out.Len())
+		remaining := maxExtractTextBytes - int64(out.Len())
 		if remaining < 0 {
-			return nil, fmt.Errorf("MOBI text exceeds limit (%d bytes): %w", maxKindleExtractTextBytes, ErrTextTooLarge)
+			return nil, fmt.Errorf("MOBI text exceeds limit (%d bytes): %w", maxExtractTextBytes, ErrTextLimit)
 		}
 		var decoded []byte
 		switch info.Compression {
 		case mobiCompressionNone:
 			if int64(len(raw)) > remaining {
-				return nil, fmt.Errorf("MOBI text exceeds limit (%d bytes): %w", maxKindleExtractTextBytes, ErrTextTooLarge)
+				return nil, fmt.Errorf("MOBI text exceeds limit (%d bytes): %w", maxExtractTextBytes, ErrTextLimit)
 			}
 			decoded = raw
 		case mobiCompressionPalmDOC:
@@ -603,7 +522,7 @@ func extractPalmTextData(r io.ReaderAt, ranges []mobiRecordRange, info *KindleIn
 				return nil, fmt.Errorf("decompress HUFF/CDIC text record %d: %w", i, err)
 			}
 		default:
-			return nil, fmt.Errorf("unsupported MOBI compression %d", info.Compression)
+			return nil, fmt.Errorf("%w: unsupported MOBI compression %d", ErrUnsupportedSource, info.Compression)
 		}
 		out.Write(decoded)
 	}
@@ -612,19 +531,19 @@ func extractPalmTextData(r io.ReaderAt, ranges []mobiRecordRange, info *KindleIn
 	if info.TextLength > 0 {
 		want := int(info.TextLength)
 		if len(data) < want {
-			return nil, fmt.Errorf("MOBI text truncated: got %d bytes, want %d", len(data), want)
+			return nil, fmt.Errorf("%w: MOBI text truncated: got %d bytes, want %d", ErrUnsupportedSource, len(data), want)
 		}
 		data = data[:want]
 	}
 	return data, nil
 }
 
-func assembleKF8Text(raw []byte, info *KindleInspection) (KindleTextFlow, error) {
+func assembleKF8Text(raw []byte, info *Inspection) (TextFlow, error) {
 	var out bytes.Buffer
 	for _, skeleton := range info.KF8Skeletons {
 		end64 := uint64(skeleton.Start) + uint64(skeleton.Length)
 		if end64 > uint64(len(raw)) {
-			return KindleTextFlow{}, fmt.Errorf("KF8 skeleton %d outside text bounds", skeleton.Index)
+			return TextFlow{}, fmt.Errorf("%w: KF8 skeleton %d outside text bounds", ErrUnsupportedSource, skeleton.Index)
 		}
 		start := int(skeleton.Start)
 		end := int(end64)
@@ -634,16 +553,16 @@ func assembleKF8Text(raw []byte, info *KindleInspection) (KindleTextFlow, error)
 			fragmentStart64 := uint64(skeleton.Start) + uint64(skeleton.Length) + uint64(fragment.Start)
 			fragmentEnd64 := fragmentStart64 + uint64(fragment.Length)
 			if fragmentEnd64 > uint64(len(raw)) {
-				return KindleTextFlow{}, fmt.Errorf("KF8 fragment %d outside text bounds", fragment.Sequence)
+				return TextFlow{}, fmt.Errorf("%w: KF8 fragment %d outside text bounds", ErrUnsupportedSource, fragment.Sequence)
 			}
 			if fragment.InsertOffset < skeleton.Start {
-				return KindleTextFlow{}, fmt.Errorf("KF8 fragment %d insert offset outside skeleton", fragment.Sequence)
+				return TextFlow{}, fmt.Errorf("%w: KF8 fragment %d insert offset outside skeleton", ErrUnsupportedSource, fragment.Sequence)
 			}
 			fragmentStart := int(fragmentStart64)
 			fragmentEnd := int(fragmentEnd64)
 			insertOffset := int(uint64(fragment.InsertOffset) - uint64(skeleton.Start))
 			if insertOffset < 0 || insertOffset > len(body) {
-				return KindleTextFlow{}, fmt.Errorf("KF8 fragment %d insert offset outside skeleton", fragment.Sequence)
+				return TextFlow{}, fmt.Errorf("%w: KF8 fragment %d insert offset outside skeleton", ErrUnsupportedSource, fragment.Sequence)
 			}
 			part := raw[fragmentStart:fragmentEnd]
 			next := make([]byte, 0, len(body)+len(part))
@@ -655,7 +574,7 @@ func assembleKF8Text(raw []byte, info *KindleInspection) (KindleTextFlow, error)
 		out.Write(body)
 	}
 	text := mobiDecode(out.Bytes(), info.Codepage)
-	return KindleTextFlow{
+	return TextFlow{
 		ID:        "flow-0001",
 		Href:      "text/flow-0001.html",
 		MediaType: "text/html",
@@ -663,11 +582,11 @@ func assembleKF8Text(raw []byte, info *KindleInspection) (KindleTextFlow, error)
 	}, nil
 }
 
-func kindleFragmentsForSkeleton(fragments []KindleKF8Fragment, fileNumber uint32, limit uint32) []KindleKF8Fragment {
+func kindleFragmentsForSkeleton(fragments []KF8Fragment, fileNumber uint32, limit uint32) []KF8Fragment {
 	if limit == 0 {
 		return nil
 	}
-	var out []KindleKF8Fragment
+	var out []KF8Fragment
 	for _, fragment := range fragments {
 		if fragment.FileNumber != fileNumber {
 			continue
@@ -680,14 +599,14 @@ func kindleFragmentsForSkeleton(fragments []KindleKF8Fragment, fileNumber uint32
 	return out
 }
 
-func extractMOBI6GuideReferences(flow KindleTextFlow) []KindleGuideReference {
+func extractMOBI6GuideReferences(flow TextFlow) []GuideReference {
 	if len(flow.Data) == 0 {
 		return nil
 	}
 	z := html.NewTokenizer(bytes.NewReader(flow.Data))
 	guideDepth := 0
 	seen := make(map[string]bool)
-	var refs []KindleGuideReference
+	var refs []GuideReference
 
 	for len(refs) < maxKindleGuideReferences {
 		typ := z.Next()
@@ -725,17 +644,17 @@ func extractMOBI6GuideReferences(flow KindleTextFlow) []KindleGuideReference {
 	return refs
 }
 
-func kindleGuideReferenceFromAttrs(attrs []html.Attribute, flowHref string) (KindleGuideReference, bool) {
+func kindleGuideReferenceFromAttrs(attrs []html.Attribute, flowHref string) (GuideReference, bool) {
 	typ := strings.ToLower(mobiCleanString(kindleHTMLAttr(attrs, "type")))
 	title := mobiCleanString(kindleHTMLAttr(attrs, "title"))
 	href := kindleGuideHref(flowHref, kindleHTMLAttr(attrs, "filepos"), kindleHTMLAttr(attrs, "href"))
 	if href == "" || (typ == "" && title == "") {
-		return KindleGuideReference{}, false
+		return GuideReference{}, false
 	}
 	if title == "" {
 		title = typ
 	}
-	return KindleGuideReference{
+	return GuideReference{
 		Type:  typ,
 		Title: title,
 		Href:  href,
@@ -775,17 +694,17 @@ func mobiTrimTrailingEntries(data []byte, flags uint16) ([]byte, error) {
 	for range trailers {
 		length := mobiTrailingEntryLength(data)
 		if length <= 0 || length > len(data) {
-			return nil, fmt.Errorf("invalid trailing entry length %d", length)
+			return nil, fmt.Errorf("%w: invalid trailing entry length %d", ErrUnsupportedSource, length)
 		}
 		data = data[:len(data)-length]
 	}
 	if flags&1 != 0 {
 		if len(data) == 0 {
-			return nil, fmt.Errorf("missing multibyte trailing data")
+			return nil, fmt.Errorf("%w: missing multibyte trailing data", ErrUnsupportedSource)
 		}
 		length := int(data[len(data)-1]&0x03) + 1
 		if length > len(data) {
-			return nil, fmt.Errorf("invalid multibyte trailing length %d", length)
+			return nil, fmt.Errorf("%w: invalid multibyte trailing length %d", ErrUnsupportedSource, length)
 		}
 		data = data[:len(data)-length]
 	}
@@ -818,14 +737,14 @@ func palmDOCDecompress(data []byte, maxBytes int64) ([]byte, error) {
 	var out []byte
 	appendByte := func(b byte) error {
 		if maxBytes >= 0 && int64(len(out)+1) > maxBytes {
-			return fmt.Errorf("decompressed text exceeds limit (%d bytes): %w", maxBytes, ErrTextTooLarge)
+			return fmt.Errorf("decompressed text exceeds limit (%d bytes): %w", maxBytes, ErrTextLimit)
 		}
 		out = append(out, b)
 		return nil
 	}
 	appendBytes := func(raw []byte) error {
 		if maxBytes >= 0 && int64(len(out)+len(raw)) > maxBytes {
-			return fmt.Errorf("decompressed text exceeds limit (%d bytes): %w", maxBytes, ErrTextTooLarge)
+			return fmt.Errorf("decompressed text exceeds limit (%d bytes): %w", maxBytes, ErrTextLimit)
 		}
 		out = append(out, raw...)
 		return nil
@@ -841,7 +760,7 @@ func palmDOCDecompress(data []byte, maxBytes int64) ([]byte, error) {
 			}
 		case c <= 8:
 			if i+int(c) > len(data) {
-				return nil, fmt.Errorf("literal run overruns record")
+				return nil, fmt.Errorf("%w: literal run overruns record", ErrUnsupportedSource)
 			}
 			if err := appendBytes(data[i : i+int(c)]); err != nil {
 				return nil, err
@@ -853,14 +772,14 @@ func palmDOCDecompress(data []byte, maxBytes int64) ([]byte, error) {
 			}
 		case c <= 0xbf:
 			if i >= len(data) {
-				return nil, fmt.Errorf("back-reference overruns record")
+				return nil, fmt.Errorf("%w: back-reference overruns record", ErrUnsupportedSource)
 			}
 			token := uint16(c)<<8 | uint16(data[i])
 			i++
 			distance := int((token >> 3) & 0x07ff)
 			length := int(token&0x0007) + 3
 			if distance == 0 || distance > len(out) {
-				return nil, fmt.Errorf("invalid back-reference distance %d", distance)
+				return nil, fmt.Errorf("%w: invalid back-reference distance %d", ErrUnsupportedSource, distance)
 			}
 			for range length {
 				if err := appendByte(out[len(out)-distance]); err != nil {
@@ -879,17 +798,20 @@ func palmDOCDecompress(data []byte, maxBytes int64) ([]byte, error) {
 	return out, nil
 }
 
-func extractMOBIResources(r io.ReaderAt, ranges []mobiRecordRange, record0 []byte, info *KindleInspection, recordIndexBase int, budget *kindleResourceBudget) ([]KindleResource, string, error) {
+func extractMOBIResources(r io.ReaderAt, ranges []mobiRecordRange, record0 []byte, info *Inspection, recordIndexBase int, budget *kindleResourceBudget) ([]Resource, error) {
 	start := kindleFirstResourceRecord(info)
 	if start < 1 || start >= len(ranges) {
-		return nil, "", nil
+		return nil, nil
 	}
-	var resources []KindleResource
+	var resources []Resource
 	byRecord := make(map[uint32]int)
 	for i := start; i < len(ranges); i++ {
-		record, ok := mobiReadRecord(r, ranges[i], maxMOBICoverBytes)
-		if !ok {
+		record, err := mobiReadRecord(r, ranges[i], maxMOBICoverBytes)
+		if errors.Is(err, ErrResourceLimit) {
 			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read MOBI resource %d: %w", i, err)
 		}
 		data := record
 		ext, mediaType, ok := kindleImageResourceType(record)
@@ -897,13 +819,13 @@ func extractMOBIResources(r io.ReaderAt, ranges []mobiRecordRange, record0 []byt
 			var err error
 			data, ext, mediaType, ok, err = kindleFontResource(record)
 			if err != nil {
-				return nil, "", fmt.Errorf("extract Kindle font record %d: %w", i, err)
+				return nil, fmt.Errorf("extract Kindle font record %d: %w", i, err)
 			}
 		}
 		if !ok {
 			data, ext, mediaType, ok = kindleMediaResource(record)
 			if !ok && kindleMediaEnvelope(record) {
-				return nil, "", fmt.Errorf("%w: invalid or unsupported media record %d", ErrUnsupportedKindleSource, i)
+				return nil, fmt.Errorf("%w: invalid or unsupported media record %d", ErrUnsupportedSource, i)
 			}
 		}
 		if len(data) == 0 {
@@ -913,7 +835,7 @@ func extractMOBIResources(r io.ReaderAt, ranges []mobiRecordRange, record0 []byt
 			continue
 		}
 		if err := budget.add(data); err != nil {
-			return nil, "", err
+			return nil, err
 		}
 		recordIndex := recordIndexBase + i
 		id := fmt.Sprintf("res-%05d", recordIndex)
@@ -928,7 +850,7 @@ func extractMOBIResources(r io.ReaderAt, ranges []mobiRecordRange, record0 []byt
 		if strings.HasPrefix(mediaType, "image/") {
 			byRecord[uint32(i)] = len(resources)
 		}
-		resources = append(resources, KindleResource{
+		resources = append(resources, Resource{
 			ID:          id,
 			Href:        kindleResourceHref(recordIndex, ext, mediaType),
 			MediaType:   mediaType,
@@ -941,10 +863,10 @@ func extractMOBIResources(r io.ReaderAt, ranges []mobiRecordRange, record0 []byt
 	for _, candidate := range mobiCoverRecordCandidates(record0, info.FirstResourceIndex) {
 		if pos, ok := byRecord[candidate]; ok {
 			resources[pos].Cover = true
-			return resources, resources[pos].ID, nil
+			break
 		}
 	}
-	return resources, "", nil
+	return resources, nil
 }
 
 func kindleResourceHref(recordIndex int, ext, mediaType string) string {
@@ -1017,7 +939,7 @@ func kindleFontResource(data []byte) ([]byte, string, string, bool, error) {
 
 func kindleWrappedFontResource(data []byte) ([]byte, string, string, bool, error) {
 	if len(data) < 24 {
-		return nil, "", "", false, fmt.Errorf("short FONT header")
+		return nil, "", "", false, fmt.Errorf("%w: short FONT header", ErrUnsupportedSource)
 	}
 	uncompressedSize := kindleUint32(data, 4)
 	flags := kindleUint32(data, 8)
@@ -1025,12 +947,12 @@ func kindleWrappedFontResource(data []byte) ([]byte, string, string, bool, error
 	xorLength := int(kindleUint32(data, 16))
 	xorStart := int(kindleUint32(data, 20))
 	if dataStart < 24 || dataStart > len(data) {
-		return nil, "", "", false, fmt.Errorf("invalid FONT data offset %d", dataStart)
+		return nil, "", "", false, fmt.Errorf("%w: invalid FONT data offset %d", ErrUnsupportedSource, dataStart)
 	}
 	fontData := slices.Clone(data[dataStart:])
 	if flags&0x0002 != 0 {
 		if xorLength <= 0 || xorStart < 0 || xorStart+xorLength > len(data) {
-			return nil, "", "", false, fmt.Errorf("invalid FONT xor range %d..%d", xorStart, xorStart+xorLength)
+			return nil, "", "", false, fmt.Errorf("%w: invalid FONT xor range %d..%d", ErrUnsupportedSource, xorStart, xorStart+xorLength)
 		}
 		key := data[xorStart : xorStart+xorLength]
 		for i := range min(len(fontData), 1040) {
@@ -1039,19 +961,19 @@ func kindleWrappedFontResource(data []byte) ([]byte, string, string, bool, error
 	}
 	if flags&0x0001 != 0 {
 		if uncompressedSize > uint32(maxMOBICoverBytes) {
-			return nil, "", "", false, fmt.Errorf("FONT payload exceeds limit (%d bytes): %w", maxMOBICoverBytes, ErrTextTooLarge)
+			return nil, "", "", false, fmt.Errorf("FONT payload exceeds limit (%d bytes): %w", maxMOBICoverBytes, ErrTextLimit)
 		}
 		zr, err := zlib.NewReader(bytes.NewReader(fontData))
 		if err != nil {
-			return nil, "", "", false, err
+			return nil, "", "", false, fmt.Errorf("%w: invalid FONT compression: %v", ErrUnsupportedSource, err)
 		}
 		defer zr.Close()
 		fontData, err = io.ReadAll(io.LimitReader(zr, maxMOBICoverBytes+1))
 		if err != nil {
-			return nil, "", "", false, err
+			return nil, "", "", false, fmt.Errorf("%w: invalid FONT compression: %v", ErrUnsupportedSource, err)
 		}
 		if int64(len(fontData)) > maxMOBICoverBytes {
-			return nil, "", "", false, fmt.Errorf("FONT payload exceeds limit (%d bytes): %w", maxMOBICoverBytes, ErrTextTooLarge)
+			return nil, "", "", false, fmt.Errorf("FONT payload exceeds limit (%d bytes): %w", maxMOBICoverBytes, ErrTextLimit)
 		}
 	}
 	ext, mediaType, ok := kindleFontMediaType(fontData)

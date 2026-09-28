@@ -15,11 +15,10 @@ import (
 
 type sourceInfo struct {
 	Source
+	Format     format.Format
 	Size       int64
 	SourceHash []byte
-	Format     format.Format
 	Extension  string
-	CanRead    bool
 	PageCount  int
 	ModTime    time.Time
 }
@@ -27,18 +26,6 @@ type sourceInfo struct {
 type preparedSource struct {
 	info   sourceInfo
 	staged storage.StagedFile
-}
-
-type contextReaderAt struct {
-	ctx  context.Context
-	file *os.File
-}
-
-func (f contextReaderAt) ReadAt(p []byte, offset int64) (int, error) {
-	if err := context.Cause(f.ctx); err != nil {
-		return 0, err
-	}
-	return f.file.ReadAt(p, offset)
 }
 
 type contextReader struct {
@@ -51,6 +38,18 @@ func (r contextReader) Read(p []byte) (int, error) {
 		return 0, err
 	}
 	return r.r.Read(p)
+}
+
+type contextReaderAt struct {
+	ctx context.Context
+	r   io.ReaderAt
+}
+
+func (r contextReaderAt) ReadAt(p []byte, off int64) (int, error) {
+	if err := context.Cause(r.ctx); err != nil {
+		return 0, err
+	}
+	return r.r.ReadAt(p, off)
 }
 
 func hashSourceIfKnownSize(ctx context.Context, src Source, knownSizes map[int64]struct{}) ([]byte, bool, error) {
@@ -134,8 +133,7 @@ func prepareSource(ctx context.Context, root storage.Root, src Source) (prepared
 		return preparedSource{}, err
 	}
 	defer stagedFile.Close()
-	contextSource := contextReaderAt{ctx: ctx, file: stagedFile}
-	kind := format.DetectFormat(src.sourceName(), contextSource, stat.Size())
+	kind := format.DetectFormat(src.sourceName(), contextReaderAt{ctx: ctx, r: stagedFile}, stat.Size())
 	if err := context.Cause(ctx); err != nil {
 		return preparedSource{}, err
 	}
@@ -145,9 +143,8 @@ func prepareSource(ctx context.Context, root storage.Root, src Source) (prepared
 			Source:     src,
 			Size:       stat.Size(),
 			SourceHash: fileHash,
-			Format:     kind,
 			Extension:  ext,
-			CanRead:    format.CanRead(kind),
+			Format:     kind,
 			ModTime:    stat.ModTime(),
 		},
 		staged: staged,
@@ -180,7 +177,7 @@ func fingerprintSource(ctx context.Context, src Source) (sourceInfo, error) {
 		return sourceInfo{}, fmt.Errorf("hash file: %w", err)
 	}
 
-	kind := format.DetectFormat(src.sourceName(), contextReaderAt{ctx: ctx, file: f}, stat.Size())
+	kind := format.DetectFormat(src.sourceName(), contextReaderAt{ctx: ctx, r: f}, stat.Size())
 	if err := context.Cause(ctx); err != nil {
 		return sourceInfo{}, err
 	}
@@ -190,9 +187,8 @@ func fingerprintSource(ctx context.Context, src Source) (sourceInfo, error) {
 		Source:     src,
 		Size:       stat.Size(),
 		SourceHash: fileHash,
-		Format:     kind,
 		Extension:  ext,
-		CanRead:    format.CanRead(kind),
+		Format:     kind,
 		ModTime:    stat.ModTime(),
 	}, nil
 }

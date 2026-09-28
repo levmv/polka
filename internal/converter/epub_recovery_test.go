@@ -10,6 +10,7 @@ import (
 	"github.com/levmv/polka/internal/bookmeta"
 	"github.com/levmv/polka/internal/epubtest"
 	"github.com/levmv/polka/internal/format"
+	"github.com/levmv/polka/internal/format/mobi"
 	"github.com/levmv/polka/internal/testfixture"
 )
 
@@ -71,7 +72,7 @@ func TestEPUBConversionRecoversResources(t *testing.T) {
 				t.Fatalf("conversion = %v, warnings = %v", err, warnings)
 			}
 			if target == TargetMOBI6 {
-				doc, err := format.ExtractKindleDocument(bytes.NewReader(out.Bytes()), int64(out.Len()), format.FormatMOBI)
+				doc, err := mobi.ExtractDocument(bytes.NewReader(out.Bytes()), int64(out.Len()))
 				if err != nil || len(doc.Flows) != 1 || !bytes.Contains(doc.Flows[0].Data, []byte("Readable chapter.")) {
 					t.Fatalf("lost readable content: %v", err)
 				}
@@ -183,7 +184,7 @@ func TestEPUBConversionRecoversDamagedArchive(t *testing.T) {
 					t.Fatalf("conversion = %v, warned = %v", err, warned)
 				}
 				if target == TargetMOBI6 {
-					doc, err := format.ExtractKindleDocument(bytes.NewReader(out.Bytes()), int64(out.Len()), format.FormatMOBI)
+					doc, err := mobi.ExtractDocument(bytes.NewReader(out.Bytes()), int64(out.Len()))
 					if err != nil || len(doc.Flows) != 1 || !bytes.Contains(doc.Flows[0].Data, []byte("Readable chapter.")) {
 						t.Fatalf("lost readable content: %v", err)
 					}

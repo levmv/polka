@@ -7,6 +7,8 @@ import (
 	"io"
 	"regexp"
 	"strings"
+
+	"github.com/levmv/polka/internal/bookmeta"
 )
 
 var rtfPageCountRE = regexp.MustCompile(`^\\nofpages([0-9]+)\b`)
@@ -37,7 +39,7 @@ func rtfDeclaredPageCount(info []byte) int {
 			i++
 		}
 		if match := rtfPageCountRE.FindSubmatch(candidate); len(match) == 2 {
-			if count := positivePageCount(string(match[1])); count > 0 {
+			if count := bookmeta.PositivePageCount(string(match[1])); count > 0 {
 				return count
 			}
 		}

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/levmv/polka/internal/format/mobi"
 )
 
 // Diagnostic describes a recoverable format anomaly. InspectDiagnostics is a
@@ -24,8 +26,8 @@ func InspectDiagnostics(r io.ReaderAt, size int64, kind Format, filename string)
 		return inspectEPUBDiagnostics(r, size)
 	case kind == FormatFB2:
 		return inspectFB2Diagnostics(r, size, filename)
-	case isKindleDiagnosticFormat(kind):
-		return inspectKindleDiagnostics(r, size, kind)
+	case isMOBIFamily(kind):
+		return inspectMOBIDiagnostics(r, size)
 	default:
 		return nil
 	}
@@ -128,29 +130,22 @@ func inspectFB2Diagnostics(r io.ReaderAt, size int64, filename string) []Diagnos
 	return out
 }
 
-func inspectKindleDiagnostics(r io.ReaderAt, size int64, kind Format) []Diagnostic {
-	info, err := InspectKindle(r, size, kind)
-	if err != nil || info == nil || info.Container != kindlePalmDBContainerMOBI {
-		return nil
-	}
-	if kindleCodepageHasNativeDecoder(info.Codepage) {
+func inspectMOBIDiagnostics(r io.ReaderAt, size int64) []Diagnostic {
+	codepage := mobi.ReadCodepage(r, size)
+	if codepage == 0 || mobi.HasNativeCodepage(codepage) {
 		return nil
 	}
 	return []Diagnostic{{
 		Code:    "kindle.codepage_fallback",
-		Message: fmt.Sprintf("Decoded unsupported MOBI codepage %d with the Windows-1252 fallback.", info.Codepage),
+		Message: fmt.Sprintf("Decoded unsupported MOBI codepage %d with the Windows-1252 fallback.", codepage),
 	}}
 }
 
-func isKindleDiagnosticFormat(kind Format) bool {
+func isMOBIFamily(kind Format) bool {
 	switch kind {
 	case FormatMOBI, FormatAZW, FormatAZW3, FormatAZW4, FormatPRC, FormatPDB:
 		return true
 	default:
 		return false
 	}
-}
-
-func kindleCodepageHasNativeDecoder(codepage uint32) bool {
-	return codepage == 65001 || codepage >= 1250 && codepage <= 1258
 }

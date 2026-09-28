@@ -16,6 +16,7 @@ import (
 
 	"golang.org/x/net/html/charset"
 
+	"github.com/levmv/polka/internal/bookmeta"
 	"github.com/levmv/polka/internal/format"
 )
 
@@ -341,7 +342,7 @@ func readRebuildCandidate(ctx context.Context, zr *zip.Reader, file *zip.File) (
 		return rebuildCandidate{}, fmt.Errorf("repair EPUB OPF %s: %w", file.Name, err)
 	}
 	var doc rebuildOPFDoc
-	if err := format.DecodeOPFXML(raw, &doc); err != nil {
+	if err := bookmeta.DecodeOPFXML(raw, &doc); err != nil {
 		return rebuildCandidate{}, fmt.Errorf("parse EPUB OPF %s: %w", file.Name, err)
 	}
 	if doc.XMLName.Local != "package" || len(doc.Manifest.Items) == 0 {
@@ -390,7 +391,7 @@ func readRebuildCandidate(ctx context.Context, zr *zip.Reader, file *zip.File) (
 
 func normalizeRebuildOPF(raw []byte) ([]byte, bool, error) {
 	normalizedXML11 := rebuildXMLVersion11RE.Match(raw)
-	decoded, err := format.NormalizeOPFXML(raw)
+	decoded, err := bookmeta.NormalizeOPFXML(raw)
 	if err != nil {
 		return nil, false, err
 	}

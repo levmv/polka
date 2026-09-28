@@ -14,6 +14,7 @@ import (
 	"github.com/levmv/polka/internal/bookmeta"
 	"github.com/levmv/polka/internal/converter"
 	"github.com/levmv/polka/internal/format"
+	"github.com/levmv/polka/internal/format/mobi"
 )
 
 var errMetaFileErrors = errors.New("one or more files could not be inspected")
@@ -365,15 +366,19 @@ func metadataForReport(meta *bookmeta.Metadata) *metaMetadata {
 func metaFormatDetails(path string, f *os.File, size int64, kind format.Format) *metaFormatDetail {
 	details := &metaFormatDetail{}
 	if kindleKind := metaKindleInspectFormat(path, kind); kindleKind != format.FormatUnknown {
-		kindle, err := format.InspectKindle(f, size, kindleKind)
+		inspect := mobi.Inspect
+		if kindleKind == format.FormatAZW4 {
+			inspect = mobi.InspectAZW4
+		}
+		kindle, err := inspect(f, size)
 		if err == nil && kindle != nil {
-			if kindle.MOBIKind != format.MOBIKindUnknown {
-				details.MOBIKind = string(kindle.MOBIKind)
+			if kindle.Kind != mobi.KindUnknown {
+				details.MOBIKind = string(kindle.Kind)
 			}
 			details.Kindle = kindleDetailForReport(kindle)
 		}
 		if kindleKind == format.FormatAZW4 {
-			if (details.Kindle != nil && details.Kindle.AZW4PDF) || (details.Kindle == nil && format.HasAZW4PDF(f, size)) {
+			if (details.Kindle != nil && details.Kindle.AZW4PDF) || (details.Kindle == nil && mobi.HasPDF(f, size)) {
 				details.AZW4PDF = "present"
 			} else {
 				details.AZW4PDF = "missing"
@@ -426,7 +431,7 @@ func metaIsKindleFamilyFormat(kind format.Format) bool {
 	}
 }
 
-func kindleDetailForReport(info *format.KindleInspection) *metaKindleDetail {
+func kindleDetailForReport(info *mobi.Inspection) *metaKindleDetail {
 	if info == nil {
 		return nil
 	}
@@ -469,7 +474,7 @@ func kindleDetailForReport(info *format.KindleInspection) *metaKindleDetail {
 	}
 }
 
-func kindleResourceCountsForReport(counts format.KindleResourceCounts) *metaKindleResourceCounts {
+func kindleResourceCountsForReport(counts mobi.ResourceCounts) *metaKindleResourceCounts {
 	out := metaKindleResourceCounts{
 		Images:   counts.Images,
 		Fonts:    counts.Fonts,

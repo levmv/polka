@@ -19,6 +19,7 @@ import (
 
 	"golang.org/x/net/html"
 
+	"github.com/levmv/polka/internal/bookmeta"
 	"github.com/levmv/polka/internal/format"
 	"github.com/levmv/polka/internal/xmlutil"
 )
@@ -1180,7 +1181,7 @@ func htmlZPackageNavFromRefs(ctx context.Context, zr *zip.Reader, hrefs []string
 
 func htmlZOPFNavigationRefs(raw []byte, opfPath string) (htmlZOPFNavigation, error) {
 	var pkg htmlZOPFPackage
-	if err := format.DecodeOPFXML(raw, &pkg); err != nil {
+	if err := bookmeta.DecodeOPFXML(raw, &pkg); err != nil {
 		return htmlZOPFNavigation{}, err
 	}
 	itemsByID := map[string]htmlZOPFItem{}
@@ -1367,7 +1368,7 @@ func htmlZMetadataForEPUB(ctx context.Context, zr *zip.Reader) (*format.Metadata
 	if err != nil {
 		return nil, err
 	}
-	meta, err := format.ParseOPF(bytes.NewReader(raw))
+	meta, err := bookmeta.ParseOPF(bytes.NewReader(raw))
 	if err != nil {
 		return nil, nil
 	}

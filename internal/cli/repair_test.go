@@ -94,7 +94,6 @@ func TestRepairReconciliation(t *testing.T) {
 		OriginalHash, CurrentHash               []byte
 		OriginalSize, CurrentSize               int64
 		Format                                  string
-		CanRead                                 bool
 	}
 	loadAsset := func() assetSnapshot {
 		t.Helper()
@@ -102,13 +101,13 @@ func TestRepairReconciliation(t *testing.T) {
 		if err := database.Read(t.Context()).QueryRow(`
 			SELECT storage_path, filename, original_filename,
 			       original_hash, current_hash, original_size, current_size,
-			       format, can_read
+			       format
 			FROM assets WHERE id = ?
 		`, assetID).Scan(
 			&snapshot.StoragePath, &snapshot.Filename, &snapshot.OriginalFilename,
 			&snapshot.OriginalHash, &snapshot.CurrentHash,
 			&snapshot.OriginalSize, &snapshot.CurrentSize,
-			&snapshot.Format, &snapshot.CanRead,
+			&snapshot.Format,
 		); err != nil {
 			t.Fatalf("query repaired asset: %v", err)
 		}
@@ -149,7 +148,7 @@ func TestRepairReconciliation(t *testing.T) {
 	for _, label := range []string{
 		"Relocated files:", "Hash recoveries:", "Fixed database paths:",
 		"Size backfills:", "Original sizes:",
-		"Formats:", "Reader capabilities:",
+		"Formats:",
 	} {
 		if expected := fmt.Sprintf("  %-32s 0\n", label); !strings.Contains(out, expected) {
 			t.Fatalf("second repair output = %q; want %q", out, expected)
@@ -1276,7 +1275,7 @@ func TestCheckAndRepairRejectChangedBytes(t *testing.T) {
 	}
 }
 
-func TestCheckAndRepairReaderCapability(t *testing.T) {
+func TestCheckAndRepairFormat(t *testing.T) {
 	dataDir := t.TempDir()
 	initialized, err := ensureLibrary(t.Context(), dataDir)
 	if err != nil {
@@ -1284,12 +1283,12 @@ func TestCheckAndRepairReaderCapability(t *testing.T) {
 	}
 	initialized.Close()
 
-	fb2Path := filepath.Join(dataDir, "reader-capability.fb2")
+	fb2Path := filepath.Join(dataDir, "format-detection.fb2")
 	fb2 := []byte(`<?xml version="1.0" encoding="UTF-8"?>
 <FictionBook>
   <description>
     <title-info>
-      <book-title>Reader Capability</book-title>
+      <book-title>Format Detection</book-title>
       <author><first-name>Ada</first-name><last-name>Lovelace</last-name></author>
     </title-info>
   </description>
@@ -1310,47 +1309,40 @@ func TestCheckAndRepairReaderCapability(t *testing.T) {
 
 	var assetID int64
 	var formatKey string
-	var canRead int
-	if err := database.Read(t.Context()).QueryRow("SELECT id, format, can_read FROM assets LIMIT 1").Scan(&assetID, &formatKey, &canRead); err != nil {
-		t.Fatalf("query asset format/can_read: %v", err)
+	if err := database.Read(t.Context()).QueryRow("SELECT id, format FROM assets LIMIT 1").Scan(&assetID, &formatKey); err != nil {
+		t.Fatalf("query asset format: %v", err)
 	}
 	if formatKey != "fb2" {
 		t.Fatalf("imported format = %q; want fb2", formatKey)
 	}
-	if canRead != 1 {
-		t.Fatalf("imported can_read = %d; want 1", canRead)
-	}
-	if _, err := database.Write(t.Context()).Exec("UPDATE assets SET format = 'unknown', can_read = 0 WHERE id = ?", assetID); err != nil {
-		t.Fatalf("make format/can_read stale: %v", err)
+	if _, err := database.Write(t.Context()).Exec("UPDATE assets SET format = 'unknown' WHERE id = ?", assetID); err != nil {
+		t.Fatalf("make format stale: %v", err)
 	}
 
 	if err := runCheck(t.Context(), dataDir, nil); err != nil {
-		t.Fatalf("fast runCheck with stale can_read = %v; want no deep-only issue", err)
+		t.Fatalf("fast runCheck with stale format = %v; want no deep-only issue", err)
 	}
 	out, err := captureStdout(t, func() error {
 		return runCheck(t.Context(), dataDir, []string{"--deep"})
 	})
 	if !errors.Is(err, ErrIssuesFound) {
-		t.Fatalf("runCheck --deep stale can_read = %v; want ErrIssuesFound", err)
+		t.Fatalf("runCheck --deep stale format = %v; want ErrIssuesFound", err)
 	}
-	if !strings.Contains(out, "Format mismatches (1):") || !strings.Contains(out, "Reader capability mismatches (1):") || !strings.Contains(out, "detected true (FB2)") {
-		t.Fatalf("check output = %q; want format and reader capability mismatch", out)
+	if !strings.Contains(out, "Format mismatches (1):") {
+		t.Fatalf("check output = %q; want format mismatch", out)
 	}
 
 	if err := runRepair(context.Background(), dataDir, nil); err != nil {
 		t.Fatalf("runRepair: %v", err)
 	}
-	if err := database.Read(t.Context()).QueryRow("SELECT format, can_read FROM assets WHERE id = ?", assetID).Scan(&formatKey, &canRead); err != nil {
-		t.Fatalf("query repaired format/can_read: %v", err)
+	if err := database.Read(t.Context()).QueryRow("SELECT format FROM assets WHERE id = ?", assetID).Scan(&formatKey); err != nil {
+		t.Fatalf("query repaired format: %v", err)
 	}
 	if formatKey != "fb2" {
 		t.Fatalf("repaired format = %q; want fb2", formatKey)
 	}
-	if canRead != 1 {
-		t.Fatalf("repaired can_read = %d; want 1", canRead)
-	}
 	if err := runCheck(t.Context(), dataDir, nil); err != nil {
-		t.Fatalf("runCheck after can_read repair: %v", err)
+		t.Fatalf("runCheck after format repair: %v", err)
 	}
 }
 

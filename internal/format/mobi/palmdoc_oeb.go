@@ -1,4 +1,4 @@
-package format
+package mobi
 
 import (
 	"bytes"
@@ -9,6 +9,9 @@ import (
 
 	"golang.org/x/image/bmp"
 	"golang.org/x/net/html"
+
+	"github.com/levmv/polka/internal/bookmeta"
+	"github.com/levmv/polka/internal/xmlutil"
 )
 
 const (
@@ -16,20 +19,19 @@ const (
 	maxPalmDOCTranscodePixels = 80_000_000
 )
 
-func palmDOCEmbeddedMetadata(r io.ReaderAt, size int64, pdb palmDB) *Metadata {
-	ranges, ok := pdb.recordRanges(r, size, palmDOCHeader)
-	if !ok || len(ranges) < 2 {
+func palmDOCEmbeddedMetadata(r io.ReaderAt, size int64, pdb palmDB) *bookmeta.Metadata {
+	ranges, err := pdb.recordRanges(r, size, palmDOCHeader)
+	if err != nil || len(ranges) < 2 {
 		return nil
 	}
 	record0 := make([]byte, palmDOCHeader)
 	if _, err := r.ReadAt(record0, ranges[0].start); err != nil || binary.BigEndian.Uint16(record0[8:10]) == 0 || binary.BigEndian.Uint16(record0[12:14]) != 0 {
 		return nil
 	}
-	raw, ok := mobiReadRecord(r, ranges[1], maxPalmDOCMetadataText)
-	if !ok {
+	raw, err := mobiReadRecord(r, ranges[1], maxPalmDOCMetadataText)
+	if err != nil {
 		return nil
 	}
-	var err error
 	switch binary.BigEndian.Uint16(record0[0:2]) {
 	case mobiCompressionNone:
 	case mobiCompressionPalmDOC:
@@ -44,7 +46,7 @@ func palmDOCEmbeddedMetadata(r io.ReaderAt, size int64, pdb palmDB) *Metadata {
 	if !ok {
 		return nil
 	}
-	meta, err := ParseOPF(bytes.NewReader(fragment))
+	meta, err := bookmeta.ParseOPF(bytes.NewReader(fragment))
 	if err != nil {
 		return nil
 	}
@@ -67,7 +69,7 @@ func palmDOCMetadataRange(raw []byte) (int, int, bool) {
 			return 0, 0, false
 		}
 		afterName := start + len(open)
-		if afterName < len(raw) && (isXMLSpace(raw[afterName]) || raw[afterName] == '>') {
+		if afterName < len(raw) && (xmlutil.IsSpace(raw[afterName]) || raw[afterName] == '>') {
 			closeStart := palmDOCIndexASCIIFold(raw, afterName, "</metadata>")
 			if closeStart < 0 {
 				return 0, 0, false

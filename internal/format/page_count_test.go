@@ -10,6 +10,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/levmv/polka/internal/bookmeta"
+	"github.com/levmv/polka/internal/format/mobi"
 )
 
 func TestDeclaredPageCountsAndWriteback(t *testing.T) {
@@ -24,7 +27,7 @@ func TestDeclaredPageCountsAndWriteback(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			raw := []byte(`<package xmlns="http://www.idpf.org/2007/opf" version="3.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Example</dc:title>` + tt.fields + `</metadata></package>`)
-			meta, err := ParseOPF(bytes.NewReader(raw))
+			meta, err := bookmeta.ParseOPF(bytes.NewReader(raw))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -51,7 +54,7 @@ func TestDeclaredPageCountsAndWriteback(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			parsed, err := ParseOPF(bytes.NewReader(out))
+			parsed, err := bookmeta.ParseOPF(bytes.NewReader(out))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -74,7 +77,7 @@ func TestDeclaredPageCountsAndWriteback(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			parsed, err = ParseOPF(bytes.NewReader(normalized))
+			parsed, err = bookmeta.ParseOPF(bytes.NewReader(normalized))
 			if err != nil || parsed.PageCount != 123 || bytes.Contains(normalized, []byte("#pages")) || bytes.Contains(normalized, []byte("#pagecount")) || bytes.Contains(normalized, []byte("bookorbit:page_count")) || !bytes.Contains(normalized, []byte("Keep &amp; preserve")) {
 				t.Fatalf("conversion did not consolidate counts and preserve other columns: %s, %v", normalized, err)
 			}
@@ -182,19 +185,19 @@ func TestEPUBReadyPageCounts(t *testing.T) {
 func TestKindlePageCountUsesNativeImageReferences(t *testing.T) {
 	for _, reference := range []string{`recindex="1"`, `src="kindle:embed:0002?mime=image/png"`} {
 		t.Run(reference, func(t *testing.T) {
-			doc := &KindleDocument{
-				Flows: []KindleTextFlow{{MediaType: "text/html", Data: []byte(strings.Repeat(`<p>A short paragraph.</p>`, 300) + strings.Repeat(`<img `+reference+`>`, 51))}},
-				Resources: []KindleResource{
+			doc := &mobi.Document{
+				Flows: []mobi.TextFlow{{MediaType: "text/html", Data: []byte(strings.Repeat(`<p>A short paragraph.</p>`, 300) + strings.Repeat(`<img `+reference+`>`, 51))}},
+				Resources: []mobi.Resource{
 					{MediaType: "font/ttf", EmbedIndex: 1},
 					{MediaType: "image/png", EmbedIndex: 2, Href: "images/formula.png", Data: testPNGSize(t, 8, 9, color.Black)},
 				},
 			}
-			tiny, err := kindlePageCount(t.Context(), doc)
+			tiny, err := mobiPageCount(t.Context(), doc)
 			if err != nil {
 				t.Fatal(err)
 			}
 			doc.Resources[1].Data = testPNGSize(t, 480, 720, color.Black)
-			large, err := kindlePageCount(t.Context(), doc)
+			large, err := mobiPageCount(t.Context(), doc)
 			if err != nil {
 				t.Fatal(err)
 			}

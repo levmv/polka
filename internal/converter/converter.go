@@ -12,6 +12,7 @@ import (
 
 	"github.com/levmv/polka/internal/bookmeta"
 	"github.com/levmv/polka/internal/format"
+	"github.com/levmv/polka/internal/format/mobi"
 )
 
 type Target string
@@ -185,7 +186,7 @@ func convertContextWithLimits(ctx context.Context, w io.Writer, src io.ReaderAt,
 
 	switch target {
 	case TargetPDF:
-		return format.ExtractAZW4PDFContext(ctx, w, src, size)
+		return mobiConversionError(mobi.ExtractPDF(ctx, w, src, size))
 	case TargetEPUB:
 		if from == format.FormatEPUB {
 			return rebuildEPUB(ctx, w, src, size, opts)
@@ -222,7 +223,7 @@ func convertSourceToEPUB(ctx context.Context, w io.Writer, src io.ReaderAt, from
 		return convertFB2SourceToEPUB(ctx, w, src, size, opts)
 	}
 	if from == format.FormatMOBI || from == format.FormatAZW || from == format.FormatAZW3 || from == format.FormatPRC || from == format.FormatPDB {
-		return convertKindleSourceToEPUB(ctx, w, src, from, size, opts)
+		return convertMOBISourceToEPUB(ctx, w, src, size, opts)
 	}
 	if from == format.FormatHTML || from == format.FormatXHTML {
 		return convertHTMLSourceToEPUB(ctx, w, src, from, size, opts)
@@ -282,7 +283,7 @@ func ConvertFileWithOptions(ctx context.Context, srcPath, dstPath string, target
 		return fmt.Errorf("target format is required")
 	}
 
-	src, kind, size, err := openSource(srcPath)
+	src, kind, size, err := openSource(ctx, srcPath)
 	if err != nil {
 		return err
 	}
@@ -296,7 +297,10 @@ func ConvertFileWithOptions(ctx context.Context, srcPath, dstPath string, target
 	})
 }
 
-func openSource(srcPath string) (*os.File, format.Format, int64, error) {
+func openSource(ctx context.Context, srcPath string) (*os.File, format.Format, int64, error) {
+	if err := context.Cause(ctx); err != nil {
+		return nil, format.FormatUnknown, 0, err
+	}
 	src, err := os.Open(srcPath)
 	if err != nil {
 		return nil, format.FormatUnknown, 0, fmt.Errorf("open source: %w", err)
@@ -306,7 +310,11 @@ func openSource(srcPath string) (*os.File, format.Format, int64, error) {
 		src.Close()
 		return nil, format.FormatUnknown, 0, fmt.Errorf("stat source: %w", err)
 	}
-	kind := format.DetectFormat(srcPath, src, stat.Size())
+	kind := format.DetectFormat(srcPath, contextReaderAt{ctx: ctx, r: src}, stat.Size())
+	if err := context.Cause(ctx); err != nil {
+		src.Close()
+		return nil, format.FormatUnknown, 0, err
+	}
 	return src, kind, stat.Size(), nil
 }
 

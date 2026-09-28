@@ -17,6 +17,7 @@ import (
 
 	"golang.org/x/net/html"
 
+	"github.com/levmv/polka/internal/bookmeta"
 	"github.com/levmv/polka/internal/format"
 	"github.com/levmv/polka/internal/xmlutil"
 )
@@ -289,7 +290,7 @@ func kepubReadDeclaredPackage(ctx context.Context, zr *zip.Reader) (kepubPackage
 				if err != nil {
 					return kepubPackage{}, fmt.Errorf("read EPUB OPF %s: %w", opfPath, err)
 				}
-				opfBytes, err = format.NormalizeOPFXML(opfBytes)
+				opfBytes, err = bookmeta.NormalizeOPFXML(opfBytes)
 				if err != nil {
 					return kepubPackage{}, fmt.Errorf("normalize EPUB OPF %s: %w", opfPath, err)
 				}
@@ -403,7 +404,7 @@ func kepubManifestPaths(opfPath string, opfBytes []byte) (map[string]bool, error
 
 func parseKEPUBOPF(opfPath string, opfBytes []byte) (kepubOPFDoc, error) {
 	var doc kepubOPFDoc
-	if err := format.DecodeOPFXML(opfBytes, &doc); err != nil {
+	if err := bookmeta.DecodeOPFXML(opfBytes, &doc); err != nil {
 		return kepubOPFDoc{}, fmt.Errorf("parse EPUB OPF %s: %w", opfPath, err)
 	}
 	return doc, nil

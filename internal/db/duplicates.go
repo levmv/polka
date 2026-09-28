@@ -314,7 +314,7 @@ func MergeDuplicateBooks(tx *Tx, scope VisibilityScope, req DuplicateMergeReques
 		return DuplicateMergeResult{}, fmt.Errorf("move duplicate assets: %w", err)
 	}
 
-	if err := EnsureReadablePrimaryAsset(tx, req.SurvivorID); err != nil {
+	if err := EnsurePreferredPrimaryAsset(tx, req.SurvivorID); err != nil {
 		return DuplicateMergeResult{}, fmt.Errorf("ensure duplicate survivor primary asset: %w", err)
 	}
 

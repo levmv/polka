@@ -1,4 +1,4 @@
-package format
+package imagecodec
 
 import (
 	"bytes"
@@ -9,9 +9,9 @@ import (
 	"unicode/utf8"
 )
 
-// Glyph-based SVGs can repeat the same path thousands of times. Compact these
-// definitions to reduce image size, preserving content we cannot safely simplify.
-func epubSVGResource(data []byte, name string) ([]byte, bool) {
+// PrepareSVG recognizes UTF-8 SVG resources and compacts repeated glyph paths.
+// Content that cannot be safely simplified is preserved.
+func PrepareSVG(data []byte, name string) ([]byte, bool) {
 	if !isSVGImageResource(data, name) || !utf8.Valid(data) {
 		return nil, false
 	}
@@ -26,7 +26,7 @@ func isSVGImageResource(data []byte, name string) bool {
 	if !strings.EqualFold(path.Ext(strings.TrimSpace(name)), ".svg") {
 		return false
 	}
-	sample := bytes.TrimSpace(trimUTF8BOM(data))
+	sample := bytes.TrimSpace(bytes.TrimPrefix(data, []byte{0xef, 0xbb, 0xbf}))
 	if len(sample) > 1024 {
 		sample = sample[:1024]
 	}

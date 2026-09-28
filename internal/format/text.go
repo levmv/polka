@@ -212,7 +212,7 @@ func txtzTextFormattingFromOPF(zr *zip.Reader) Format {
 	if opf == nil {
 		return FormatUnknown
 	}
-	raw, err := readZipFileLimited(opf, maxOPFDocumentBytes)
+	raw, err := readZipFileLimited(opf, bookmeta.MaxOPFDocumentBytes)
 	if err != nil {
 		return FormatUnknown
 	}
@@ -468,11 +468,11 @@ func ExtractTXTZMetadata(r io.ReaderAt, size int64) (*Metadata, error) {
 	if opf == nil {
 		return &Metadata{}, nil
 	}
-	raw, err := readZipFileLimited(opf, maxOPFDocumentBytes)
+	raw, err := readZipFileLimited(opf, bookmeta.MaxOPFDocumentBytes)
 	if err != nil {
 		return nil, err
 	}
-	meta, err := ParseOPF(bytes.NewReader(raw))
+	meta, err := bookmeta.ParseOPF(bytes.NewReader(raw))
 	if err != nil {
 		return nil, fmt.Errorf("parse TXTZ metadata.opf: %w", err)
 	}
@@ -490,7 +490,7 @@ func ExtractTXTZCover(r io.ReaderAt, size int64) ([]byte, string, error) {
 	if opf == nil {
 		return nil, "", nil
 	}
-	raw, err := readZipFileLimited(opf, maxOPFDocumentBytes)
+	raw, err := readZipFileLimited(opf, bookmeta.MaxOPFDocumentBytes)
 	if err != nil {
 		return nil, "", err
 	}

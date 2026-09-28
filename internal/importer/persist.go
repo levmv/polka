@@ -253,7 +253,7 @@ func addAssetsToExistingBook(ctx context.Context, database *db.DB, root storage.
 		results[idx] = saved
 		placements = append(placements, stagedPlacement{staged: source.staged, relPath: saved.StoragePath})
 	}
-	if err := db.EnsureReadablePrimaryAsset(tx, bookID); err != nil {
+	if err := db.EnsurePreferredPrimaryAsset(tx, bookID); err != nil {
 		return GroupResult{}, fmt.Errorf("choose primary asset: %w", err)
 	}
 
@@ -292,7 +292,7 @@ func insertNewBook(tx *db.Tx, root storage.Root, resolved resolvedBook, sources 
 		results[i] = result
 		placements[i] = stagedPlacement{staged: source.staged, relPath: result.StoragePath}
 	}
-	if err := db.EnsureReadablePrimaryAsset(tx, book.id); err != nil {
+	if err := db.EnsurePreferredPrimaryAsset(tx, book.id); err != nil {
 		return storedBook{}, nil, nil, fmt.Errorf("choose primary asset: %w", err)
 	}
 	if err := db.UpdateSearchIndex(tx, book.id); err != nil {
@@ -360,10 +360,10 @@ func insertAsset(tx *db.Tx, root storage.Root, template string, book storedBook,
 	// The insert and path update commit together so no empty path becomes visible.
 	var assetID int64
 	err := tx.QueryRow(`
-		INSERT INTO assets (book_id, storage_path, filename, original_filename, extension, format, is_primary, can_read, original_hash, current_hash, original_size, current_size, page_count)
-		VALUES (?, '', '', ?, ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, 0))
+		INSERT INTO assets (book_id, storage_path, filename, original_filename, extension, format, is_primary, original_hash, current_hash, original_size, current_size, page_count)
+		VALUES (?, '', '', ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, 0))
 		RETURNING id
-	`, book.id, filepath.Base(info.sourceName()), info.Extension, format.FormatKey(info.Format), isPrimary, info.CanRead, info.SourceHash, info.SourceHash, info.Size, info.Size, info.PageCount).Scan(&assetID)
+	`, book.id, filepath.Base(info.sourceName()), info.Extension, format.FormatKey(info.Format), isPrimary, info.SourceHash, info.SourceHash, info.Size, info.Size, info.PageCount).Scan(&assetID)
 	if err != nil {
 		return Result{}, fmt.Errorf("insert asset: %w", err)
 	}

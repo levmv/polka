@@ -650,9 +650,9 @@ func setupWritebackBook(t *testing.T, title, author, formatKey string, src []byt
 	}
 	if _, err := database.Write(t.Context()).Exec(`
 		INSERT INTO assets
-			(id, book_id, storage_path, filename, extension, format, is_primary, can_read, original_hash, current_hash, original_size, current_size)
+			(id, book_id, storage_path, filename, extension, format, is_primary, original_hash, current_hash, original_size, current_size)
 		VALUES
-			(?, 1, ?, ?, ?, ?, 1, 1, ?, ?, ?, ?)
+			(?, 1, ?, ?, ?, ?, 1, ?, ?, ?, ?)
 	`, assetID, relPath, filename, "."+formatKey, formatKey, hashForTest(src), hashForTest(src), len(src), len(src)); err != nil {
 		t.Fatalf("insert asset: %v", err)
 	}

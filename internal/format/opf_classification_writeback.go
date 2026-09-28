@@ -7,6 +7,8 @@ import (
 	"maps"
 	"slices"
 	"strings"
+
+	"github.com/levmv/polka/internal/bookmeta"
 )
 
 const calibreMetadataURI = "https://calibre-ebook.com"
@@ -21,7 +23,7 @@ func calibreExtraTags(tags []string) jsontext.Value {
 	column, _ := json.Marshal(map[string]any{
 		"name": "Extra tags", "label": "extra_tags", "datatype": "text",
 		"is_multiple": "|", "is_custom": true, "display": map[string]any{},
-		"#value#": nonNilTagList(tags),
+		"#value#": append([]string{}, tags...),
 	}, json.Deterministic(true))
 	return column
 }
@@ -54,13 +56,13 @@ func rewriteOPFCalibreMetadata(inner []byte, tags []string, epub3 bool) ([]byte,
 		}
 		rawName, value := strings.TrimSpace(child.attrs["name"]), child.attrs["content"]
 		if rawName == "" {
-			var record opfMeta
+			var record bookmeta.OPFMeta
 			if xml.Unmarshal(child.raw, &record) != nil {
 				continue
 			}
 			rawName, value = strings.TrimSpace(record.Property), record.Text
 		}
-		name := opfMetaName(rawName)
+		name := bookmeta.OPFMetaName(rawName)
 		switch {
 		case name == "calibre:user_metadata":
 			var existing map[string]jsontext.Value

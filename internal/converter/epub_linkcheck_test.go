@@ -9,16 +9,17 @@ import (
 
 	"github.com/levmv/polka/internal/bookmeta"
 	"github.com/levmv/polka/internal/format"
+	"github.com/levmv/polka/internal/format/mobi"
 )
 
 func TestCheckEPUBInternalLinksAcceptsCleanKindleOutput(t *testing.T) {
-	doc := &format.KindleDocument{
+	doc := &mobi.Document{
 		Metadata: &format.Metadata{
 			Title:    "Kindle Export",
 			Language: "en",
 			Authors:  []bookmeta.AuthorMeta{{Name: "Jane Doe"}},
 		},
-		Flows: []format.KindleTextFlow{{
+		Flows: []mobi.TextFlow{{
 			ID:        "flow-0001",
 			Href:      "text/flow-0001.html",
 			MediaType: "text/html",
@@ -26,7 +27,7 @@ func TestCheckEPUBInternalLinksAcceptsCleanKindleOutput(t *testing.T) {
 				`<p id="x"><img recindex="00001"><img src="kindle:embed:0001?mime=image/png" alt="e">` +
 				`<img src="kindle:flow:0003?mime=image/svg+xml" alt="s"></p></body></html>`),
 		}},
-		Resources: []format.KindleResource{{
+		Resources: []mobi.Resource{{
 			ID: "res-00001", Href: "images/00001.png", MediaType: "image/png",
 			Data: converterTinyPNG, EmbedIndex: 1, Cover: true,
 		}, {
@@ -36,12 +37,12 @@ func TestCheckEPUBInternalLinksAcceptsCleanKindleOutput(t *testing.T) {
 			ID: "style-0001", Href: "styles/flow-0001.css", MediaType: "text/css",
 			Data: []byte(".figure { background: url(\"kindle:flow:0003?mime=image/svg+xml\"); }\n"),
 		}},
-		Navigation: []format.KindleNavItem{{Label: "Chapter", Href: "text/flow-0001.html#filepos12"}},
+		Navigation: []mobi.NavItem{{Label: "Chapter", Href: "text/flow-0001.html#filepos12"}},
 	}
 
 	var out bytes.Buffer
-	if err := convertKindleDocumentToEPUB(context.Background(), &out, doc, ConversionOptions{}); err != nil {
-		t.Fatalf("convertKindleDocumentToEPUB: %v", err)
+	if err := convertMOBIDocumentToEPUB(context.Background(), &out, doc, ConversionOptions{}); err != nil {
+		t.Fatalf("convertMOBIDocumentToEPUB: %v", err)
 	}
 	problems, err := checkEPUBInternalLinks(out.Bytes())
 	if err != nil {

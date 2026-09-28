@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/levmv/polka/internal/bookmeta"
+	"github.com/levmv/polka/internal/xmlutil"
 )
 
 var (
@@ -78,11 +79,11 @@ func RewriteEPUBMetadataAndCoverTo(w io.Writer, src io.ReaderAt, size int64, met
 	if opfFile == nil {
 		return fmt.Errorf("EPUB OPF %s not found", opf.path)
 	}
-	rawOPF, err := readZipFileLimited(opfFile, maxOPFDocumentBytes)
+	rawOPF, err := readZipFileLimited(opfFile, bookmeta.MaxOPFDocumentBytes)
 	if err != nil {
 		return fmt.Errorf("read EPUB OPF %s: %w", opf.path, err)
 	}
-	normalizedOPF, err := NormalizeOPFXML(rawOPF)
+	normalizedOPF, err := bookmeta.NormalizeOPFXML(rawOPF)
 	if err != nil {
 		return fmt.Errorf("normalize EPUB OPF %s: %w", opf.path, err)
 	}
@@ -124,7 +125,7 @@ func ValidateEPUBRewriteSafety(zr *zip.Reader, rawOPF, nextOPF []byte) error {
 	if encryptionFile == nil {
 		return nil
 	}
-	encryptionXML, err := readZipFileLimited(encryptionFile, maxOPFDocumentBytes)
+	encryptionXML, err := readZipFileLimited(encryptionFile, bookmeta.MaxOPFDocumentBytes)
 	if err != nil {
 		return fmt.Errorf("read EPUB encryption.xml: %w", err)
 	}
@@ -700,7 +701,7 @@ func opfAppendElementChild(raw []byte, tag opfTagRange, local, child string) ([]
 	}
 
 	insertAt := endStart
-	for insertAt > tag.end && isXMLSpace(raw[insertAt-1]) {
+	for insertAt > tag.end && xmlutil.IsSpace(raw[insertAt-1]) {
 		insertAt--
 	}
 	tail := raw[insertAt:endStart]
@@ -888,14 +889,14 @@ func RewriteOPFMetadata(raw []byte, meta Metadata, modified time.Time) ([]byte, 
 	epub3 := opfVersionAtLeast3(version)
 
 	var current opfDoc
-	if err := decodeOPFBytes(raw, &current); err != nil {
+	if err := bookmeta.DecodeOPFXML(raw, &current); err != nil {
 		return nil, err
 	}
 	// Compare with the same date selection used by import, including its
 	// precision and legacy metadata containers. Unknown source dates survive
 	// unrelated edits when the catalog date is also empty.
 	inner := raw[metadataTag.end:endStart]
-	if meta.Date == opfDate(current.Metadata.Date) {
+	if meta.Date == bookmeta.OPFPublicationDate(current.Metadata.Date) {
 		// The preserved source supplies this date; don't generate a second one.
 		meta.Date = ""
 	} else {
@@ -1125,7 +1126,7 @@ type opfMetadataChild struct {
 
 func opfMetadataChildren(raw []byte, includeLegacy bool) ([]opfMetadataChild, error) {
 	// Keep raw spans to preserve namespaces and unknown content. includeLegacy
-	// descends through the same containers as opfMetadata.UnmarshalXML, leaving
+	// descends through the same containers as bookmeta.OPFMetadata.UnmarshalXML, leaving
 	// their tags outside the spans so callers can patch records in place.
 	var children []opfMetadataChild
 	depth := 0
@@ -1149,7 +1150,7 @@ func opfMetadataChildren(raw []byte, includeLegacy bool) ([]opfMetadataChild, er
 			pos = tagEnd
 			continue
 		}
-		if includeLegacy && depth == 0 && isOPFMetadataContainer(info.local) {
+		if includeLegacy && depth == 0 && bookmeta.IsOPFMetadataContainer(info.local) {
 			switch {
 			case info.end:
 				containerDepth--
@@ -1228,7 +1229,7 @@ func opfRetainedCreatorRoles(children []opfMetadataChild, authors []bookmeta.Aut
 	for _, author := range authors {
 		name := strings.TrimSpace(author.Name)
 		authorCounts[name]++
-		role := opfRole(author.Role)
+		role := bookmeta.OPFRole(author.Role)
 		if role == "" {
 			role = "aut"
 		}
@@ -1262,7 +1263,7 @@ func opfRetainedCreatorRoles(children []opfMetadataChild, authors []bookmeta.Aut
 		for _, i := range rolesByID[id] {
 			roles = append(roles, children[i].text)
 		}
-		if opfCreatorRole(child.attrs["role"], roles) != rolesByName[name] {
+		if bookmeta.OPFCreatorRole(child.attrs["role"], roles) != rolesByName[name] {
 			continue
 		}
 		for _, i := range rolesByID[id] {
@@ -1356,7 +1357,7 @@ func opfPreservedMetadataChildren(children []opfMetadataChild, uniqueID string, 
 	owned := func(child opfMetadataChild) bool {
 		// Writeback owns only the canonical count. An unknown DB count leaves
 		// the existing declaration intact; other programs' fields are preserved.
-		if child.local == "meta" && child.attrs["refines"] == "" && (isCanonicalPageCountKey(child.attrs["name"]) || isCanonicalPageCountKey(child.attrs["property"])) {
+		if child.local == "meta" && child.attrs["refines"] == "" && (bookmeta.IsCanonicalPageCountKey(child.attrs["name"]) || bookmeta.IsCanonicalPageCountKey(child.attrs["property"])) {
 			return replacePageCount
 		}
 		return opfChildOwnedByPolka(child, uniqueID, polkaTypes, uniqueIDPolkaTypes, seriesCollectionIDs)
@@ -1400,7 +1401,7 @@ func opfPreservedMetadataChildren(children []opfMetadataChild, uniqueID string, 
 // Patch date records in place, including legacy containers. The decoded records
 // and raw spans follow the same document order; using the decoded events keeps
 // namespace resolution identical to import, including locally declared prefixes.
-func removeOPFPublicationDates(inner []byte, dates []opfDateRecord, clear bool) ([]byte, error) {
+func removeOPFPublicationDates(inner []byte, dates []bookmeta.OPFDateRecord, clear bool) ([]byte, error) {
 	children, err := opfMetadataChildren(inner, true)
 	if err != nil {
 		return nil, err
@@ -1414,9 +1415,9 @@ func removeOPFPublicationDates(inner []byte, dates []opfDateRecord, clear bool) 
 		if dateIndex >= len(dates) {
 			return nil, fmt.Errorf("OPF date records do not match metadata spans")
 		}
-		priority := opfDatePriority(dates[dateIndex].Event)
+		priority := bookmeta.OPFDatePriority(dates[dateIndex].Event)
 		dateIndex++
-		removed[i] = priority == opfDatePublication || priority == opfDateUnqualified || clear && priority != opfDateOther
+		removed[i] = priority == bookmeta.OPFDatePublication || priority == bookmeta.OPFDateUnqualified || clear && priority != bookmeta.OPFDateOther
 	}
 	if dateIndex != len(dates) {
 		return nil, fmt.Errorf("OPF date records do not match metadata spans")
@@ -1480,7 +1481,7 @@ func opfChildOwnedByPolka(child opfMetadataChild, uniqueID string, polkaTypes ma
 		}
 		return polkaTypes[typ]
 	case "meta":
-		name := opfMetaName(child.attrs["name"])
+		name := bookmeta.OPFMetaName(child.attrs["name"])
 		switch name {
 		case "calibre:title_sort", "calibre:series", "calibre:series_index":
 			return true
@@ -1563,7 +1564,7 @@ func renderOPFMetadataChildren(packageTag, metadataTag []byte, meta Metadata, pr
 			roles := preserved.CreatorRoles[name]
 			hasPrimaryRole := false
 			for _, rawRole := range roles {
-				if opfRole(opfElementText(rawRole)) == opfRole(role) {
+				if bookmeta.OPFRole(opfElementText(rawRole)) == bookmeta.OPFRole(role) {
 					hasPrimaryRole = true
 				}
 			}

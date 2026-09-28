@@ -16,7 +16,6 @@ type AssetRow struct {
 	OriginalFilename string
 	BookID           int64
 	IsPrimary        bool
-	CanRead          bool
 	PageCount        int
 	// Size is COALESCE(current_size, original_size, 0) from the row, so UI/list
 	// paths report byte sizes without a per-asset os.Stat (matters on a NAS root).
@@ -29,7 +28,6 @@ type PrimaryAssetRow struct {
 	Title       string
 	Extension   string
 	Format      format.Format
-	CanRead     bool
 	CurrentHash []byte
 }
 
@@ -40,7 +38,6 @@ type AssetWithAuthorRow struct {
 	OriginalFilename string
 	Extension        string
 	Format           format.Format
-	CanRead          bool
 	OriginalHash     []byte
 	CurrentHash      []byte
 	OriginalSize     sql.NullInt64
@@ -79,25 +76,38 @@ func RecordAssetRestore(database Execer, assetID int64, hash []byte, size int64)
 	return err
 }
 
-// EnsureReadablePrimaryAsset keeps one primary asset for a book while
-// preferring something the browser can actually open. An existing readable
-// primary is stable; an unreadable primary is replaced only when a readable
-// candidate exists. If every asset is unreadable, the existing primary remains
-// the least surprising download/default-format choice.
-func EnsureReadablePrimaryAsset(tx *Tx, bookID int64) error {
-	var selectedID int64
-	err := tx.QueryRow(`
-		SELECT id
-		FROM assets
-		WHERE book_id = ?
-		ORDER BY can_read DESC, is_primary DESC, created_at ASC, id ASC
-		LIMIT 1
-	`, bookID).Scan(&selectedID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil
-	}
+// EnsurePreferredPrimaryAsset chooses the preferred browser-reading format.
+// Equal priorities keep the current primary, then prefer the oldest asset.
+// A catalog default never changes per-user positions or annotations.
+func EnsurePreferredPrimaryAsset(tx *Tx, bookID int64) error {
+	rows, err := tx.Query(`
+		SELECT id, format FROM assets WHERE book_id = ?
+		ORDER BY is_primary DESC, created_at ASC, id ASC
+	`, bookID)
 	if err != nil {
 		return fmt.Errorf("select primary asset: %w", err)
+	}
+	var selectedID int64
+	var bestPriority int
+	for rows.Next() {
+		var id int64
+		var key string
+		if err := rows.Scan(&id, &key); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan primary asset: %w", err)
+		}
+		priority := format.ReadingPriority(format.FormatFromKey(key))
+		if selectedID == 0 || priority < bestPriority {
+			selectedID, bestPriority = id, priority
+		}
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return fmt.Errorf("select primary asset: %w", err)
+	}
+	if selectedID == 0 {
+		return nil
 	}
 
 	if _, err := tx.Exec(`
@@ -125,7 +135,7 @@ func AssetsByBookIDs(queryer Queryer, bookIDs []int64) ([]AssetRow, error) {
 	placeholders, args := idPlaceholders(bookIDs)
 
 	query := `
-				SELECT a.book_id, a.id, a.extension, a.format, a.storage_path, a.original_filename, a.is_primary, a.can_read,
+				SELECT a.book_id, a.id, a.extension, a.format, a.storage_path, a.original_filename, a.is_primary,
 				       COALESCE(a.current_size, a.original_size, 0), COALESCE(a.page_count, 0)
 			FROM assets a
 			WHERE a.book_id IN (` + placeholders + `)
@@ -143,7 +153,7 @@ func AssetsByBookIDs(queryer Queryer, bookIDs []int64) ([]AssetRow, error) {
 // large-library scale instead of expanding one host parameter per book.
 func AssetsForTrashedBooks(queryer Queryer) ([]AssetRow, error) {
 	rows, err := queryer.Query(`
-		SELECT a.book_id, a.id, a.extension, a.format, a.storage_path, a.original_filename, a.is_primary, a.can_read,
+		SELECT a.book_id, a.id, a.extension, a.format, a.storage_path, a.original_filename, a.is_primary,
 		       COALESCE(a.current_size, a.original_size, 0), COALESCE(a.page_count, 0)
 		FROM assets a
 		JOIN books b ON b.id = a.book_id
@@ -163,13 +173,12 @@ func scanAssetRows(rows *sql.Rows, operation string) ([]AssetRow, error) {
 	for rows.Next() {
 		var a AssetRow
 		var formatKey string
-		var isPrimary, canRead int
-		if err := rows.Scan(&a.BookID, &a.ID, &a.Extension, &formatKey, &a.StoragePath, &a.OriginalFilename, &isPrimary, &canRead, &a.Size, &a.PageCount); err != nil {
+		var isPrimary int
+		if err := rows.Scan(&a.BookID, &a.ID, &a.Extension, &formatKey, &a.StoragePath, &a.OriginalFilename, &isPrimary, &a.Size, &a.PageCount); err != nil {
 			return nil, fmt.Errorf("%s scan: %w", operation, err)
 		}
 		a.Format = format.FormatFromKey(formatKey)
 		a.IsPrimary = isPrimary == 1
-		a.CanRead = canRead == 1
 		assets = append(assets, a)
 	}
 	if err := rows.Err(); err != nil {
@@ -183,12 +192,12 @@ func PrimaryAssetForBook(queryer Queryer, scope VisibilityScope, bookID int64) (
 	var formatKey string
 	where, args := scope.AppendBookWhere("b.id = ? AND b.deleted_at IS NULL AND a.is_primary = 1", "b.id", bookID)
 	err := queryer.QueryRow(`
-			SELECT b.id, b.title, a.id, a.extension, a.format, a.can_read, a.current_hash
+			SELECT b.id, b.title, a.id, a.extension, a.format, a.current_hash
 			FROM books b
 			JOIN assets a ON a.book_id = b.id
 			WHERE `+where+`
 			LIMIT 1
-	`, args...).Scan(&a.BookID, &a.Title, &a.ID, &a.Extension, &formatKey, &a.CanRead, &a.CurrentHash)
+	`, args...).Scan(&a.BookID, &a.Title, &a.ID, &a.Extension, &formatKey, &a.CurrentHash)
 	if err != nil {
 		return PrimaryAssetRow{}, err
 	}
@@ -198,7 +207,7 @@ func PrimaryAssetForBook(queryer Queryer, scope VisibilityScope, bookID int64) (
 
 func AllAssetsWithPrimaryAuthor(queryer Queryer) ([]AssetWithAuthorRow, error) {
 	rows, err := queryer.Query(`
-		SELECT a.id, a.book_id, a.storage_path, a.original_filename, a.extension, a.format, a.can_read,
+		SELECT a.id, a.book_id, a.storage_path, a.original_filename, a.extension, a.format,
 		       a.original_hash, a.current_hash,
 		       a.original_size, a.current_size,
 		       b.title, b.sort_title, COALESCE(b.series, ''),
@@ -218,12 +227,10 @@ func AllAssetsWithPrimaryAuthor(queryer Queryer) ([]AssetWithAuthorRow, error) {
 	for rows.Next() {
 		var a AssetWithAuthorRow
 		var formatKey string
-		var canRead int
-		if err := rows.Scan(&a.ID, &a.BookID, &a.StoragePath, &a.OriginalFilename, &a.Extension, &formatKey, &canRead, &a.OriginalHash, &a.CurrentHash, &a.OriginalSize, &a.CurrentSize, &a.Title, &a.SortTitle, &a.Series, &a.SeriesIndex, &a.AuthorName, &a.AuthorSortName); err != nil {
+		if err := rows.Scan(&a.ID, &a.BookID, &a.StoragePath, &a.OriginalFilename, &a.Extension, &formatKey, &a.OriginalHash, &a.CurrentHash, &a.OriginalSize, &a.CurrentSize, &a.Title, &a.SortTitle, &a.Series, &a.SeriesIndex, &a.AuthorName, &a.AuthorSortName); err != nil {
 			return nil, fmt.Errorf("scan all assets: %w", err)
 		}
 		a.Format = format.FormatFromKey(formatKey)
-		a.CanRead = canRead == 1
 		assets = append(assets, a)
 	}
 	if err := rows.Err(); err != nil {

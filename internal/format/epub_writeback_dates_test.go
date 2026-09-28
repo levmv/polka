@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/levmv/polka/internal/bookmeta"
 )
 
 func TestRewriteOPFMetadataPreservesDates(t *testing.T) {
@@ -70,7 +72,7 @@ func TestRewriteOPFMetadataPreservesDates(t *testing.T) {
 			}
 			const independentDate = `<meta property="dcterms:created">2020-01-02T03:04:05Z</meta>`
 			src := opfDateTestPackage(tc.version, records+"\n"+independentDate)
-			current, err := ParseOPF(bytes.NewReader(src))
+			current, err := bookmeta.ParseOPF(bytes.NewReader(src))
 			if err != nil || current == nil || current.Date != tc.date {
 				t.Fatalf("source metadata = %+v, %v; want date %q", current, err, tc.date)
 			}
@@ -91,7 +93,7 @@ func TestRewriteOPFMetadataPreservesDates(t *testing.T) {
 				}
 			}
 			assertOPFReferences(t, opf)
-			got, err := ParseOPF(bytes.NewReader(out))
+			got, err := bookmeta.ParseOPF(bytes.NewReader(out))
 			if err != nil || got == nil || got.Date != meta.Date {
 				t.Fatalf("metadata after tag edit = %+v, %v; want date %q", got, err, meta.Date)
 			}
@@ -156,7 +158,7 @@ func TestRewriteOPFPublicationDateChanges(t *testing.T) {
 					// declare the OPF prefix.
 					src = bytes.Replace(src, []byte(` xmlns:opf="http://www.idpf.org/2007/opf"`), nil, 1)
 				}
-				meta, err := ParseOPF(bytes.NewReader(src))
+				meta, err := bookmeta.ParseOPF(bytes.NewReader(src))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -183,7 +185,7 @@ func TestRewriteOPFPublicationDateChanges(t *testing.T) {
 					}
 				}
 				assertOPFReferences(t, string(out))
-				got, err := ParseOPF(bytes.NewReader(out))
+				got, err := bookmeta.ParseOPF(bytes.NewReader(out))
 				if err != nil || got == nil || got.Date != date {
 					t.Fatalf("metadata after rewrite = %+v, %v; want date %q", got, err, date)
 				}
@@ -231,4 +233,13 @@ func assertFirstOPFDate(t *testing.T, raw []byte, date, version string) {
 		}
 		return
 	}
+}
+
+func opfDateTestPackage(version, records string) []byte {
+	return []byte(`<package xmlns="http://www.idpf.org/2007/opf" version="` + version + `">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
+    <dc:title>Book</dc:title>
+    ` + records + `
+  </metadata>
+</package>`)
 }

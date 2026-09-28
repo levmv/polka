@@ -78,6 +78,10 @@ its metadata is optional and can happen later.
   with `metadata.opf`, a cover, and several formats becomes one book with
   multiple files attached.
 
+For books with several files, polka prefers EPUB, then other reflowable ebook
+formats, over fixed-page copies. Adding or merging in an EPUB can therefore
+make it the primary file in place of an existing PDF or MOBI.
+
 Imports copy books into managed storage and leave their sources unchanged by
 default. Importing the same file again is safe: matching content is recognized
 instead of added twice.
@@ -232,10 +236,11 @@ When necessary, polka converts the book to a format accepted by the device.
 
 ### Download and conversion
 
-The book page offers conversions supported for each file. Conversion happens
-when the file is requested and does not replace the library copy. This includes
-the *Repaired EPUB* option, which fixes recoverable EPUB packaging problems in
-the downloaded copy.
+The book page offers conversion options for each file's format. A particular
+file may still be encrypted or contain unsupported content; polka checks it when
+you request the conversion. The library copy stays unchanged. This includes the
+*Repaired EPUB* option, which fixes recoverable EPUB packaging problems in the
+downloaded copy.
 
 ## Accounts and access
 

@@ -19,7 +19,7 @@ var ErrIssuesFound = errors.New("issues found")
 
 func runCheck(ctx context.Context, dataDir string, args []string) error {
 	fs := commandFlagSet("check", "polka check [--deep]")
-	deep := fs.Bool("deep", false, "verify hashes and reader capabilities by reading asset contents")
+	deep := fs.Bool("deep", false, "verify hashes and detected formats by reading asset contents")
 	if help, err := parseCommandFlags(fs, args); help || err != nil {
 		return err
 	}
@@ -88,23 +88,22 @@ func runCheck(ctx context.Context, dataDir string, args []string) error {
 // Checks accumulate issues here and continue with the remaining files. They
 // return an error only when the whole run must stop, such as on cancellation.
 type checkReport struct {
-	invalidStoragePaths        []string
-	missingFiles               []string
-	missingCoverOriginals      []string
-	staleLayouts               []string
-	pathCollisions             []string
-	missingCurrentSizes        []string
-	sizeMismatches             []string
-	hashMismatches             []string
-	formatMismatches           []string
-	readerCapabilityMismatches []string
-	ioErrors                   []string
-	orphanFiles                []string
-	orphanCoverOriginals       []string
-	pendingWritebackAttempts   []string
-	orphanWritebackTemps       []string
-	stagedFiles                []string
-	emptyDirs                  []string
+	invalidStoragePaths      []string
+	missingFiles             []string
+	missingCoverOriginals    []string
+	staleLayouts             []string
+	pathCollisions           []string
+	missingCurrentSizes      []string
+	sizeMismatches           []string
+	hashMismatches           []string
+	formatMismatches         []string
+	ioErrors                 []string
+	orphanFiles              []string
+	orphanCoverOriginals     []string
+	pendingWritebackAttempts []string
+	orphanWritebackTemps     []string
+	stagedFiles              []string
+	emptyDirs                []string
 }
 
 func (report *checkReport) checkAssets(ctx context.Context, root storage.Root, template string, assets []db.AssetWithAuthorRow, deep bool) (map[string]bool, error) {
@@ -149,16 +148,16 @@ func (report *checkReport) checkAssets(ctx context.Context, root storage.Root, t
 					}
 				}
 				if deep {
-					capability, err := detectAssetReaderCapability(a.StoragePath, absPath)
+					kind, err := detectAssetFormat(ctx, a.StoragePath, absPath)
 					if err != nil {
-						report.ioErrors = append(report.ioErrors, fmt.Sprintf("detect reader capability %s: %v", a.StoragePath, err))
+						if cause := context.Cause(ctx); cause != nil {
+							return nil, cause
+						}
+						report.ioErrors = append(report.ioErrors, fmt.Sprintf("detect format %s: %v", a.StoragePath, err))
 						continue
 					}
-					if capability.Format != a.Format {
-						report.formatMismatches = append(report.formatMismatches, fmt.Sprintf("%d (%s): db %s, detected %s", a.ID, a.StoragePath, format.FormatLabel(a.Format), format.FormatLabel(capability.Format)))
-					}
-					if capability.CanRead != a.CanRead {
-						report.readerCapabilityMismatches = append(report.readerCapabilityMismatches, fmt.Sprintf("%d (%s): db %t, detected %t (%s)", a.ID, a.StoragePath, a.CanRead, capability.CanRead, format.FormatLabel(capability.Format)))
+					if kind != a.Format {
+						report.formatMismatches = append(report.formatMismatches, fmt.Sprintf("%d (%s): db %s, detected %s", a.ID, a.StoragePath, format.FormatLabel(a.Format), format.FormatLabel(kind)))
 					}
 				}
 			}
@@ -331,7 +330,6 @@ func (report *checkReport) print() error {
 		{"Current size mismatches", report.sizeMismatches},
 		{"Current hash mismatches", report.hashMismatches},
 		{"Format mismatches", report.formatMismatches},
-		{"Reader capability mismatches", report.readerCapabilityMismatches},
 		{"I/O errors", report.ioErrors},
 		{"Orphan files", report.orphanFiles},
 		{"Orphan cover originals", report.orphanCoverOriginals},

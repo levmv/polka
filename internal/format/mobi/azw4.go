@@ -1,4 +1,4 @@
-package format
+package mobi
 
 import (
 	"bytes"
@@ -8,7 +8,7 @@ import (
 	"io"
 )
 
-var ErrAZW4PDFNotFound = errors.New("azw4 contains no embedded PDF")
+var ErrPDFNotFound = errors.New("azw4 contains no embedded PDF")
 
 var (
 	azw4PDFStartMarker = []byte("%PDF-")
@@ -17,12 +17,21 @@ var (
 
 const azw4ScanChunkSize = 64 << 10
 
-// ExtractAZW4PDFContext writes the embedded PDF payload from an AZW4/PalmDB
+// InspectAZW4 inspects a Print Replica wrapper and locates its embedded PDF.
+// Its PalmDOC text fields need not describe a readable MOBI text document.
+func InspectAZW4(r io.ReaderAt, size int64) (*Inspection, error) {
+	return inspect(r, size, true)
+}
+
+// ExtractPDF writes the embedded PDF payload from an AZW4/PalmDB
 // container. AZW4 is a Kindle Print Replica shape that commonly stores a PDF
 // payload inside a MOBI-like container. Callers should detect the source format
-// first; this function only finds and copies the PDF section.
-func ExtractAZW4PDFContext(ctx context.Context, w io.Writer, r io.ReaderAt, size int64) error {
-	start, end, err := azw4PDFBoundsContext(ctx, r, size)
+// first; extraction locates and copies the PDF section.
+func ExtractPDF(ctx context.Context, w io.Writer, r io.ReaderAt, size int64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	start, end, err := azw4PDFBounds(ctx, r, size)
 	if err != nil {
 		return err
 	}
@@ -30,20 +39,16 @@ func ExtractAZW4PDFContext(ctx context.Context, w io.Writer, r io.ReaderAt, size
 	return err
 }
 
-// HasAZW4PDF reports whether an AZW4-like container has a bounded embedded PDF
+// HasPDF reports whether an AZW4-like container has a bounded embedded PDF
 // payload that Polka can unwrap.
-func HasAZW4PDF(r io.ReaderAt, size int64) bool {
-	_, _, err := azw4PDFBounds(r, size)
+func HasPDF(r io.ReaderAt, size int64) bool {
+	_, _, err := azw4PDFBounds(context.Background(), r, size)
 	return err == nil
 }
 
-func azw4PDFBounds(r io.ReaderAt, size int64) (int64, int64, error) {
-	return azw4PDFBoundsContext(context.Background(), r, size)
-}
-
-func azw4PDFBoundsContext(ctx context.Context, r io.ReaderAt, size int64) (int64, int64, error) {
+func azw4PDFBounds(ctx context.Context, r io.ReaderAt, size int64) (int64, int64, error) {
 	if size <= 0 {
-		return 0, 0, ErrAZW4PDFNotFound
+		return 0, 0, ErrPDFNotFound
 	}
 
 	overlapSize := max(len(azw4PDFStartMarker), len(azw4PDFEndMarker)) - 1
@@ -53,14 +58,14 @@ func azw4PDFBoundsContext(ctx context.Context, r io.ReaderAt, size int64) (int64
 	lastEOF := int64(-1)
 
 	for offset := int64(0); offset < size; {
-		if err := checkContext(ctx); err != nil {
+		if err := ctx.Err(); err != nil {
 			return 0, 0, err
 		}
 		n := int64(len(buf))
 		if remaining := size - offset; remaining < n {
 			n = remaining
 		}
-		if _, err := r.ReadAt(buf[:n], offset); err != nil && err != io.EOF {
+		if _, err := r.ReadAt(buf[:n], offset); err != nil {
 			return 0, 0, err
 		}
 
@@ -95,10 +100,22 @@ func azw4PDFBoundsContext(ctx context.Context, r io.ReaderAt, size int64) (int64
 	}
 
 	if start < 0 {
-		return 0, 0, ErrAZW4PDFNotFound
+		return 0, 0, ErrPDFNotFound
 	}
 	if lastEOF < start {
-		return 0, 0, fmt.Errorf("%w: missing PDF EOF marker", ErrAZW4PDFNotFound)
+		return 0, 0, fmt.Errorf("%w: missing PDF EOF marker", ErrPDFNotFound)
 	}
 	return start, lastEOF + int64(len(azw4PDFEndMarker)), nil
+}
+
+type contextReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (r contextReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.r.Read(p)
 }

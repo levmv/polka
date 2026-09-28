@@ -1,4 +1,4 @@
-package format
+package mobi
 
 import (
 	"encoding/binary"
@@ -40,7 +40,7 @@ type kindleNCXEntry struct {
 // extractKindleNCXNavigation reads the MOBI/KF8 NCX (INDX/TAGX/CNCX) table into
 // navigation items. It is format-neutral: MOBI6 and KF8 share the same NCX
 // structure, so both source classes use it against their active record set.
-func extractKindleNCXNavigation(ranges []mobiRecordRange, r io.ReaderAt, info *KindleInspection, flowHref string) ([]KindleNavItem, error) {
+func extractKindleNCXNavigation(ranges []mobiRecordRange, r io.ReaderAt, info *Inspection, flowHref string) ([]NavItem, error) {
 	if info.NCXIndex == 0 {
 		return nil, nil
 	}
@@ -89,11 +89,11 @@ func extractKindleNCXNavigation(ranges []mobiRecordRange, r io.ReaderAt, info *K
 
 func readKindleIndex(ranges []mobiRecordRange, r io.ReaderAt, index int) (kindleIndexData, error) {
 	if index <= 0 || index >= len(ranges) {
-		return kindleIndexData{}, fmt.Errorf("INDX record %d outside record table", index)
+		return kindleIndexData{}, fmt.Errorf("%w: INDX record %d outside record table", ErrUnsupportedSource, index)
 	}
-	master, ok := mobiReadRecord(r, ranges[index], maxKindleIndexRecordBytes)
-	if !ok {
-		return kindleIndexData{}, fmt.Errorf("read INDX record %d", index)
+	master, err := mobiReadRecord(r, ranges[index], maxKindleIndexRecordBytes)
+	if err != nil {
+		return kindleIndexData{}, fmt.Errorf("read INDX record %d: %w", index, err)
 	}
 	header, err := parseKindleINDXHeader(master)
 	if err != nil {
@@ -109,11 +109,11 @@ func readKindleIndex(ranges []mobiRecordRange, r io.ReaderAt, index int) (kindle
 	for i := range int(header.NumCNCX) {
 		recordIndex := index + int(header.NumRecords) + i + 1
 		if recordIndex >= len(ranges) {
-			return kindleIndexData{}, fmt.Errorf("CNCX record %d outside record table", recordIndex)
+			return kindleIndexData{}, fmt.Errorf("%w: CNCX record %d outside record table", ErrUnsupportedSource, recordIndex)
 		}
-		record, ok := mobiReadRecord(r, ranges[recordIndex], maxKindleIndexRecordBytes)
-		if !ok {
-			return kindleIndexData{}, fmt.Errorf("read CNCX record %d", recordIndex)
+		record, err := mobiReadRecord(r, ranges[recordIndex], maxKindleIndexRecordBytes)
+		if err != nil {
+			return kindleIndexData{}, fmt.Errorf("read CNCX record %d: %w", recordIndex, err)
 		}
 		if err := readKindleCNCXRecord(out.CNCX, cncxOffset, record, header.Encoding); err != nil {
 			return kindleIndexData{}, fmt.Errorf("parse CNCX record %d: %w", recordIndex, err)
@@ -124,11 +124,11 @@ func readKindleIndex(ranges []mobiRecordRange, r io.ReaderAt, index int) (kindle
 	for i := range int(header.NumRecords) {
 		recordIndex := index + i + 1
 		if recordIndex >= len(ranges) {
-			return kindleIndexData{}, fmt.Errorf("index entry record %d outside record table", recordIndex)
+			return kindleIndexData{}, fmt.Errorf("%w: index entry record %d outside record table", ErrUnsupportedSource, recordIndex)
 		}
-		record, ok := mobiReadRecord(r, ranges[recordIndex], maxKindleIndexRecordBytes)
-		if !ok {
-			return kindleIndexData{}, fmt.Errorf("read index entry record %d", recordIndex)
+		record, err := mobiReadRecord(r, ranges[recordIndex], maxKindleIndexRecordBytes)
+		if err != nil {
+			return kindleIndexData{}, fmt.Errorf("read index entry record %d: %w", recordIndex, err)
 		}
 		entries, err := readKindleIndexEntryRecord(record, tags, controlBytes, header.Encoding)
 		if err != nil {
@@ -149,7 +149,7 @@ type kindleINDXHeader struct {
 
 func parseKindleINDXHeader(data []byte) (kindleINDXHeader, error) {
 	if len(data) < 56 || string(data[:4]) != "INDX" {
-		return kindleINDXHeader{}, fmt.Errorf("missing INDX magic")
+		return kindleINDXHeader{}, fmt.Errorf("%w: missing INDX magic", ErrUnsupportedSource)
 	}
 	header := kindleINDXHeader{
 		Length:     binary.BigEndian.Uint32(data[4:8]),
@@ -159,7 +159,7 @@ func parseKindleINDXHeader(data []byte) (kindleINDXHeader, error) {
 		NumCNCX:    binary.BigEndian.Uint32(data[52:56]),
 	}
 	if header.Length > uint32(len(data)) {
-		return kindleINDXHeader{}, fmt.Errorf("INDX header length %d exceeds record length %d", header.Length, len(data))
+		return kindleINDXHeader{}, fmt.Errorf("%w: INDX header length %d exceeds record length %d", ErrUnsupportedSource, header.Length, len(data))
 	}
 	return header, nil
 }
@@ -167,18 +167,18 @@ func parseKindleINDXHeader(data []byte) (kindleINDXHeader, error) {
 func parseKindleTAGX(data []byte, offset uint32) ([]kindleTAGXEntry, int, error) {
 	start := int(offset)
 	if start == 0 {
-		return nil, 0, fmt.Errorf("missing TAGX offset")
+		return nil, 0, fmt.Errorf("%w: missing TAGX offset", ErrUnsupportedSource)
 	}
 	if start+12 > len(data) || string(data[start:start+4]) != "TAGX" {
-		return nil, 0, fmt.Errorf("missing TAGX magic")
+		return nil, 0, fmt.Errorf("%w: missing TAGX magic", ErrUnsupportedSource)
 	}
 	length := int(binary.BigEndian.Uint32(data[start+4 : start+8]))
 	if length < 12 || start+length > len(data) || (length-12)%4 != 0 {
-		return nil, 0, fmt.Errorf("invalid TAGX length %d", length)
+		return nil, 0, fmt.Errorf("%w: invalid TAGX length %d", ErrUnsupportedSource, length)
 	}
 	controlBytes := int(binary.BigEndian.Uint32(data[start+8 : start+12]))
 	if controlBytes > 16 {
-		return nil, 0, fmt.Errorf("invalid TAGX control byte count %d", controlBytes)
+		return nil, 0, fmt.Errorf("%w: invalid TAGX control byte count %d", ErrUnsupportedSource, controlBytes)
 	}
 	entries := make([]kindleTAGXEntry, 0, (length-12)/4)
 	for pos := start + 12; pos < start+length; pos += 4 {
@@ -200,12 +200,12 @@ func readKindleCNCXRecord(out map[uint32]string, base uint32, data []byte, codep
 		index := pos
 		length, consumed, ok := kindleVarLen(data, pos)
 		if !ok {
-			return fmt.Errorf("invalid CNCX length at %d", pos)
+			return fmt.Errorf("%w: invalid CNCX length at %d", ErrUnsupportedSource, pos)
 		}
 		pos += consumed
 		end := pos + int(length)
 		if end < pos || end > len(data) {
-			return fmt.Errorf("CNCX string at %d overruns record", index)
+			return fmt.Errorf("%w: CNCX string at %d overruns record", ErrUnsupportedSource, index)
 		}
 		out[base+uint32(index)] = mobiCleanString(mobiDecode(data[pos:end], codepage))
 		pos = end
@@ -220,7 +220,7 @@ func readKindleIndexEntryRecord(data []byte, tags []kindleTAGXEntry, controlByte
 	}
 	idxt := int(header.IDXTOffset)
 	if idxt <= 0 || idxt+4+int(header.NumRecords)*2 > len(data) {
-		return nil, fmt.Errorf("invalid IDXT offset %d", idxt)
+		return nil, fmt.Errorf("%w: invalid IDXT offset %d", ErrUnsupportedSource, idxt)
 	}
 
 	var entries []kindleIndexEntry
@@ -233,12 +233,12 @@ func readKindleIndexEntryRecord(data []byte, tags []kindleTAGXEntry, controlByte
 			end = int(binary.BigEndian.Uint16(data[nextOffsetPos : nextOffsetPos+2]))
 		}
 		if start < 0 || start >= end || end > len(data) {
-			return nil, fmt.Errorf("invalid index entry bounds %d..%d", start, end)
+			return nil, fmt.Errorf("%w: invalid index entry bounds %d..%d", ErrUnsupportedSource, start, end)
 		}
 		nameLength := int(data[start])
 		nameEnd := start + 1 + nameLength
 		if nameEnd+controlBytes > end {
-			return nil, fmt.Errorf("index entry %d text/control bytes overrun entry", i)
+			return nil, fmt.Errorf("%w: index entry %d text/control bytes overrun entry", ErrUnsupportedSource, i)
 		}
 		entry := kindleIndexEntry{
 			Name: mobiCleanString(mobiDecode(data[start+1:nameEnd], codepage)),
@@ -264,7 +264,7 @@ func readKindleIndexTags(data []byte, start, end int, tags []kindleTAGXEntry, co
 	controlByteIndex := 0
 	pos := start + controlBytes
 	if pos > end {
-		return nil, fmt.Errorf("control bytes overrun entry")
+		return nil, fmt.Errorf("%w: control bytes overrun entry", ErrUnsupportedSource)
 	}
 
 	for _, tag := range tags {
@@ -273,7 +273,7 @@ func readKindleIndexTags(data []byte, start, end int, tags []kindleTAGXEntry, co
 			continue
 		}
 		if controlByteIndex >= controlBytes {
-			return nil, fmt.Errorf("TAGX control byte index %d outside %d bytes", controlByteIndex, controlBytes)
+			return nil, fmt.Errorf("%w: TAGX control byte index %d outside %d bytes", ErrUnsupportedSource, controlByteIndex, controlBytes)
 		}
 		if tag.Mask == 0 {
 			continue
@@ -290,7 +290,7 @@ func readKindleIndexTags(data []byte, start, end int, tags []kindleTAGXEntry, co
 		case value == int(tag.Mask) && countKindleBitsSet(tag.Mask) > 1:
 			valueBytes, consumed, ok := kindleVarLen(data, pos)
 			if !ok || pos+consumed > end {
-				return nil, fmt.Errorf("invalid variable-width tag byte count")
+				return nil, fmt.Errorf("%w: invalid variable-width tag byte count", ErrUnsupportedSource)
 			}
 			pos += consumed
 			pending = append(pending, pendingTag{tag: tag.Tag, valueCount: -1, valueBytes: int(valueBytes)})
@@ -309,7 +309,7 @@ func readKindleIndexTags(data []byte, start, end int, tags []kindleTAGXEntry, co
 			for range tag.valueCount {
 				value, consumed, ok := kindleVarLen(data, pos)
 				if !ok || pos+consumed > end {
-					return nil, fmt.Errorf("invalid variable-width tag value")
+					return nil, fmt.Errorf("%w: invalid variable-width tag value", ErrUnsupportedSource)
 				}
 				pos += consumed
 				values = append(values, value)
@@ -319,14 +319,14 @@ func readKindleIndexTags(data []byte, start, end int, tags []kindleTAGXEntry, co
 			for consumedBytes < tag.valueBytes {
 				value, consumed, ok := kindleVarLen(data, pos)
 				if !ok || pos+consumed > end {
-					return nil, fmt.Errorf("invalid variable-width counted tag value")
+					return nil, fmt.Errorf("%w: invalid variable-width counted tag value", ErrUnsupportedSource)
 				}
 				pos += consumed
 				consumedBytes += consumed
 				values = append(values, value)
 			}
 			if consumedBytes != tag.valueBytes {
-				return nil, fmt.Errorf("tag byte count mismatch")
+				return nil, fmt.Errorf("%w: tag byte count mismatch", ErrUnsupportedSource)
 			}
 		}
 		out[tag.tag] = values
@@ -334,13 +334,13 @@ func readKindleIndexTags(data []byte, start, end int, tags []kindleTAGXEntry, co
 
 	for _, b := range data[pos:end] {
 		if b != 0 {
-			return nil, fmt.Errorf("unprocessed non-zero index bytes")
+			return nil, fmt.Errorf("%w: unprocessed non-zero index bytes", ErrUnsupportedSource)
 		}
 	}
 	return out, nil
 }
 
-func kindleNCXNavigationFromEntries(entries []kindleNCXEntry) []KindleNavItem {
+func kindleNCXNavigationFromEntries(entries []kindleNCXEntry) []NavItem {
 	visited := map[int]bool{}
 	nav := kindleNCXChildren(entries, 0, len(entries), 0, visited)
 	if len(nav) == 0 && len(entries) > 0 {
@@ -349,7 +349,7 @@ func kindleNCXNavigationFromEntries(entries []kindleNCXEntry) []KindleNavItem {
 	return nav
 }
 
-func kindleNCXChildren(entries []kindleNCXEntry, start, end, level int, visited map[int]bool) []KindleNavItem {
+func kindleNCXChildren(entries []kindleNCXEntry, start, end, level int, visited map[int]bool) []NavItem {
 	if start < 0 {
 		start = 0
 	}
@@ -359,7 +359,7 @@ func kindleNCXChildren(entries []kindleNCXEntry, start, end, level int, visited 
 	if start > end {
 		return nil
 	}
-	var out []KindleNavItem
+	var out []NavItem
 	for i := start; i < end && len(out) < maxKindleNavigationItems; i++ {
 		entry := entries[i]
 		if visited[entry.Index] || entry.HeadingLevel != level {
@@ -369,7 +369,7 @@ func kindleNCXChildren(entries []kindleNCXEntry, start, end, level int, visited 
 		if entry.Label == "" || entry.Href == "" {
 			continue
 		}
-		item := KindleNavItem{Label: entry.Label, Href: entry.Href}
+		item := NavItem{Label: entry.Label, Href: entry.Href}
 		if entry.FirstChild >= 0 {
 			childEnd := entry.LastChild + 1
 			if childEnd <= entry.FirstChild {
@@ -382,13 +382,13 @@ func kindleNCXChildren(entries []kindleNCXEntry, start, end, level int, visited 
 	return out
 }
 
-func kindleNCXFlatNavigation(entries []kindleNCXEntry) []KindleNavItem {
-	var out []KindleNavItem
+func kindleNCXFlatNavigation(entries []kindleNCXEntry) []NavItem {
+	var out []NavItem
 	for _, entry := range entries {
 		if entry.Label == "" || entry.Href == "" {
 			continue
 		}
-		out = append(out, KindleNavItem{Label: entry.Label, Href: entry.Href})
+		out = append(out, NavItem{Label: entry.Label, Href: entry.Href})
 		if len(out) >= maxKindleNavigationItems {
 			break
 		}

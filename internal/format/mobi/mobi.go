@@ -1,8 +1,12 @@
-package format
+// Package mobi reads PalmDB ebooks: PalmDOC, MOBI6, KF8 and AZW4 Print Replica.
+// It extracts metadata, text and resources; extension aliases and format
+// recognition belong to the parent format package.
+package mobi
 
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"html"
 	"image"
@@ -12,6 +16,7 @@ import (
 	"golang.org/x/text/encoding/charmap"
 
 	"github.com/levmv/polka/internal/bookmeta"
+	"github.com/levmv/polka/internal/imagecodec"
 )
 
 const (
@@ -22,14 +27,14 @@ const (
 	mobiNoImageIndex    = 0xffffffff
 )
 
-type MOBIKind string
+type Kind string
 
 const (
-	MOBIKindUnknown       MOBIKind = ""
-	MOBIKindMOBI6         MOBIKind = "mobi6"
-	MOBIKindKF8Standalone MOBIKind = "kf8-standalone"
-	MOBIKindCombo         MOBIKind = "mobi6+kf8-combo"
-	MOBIKindPalmDOC       MOBIKind = "palmdoc"
+	KindUnknown Kind = ""
+	KindMOBI6   Kind = "mobi6"
+	KindKF8     Kind = "kf8-standalone"
+	KindCombo   Kind = "mobi6+kf8-combo"
+	KindPalmDOC Kind = "palmdoc"
 )
 
 type mobiRecordRange struct {
@@ -37,63 +42,62 @@ type mobiRecordRange struct {
 	end   int64
 }
 
-func isMOBI(r io.ReaderAt, size int64) bool {
-	record0Offset, _, ok := mobiRecord0Bounds(r, size)
-	if !ok {
-		return false
+// DetectContainer recognizes PalmDB ebook signatures without validating content.
+func DetectContainer(r io.ReaderAt) string {
+	var signature [8]byte
+	if _, err := r.ReadAt(signature[:], 60); err != nil {
+		return ""
 	}
-	mobiMagic := make([]byte, 4)
-	if _, err := r.ReadAt(mobiMagic, record0Offset+16); err != nil {
-		return false
+	switch string(signature[:]) {
+	case "BOOKMOBI":
+		return ContainerMOBI
+	case "TEXtREAd":
+		return ContainerPalmDOC
+	default:
+		return ""
 	}
-	return bytes.Equal(mobiMagic, []byte("MOBI"))
 }
 
-// DetectMOBIKind returns a cheap diagnostic subtype for PalmDB ebook containers.
-// It intentionally stays at the header/record-table layer; it does not parse
-// MOBI text records, KF8 flows, or resources.
-func DetectMOBIKind(r io.ReaderAt, size int64) MOBIKind {
-	if isPalmDOC(r, size) {
-		return MOBIKindPalmDOC
+// ReadCodepage reads only the primary text header. Zero means unavailable.
+func ReadCodepage(r io.ReaderAt, size int64) uint32 {
+	start, end, err := mobiRecord0Bounds(r, size)
+	if err != nil || end-start < 32 {
+		return 0
 	}
-	ranges, ok := mobiRecordRanges(r, size)
-	if !ok || len(ranges) == 0 {
-		return MOBIKindUnknown
+	var prefix [32]byte
+	if _, err := r.ReadAt(prefix[:], start); err != nil || string(prefix[16:20]) != "MOBI" {
+		return 0
 	}
-	record0, ok := mobiReadRecord(r, ranges[0], maxMOBIRecord0Bytes)
-	if !ok || len(record0) < 0x6c || !bytes.Equal(record0[16:20], []byte("MOBI")) {
-		return MOBIKindUnknown
-	}
-	if kf8HeaderIndex, ok := mobiEXTHUint32(record0, 121); ok && kf8HeaderIndex > 0 && kf8HeaderIndex < uint32(len(ranges)) {
-		boundary, ok := mobiReadRecord(r, ranges[kf8HeaderIndex-1], 64)
-		if ok && bytes.Equal(boundary, []byte("BOUNDARY")) {
-			return MOBIKindCombo
-		}
-	}
-	version := binary.BigEndian.Uint32(record0[0x68:0x6c])
-	headerLength := binary.BigEndian.Uint32(record0[20:24])
-	if version == 8 && headerLength >= 0x100 && len(record0) >= 0xfc {
-		skelIndex := binary.BigEndian.Uint32(record0[0xf8:0xfc])
-		if skelIndex > 0 && skelIndex != mobiNoImageIndex {
-			return MOBIKindKF8Standalone
-		}
-	}
-	return MOBIKindMOBI6
+	return mobiCodepage(prefix[:])
 }
 
-// ExtractMOBIMetadata reads the lightweight metadata carried by the MOBI header
-// and EXTH records. It does not parse text content, resources, or KF8 structure;
-// those are separate parser layers.
-func ExtractMOBIMetadata(r io.ReaderAt, size int64) (*Metadata, error) {
-	record0, ok := mobiRecord0(r, size)
-	if !ok {
-		return nil, fmt.Errorf("invalid MOBI PalmDB header")
+func kindleHasComboBoundary(r io.ReaderAt, ranges []mobiRecordRange, index uint32) (bool, error) {
+	if index == 0 || index >= uint32(len(ranges)) {
+		return false, nil
+	}
+	record := ranges[index-1]
+	if record.end-record.start != 8 {
+		return false, nil
+	}
+	var boundary [8]byte
+	if _, err := r.ReadAt(boundary[:], record.start); err != nil {
+		return false, fmt.Errorf("read KF8 boundary: %w", err)
+	}
+	return string(boundary[:]) == "BOUNDARY", nil
+}
+
+// ExtractMetadata reads MOBI/EXTH metadata, with a bounded title-page fallback
+// for older Mobipocket files.
+func ExtractMetadata(r io.ReaderAt, size int64) (*bookmeta.Metadata, error) {
+	record0, err := mobiRecord0(r, size)
+	if err != nil {
+		return nil, err
 	}
 	if len(record0) < 24 || !bytes.Equal(record0[16:20], []byte("MOBI")) {
-		return &Metadata{}, nil
+		return &bookmeta.Metadata{}, nil
 	}
 
-	meta := &Metadata{}
+	meta := &bookmeta.Metadata{}
 	codepage := mobiCodepage(record0)
 	if title := mobiHeaderTitle(record0, codepage); title != "" {
 		meta.Title = title
@@ -105,7 +109,7 @@ func ExtractMOBIMetadata(r io.ReaderAt, size int64) (*Metadata, error) {
 		mobiApplyEXTH(meta, record0, codepage)
 	}
 	if meta.Title == "" {
-		if pdb, ok := readPalmDB(r, size); ok {
+		if pdb, err := readPalmDB(r, size); err == nil {
 			if title := palmDBHeaderName(pdb.header, codepage); usefulMOBIPalmDBTitle(title) {
 				meta.Title = title
 			}
@@ -117,18 +121,18 @@ func ExtractMOBIMetadata(r io.ReaderAt, size int64) (*Metadata, error) {
 	return meta, nil
 }
 
-// ExtractMOBICover extracts the cover image referenced by MOBI EXTH record 201.
+// ExtractCover extracts the cover image referenced by MOBI EXTH record 201.
 // If the explicit cover offset is absent or unusable, it falls back to the
 // MOBI header's first image record. It intentionally supports only image types
 // handled by the current cover pipeline.
-func ExtractMOBICover(r io.ReaderAt, size int64) ([]byte, string, error) {
-	ranges, ok := mobiRecordRanges(r, size)
-	if !ok {
-		return nil, "", fmt.Errorf("invalid MOBI PalmDB header")
+func ExtractCover(r io.ReaderAt, size int64) ([]byte, string, error) {
+	ranges, err := mobiRecordRanges(r, size)
+	if err != nil {
+		return nil, "", err
 	}
-	record0, ok := mobiReadRecord(r, ranges[0], maxMOBIRecord0Bytes)
-	if !ok {
-		return nil, "", fmt.Errorf("invalid MOBI record 0")
+	record0, err := mobiReadRecord(r, ranges[0], maxMOBIRecord0Bytes)
+	if err != nil {
+		return nil, "", fmt.Errorf("read MOBI record 0: %w", err)
 	}
 	if len(record0) < 0x70 || !bytes.Equal(record0[16:20], []byte("MOBI")) {
 		return nil, "", nil
@@ -172,42 +176,54 @@ func ExtractMOBICover(r io.ReaderAt, size int64) ([]byte, string, error) {
 	return nil, "", nil
 }
 
-func mobiRecord0(r io.ReaderAt, size int64) ([]byte, bool) {
-	record0Offset, record0End, ok := mobiRecord0Bounds(r, size)
-	if !ok {
-		return nil, false
+func mobiRecord0(r io.ReaderAt, size int64) ([]byte, error) {
+	record0Offset, record0End, err := mobiRecord0Bounds(r, size)
+	if err != nil {
+		return nil, err
 	}
 	return mobiReadRecord(r, mobiRecordRange{start: record0Offset, end: record0End}, maxMOBIRecord0Bytes)
 }
 
-func mobiReadRecord(r io.ReaderAt, record mobiRecordRange, maxBytes int64) ([]byte, bool) {
+func mobiReadRecord(r io.ReaderAt, record mobiRecordRange, maxBytes int64) ([]byte, error) {
 	length := record.end - record.start
-	if length < 0 || length > maxBytes {
-		return nil, false
+	if length < 0 {
+		return nil, fmt.Errorf("%w: invalid record bounds", ErrUnsupportedSource)
+	}
+	if length > maxBytes {
+		return nil, fmt.Errorf("record exceeds limit (%d bytes): %w", maxBytes, ErrResourceLimit)
 	}
 	data := make([]byte, length)
 	if _, err := r.ReadAt(data, record.start); err != nil {
-		return nil, false
+		return nil, err
 	}
-	return data, true
+	return data, nil
 }
 
-func mobiRecord0Bounds(r io.ReaderAt, size int64) (int64, int64, bool) {
-	pdb, ok := readPalmDB(r, size)
-	if !ok || !bytes.Equal(pdb.header[60:68], []byte("BOOKMOBI")) {
-		return 0, 0, false
+func mobiRecord0Bounds(r io.ReaderAt, size int64) (int64, int64, error) {
+	pdb, err := readPalmDB(r, size)
+	if err != nil {
+		return 0, 0, err
 	}
-	record0Offset, record0End, ok := pdb.record0Bounds(r, size)
-	if !ok || record0Offset+20 > size {
-		return 0, 0, false
+	if !bytes.Equal(pdb.header[60:68], []byte("BOOKMOBI")) {
+		return 0, 0, fmt.Errorf("%w: invalid MOBI PalmDB header", ErrUnsupportedSource)
 	}
-	return record0Offset, record0End, true
+	record0Offset, record0End, err := pdb.record0Bounds(r, size)
+	if err != nil {
+		return 0, 0, err
+	}
+	if record0End-record0Offset < 20 {
+		return 0, 0, fmt.Errorf("%w: truncated MOBI record 0", ErrUnsupportedSource)
+	}
+	return record0Offset, record0End, nil
 }
 
-func mobiRecordRanges(r io.ReaderAt, size int64) ([]mobiRecordRange, bool) {
-	pdb, ok := readPalmDB(r, size)
-	if !ok || !bytes.Equal(pdb.header[60:68], []byte("BOOKMOBI")) {
-		return nil, false
+func mobiRecordRanges(r io.ReaderAt, size int64) ([]mobiRecordRange, error) {
+	pdb, err := readPalmDB(r, size)
+	if err != nil {
+		return nil, err
+	}
+	if !bytes.Equal(pdb.header[60:68], []byte("BOOKMOBI")) {
+		return nil, fmt.Errorf("%w: invalid MOBI PalmDB header", ErrUnsupportedSource)
 	}
 	return pdb.recordRanges(r, size, 20)
 }
@@ -268,7 +284,7 @@ func mobiHasEXTH(record0 []byte) bool {
 	return binary.BigEndian.Uint32(record0[0x80:0x84])&0x40 != 0
 }
 
-func mobiApplyEXTH(meta *Metadata, record0 []byte, codepage uint32) {
+func mobiApplyEXTH(meta *bookmeta.Metadata, record0 []byte, codepage uint32) {
 	var ids []bookmeta.Identifier
 	if meta.Identifier != "" {
 		ids = bookmeta.ParseIdentifiers(meta.Identifier)
@@ -334,10 +350,13 @@ func mobiApplyEXTH(meta *Metadata, record0 []byte, codepage uint32) {
 	if len(ids) > 0 {
 		meta.Identifier = bookmeta.FormatIdentifiers(ids)
 	}
-	meta.Genres = uniqueTagList(meta.Genres, semicolonNewlineTabSeparator, mobiCleanString)
+	meta.Genres = cleanGenres(meta.Genres)
 }
 
 func mobiWalkEXTH(record0 []byte, fn func(recordType uint32, content []byte) bool) {
+	if len(record0) < 24 {
+		return
+	}
 	headerLength := int(binary.BigEndian.Uint32(record0[20:24]))
 	exthStart := 16 + headerLength
 	if headerLength <= 0 || exthStart+12 > len(record0) || !bytes.Equal(record0[exthStart:exthStart+4], []byte("EXTH")) {
@@ -383,9 +402,12 @@ func mobiEXTHUint32(record0 []byte, want uint32) (uint32, bool) {
 }
 
 func mobiReadImageRecord(r io.ReaderAt, record mobiRecordRange) ([]byte, string, error) {
-	data, ok := mobiReadRecord(r, record, maxMOBICoverBytes)
-	if !ok {
+	data, err := mobiReadRecord(r, record, maxMOBICoverBytes)
+	if errors.Is(err, ErrResourceLimit) {
 		return nil, "", nil
+	}
+	if err != nil {
+		return nil, "", err
 	}
 	ext, ok := mobiImageExtension(data)
 	if !ok {
@@ -402,7 +424,7 @@ func mobiImageExtension(data []byte) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	return coverImageExtensionFromFormatName(formatName)
+	return imagecodec.CoverExtension(formatName)
 }
 
 func mobiAuthor(value string) bookmeta.AuthorMeta {
@@ -437,7 +459,8 @@ func mobiDecode(raw []byte, codepage uint32) string {
 	if codepage == 65001 {
 		return string(raw)
 	}
-	return decodeCharmap(raw, mobiCharmap(codepage))
+	decoded, _ := mobiCharmap(codepage).NewDecoder().Bytes(raw)
+	return string(decoded)
 }
 
 func mobiCleanString(s string) string {
@@ -573,4 +596,25 @@ func mobiPrimaryLanguage(primary byte) string {
 	default:
 		return ""
 	}
+}
+
+// HasNativeCodepage reports whether decoding uses the declared codepage directly.
+func HasNativeCodepage(codepage uint32) bool {
+	return codepage == 65001 || codepage >= 1250 && codepage <= 1258
+}
+
+func cleanGenres(values []string) []string {
+	var out []string
+	seen := make(map[string]bool)
+	for _, value := range values {
+		for _, field := range strings.FieldsFunc(value, func(r rune) bool { return r == ';' || r == '\n' || r == '\r' || r == '\t' }) {
+			value := mobiCleanString(field)
+			key := strings.ToLower(value)
+			if value != "" && !seen[key] {
+				out = append(out, value)
+				seen[key] = true
+			}
+		}
+	}
+	return out
 }

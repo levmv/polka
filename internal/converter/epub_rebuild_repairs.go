@@ -13,7 +13,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/levmv/polka/internal/format"
+	"github.com/levmv/polka/internal/bookmeta"
 )
 
 const (
@@ -203,7 +203,7 @@ func applyRebuildXMLEdits(raw []byte, edits []rebuildXMLEdit) ([]byte, bool) {
 // payload is already absent and whose media type cannot carry book content.
 func removeMissingPresentationReferences(zr *zip.Reader, opfPath string, raw []byte) ([]byte, map[string]bool, error) {
 	var doc rebuildOPFDoc
-	if err := format.DecodeOPFXML(raw, &doc); err != nil {
+	if err := bookmeta.DecodeOPFXML(raw, &doc); err != nil {
 		return nil, nil, fmt.Errorf("parse EPUB OPF %s for missing resources: %w", opfPath, err)
 	}
 	spineIDs := make(map[string]bool, len(doc.Spine.Items))
@@ -280,7 +280,7 @@ func rebuildPresentationResourceMediaType(mediaType string) bool {
 // document. The legacy page-map resource remains untouched in the archive.
 func removeLegacyPageMapPointer(ctx context.Context, zr *zip.Reader, opfPath string, raw []byte) ([]byte, error) {
 	var doc rebuildOPFDoc
-	if err := format.DecodeOPFXML(raw, &doc); err != nil {
+	if err := bookmeta.DecodeOPFXML(raw, &doc); err != nil {
 		return raw, nil
 	}
 	if !rebuildOPFVersionAtLeast3(doc.Version) {
@@ -352,7 +352,7 @@ func rebuildOPFVersionAtLeast3(version string) bool {
 
 func classifyRebuildContent(opfPath string, raw []byte) (map[string]bool, string, bool) {
 	var doc rebuildOPFDoc
-	if err := format.DecodeOPFXML(raw, &doc); err != nil {
+	if err := bookmeta.DecodeOPFXML(raw, &doc); err != nil {
 		return nil, "", false
 	}
 	major, _, _ := strings.Cut(strings.TrimSpace(doc.Version), ".")
@@ -394,7 +394,7 @@ func addMissingSVGProperties(opfPath string, raw []byte, inlineSVGDocuments map[
 		return raw
 	}
 	var doc rebuildOPFDoc
-	if err := format.DecodeOPFXML(raw, &doc); err != nil || !rebuildOPFVersionAtLeast3(doc.Version) {
+	if err := bookmeta.DecodeOPFXML(raw, &doc); err != nil || !rebuildOPFVersionAtLeast3(doc.Version) {
 		return raw
 	}
 
@@ -462,7 +462,7 @@ func rebuildXHTMLHasPageList(raw []byte) bool {
 // EPUB2 metadata and removes only vendor guide entries that point to images.
 func normalizeVendorImageGuide(opfPath string, raw []byte) []byte {
 	var doc rebuildOPFDoc
-	if err := format.DecodeOPFXML(raw, &doc); err != nil {
+	if err := bookmeta.DecodeOPFXML(raw, &doc); err != nil {
 		return raw
 	}
 	imageIDs := make(map[string]string)
@@ -876,7 +876,7 @@ func rebuildLinkIsStylesheet(attrs []xml.Attr) bool {
 // unique identifier.
 func rebuildNCXRepairs(ctx context.Context, zr *zip.Reader, pkg rebuildPackage) (*zip.File, []byte, error) {
 	var doc rebuildOPFDoc
-	if err := format.DecodeOPFXML(pkg.opfBytes, &doc); err != nil {
+	if err := bookmeta.DecodeOPFXML(pkg.opfBytes, &doc); err != nil {
 		return nil, nil, fmt.Errorf("parse EPUB OPF %s for NCX repair: %w", pkg.opfPath, err)
 	}
 	identifierID := strings.TrimSpace(doc.UniqueIdentifier)

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/levmv/polka/internal/converter"
 	"github.com/levmv/polka/internal/covers"
 	"github.com/levmv/polka/internal/testfixture"
 )
@@ -143,8 +144,8 @@ func TestRunMetaReportsToleratedFormatWarnings(t *testing.T) {
 	kindlePath := filepath.Join(dir, "unknown-codepage.mobi")
 	writeMetaEPUBWithFallbackPaths(t, epubPath)
 	writeMetaFB2Zip(t, fb2Path, "Rock & Roll")
-	kindle := testfixture.MinimalMOBI()
-	const record0Offset = 78 + 8
+	kindle := testfixture.MOBI(0)
+	const record0Offset = 78 + 2*8
 	binary.BigEndian.PutUint32(kindle[record0Offset+28:record0Offset+32], 932)
 	if err := os.WriteFile(kindlePath, kindle, 0o644); err != nil {
 		t.Fatalf("write Kindle fixture: %v", err)
@@ -395,7 +396,7 @@ func TestRunMetaJSONIncludesPalmDBSubtype(t *testing.T) {
 	}
 }
 
-func TestRunMetaJSONIncludesKindleDetailsForUnknownPalmDBByExtension(t *testing.T) {
+func TestRunMetaJSONRecognizesEncryptedPalmDOC(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "encrypted.mobi")
 	if err := os.WriteFile(src, metaPalmDOCFileWithEncryption("DRM PalmDOC", 1), 0o644); err != nil {
@@ -417,8 +418,8 @@ func TestRunMetaJSONIncludesKindleDetailsForUnknownPalmDBByExtension(t *testing.
 		t.Fatalf("reports len = %d; want 1", len(reports))
 	}
 	report := reports[0]
-	if report.Format != "unknown" {
-		t.Fatalf("Format = %q; want unknown because encrypted PalmDOC is not import-readable", report.Format)
+	if report.Format != "pdb" || len(report.ConversionTargets) != 1 || report.ConversionTargets[0].Target != "epub" {
+		t.Fatalf("encrypted PalmDOC report = %+v", report)
 	}
 	if report.Details == nil || report.Details.Kindle == nil {
 		t.Fatalf("details = %+v; want Kindle diagnostic block", report.Details)
@@ -431,43 +432,60 @@ func TestRunMetaJSONIncludesKindleDetailsForUnknownPalmDBByExtension(t *testing.
 	}
 }
 
-func TestRunMetaJSONIncludesAZW4PDFDetail(t *testing.T) {
-	dir := t.TempDir()
-	withPDF := filepath.Join(dir, "print-replica.azw4")
-	withoutPDF := filepath.Join(dir, "empty.azw4")
-	if err := os.WriteFile(withPDF, append(testfixture.MinimalMOBI(), []byte("%PDF-1.7\nbody\n%%EOF")...), 0o644); err != nil {
-		t.Fatalf("write AZW4 with PDF: %v", err)
-	}
-	if err := os.WriteFile(withoutPDF, testfixture.MinimalMOBI(), 0o644); err != nil {
-		t.Fatalf("write AZW4 without PDF: %v", err)
-	}
-
-	out, err := captureStdout(t, func() error {
-		return runMeta(t.Context(), []string{"--json", withPDF, withoutPDF})
-	})
-	if err != nil {
-		t.Fatalf("runMeta: %v", err)
-	}
-
-	var reports []metaFileReport
-	if err := json.Unmarshal([]byte(out), &reports); err != nil {
-		t.Fatalf("unmarshal meta JSON: %v\n%s", err, out)
-	}
-	byPath := metaReportsByPath(reports)
-	for path, want := range map[string]string{
-		withPDF:    "present",
-		withoutPDF: "missing",
+func TestAZW4MetadataAndPDFConversion(t *testing.T) {
+	pdf := bytes.TrimSpace(testfixture.MinimalPDF())
+	header := testfixture.PalmDBRecordBodies(t, testfixture.MOBI(0))[0][:64]
+	for _, tt := range []struct {
+		name, pdfState, reason string
+		data                   []byte
+	}{
+		{"print-replica", "present", "", append(testfixture.MOBI(0), pdf...)},
+		{"empty", "missing", "no embedded PDF", testfixture.MOBI(0)},
+		{"short-header", "present", "", testfixture.PalmDBWithRecords("Print Replica", "BOOKMOBI", [][]byte{header, pdf})},
 	} {
-		report := byPath[path]
-		if report == nil || report.Format != "azw4" || report.Details == nil || report.Details.AZW4PDF != want {
-			t.Fatalf("%s report = %+v; want AZW4 PDF %s", path, report, want)
-		}
-		if want == "present" && (report.Details.Kindle == nil || report.Details.Kindle.SourceClass != "azw4-pdf-wrapper" || !report.Details.Kindle.AZW4PDF) {
-			t.Fatalf("%s kindle details = %+v; want AZW4 PDF wrapper", path, report.Details.Kindle)
-		}
-		if len(report.ConversionTargets) != 1 || report.ConversionTargets[0].Target != "pdf" {
-			t.Fatalf("%s conversion targets = %+v; want pdf", path, report.ConversionTargets)
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			src, dst := filepath.Join(dir, tt.name+".azw4"), filepath.Join(dir, "export.pdf")
+			if err := os.WriteFile(src, tt.data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			out, err := captureStdout(t, func() error { return runMeta(t.Context(), []string{"--json", src}) })
+			if err != nil {
+				t.Fatal(err)
+			}
+			var reports []metaFileReport
+			if err := json.Unmarshal([]byte(out), &reports); err != nil || len(reports) != 1 {
+				t.Fatalf("meta JSON: %v\n%s", err, out)
+			}
+			report := reports[0]
+			if report.Format != "azw4" || report.Details == nil || report.Details.AZW4PDF != tt.pdfState {
+				t.Fatalf("report = %+v; want AZW4 PDF %s", report, tt.pdfState)
+			}
+			if tt.pdfState == "present" && (report.Details.Kindle == nil || report.Details.Kindle.SourceClass != "azw4-pdf-wrapper" || !report.Details.Kindle.AZW4PDF) {
+				t.Fatalf("kindle details = %+v; want AZW4 PDF wrapper", report.Details.Kindle)
+			}
+			if len(report.ConversionTargets) != 1 || report.ConversionTargets[0].Target != "pdf" {
+				t.Fatalf("conversion targets = %+v; want pdf", report.ConversionTargets)
+			}
+			_, err = captureStdout(t, func() error {
+				return RunContext(t.Context(), []string{"convert", "--to", "pdf", src, dst})
+			})
+			if tt.reason != "" {
+				if !errors.Is(err, converter.ErrUnsupportedContent) || !strings.Contains(err.Error(), tt.reason) {
+					t.Fatalf("conversion error = %v; want refusal with %q", err, tt.reason)
+				}
+				if _, err := os.Stat(dst); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("failed conversion left an output file: %v", err)
+				}
+			} else {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got, err := os.ReadFile(dst); err != nil || !bytes.Equal(got, pdf) {
+					t.Fatalf("PDF export changed the payload: %v", err)
+				}
+			}
+		})
 	}
 }
 
@@ -573,7 +591,7 @@ func TestRunMetaSetRejectsUnsupportedFormat(t *testing.T) {
 func TestRunMetaPrintsAZW4PDFDetail(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "print-replica.azw4")
-	if err := os.WriteFile(src, append(testfixture.MinimalMOBI(), []byte("%PDF-1.7\nbody\n%%EOF")...), 0o644); err != nil {
+	if err := os.WriteFile(src, append(testfixture.MOBI(0), []byte("%PDF-1.7\nbody\n%%EOF")...), 0o644); err != nil {
 		t.Fatalf("write AZW4: %v", err)
 	}
 
@@ -883,20 +901,10 @@ func metaPalmDOCFile(title string) []byte {
 }
 
 func metaPalmDOCFileWithEncryption(title string, encryption uint16) []byte {
-	record0 := make([]byte, 16)
-	binary.BigEndian.PutUint16(record0[0:2], 2)
-	binary.BigEndian.PutUint32(record0[4:8], 1024)
-	binary.BigEndian.PutUint16(record0[8:10], 1)
-	binary.BigEndian.PutUint16(record0[10:12], 4096)
+	record0 := testfixture.PalmDOCHeader(2)
+	binary.BigEndian.PutUint32(record0[4:8], 4)
 	binary.BigEndian.PutUint16(record0[12:14], encryption)
-
-	data := make([]byte, 78+8+len(record0))
-	copy(data[:32], []byte(title))
-	copy(data[60:68], []byte("TEXtREAd"))
-	binary.BigEndian.PutUint16(data[76:78], 1)
-	binary.BigEndian.PutUint32(data[78:82], 86)
-	copy(data[86:], record0)
-	return data
+	return testfixture.PalmDBWithRecords(title, "TEXtREAd", [][]byte{record0, []byte("Text")})
 }
 
 // A format with no metadata extractor still reports an (empty) metadata object;

@@ -14,7 +14,7 @@ import (
 
 	"golang.org/x/net/html"
 
-	"github.com/levmv/polka/internal/format"
+	"github.com/levmv/polka/internal/format/mobi"
 )
 
 const (
@@ -29,18 +29,33 @@ var (
 	kindleCSSFlowURLReferenceRE  = regexp.MustCompile(`(?i)url\(\s*(['"]?)(kindle:flow:([0-9A-V]+)\?mime=([a-z0-9.+-]+/[a-z0-9.+-]+)(?:[^'")\s]*)?)['"]?\s*\)`)
 )
 
-func convertKindleSourceToEPUB(ctx context.Context, w io.Writer, src io.ReaderAt, from format.Format, size int64, opts ConversionOptions) error {
-	doc, err := format.ExtractKindleDocument(src, size, from)
-	if err != nil {
-		if errors.Is(err, format.ErrKindleResourceLimit) {
-			return fmt.Errorf("extract Kindle document: %v: %w", err, ErrResourceLimit)
-		}
-		return fmt.Errorf("extract Kindle document: %w", err)
+func convertMOBISourceToEPUB(ctx context.Context, w io.Writer, src io.ReaderAt, size int64, opts ConversionOptions) error {
+	doc, err := mobi.ExtractDocument(src, size)
+	if cause := context.Cause(ctx); cause != nil {
+		return cause
 	}
-	return convertKindleDocumentToEPUB(ctx, w, doc, opts)
+	if err != nil {
+		return fmt.Errorf("extract Kindle document: %w", mobiConversionError(err))
+	}
+	return convertMOBIDocumentToEPUB(ctx, w, doc, opts)
 }
 
-func convertKindleDocumentToEPUB(ctx context.Context, w io.Writer, doc *format.KindleDocument, opts ConversionOptions) error {
+// Keep parser errors inside the adapter. Callers handle the same conversion
+// refusal and budget errors for MOBI text and AZW4 PDF as for other formats.
+func mobiConversionError(err error) error {
+	switch {
+	case errors.Is(err, mobi.ErrUnsupportedSource), errors.Is(err, mobi.ErrPDFNotFound):
+		return fmt.Errorf("%w: %v", ErrUnsupportedContent, err)
+	case errors.Is(err, mobi.ErrTextLimit):
+		return fmt.Errorf("%w: %v", ErrInputTooLarge, err)
+	case errors.Is(err, mobi.ErrResourceLimit):
+		return fmt.Errorf("%w: %v", ErrResourceLimit, err)
+	default:
+		return err
+	}
+}
+
+func convertMOBIDocumentToEPUB(ctx context.Context, w io.Writer, doc *mobi.Document, opts ConversionOptions) error {
 	if doc == nil {
 		return fmt.Errorf("Kindle document is required")
 	}
@@ -68,7 +83,7 @@ func convertKindleDocumentToEPUB(ctx context.Context, w io.Writer, doc *format.K
 	return writeSimpleEPUBWithNav(ctx, w, body, meta, kindleEPUBNav(doc.Navigation), assets...)
 }
 
-func kindleEPUBBody(doc *format.KindleDocument, flow format.KindleTextFlow, opts ConversionOptions) (string, []epubAsset, error) {
+func kindleEPUBBody(doc *mobi.Document, flow mobi.TextFlow, opts ConversionOptions) (string, []epubAsset, error) {
 	switch strings.ToLower(strings.TrimSpace(flow.MediaType)) {
 	case "", "text/html", "application/xhtml+xml":
 		bodyRaw := insertKindleFileposAnchors(flow.Data, kindleReferencedFilepos(doc, flow.Data))
@@ -91,7 +106,7 @@ func kindleEPUBBody(doc *format.KindleDocument, flow format.KindleTextFlow, opts
 	}
 }
 
-func kindleReferencedFilepos(doc *format.KindleDocument, flow []byte) []int {
+func kindleReferencedFilepos(doc *mobi.Document, flow []byte) []int {
 	seen := map[int]bool{}
 	var refs []int
 	add := func(pos int) {
@@ -101,8 +116,8 @@ func kindleReferencedFilepos(doc *format.KindleDocument, flow []byte) []int {
 		seen[pos] = true
 		refs = append(refs, pos)
 	}
-	var walkNav func([]format.KindleNavItem)
-	walkNav = func(items []format.KindleNavItem) {
+	var walkNav func([]mobi.NavItem)
+	walkNav = func(items []mobi.NavItem) {
 		for _, item := range items {
 			if pos, ok := kindleFileposFromHref(item.Href); ok {
 				add(pos)
@@ -351,7 +366,7 @@ func kindleAttrsWithout(attrs []html.Attribute, names ...string) []html.Attribut
 	return out
 }
 
-func kindleImageResolver(resources []format.KindleResource) htmlImageResolver {
+func kindleImageResolver(resources []mobi.Resource) htmlImageResolver {
 	return func(src string) (string, bool) {
 		src = strings.TrimSpace(src)
 		if raw, ok := strings.CutPrefix(src, kindleRecindexImagePrefix); ok {
@@ -382,7 +397,7 @@ func kindleImageResolver(resources []format.KindleResource) htmlImageResolver {
 	}
 }
 
-func kindleMediaResolver(resources []format.KindleResource) htmlMediaResolver {
+func kindleMediaResolver(resources []mobi.Resource) htmlMediaResolver {
 	return func(src, mediaPrefix string) (string, bool) {
 		src = strings.TrimSpace(src)
 		if raw, ok := cutKindlePrefix(src, kindleRecindexMediaPrefix); ok {
@@ -413,7 +428,7 @@ func cutKindlePrefix(src, prefix string) (string, bool) {
 	return src[len(prefix):], true
 }
 
-func kindleImageResourceHref(resources []format.KindleResource, index uint64) (string, bool) {
+func kindleImageResourceHref(resources []mobi.Resource, index uint64) (string, bool) {
 	if index == 0 {
 		return "", false
 	}
@@ -430,7 +445,7 @@ func kindleImageResourceHref(resources []format.KindleResource, index uint64) (s
 	return "", false
 }
 
-func kindleEmbedResourceHref(resources []format.KindleResource, index uint64, mediaPrefix string) (string, bool) {
+func kindleEmbedResourceHref(resources []mobi.Resource, index uint64, mediaPrefix string) (string, bool) {
 	if index == 0 {
 		return "", false
 	}
@@ -449,22 +464,22 @@ func kindleEmbedResourceHref(resources []format.KindleResource, index uint64, me
 	return "", false
 }
 
-func kindleResourceHrefWithMediaPrefix(resource format.KindleResource, mediaPrefix string) (string, bool) {
+func kindleResourceHrefWithMediaPrefix(resource mobi.Resource, mediaPrefix string) (string, bool) {
 	if mediaPrefix != "" && !kindleResourceHasMediaPrefix(resource, mediaPrefix) {
 		return "", false
 	}
 	return kindleResourceHref(resource)
 }
 
-func kindleResourceHasMediaPrefix(resource format.KindleResource, mediaPrefix string) bool {
+func kindleResourceHasMediaPrefix(resource mobi.Resource, mediaPrefix string) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(resource.MediaType)), mediaPrefix)
 }
 
-func kindleResourceHasMediaType(resource format.KindleResource, mediaType string) bool {
+func kindleResourceHasMediaType(resource mobi.Resource, mediaType string) bool {
 	return strings.EqualFold(strings.TrimSpace(resource.MediaType), strings.TrimSpace(mediaType))
 }
 
-func kindleResourceHref(resource format.KindleResource) (string, bool) {
+func kindleResourceHref(resource mobi.Resource) (string, bool) {
 	href := strings.TrimSpace(resource.Href)
 	return href, href != ""
 }
@@ -487,7 +502,7 @@ func kindleFlowResourceRef(raw string) (uint64, string, bool) {
 	return 0, "", false
 }
 
-func kindleFlowResourceHref(resources []format.KindleResource, flow uint64, mediaType string) (string, bool) {
+func kindleFlowResourceHref(resources []mobi.Resource, flow uint64, mediaType string) (string, bool) {
 	if flow == 0 {
 		return "", false
 	}
@@ -499,7 +514,7 @@ func kindleFlowResourceHref(resources []format.KindleResource, flow uint64, medi
 	return "", false
 }
 
-func kindleEPUBAssets(resources []format.KindleResource) []epubAsset {
+func kindleEPUBAssets(resources []mobi.Resource) []epubAsset {
 	assets := make([]epubAsset, 0, len(resources))
 	for _, resource := range resources {
 		if len(resource.Data) == 0 || strings.TrimSpace(resource.Href) == "" || strings.TrimSpace(resource.MediaType) == "" {
@@ -520,7 +535,7 @@ func kindleEPUBAssets(resources []format.KindleResource) []epubAsset {
 	return assets
 }
 
-func rewriteKindleCSSResourceReferences(css []byte, cssHref string, resources []format.KindleResource) []byte {
+func rewriteKindleCSSResourceReferences(css []byte, cssHref string, resources []mobi.Resource) []byte {
 	css = kindleCSSEmbedURLReferenceRE.ReplaceAllFunc(css, func(match []byte) []byte {
 		parts := kindleCSSEmbedURLReferenceRE.FindSubmatch(match)
 		if len(parts) != 4 {
@@ -568,9 +583,9 @@ func rewriteKindleCSSResourceReferences(css []byte, cssHref string, resources []
 	})
 }
 
-func kindleEmbedResource(resources []format.KindleResource, index uint64) (format.KindleResource, bool) {
+func kindleEmbedResource(resources []mobi.Resource, index uint64) (mobi.Resource, bool) {
 	if index == 0 {
-		return format.KindleResource{}, false
+		return mobi.Resource{}, false
 	}
 	hasEmbedIndex := false
 	for _, resource := range resources {
@@ -584,7 +599,7 @@ func kindleEmbedResource(resources []format.KindleResource, index uint64) (forma
 	if !hasEmbedIndex && int(index) <= len(resources) {
 		return resources[index-1], true
 	}
-	return format.KindleResource{}, false
+	return mobi.Resource{}, false
 }
 
 func epubRelativeAssetHref(fromHref, toHref string) string {
@@ -598,7 +613,7 @@ func epubRelativeAssetHref(fromHref, toHref string) string {
 	return strings.Repeat("../", depth) + toHref
 }
 
-func kindleEPUBNav(items []format.KindleNavItem) []epubNavItem {
+func kindleEPUBNav(items []mobi.NavItem) []epubNavItem {
 	var nav []epubNavItem
 	for _, item := range items {
 		children := kindleEPUBNav(item.Children)

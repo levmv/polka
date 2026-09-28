@@ -324,103 +324,22 @@ func testPalmDOCBytes(title string) []byte {
 }
 
 func testPalmDBBytes(title, typeCreator string, compression uint16) []byte {
-	const (
-		palmDBHeaderSize = 78
-		palmDBRecordSize = 8
-		record0Offset    = palmDBHeaderSize + palmDBRecordSize
-	)
-
-	record0 := make([]byte, 16)
-	binary.BigEndian.PutUint16(record0[0:2], compression)
-	binary.BigEndian.PutUint32(record0[4:8], 1024)
-	binary.BigEndian.PutUint16(record0[8:10], 1)
-	binary.BigEndian.PutUint16(record0[10:12], 4096)
-
-	data := make([]byte, record0Offset+len(record0))
-	copy(data[:32], []byte(title))
-	copy(data[60:68], []byte(typeCreator))
-	binary.BigEndian.PutUint16(data[76:78], 1)
-	binary.BigEndian.PutUint32(data[78:82], record0Offset)
-	copy(data[record0Offset:], record0)
-	return data
-}
-
-type testMOBIEXTHRecord struct {
-	typ   uint32
-	value []byte
+	record0 := testfixture.PalmDOCHeader(compression)
+	binary.BigEndian.PutUint32(record0[4:8], 4)
+	return testfixture.PalmDBWithRecords(title, typeCreator, [][]byte{record0, []byte("Text")})
 }
 
 func testMOBIBytesWithMetadataAndCover(cover []byte) []byte {
-	const (
-		palmDBHeaderSize = 78
-		palmDBRecordSize = 8
-		mobiHeaderLength = 0xe8
-	)
-	exth := testMOBIEXTH([]testMOBIEXTHRecord{
-		{typ: 503, value: []byte("MOBI Book")},
-		{typ: 100, value: []byte("Doe, Jane")},
-		{typ: 201, value: testMOBIUint32(0)},
+	return testfixture.BuildMOBI(testfixture.MOBIOptions{
+		Title: "MOBI Book",
+		EXTH: []testfixture.MOBIEXTHRecord{
+			{Type: 503, Value: []byte("MOBI Book")},
+			{Type: 100, Value: []byte("Doe, Jane")},
+			{Type: 201, Value: testfixture.MOBIUint32(0)},
+		},
+		FirstImageIndex: 2,
+		ExtraRecords:    [][]byte{cover},
 	})
-	title := []byte("MOBI Book")
-	titleOffset := 16 + mobiHeaderLength + len(exth)
-	record0 := make([]byte, titleOffset+len(title))
-	binary.BigEndian.PutUint16(record0[0:2], 1)
-	copy(record0[16:20], "MOBI")
-	binary.BigEndian.PutUint32(record0[20:24], mobiHeaderLength)
-	binary.BigEndian.PutUint32(record0[28:32], 65001)
-	binary.BigEndian.PutUint32(record0[0x54:0x58], uint32(titleOffset))
-	binary.BigEndian.PutUint32(record0[0x58:0x5c], uint32(len(title)))
-	binary.BigEndian.PutUint32(record0[0x5c:0x60], 0x09)
-	binary.BigEndian.PutUint32(record0[0x68:0x6c], 8)
-	binary.BigEndian.PutUint32(record0[0x6c:0x70], 2)
-	binary.BigEndian.PutUint32(record0[0x80:0x84], 0x40)
-	copy(record0[16+mobiHeaderLength:], exth)
-	copy(record0[titleOffset:], title)
-
-	records := [][]byte{record0, []byte("dummy text record"), cover}
-	header := make([]byte, palmDBHeaderSize)
-	copy(header[60:68], "BOOKMOBI")
-	binary.BigEndian.PutUint16(header[76:78], uint16(len(records)))
-
-	offset := palmDBHeaderSize + len(records)*palmDBRecordSize
-	table := make([]byte, len(records)*palmDBRecordSize)
-	for i, body := range records {
-		binary.BigEndian.PutUint32(table[i*palmDBRecordSize:i*palmDBRecordSize+4], uint32(offset))
-		offset += len(body)
-	}
-
-	out := append(header, table...)
-	for _, body := range records {
-		out = append(out, body...)
-	}
-	return out
-}
-
-func testMOBIEXTH(records []testMOBIEXTHRecord) []byte {
-	var body []byte
-	for _, rec := range records {
-		buf := make([]byte, 8+len(rec.value))
-		binary.BigEndian.PutUint32(buf[0:4], rec.typ)
-		binary.BigEndian.PutUint32(buf[4:8], uint32(len(buf)))
-		copy(buf[8:], rec.value)
-		body = append(body, buf...)
-	}
-	length := 12 + len(body)
-	exth := make([]byte, length)
-	copy(exth[0:4], "EXTH")
-	binary.BigEndian.PutUint32(exth[4:8], uint32(length))
-	binary.BigEndian.PutUint32(exth[8:12], uint32(len(records)))
-	copy(exth[12:], body)
-	for len(exth)%4 != 0 {
-		exth = append(exth, 0)
-	}
-	return exth
-}
-
-func testMOBIUint32(value uint32) []byte {
-	buf := make([]byte, 4)
-	binary.BigEndian.PutUint32(buf, value)
-	return buf
 }
 
 func testCHMBytesWithTitle(title string) []byte {
@@ -534,16 +453,20 @@ func TestStagedImportSnapshotDrivesResolveAndPersist(t *testing.T) {
 	dataDir := t.TempDir()
 	database, root := openTestLibrary(t, dataDir, filepath.Join(dataDir, "books"))
 
-	original := []byte(`<?xml version="1.0" encoding="utf-8"?>
-<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0">
-  <description><title-info><book-title>Staged Original</book-title></title-info></description>
-</FictionBook>`)
-	sourcePath := filepath.Join(dataDir, "snapshot.fb2")
+	original := testfixture.BuildMOBI(testfixture.MOBIOptions{
+		Codepage: 65001, Title: "Staged Original", Encryption: 2,
+	})
+	sourcePath := filepath.Join(dataDir, "snapshot.mobi")
 	if err := os.WriteFile(sourcePath, original, 0o644); err != nil {
 		t.Fatalf("write source: %v", err)
 	}
 
-	prepared, err := prepareSource(t.Context(), root, Source{Path: sourcePath})
+	src := Source{Path: sourcePath}
+	fingerprint, err := fingerprintSource(t.Context(), src)
+	if err != nil || fingerprint.Format != format.FormatMOBI {
+		t.Fatalf("fingerprint=%+v, error=%v", fingerprint, err)
+	}
+	prepared, err := prepareSource(t.Context(), root, src)
 	if err != nil {
 		t.Fatalf("prepareSource: %v", err)
 	}
@@ -554,10 +477,11 @@ func TestStagedImportSnapshotDrivesResolveAndPersist(t *testing.T) {
 		t.Fatalf("staging = %v, %v; want one source", entries, err)
 	}
 	label, ok := storage.ParseStagedTempName(entries[0].Name())
-	if wantLabel := fmt.Sprintf("%x.fb2", wantHash); !ok || label != wantLabel {
+	if wantLabel := fmt.Sprintf("%x.mobi", wantHash); !ok || label != wantLabel {
 		t.Fatalf("staging label = %q, %v; want %q", label, ok, wantLabel)
 	}
-	if err := os.WriteFile(sourcePath, []byte("replacement after staging"), 0o644); err != nil {
+	// Replacing the input must not change the staged metadata or stored bytes.
+	if err := os.WriteFile(sourcePath, testfixture.MOBI(0), 0o644); err != nil {
 		t.Fatalf("replace source: %v", err)
 	}
 
@@ -603,9 +527,6 @@ func TestResolveKEPUBUsesEPUBMetadata(t *testing.T) {
 	if resolved.Extension != ".kepub.epub" {
 		t.Fatalf("Extension = %q; want .kepub.epub", resolved.Extension)
 	}
-	if !resolved.CanRead {
-		t.Fatalf("CanRead = false; want true for KEPUB reader path")
-	}
 	if resolved.Metadata.Title != "Kobo Book" {
 		t.Fatalf("Title = %q; want Kobo Book", resolved.Metadata.Title)
 	}
@@ -643,9 +564,6 @@ func TestResolveDJVUUsesFilenameFallbacks(t *testing.T) {
 			}
 			if resolved.Format != format.FormatDJVU {
 				t.Fatalf("Format = %v; want FormatDJVU", resolved.Format)
-			}
-			if !resolved.CanRead {
-				t.Fatal("DjVu should be readable")
 			}
 			if (len(resolved.CoverBytes) > 0) != tt.cover || (len(resolved.Warnings) == 0) != tt.cover {
 				t.Fatalf("cover bytes=%d, warnings=%v; want cover=%v", len(resolved.CoverBytes), resolved.Warnings, tt.cover)
@@ -740,18 +658,17 @@ func TestResolveMOBIFamilyUsesFilenameFallbacks(t *testing.T) {
 	for _, tt := range []struct {
 		name       string
 		wantFormat format.Format
-		canRead    bool
 	}{
-		{name: "Legacy Book.mobi", wantFormat: format.FormatMOBI, canRead: true},
-		{name: "Kindle Book.azw", wantFormat: format.FormatAZW, canRead: true},
-		{name: "Kindle Book.azw3", wantFormat: format.FormatAZW3, canRead: true},
+		{name: "Legacy Book.mobi", wantFormat: format.FormatMOBI},
+		{name: "Kindle Book.azw", wantFormat: format.FormatAZW},
+		{name: "Kindle Book.azw3", wantFormat: format.FormatAZW3},
 		{name: "Print Replica.azw4", wantFormat: format.FormatAZW4},
-		{name: "Palm Book.prc", wantFormat: format.FormatPRC, canRead: true},
+		{name: "Palm Book.prc", wantFormat: format.FormatPRC},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
 			path := filepath.Join(dir, tt.name)
-			if err := os.WriteFile(path, testfixture.MinimalMOBI(), 0o644); err != nil {
+			if err := os.WriteFile(path, testfixture.MOBI(0), 0o644); err != nil {
 				t.Fatalf("write source: %v", err)
 			}
 
@@ -762,9 +679,6 @@ func TestResolveMOBIFamilyUsesFilenameFallbacks(t *testing.T) {
 
 			if resolved.Format != tt.wantFormat {
 				t.Fatalf("Format = %v; want %v", resolved.Format, tt.wantFormat)
-			}
-			if resolved.CanRead != tt.canRead {
-				t.Fatalf("CanRead = %v; want %v", resolved.CanRead, tt.canRead)
 			}
 			if len(resolved.Warnings) != 0 {
 				t.Fatalf("Warnings = %+v; want none for recognized MOBI-family format", resolved.Warnings)
@@ -803,9 +717,6 @@ func TestResolvePalmDOCMetadata(t *testing.T) {
 			if resolved.Format != format.FormatPDB {
 				t.Fatalf("Format = %v; want FormatPDB", resolved.Format)
 			}
-			if resolved.CanRead {
-				t.Fatalf("CanRead = true; want false until PalmDOC reader/export exists")
-			}
 			if len(resolved.Warnings) != 0 {
 				t.Fatalf("Warnings = %+v; want none for recognized PalmDOC", resolved.Warnings)
 			}
@@ -819,18 +730,17 @@ func TestResolvePalmDOCMetadata(t *testing.T) {
 	}
 }
 
-func TestResolveComicArchivesUseAvailableCapabilities(t *testing.T) {
+func TestResolveComicArchivesMetadataAndCover(t *testing.T) {
 	for _, tt := range []struct {
 		name        string
 		data        []byte
 		wantFormat  format.Format
-		canRead     bool
 		hasCover    bool
 		wantTitle   string
 		wantAuthors []string
 	}{
-		{name: "Rar Comic.cbr", data: testRAR4Bytes(), wantFormat: format.FormatCBR, canRead: true, hasCover: true, wantTitle: "Rar Comic"},
-		{name: "Seven Zip Comic.cb7", data: testfixture.CB7(), wantFormat: format.FormatCB7, canRead: true, hasCover: true, wantTitle: "CB7 Fixture", wantAuthors: []string{"Fixture Author"}},
+		{name: "Rar Comic.cbr", data: testRAR4Bytes(), wantFormat: format.FormatCBR, hasCover: true, wantTitle: "Rar Comic"},
+		{name: "Seven Zip Comic.cb7", data: testfixture.CB7(), wantFormat: format.FormatCB7, hasCover: true, wantTitle: "CB7 Fixture", wantAuthors: []string{"Fixture Author"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -846,9 +756,6 @@ func TestResolveComicArchivesUseAvailableCapabilities(t *testing.T) {
 
 			if resolved.Format != tt.wantFormat {
 				t.Fatalf("Format = %v; want %v", resolved.Format, tt.wantFormat)
-			}
-			if resolved.CanRead != tt.canRead {
-				t.Fatalf("CanRead = %v; want %v", resolved.CanRead, tt.canRead)
 			}
 			if (len(resolved.CoverBytes) > 0) != tt.hasCover {
 				t.Fatalf("CoverBytes length = %d; has cover want %v", len(resolved.CoverBytes), tt.hasCover)
@@ -896,9 +803,6 @@ func TestResolveTextFormatsUseFilenameFallbacks(t *testing.T) {
 
 			if resolved.Format != tt.wantFormat {
 				t.Fatalf("Format = %v; want %v", resolved.Format, tt.wantFormat)
-			}
-			if resolved.CanRead {
-				t.Fatalf("CanRead = true; want false until text reader/export exists")
 			}
 			if len(resolved.Warnings) != 0 {
 				t.Fatalf("Warnings = %+v; want none for recognized text format", resolved.Warnings)
@@ -1055,9 +959,6 @@ func TestResolveParsedMetadataDispatch(t *testing.T) {
 			}
 			if resolved.Format != tt.wantFormat {
 				t.Fatalf("Format = %v; want %v", resolved.Format, tt.wantFormat)
-			}
-			if resolved.CanRead {
-				t.Fatalf("CanRead = true; want false for parsed metadata format")
 			}
 			if len(resolved.Warnings) != 0 {
 				t.Fatalf("Warnings = %+v; want none for parsed metadata", resolved.Warnings)
@@ -1225,9 +1126,6 @@ func TestResolveHTMLFormatsUseMetadata(t *testing.T) {
 			if resolved.Format != tt.wantFormat {
 				t.Fatalf("Format = %v; want %v", resolved.Format, tt.wantFormat)
 			}
-			if resolved.CanRead {
-				t.Fatalf("CanRead = true; want false until sanitized HTML reader/export exists")
-			}
 			if len(resolved.Warnings) != 0 {
 				t.Fatalf("Warnings = %+v; want none for recognized HTML", resolved.Warnings)
 			}
@@ -1254,9 +1152,6 @@ func TestResolveCHMUsesFilenameFallbacks(t *testing.T) {
 	}
 	if resolved.Format != format.FormatCHM {
 		t.Fatalf("Format = %v; want FormatCHM", resolved.Format)
-	}
-	if resolved.CanRead {
-		t.Fatalf("CanRead = true; want false until CHM reader/export exists")
 	}
 	if len(resolved.Warnings) != 0 {
 		t.Fatalf("Warnings = %+v; want none for recognized CHM", resolved.Warnings)
@@ -1366,9 +1261,6 @@ func TestResolveWarnsForUnrecognizedRegisteredFormats(t *testing.T) {
 			}
 			if resolved.Format != format.FormatUnknown {
 				t.Fatalf("Format = %v; want FormatUnknown", resolved.Format)
-			}
-			if resolved.CanRead {
-				t.Fatalf("CanRead = true; want false for unrecognized format")
 			}
 			want := "unrecognized " + strings.ToLower(format.BookExtension(tt.name)) + " contents"
 			if len(resolved.Warnings) != 1 || !strings.Contains(resolved.Warnings[0].Error(), want) {
@@ -1580,9 +1472,6 @@ func TestResolveMOBIMetadataAndCover(t *testing.T) {
 	if resolved.Format != format.FormatMOBI {
 		t.Fatalf("Format = %v; want FormatMOBI", resolved.Format)
 	}
-	if !resolved.CanRead {
-		t.Fatalf("CanRead = false; want true for MOBI foliate reader")
-	}
 	if len(resolved.Warnings) != 0 {
 		t.Fatalf("Warnings = %+v; want none for valid MOBI metadata/cover", resolved.Warnings)
 	}
@@ -1758,9 +1647,6 @@ func TestResolveCBZMetadataAndCover(t *testing.T) {
 	if resolved.PageCount != 1 {
 		t.Fatalf("PageCount = %d; want one image page", resolved.PageCount)
 	}
-	if !resolved.CanRead {
-		t.Fatalf("CanRead = false; want true for CBZ foliate reader")
-	}
 	if len(resolved.Warnings) != 0 {
 		t.Fatalf("Warnings = %+v; want none for valid CBZ", resolved.Warnings)
 	}
@@ -1797,16 +1683,16 @@ func TestImportGroupElectsReadablePrimary(t *testing.T) {
 	assertPrimaryEPUB := func(t *testing.T, database *db.DB, bookID int64) {
 		t.Helper()
 		var extension string
-		var canRead int
+		var primaryFormat string
 		if err := database.Read(t.Context()).QueryRow(`
-			SELECT extension, can_read
+			SELECT extension, format
 			FROM assets
 			WHERE book_id = ? AND is_primary = 1
-		`, bookID).Scan(&extension, &canRead); err != nil {
+		`, bookID).Scan(&extension, &primaryFormat); err != nil {
 			t.Fatalf("query primary asset: %v", err)
 		}
-		if extension != ".epub" || canRead != 1 {
-			t.Fatalf("primary asset = extension %q can_read %d; want readable EPUB", extension, canRead)
+		if extension != ".epub" || primaryFormat != "epub" {
+			t.Fatalf("primary asset = extension %q format %q; want EPUB", extension, primaryFormat)
 		}
 	}
 
@@ -2161,9 +2047,8 @@ func TestPersistPreparedStoresBookMetadata(t *testing.T) {
 		Source:     Source{Path: sourcePath},
 		Size:       int64(len(source)),
 		SourceHash: sum[:],
-		Format:     format.FormatFB2,
 		Extension:  ".fb2",
-		CanRead:    true,
+		Format:     format.FormatFB2,
 	}
 	resolved := resolvedBook{
 		Metadata: &bookmeta.Metadata{
@@ -2293,12 +2178,12 @@ func TestPersistPreparedStoresAssetHashesAndCover(t *testing.T) {
 	var storagePath string
 	var formatKey string
 	var originalSize, currentSize int64
-	var isPrimary, canRead int
+	var isPrimary int
 	if err := database.Read(t.Context()).QueryRow(`
-			SELECT original_hash, current_hash, original_size, current_size, storage_path, format, is_primary, can_read
+			SELECT original_hash, current_hash, original_size, current_size, storage_path, format, is_primary
 			FROM assets
 			WHERE id = ?
-		`, res.AssetID).Scan(&originalHash, &currentHash, &originalSize, &currentSize, &storagePath, &formatKey, &isPrimary, &canRead); err != nil {
+		`, res.AssetID).Scan(&originalHash, &currentHash, &originalSize, &currentSize, &storagePath, &formatKey, &isPrimary); err != nil {
 		t.Fatalf("query asset: %v", err)
 	}
 	if !bytes.Equal(originalHash, wantHash) || !bytes.Equal(currentHash, wantHash) {
@@ -2309,9 +2194,6 @@ func TestPersistPreparedStoresAssetHashesAndCover(t *testing.T) {
 	}
 	if isPrimary != 1 {
 		t.Fatalf("is_primary = %d; want 1", isPrimary)
-	}
-	if canRead != 1 {
-		t.Fatalf("can_read = %d; want 1", canRead)
 	}
 	if formatKey != format.FormatKey(resolved.Format) {
 		t.Fatalf("format = %q; want %q", formatKey, format.FormatKey(resolved.Format))

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/levmv/polka/internal/format/djvu"
+	"github.com/levmv/polka/internal/format/mobi"
 	"github.com/levmv/polka/internal/format/pdf"
 )
 
@@ -94,12 +95,14 @@ func CountPages(ctx context.Context, r io.ReaderAt, size int64, kind Format) (in
 			return n, err
 		}
 		return officePageCount(ctx, r, size, kind)
-	case FormatMOBI, FormatAZW, FormatAZW3, FormatAZW4, FormatPRC, FormatPDB:
-		doc, err := ExtractKindleDocument(r, size, kind)
+	case FormatAZW4:
+		return 0, fmt.Errorf("%w: Print Replica requires PDF extraction", mobi.ErrUnsupportedSource)
+	case FormatMOBI, FormatAZW, FormatAZW3, FormatPRC, FormatPDB:
+		doc, err := mobi.ExtractDocument(r, size)
 		if err != nil {
 			return 0, err
 		}
-		return kindlePageCount(ctx, doc)
+		return mobiPageCount(ctx, doc)
 	case FormatTXT, FormatMarkdown, FormatTextile, FormatHTML, FormatXHTML, FormatTXTZ:
 		var raw []byte
 		var err error

@@ -1,4 +1,4 @@
-package format
+package bookmeta
 
 import (
 	"bytes"
@@ -6,8 +6,6 @@ import (
 	"testing"
 
 	"golang.org/x/text/encoding/unicode"
-
-	"github.com/levmv/polka/internal/bookmeta"
 )
 
 func TestParseOPF(t *testing.T) {
@@ -449,14 +447,14 @@ func TestParseOPFRejectsMalformedDate(t *testing.T) {
 func TestMetadataMerge(t *testing.T) {
 	base := &Metadata{
 		Title:       "Embedded Title",
-		Authors:     []bookmeta.AuthorMeta{{Name: "Embedded Author"}},
+		Authors:     []AuthorMeta{{Name: "Embedded Author"}},
 		Language:    "en",
 		SeriesIndex: 3,
 		Tags:        []string{"old"},
 	}
 	override := &Metadata{
 		Title:            "Sidecar Title",
-		Authors:          []bookmeta.AuthorMeta{{Name: "Sidecar Author", SortName: "Author, Sidecar"}},
+		Authors:          []AuthorMeta{{Name: "Sidecar Author", SortName: "Author, Sidecar"}},
 		CalibreTimestamp: "2019-02-03T04:05:06Z",
 		// Language empty -> keep base.
 		Publisher: "Sidecar Press",

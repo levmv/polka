@@ -45,3 +45,6 @@ func RemoveInvalidXML10ControlBytes(raw []byte) ([]byte, bool) {
 	}
 	return out, true
 }
+
+// IsSpace reports the four whitespace bytes permitted by XML.
+func IsSpace(b byte) bool { return b == ' ' || b == '\t' || b == '\n' || b == '\r' }

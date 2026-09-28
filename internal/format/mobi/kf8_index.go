@@ -1,4 +1,4 @@
-package format
+package mobi
 
 import (
 	"fmt"
@@ -6,22 +6,22 @@ import (
 	"strconv"
 )
 
-func readKindleKF8Skeletons(ranges []mobiRecordRange, r io.ReaderAt, index int) ([]KindleKF8Skeleton, error) {
+func readKindleKF8Skeletons(ranges []mobiRecordRange, r io.ReaderAt, index int) ([]KF8Skeleton, error) {
 	data, err := readKindleIndex(ranges, r, index)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]KindleKF8Skeleton, 0, len(data.Entries))
+	out := make([]KF8Skeleton, 0, len(data.Entries))
 	for i, entry := range data.Entries {
 		fragmentCount, ok := kindleIndexTagValue(entry.Tags, 1, 0)
 		if !ok {
-			return nil, fmt.Errorf("SKEL entry %d missing fragment count", i)
+			return nil, fmt.Errorf("%w: SKEL entry %d missing fragment count", ErrUnsupportedSource, i)
 		}
 		start, length, ok := kindleIndexTagPair(entry.Tags, 6)
 		if !ok {
-			return nil, fmt.Errorf("SKEL entry %d missing bounds", i)
+			return nil, fmt.Errorf("%w: SKEL entry %d missing bounds", ErrUnsupportedSource, i)
 		}
-		out = append(out, KindleKF8Skeleton{
+		out = append(out, KF8Skeleton{
 			Index:         i,
 			Name:          entry.Name,
 			FragmentCount: fragmentCount,
@@ -32,34 +32,34 @@ func readKindleKF8Skeletons(ranges []mobiRecordRange, r io.ReaderAt, index int) 
 	return out, nil
 }
 
-func readKindleKF8Fragments(ranges []mobiRecordRange, r io.ReaderAt, index int) ([]KindleKF8Fragment, error) {
+func readKindleKF8Fragments(ranges []mobiRecordRange, r io.ReaderAt, index int) ([]KF8Fragment, error) {
 	data, err := readKindleIndex(ranges, r, index)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]KindleKF8Fragment, 0, len(data.Entries))
+	out := make([]KF8Fragment, 0, len(data.Entries))
 	for i, entry := range data.Entries {
 		insertOffset, err := strconv.ParseUint(entry.Name, 10, 32)
 		if err != nil {
-			return nil, fmt.Errorf("fragment entry %d has invalid insert offset %q", i, entry.Name)
+			return nil, fmt.Errorf("%w: fragment entry %d has invalid insert offset %q", ErrUnsupportedSource, i, entry.Name)
 		}
 		selectorOffset, ok := kindleIndexTagValue(entry.Tags, 2, 0)
 		if !ok {
-			return nil, fmt.Errorf("fragment entry %d missing selector offset", i)
+			return nil, fmt.Errorf("%w: fragment entry %d missing selector offset", ErrUnsupportedSource, i)
 		}
 		fileNumber, ok := kindleIndexTagValue(entry.Tags, 3, 0)
 		if !ok {
-			return nil, fmt.Errorf("fragment entry %d missing file number", i)
+			return nil, fmt.Errorf("%w: fragment entry %d missing file number", ErrUnsupportedSource, i)
 		}
 		sequence, ok := kindleIndexTagValue(entry.Tags, 4, 0)
 		if !ok {
-			return nil, fmt.Errorf("fragment entry %d missing sequence", i)
+			return nil, fmt.Errorf("%w: fragment entry %d missing sequence", ErrUnsupportedSource, i)
 		}
 		start, length, ok := kindleIndexTagPair(entry.Tags, 6)
 		if !ok {
-			return nil, fmt.Errorf("fragment entry %d missing bounds", i)
+			return nil, fmt.Errorf("%w: fragment entry %d missing bounds", ErrUnsupportedSource, i)
 		}
-		out = append(out, KindleKF8Fragment{
+		out = append(out, KF8Fragment{
 			InsertOffset: uint32(insertOffset),
 			Selector:     data.CNCX[selectorOffset],
 			FileNumber:   fileNumber,

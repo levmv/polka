@@ -6,10 +6,12 @@ import (
 	"image"
 	"strconv"
 	"strings"
+
+	"github.com/levmv/polka/internal/format/mobi"
 )
 
-func kindlePageCount(ctx context.Context, doc *KindleDocument) (int, error) {
-	imageSize := kindlePageImages(doc.Resources)
+func mobiPageCount(ctx context.Context, doc *mobi.Document) (int, error) {
+	imageSize := mobiPageImages(doc.Resources)
 	var extent pageExtent
 	for _, flow := range doc.Flows {
 		switch flow.MediaType {
@@ -26,10 +28,10 @@ func kindlePageCount(ctx context.Context, doc *KindleDocument) (int, error) {
 	return extent.Pages(), nil
 }
 
-func kindlePageImages(resources []KindleResource) pageImageSize {
-	byHref := make(map[string]*KindleResource)
-	byEmbed := make(map[int]*KindleResource)
-	var images []*KindleResource
+func mobiPageImages(resources []mobi.Resource) pageImageSize {
+	byHref := make(map[string]*mobi.Resource)
+	byEmbed := make(map[int]*mobi.Resource)
+	var images []*mobi.Resource
 	for i := range resources {
 		resource := &resources[i]
 		if !strings.HasPrefix(resource.MediaType, "image/") {
@@ -41,7 +43,7 @@ func kindlePageImages(resources []KindleResource) pageImageSize {
 			byEmbed[resource.EmbedIndex] = resource
 		}
 	}
-	sizes := make(map[*KindleResource]image.Config)
+	sizes := make(map[*mobi.Resource]image.Config)
 	return func(attrs map[string]string) (int, int) {
 		href := pageImageHref(attrs)
 		resource := byHref[href]

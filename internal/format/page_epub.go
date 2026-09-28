@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"path"
 	"strings"
+
+	"github.com/levmv/polka/internal/bookmeta"
 )
 
 const (
@@ -75,7 +77,7 @@ func epubFixedPageCount(files *zipEntryIndex, opf epubOPFRead) int {
 }
 
 func metadataFromEPUB(zr *zip.Reader, opf epubOPFRead) *Metadata {
-	meta := metadataFromOPF(opf.doc)
+	meta := opf.doc.Metadata.BookMetadata()
 	if fixed := epubFixedPageCount(&zipEntryIndex{files: zr.File}, opf); fixed > 0 {
 		meta.PageCount = fixed
 		meta.FixedLayout = true
@@ -102,7 +104,7 @@ func estimateEPUBPages(ctx context.Context, r io.ReaderAt, size int64) (int, err
 	if fixed := epubFixedPageCount(files, opf); fixed > 0 {
 		return fixed, nil
 	}
-	if declared := opfDeclaredPageCount(opf.doc.Metadata.Meta); declared > 0 {
+	if declared := bookmeta.OPFDeclaredPageCount(opf.doc.Metadata.Meta); declared > 0 {
 		return declared, nil
 	}
 	if len(opf.doc.Spine.Itemrefs) > maxPageSpineItems {

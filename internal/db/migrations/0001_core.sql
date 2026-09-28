@@ -73,9 +73,6 @@ CREATE TABLE assets (
     -- independent of the filename extension. Drives reader/conversion support.
     format TEXT NOT NULL DEFAULT 'unknown',
     is_primary INTEGER NOT NULL DEFAULT 0 CHECK (is_primary IN (0, 1)),
-    -- Reader capability checked at import, so listing needs no file validation.
-    -- Repair can recompute it only after verifying the current file's identity.
-    can_read INTEGER NOT NULL DEFAULT 0 CHECK (can_read IN (0, 1)),
     -- Content hashes are the first 16 bytes of SHA-256.
     -- original_hash identifies the bytes first imported and never changes.
     -- current_hash identifies the expected managed bytes after write-back or

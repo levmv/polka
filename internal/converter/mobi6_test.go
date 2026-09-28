@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/levmv/polka/internal/format"
+	"github.com/levmv/polka/internal/format/mobi"
 	"github.com/levmv/polka/internal/testfixture"
 )
 
@@ -73,14 +74,14 @@ func TestMOBI6PreservesPublication(t *testing.T) {
 				t.Fatal(err)
 			}
 			r := bytes.NewReader(out.Bytes())
-			inspection, err := format.InspectKindle(r, r.Size(), format.FormatMOBI)
+			inspection, err := mobi.Inspect(r, r.Size())
 			if err != nil {
 				t.Fatal(err)
 			}
-			if inspection.MOBIKind != format.MOBIKindMOBI6 || inspection.Encrypted || inspection.Compression != 2 || inspection.TextRecords < 3 {
+			if inspection.Kind != mobi.KindMOBI6 || inspection.Encrypted || inspection.Compression != 2 || inspection.TextRecords < 3 {
 				t.Fatalf("header: %+v", inspection)
 			}
-			doc, err := format.ExtractKindleDocument(r, r.Size(), format.FormatMOBI)
+			doc, err := mobi.ExtractDocument(r, r.Size())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -128,7 +129,7 @@ func TestMOBI6PreservesPublication(t *testing.T) {
 					t.Fatalf("navigation %d: %+v", i, doc.Navigation[i])
 				}
 			}
-			cover, _, err := format.ExtractMOBICover(r, r.Size())
+			cover, _, err := mobi.ExtractCover(r, r.Size())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -187,7 +188,7 @@ func TestMOBI6Presentation(t *testing.T) {
 			if err := ConvertContext(t.Context(), &out, bytes.NewReader(src), format.FormatEPUB, int64(len(src)), TargetMOBI6); err != nil {
 				t.Fatal(err)
 			}
-			doc, err := format.ExtractKindleDocument(bytes.NewReader(out.Bytes()), int64(out.Len()), format.FormatMOBI)
+			doc, err := mobi.ExtractDocument(bytes.NewReader(out.Bytes()), int64(out.Len()))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -223,7 +224,7 @@ func TestMOBI6RecoversContentWithWarnings(t *testing.T) {
 			if err != nil || !strings.Contains(strings.Join(warnings, "\n"), tc.warning) {
 				t.Fatalf("error=%v warnings=%v", err, warnings)
 			}
-			doc, err := format.ExtractKindleDocument(bytes.NewReader(out.Bytes()), int64(out.Len()), format.FormatMOBI)
+			doc, err := mobi.ExtractDocument(bytes.NewReader(out.Bytes()), int64(out.Len()))
 			if err != nil || len(doc.Flows) != 1 {
 				t.Fatalf("read converted book: %v", err)
 			}
@@ -249,7 +250,7 @@ func TestMOBI6KeepsReadableChapters(t *testing.T) {
 	if err != nil || !hasWarnings {
 		t.Fatalf("conversion = %v, warnings = %v", err, hasWarnings)
 	}
-	doc, err := format.ExtractKindleDocument(bytes.NewReader(out.Bytes()), int64(out.Len()), format.FormatMOBI)
+	doc, err := mobi.ExtractDocument(bytes.NewReader(out.Bytes()), int64(out.Len()))
 	if err != nil || len(doc.Flows) != 1 {
 		t.Fatalf("read converted book: %v", err)
 	}

@@ -17,6 +17,7 @@ import (
 	"golang.org/x/text/encoding/charmap"
 
 	"github.com/levmv/polka/internal/bookmeta"
+	"github.com/levmv/polka/internal/imagecodec"
 	"github.com/levmv/polka/internal/xmlutil"
 )
 
@@ -276,14 +277,61 @@ func fb2ZipSource(zr *zip.Reader, filename string) (FB2Source, error) {
 	}, nil
 }
 
-func validateFB2Gzip(r io.ReaderAt, size int64) error {
-	source, err := openFB2GzipSource(r, size, "")
+const maxFB2GzipProbeBytes = 64 << 10
+
+// isGzipFB2 recognizes the root element, without validating or decompressing
+// the whole document. Bound both compressed IO and XML bytes: even a long gzip
+// header or a highly compressed XML prolog must keep detection cheap.
+func isGzipFB2(r io.ReaderAt, size int64) bool {
+	source, err := openFB2GzipSource(r, min(size, maxFB2GzipProbeBytes), "")
 	if err != nil {
-		return err
+		return false
 	}
 	defer source.Reader.Close()
-	_, err = normalizeFB2Reader(source.Reader)
-	return err
+	limited := io.LimitReader(source.Reader, maxFB2GzipProbeBytes)
+	var prefix bytes.Buffer
+	if hasFB2Root(io.TeeReader(limited, &prefix)) {
+		return true
+	}
+	// Reuse the bounded prefix for the same narrow repairs as FB2 extraction.
+	// It may end inside the body or at an input limit; only the root is needed.
+	_, _ = io.Copy(&prefix, limited)
+	raw, _ := xmlutil.RemoveInvalidXML10ControlBytes(prefix.Bytes())
+	if hasFB2Root(bytes.NewReader(raw)) {
+		return true
+	}
+	if repaired, ok := repairFB2Ampersand(raw); ok && hasFB2Root(bytes.NewReader(repaired)) {
+		return true
+	}
+	for _, decoded := range fb2EncodingFallbacks(raw) {
+		decoded = normalizeFB2XMLEncodingDecl(decoded)
+		if hasFB2Root(bytes.NewReader(decoded)) {
+			return true
+		}
+		if repaired, ok := repairFB2Ampersand(decoded); ok && hasFB2Root(bytes.NewReader(repaired)) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasFB2Root(r io.Reader) bool {
+	decoder := xml.NewDecoder(r)
+	decoder.CharsetReader = charset.NewReaderLabel
+	for {
+		token, err := decoder.Token()
+		if err != nil {
+			return false
+		}
+		switch token := token.(type) {
+		case xml.StartElement:
+			return token.Name.Local == "FictionBook"
+		case xml.CharData:
+			if len(bytes.TrimSpace(bytes.TrimPrefix(token, []byte("\xef\xbb\xbf")))) != 0 {
+				return false
+			}
+		}
+	}
 }
 
 func openFB2GzipSource(r io.ReaderAt, size int64, filename string) (FB2Source, error) {
@@ -682,7 +730,7 @@ func decodeFB2ImageBinary(bin *fb2Binary) ([]byte, string, error) {
 		// FB2 content-type is often wrong, so trust the actual bytes.
 		return nil, "", nil
 	}
-	if ext, ok := coverImageExtensionFromFormatName(format); ok {
+	if ext, ok := imagecodec.CoverExtension(format); ok {
 		return b, ext, nil
 	}
 	return nil, "", nil
