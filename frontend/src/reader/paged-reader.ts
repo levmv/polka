@@ -1,15 +1,8 @@
 import { fetchReaderPosition, touchReader } from '../api';
 import { clamp } from '../dom';
-import { showToast } from '../toast';
 import type { Locator, ReaderPosition, ReaderPositionSaveResult } from '../types';
 import { createReadingActivity } from './activity';
-import {
-    closeReader,
-    focusReaderSurface,
-    revealChrome,
-    showReaderError,
-    toggleReaderChrome,
-} from './chrome';
+import { closeReader, focusReaderSurface, revealChrome, toggleReaderChrome } from './chrome';
 import { type ReaderLifecycle, wireReaderLifecycle } from './lifecycle';
 import { createPositionSaver, type PositionSaver } from './position-saver';
 
@@ -87,11 +80,7 @@ export abstract class PagedReader {
                     if (generation === this.renderGeneration) {
                         this.pageNumber = previousPage;
                         this.updateControls();
-                        try {
-                            await this.renderCurrentPage();
-                        } catch {
-                            showReaderError(this.root, `Could not open this ${this.label}.`);
-                        }
+                        await this.tryRender();
                     }
                     throw error;
                 }
@@ -130,8 +119,8 @@ export abstract class PagedReader {
             await this.setup();
             this.wireControls();
             this.updateControls();
-            await this.renderCurrentPage();
-            this.elements.loading.remove();
+            // A page failure must leave the document and navigation available.
+            await this.tryRender();
             this.elements.stage.dataset.readerReady = 'true';
             this.root.classList.add('reader-ready');
             this.elements.stage.focus({ preventScroll: true });
@@ -325,13 +314,17 @@ export abstract class PagedReader {
             await this.renderCurrentPage();
         } catch (error) {
             console.error(`Failed to render ${this.label} page:`, error);
-            showToast('Could not open this page.', {
-                type: 'error',
-                action: {
-                    label: 'Retry',
-                    onClick: () => void this.tryRender(),
-                },
-            });
+            this.releasePage();
+            this.elements.page.hidden = true;
+            const loading = this.elements.loading;
+            loading.classList.add('reader-loading-error');
+            loading.innerHTML = `<div>
+                <p>Could not open this page. You can try another page.</p>
+                <button class="action-btn" type="button">Try again</button>
+            </div>`;
+            loading.querySelector('button')?.addEventListener('click', () => void this.tryRender());
+            loading.hidden = false;
+            revealChrome(this.root);
         }
     }
 
@@ -347,6 +340,7 @@ export abstract class PagedReader {
             throw error;
         }
         if (generation !== this.renderGeneration) return;
+        this.elements.loading.hidden = true;
         this.elements.page.dataset.renderedPage = String(this.pageNumber);
         // A zoom or resize can replace the render started by a page turn.
         // Save once that page is visible, whichever render completed it.

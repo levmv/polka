@@ -793,6 +793,11 @@ body.reader-shell .layout {
 
 .reader-loading-error {
     color: var(--text-main);
+    text-align: center;
+}
+
+.reader-loading[hidden] {
+    display: none;
 }
 
 .reader-footer {

@@ -5,6 +5,54 @@ import { importTestBook, readerMutationFields } from './helpers';
 
 type FontTestWindow = typeof window & { pdfFallbackFonts: Map<string, FontFace> };
 
+test('PDF page errors preserve navigation and the last readable position', async ({
+  page,
+  browserErrors,
+}) => {
+  browserErrors.allow((message) => message.includes('Failed to render PDF page:'));
+  const file = pdf('Partially readable PDF', 'PDF Author', 'partial-pdf');
+  // Preserve xref offsets while losing the first page's content.
+  const start = file.buffer.indexOf('4 0 obj\n');
+  const end = file.buffer.indexOf('\nendobj', start) + '\nendobj'.length;
+  file.buffer.fill(0, start, end);
+  const bookId = await importTestBook(page, file);
+  await page.goto(`/read/${bookId}`);
+
+  const stage = page.locator('[data-page-stage]');
+  const surface = page.locator('[data-page-surface]');
+  const error = page.locator('[data-reader-loading]');
+  await expect(stage).toHaveAttribute('data-reader-ready', 'true');
+  await expect(error).toContainText('Could not open this page.');
+  await expect(surface).toBeHidden();
+  await expect(page.locator('[data-page-input]')).toHaveValue('1');
+  await expect(page.locator('[data-page-total]')).toHaveText('3');
+  await error.getByRole('button', { name: 'Try again' }).click();
+  await expect(error).toBeVisible();
+
+  await page.locator('[data-page-input]').fill('3');
+  await page.locator('[data-page-input]').press('Enter');
+  await expect(surface).toHaveAttribute('data-rendered-page', '3');
+  await expect(error).toBeHidden();
+  await expect(page.locator('[data-page-text-layer]')).toContainText('Third PDF page');
+  const assetId = Number(await page.locator('.reader-page').getAttribute('data-reader-asset-id'));
+  await expect
+    .poll(async () => {
+      const response = await page.request.get(`/api/reader/assets/${assetId}/position`);
+      return (await response.json()).locator;
+    })
+    .toEqual({ page: 3 });
+
+  await stage.focus();
+  await page.keyboard.press('Home');
+  await expect(error).toBeVisible();
+  await expect(surface).toBeHidden();
+  // Leaving an unreadable page must not overwrite the last useful location.
+  await page.reload();
+  await expect(surface).toHaveAttribute('data-rendered-page', '3');
+  await expect(error).toBeHidden();
+  await expect(page.locator('[data-page-text-layer]')).toContainText('Third PDF page');
+});
+
 test('PDF reader behavior', async ({ page, browserName, browserErrors }) => {
   test.setTimeout(45_000);
   if (browserName === 'chromium') {
