@@ -35,3 +35,16 @@ ANTz fields (`Creator: Scanner software`, `Language: eng`, `Year: 1843`) and
 last-page ANTz containing `Title: Annotated DjVu` and XMP. XMP supplies the author
 Ada Lovelace and an alternative title. It checks complete annotation discovery,
 XMP fallback and metadata/cover independence without real book content.
+
+`kfx-font.ttf` is a 916-byte project-owned TrueType font containing one triangular
+letter A, with a one-em advance. The KFX fixture embeds it under two family names
+to check that repeated font declarations retain their shared resource.
+
+`KFXFixed` builds four tiny image pages with single, paired and wide page
+templates. It checks fixed-page order, dimensions, navigation and right-to-left
+spread placement without including real-book text or artwork.
+
+`KFXJapanese` builds a small vertical Japanese book with ruby, combined digits,
+overlapping bold, colored emphasis marks and links after annotated text. It
+checks that annotation text does not change base-text positions and that
+exported EPUB/KEPUB files retain their writing direction.

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/levmv/polka/internal/format/djvu"
+	"github.com/levmv/polka/internal/format/kfx"
 	"github.com/levmv/polka/internal/format/mobi"
 	"github.com/levmv/polka/internal/format/pdf"
 )
@@ -43,6 +44,7 @@ const (
 	FormatODT
 	FormatRTF
 	FormatCHM
+	FormatKFX
 )
 
 type ReaderKind string
@@ -166,6 +168,15 @@ var bookFormats = []bookFormat{
 		Label:      "PDB",
 		Extensions: []string{".pdb"},
 		MediaTypes: map[string]string{".pdb": "application/vnd.palm"},
+	},
+	{
+		Format:     FormatKFX,
+		Key:        "kfx",
+		Label:      "KFX",
+		Extensions: []string{".kfx", ".kfx-zip", ".kfx.zip"},
+		MediaTypes: map[string]string{".kfx": "application/vnd.amazon.ebook", ".kfx-zip": "application/zip", ".kfx.zip": "application/zip"},
+		Reader:     ReaderFoliate,
+		Verify:     kfx.Is,
 	},
 	{
 		Format:     FormatCBZ,
@@ -480,7 +491,7 @@ func CanRead(format Format) bool {
 // (ZIP before formats needing repackaging), then fixed-page documents.
 // Delivery and conversion-source preferences are separate policies.
 var readingFormatPreference = []Format{
-	FormatEPUB, FormatKEPUB, FormatFB2, FormatAZW3, FormatMOBI,
+	FormatEPUB, FormatKEPUB, FormatFB2, FormatAZW3, FormatMOBI, FormatKFX,
 	FormatCBZ, FormatCBR, FormatCB7, FormatPDF, FormatDJVU,
 }
 
@@ -521,7 +532,8 @@ func normalizeBookExtension(ext string) string {
 // DetectFormat treats the filename extension as authoritative: it selects the
 // only candidate format considered here, and content checks accept or reject
 // that candidate where required. Contents do not select a different format,
-// except that PalmDOC content in a .mobi or .prc file returns FormatPDB.
+// except for Kindle's shared extensions: PalmDOC in .mobi/.prc returns FormatPDB,
+// and a KFX container in .azw returns FormatKFX.
 func DetectFormat(p string, r io.ReaderAt, size int64) Format {
 	formatInfo, ext, known := bookFormatByExtension(BookExtension(p))
 	if !known {
@@ -554,6 +566,9 @@ func DetectFormat(p string, r io.ReaderAt, size int64) Format {
 			}
 		}
 	case FormatMOBI, FormatAZW, FormatAZW3, FormatAZW4, FormatPRC, FormatPDB:
+		if kind == FormatAZW && kfx.Is(r, size) {
+			return FormatKFX
+		}
 		switch mobi.DetectContainer(r) {
 		case mobi.ContainerMOBI:
 			if kind != FormatPDB {

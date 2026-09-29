@@ -342,7 +342,7 @@ func kindleEPUBSource(f format.Format) bool {
 	switch f {
 	case format.FormatFB2, format.FormatTXT, format.FormatTXTZ, format.FormatMarkdown,
 		format.FormatHTML, format.FormatXHTML, format.FormatHTMLZ,
-		format.FormatMOBI, format.FormatAZW, format.FormatAZW3, format.FormatPRC, format.FormatPDB:
+		format.FormatMOBI, format.FormatAZW, format.FormatAZW3, format.FormatPRC, format.FormatPDB, format.FormatKFX:
 		return true
 	default:
 		return false
@@ -353,7 +353,7 @@ func pocketBookEPUBSource(f format.Format) bool {
 	switch f {
 	case format.FormatTXT, format.FormatTXTZ, format.FormatMarkdown,
 		format.FormatHTML, format.FormatXHTML, format.FormatHTMLZ,
-		format.FormatMOBI, format.FormatAZW, format.FormatAZW3, format.FormatPRC, format.FormatPDB:
+		format.FormatMOBI, format.FormatAZW, format.FormatAZW3, format.FormatPRC, format.FormatPDB, format.FormatKFX:
 		return true
 	default:
 		return false

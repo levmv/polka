@@ -7,6 +7,7 @@ import (
 
 	"github.com/levmv/polka/internal/bookmeta"
 	"github.com/levmv/polka/internal/format/djvu"
+	"github.com/levmv/polka/internal/format/kfx"
 	"github.com/levmv/polka/internal/format/mobi"
 	"github.com/levmv/polka/internal/format/pdf"
 )
@@ -26,6 +27,8 @@ func ExtractMetadata(r io.ReaderAt, size int64, kind Format) (*Metadata, error) 
 		return mobi.ExtractMetadata(r, size)
 	case FormatPDB:
 		return mobi.ExtractPalmDOCMetadata(r, size)
+	case FormatKFX:
+		return kfx.ExtractMetadata(r, size)
 	case FormatFB2:
 		return ExtractFB2Metadata(r, size)
 	case FormatCBZ:
@@ -62,6 +65,8 @@ func extractEmbeddedCover(r io.ReaderAt, size int64, kind Format) ([]byte, strin
 		return ExtractEPUBCover(r, size)
 	case FormatMOBI, FormatAZW, FormatAZW3, FormatAZW4, FormatPRC:
 		return mobi.ExtractCover(r, size)
+	case FormatKFX:
+		return kfx.ExtractCover(r, size)
 	case FormatFB2:
 		return ExtractFB2Cover(r, size)
 	case FormatCBZ:

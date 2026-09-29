@@ -33,7 +33,7 @@ lower-maintenance home for your books.
 ## Formats
 
 polka imports EPUB, FB2, PDF, Kindle formats (MOBI, AZW,
-AZW3, AZW4), comic archives (CBZ, CBR, CB7), DjVu, TXT, Markdown, HTML, DOCX,
+AZW3, AZW4, KFX), comic archives (CBZ, CBR, CB7), DjVu, TXT, Markdown, HTML, DOCX,
 ODT, RTF, and CHM. Conversion is built in, with no external tools.
 
 ## For a household

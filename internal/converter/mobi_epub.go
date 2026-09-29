@@ -80,7 +80,7 @@ func convertMOBIDocumentToEPUB(ctx context.Context, w io.Writer, doc *mobi.Docum
 		return err
 	}
 	meta := epubMetadataForOutput(toEPUBMetadata(doc.Metadata), opts)
-	return writeSimpleEPUBWithNav(ctx, w, body, meta, kindleEPUBNav(doc.Navigation), assets...)
+	return writeSimpleEPUBWithNav(ctx, w, body, meta, epubNavigation{Contents: kindleEPUBNav(doc.Navigation)}, assets...)
 }
 
 func kindleEPUBBody(doc *mobi.Document, flow mobi.TextFlow, opts ConversionOptions) (string, []epubAsset, error) {

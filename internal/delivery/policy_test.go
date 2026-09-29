@@ -59,6 +59,7 @@ func TestPlanDeliveryKindleConversions(t *testing.T) {
 		filename string
 	}{
 		{".mobi", format.FormatMOBI, converter.TargetEPUB, "Book.epub"},
+		{".kfx", format.FormatKFX, converter.TargetEPUB, "Book.epub"},
 		{".pdb", format.FormatPDB, converter.TargetEPUB, "Book.epub"},
 		{".fb2", format.FormatFB2, converter.TargetEPUB, "Book.epub"},
 		{".azw4", format.FormatAZW4, converter.TargetPDF, "Book.pdf"},

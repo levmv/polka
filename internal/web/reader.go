@@ -145,7 +145,7 @@ func readerFallbackURL(assetID int64, kind format.Format, currentHash []byte) st
 
 func readerAssetURL(assetID int64, kind format.Format, currentHash []byte) string {
 	version := assetCacheVersion(currentHash)
-	if kind == format.FormatCBR || kind == format.FormatCB7 {
+	if readerConversionTarget(kind) != "" {
 		version = conversionCacheVersion(currentHash)
 	}
 	return pinnedReaderURL(versionedURL("/read/assets/"+strconv.FormatInt(assetID, 10), version), currentHash)
@@ -200,10 +200,21 @@ func setCacheControlForVersion(w http.ResponseWriter, r *http.Request, version s
 }
 
 func readerTransportFormat(kind format.Format) string {
-	if (kind == format.FormatCBR || kind == format.FormatCB7) && converter.CanConvert(kind, converter.TargetCBZ) {
-		return format.FormatKey(format.FormatCBZ)
+	if target := readerConversionTarget(kind); target != "" {
+		return string(target)
 	}
 	return format.FormatKey(kind)
+}
+
+func readerConversionTarget(kind format.Format) converter.Target {
+	switch kind {
+	case format.FormatCBR, format.FormatCB7:
+		return converter.TargetCBZ
+	case format.FormatKFX:
+		return converter.TargetEPUB
+	default:
+		return ""
+	}
 }
 
 const readerContentSecurityPolicy = "default-src 'self'; script-src 'self'; " +
@@ -231,11 +242,10 @@ func (s *Server) handleReadAsset(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Asset is not readable", http.StatusUnprocessableEntity)
 		return
 	}
-	if asset.Format == format.FormatCBR || asset.Format == format.FormatCB7 {
-		// Foliate reads ZIP comic archives. Keep the original archive asset as the
-		// source of truth and normalize a bounded temporary CBZ for this read.
+	if target := readerConversionTarget(asset.Format); target != "" {
+		// Keep the original asset and serve a bounded temporary reader rendition.
 		setVersionedConversionCacheControl(w, r, asset.CurrentHash)
-		redirectURL := versionedURL("/download/"+strconv.FormatInt(assetID, 10)+"/as/cbz", conversionCacheVersion(asset.CurrentHash))
+		redirectURL := versionedURL("/download/"+strconv.FormatInt(assetID, 10)+"/as/"+string(target), conversionCacheVersion(asset.CurrentHash))
 		if source := r.URL.Query().Get("source"); source != "" {
 			redirectURL += "&source=" + url.QueryEscape(source)
 		}

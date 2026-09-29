@@ -82,6 +82,10 @@ For books with several files, polka prefers EPUB, then other reflowable ebook
 formats, over fixed-page copies. Adding or merging in an EPUB can therefore
 make it the primary file in place of an existing PDF or MOBI.
 
+If a KFX book comes as several files, put the complete book folder in a ZIP
+archive and change its extension to `.kfx-zip` before importing. Importing the
+parts separately does not assemble a book.
+
 Imports copy books into managed storage and leave their sources unchanged by
 default. Importing the same file again is safe: matching content is recognized
 instead of added twice.

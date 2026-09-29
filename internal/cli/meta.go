@@ -415,6 +415,9 @@ func metaKindleInspectFormat(path string, kind format.Format) format.Format {
 	if metaIsKindleFamilyFormat(kind) {
 		return kind
 	}
+	if kind != format.FormatUnknown {
+		return format.FormatUnknown
+	}
 	extKind := format.FormatFromExt(format.BookExtension(path))
 	if metaIsKindleFamilyFormat(extKind) {
 		return extKind

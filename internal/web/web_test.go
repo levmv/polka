@@ -485,7 +485,7 @@ func TestDownloadAsCBRToCBZ(t *testing.T) {
 	}
 }
 
-func TestDownloadAsReportsMOBIRefusalsWithoutAttachment(t *testing.T) {
+func TestDownloadAsReportsKindleRefusalsWithoutAttachment(t *testing.T) {
 	shortRecords := testfixture.PalmDBRecordBodies(t, testfixture.MOBI(0))
 	shortRecords[0] = shortRecords[0][:16]
 	for _, tc := range []struct {
@@ -493,6 +493,8 @@ func TestDownloadAsReportsMOBIRefusalsWithoutAttachment(t *testing.T) {
 		data                  []byte
 		status                int
 	}{
+		{"protected.kfx", "epub", "book is protected", []byte("\xeaDRMION\xee"), http.StatusUnprocessableEntity},
+		{"damaged.kfx", "epub", "invalid container header", []byte("CONT\x02\x00"), http.StatusUnprocessableEntity},
 		{"missing-pdf.azw4", "pdf", "azw4 contains no embedded PDF", testfixture.MOBI(0), http.StatusUnprocessableEntity},
 		{"encrypted.mobi", "epub", "encrypted", testfixture.MOBI(2), http.StatusUnprocessableEntity},
 		{"damaged.mobi", "epub", "truncated MOBI", testfixture.MOBIHeaderOnly(), http.StatusUnprocessableEntity},

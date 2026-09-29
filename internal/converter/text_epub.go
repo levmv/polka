@@ -34,7 +34,7 @@ func convertTextSourceToEPUB(ctx context.Context, w io.Writer, src io.ReaderAt, 
 	if err := checkContext(ctx); err != nil {
 		return err
 	}
-	return writeSimpleEPUBWithNav(ctx, w, doc.Body, meta, doc.Nav)
+	return writeSimpleEPUBWithNav(ctx, w, doc.Body, meta, epubNavigation{Contents: doc.Nav})
 }
 
 func readEPUBTextSource(ctx context.Context, src io.ReaderAt, from format.Format, size int64) ([]byte, format.Format, epubMetadata, error) {
@@ -597,6 +597,7 @@ func normalizeLineEndings(text string) string {
 }
 
 type epubMetadata struct {
+	PageProgression  string
 	Title            string
 	Language         string
 	Authors          []string
@@ -764,7 +765,16 @@ type epubNavItem struct {
 	Children []epubNavItem
 }
 
-func writeSimpleEPUBWithNav(ctx context.Context, w io.Writer, body string, meta epubMetadata, nav []epubNavItem, assets ...epubAsset) error {
+type epubNavigation struct {
+	Contents []epubNavItem
+	Pages    []epubNavItem
+}
+
+type epubContentDocument struct {
+	ID, Href, Properties, SpineProperties string
+}
+
+func writeSimpleEPUBWithNav(ctx context.Context, w io.Writer, body string, meta epubMetadata, nav epubNavigation, assets ...epubAsset) error {
 	if err := claimConversionResources(ctx, len(assets), "generated EPUB assets"); err != nil {
 		return err
 	}
@@ -785,7 +795,7 @@ func writeSimpleEPUBWithNav(ctx context.Context, w io.Writer, body string, meta 
 		body string
 	}{
 		{"META-INF/container.xml", epubContainerXML()},
-		{"OEBPS/content.opf", epubContentOPF(meta, assets, epubBodyProperties(body, assets))},
+		{"OEBPS/content.opf", epubContentOPF(meta, assets, []epubContentDocument{{ID: "text", Href: "text.xhtml", Properties: epubBodyProperties(body, assets)}}, false)},
 		{"OEBPS/nav.xhtml", epubNavXHTML(meta, nav)},
 	}
 	for _, file := range files {
@@ -864,7 +874,7 @@ func epubContainerXML() string {
 `
 }
 
-func epubContentOPF(meta epubMetadata, assets []epubAsset, bodyProperties string) string {
+func epubContentOPF(meta epubMetadata, assets []epubAsset, documents []epubContentDocument, fixed bool) string {
 	var identifiers strings.Builder
 	fmt.Fprintf(&identifiers, "    <dc:identifier id=\"pub-id\">%s</dc:identifier>\n", html.EscapeString(meta.Identifier))
 	for _, identifier := range meta.ExtraIdentifiers {
@@ -900,6 +910,10 @@ func epubContentOPF(meta epubMetadata, assets []epubAsset, bodyProperties string
 		}
 	}
 	var coverMeta string
+	if fixed {
+		metadata.WriteString("    <meta property=\"rendition:layout\">pre-paginated</meta>\n")
+		metadata.WriteString("    <meta property=\"rendition:spread\">auto</meta>\n")
+	}
 	var manifest strings.Builder
 	for _, asset := range assets {
 		properties := ""
@@ -916,8 +930,22 @@ func epubContentOPF(meta epubMetadata, assets []epubAsset, bodyProperties string
 			properties,
 		)
 	}
-	if bodyProperties != "" {
-		bodyProperties = ` properties="` + html.EscapeString(bodyProperties) + `"`
+	var contentManifest, spine strings.Builder
+	for _, document := range documents {
+		properties, spineProperties := "", ""
+		if document.Properties != "" {
+			properties = ` properties="` + html.EscapeString(document.Properties) + `"`
+		}
+		if document.SpineProperties != "" {
+			spineProperties = ` properties="` + html.EscapeString(document.SpineProperties) + `"`
+		}
+		fmt.Fprintf(&contentManifest, "    <item id=\"%s\" href=\"%s\" media-type=\"application/xhtml+xml\"%s/>\n",
+			html.EscapeString(document.ID), html.EscapeString(document.Href), properties)
+		fmt.Fprintf(&spine, "    <itemref idref=\"%s\"%s/>\n", html.EscapeString(document.ID), spineProperties)
+	}
+	spineDirection := ""
+	if meta.PageProgression == "rtl" {
+		spineDirection = ` page-progression-direction="rtl"`
 	}
 	return `<?xml version="1.0" encoding="UTF-8"?>
 <package version="3.0" unique-identifier="pub-id" xmlns="http://www.idpf.org/2007/opf" prefix="calibre: https://calibre-ebook.com">
@@ -928,17 +956,15 @@ func epubContentOPF(meta epubMetadata, assets []epubAsset, bodyProperties string
 ` + coverMeta + `  </metadata>
   <manifest>
     <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
-    <item id="text" href="text.xhtml" media-type="application/xhtml+xml"` + bodyProperties + `/>
-` + manifest.String() + `
+` + contentManifest.String() + manifest.String() + `
   </manifest>
-  <spine>
-    <itemref idref="text"/>
-  </spine>
+  <spine` + spineDirection + `>
+` + spine.String() + `  </spine>
 </package>
 `
 }
 
-func epubNavXHTML(meta epubMetadata, nav []epubNavItem) string {
+func epubNavXHTML(meta epubMetadata, nav epubNavigation) string {
 	var items strings.Builder
 	var writeItems func([]epubNavItem)
 	writeItems = func(nav []epubNavItem) {
@@ -963,9 +989,16 @@ func epubNavXHTML(meta epubMetadata, nav []epubNavItem) string {
 			items.WriteString("</li>\n")
 		}
 	}
-	writeItems(nav)
+	writeItems(nav.Contents)
 	if items.Len() == 0 {
 		items.WriteString(`        <li><a href="text.xhtml">Text</a></li>` + "\n")
+	}
+	contents := items.String()
+	pages := ""
+	if len(nav.Pages) > 0 {
+		items.Reset()
+		writeItems(nav.Pages)
+		pages = `    <nav epub:type="page-list" hidden="hidden"><h2>Pages</h2><ol>` + items.String() + "</ol></nav>\n"
 	}
 	return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
@@ -977,10 +1010,10 @@ func epubNavXHTML(meta epubMetadata, nav []epubNavItem) string {
     <nav epub:type="toc" id="toc">
       <h1>Contents</h1>
       <ol>
-` + items.String() + `
+` + contents + `
       </ol>
     </nav>
-  </body>
+` + pages + `  </body>
 </html>
 `
 }

@@ -56,6 +56,7 @@ var targetSpecsBySourceFormat = map[format.Format][]TargetSpec{
 	format.FormatAZW3:     {targetSpec(TargetEPUB), targetSpec(TargetKEPUB), targetSpec(TargetMOBI6)},
 	format.FormatPRC:      {targetSpec(TargetEPUB), targetSpec(TargetKEPUB)},
 	format.FormatPDB:      {targetSpec(TargetEPUB)},
+	format.FormatKFX:      {targetSpec(TargetEPUB), targetSpec(TargetKEPUB)},
 	format.FormatTXT:      {targetSpec(TargetEPUB), targetSpec(TargetKEPUB)},
 	format.FormatTXTZ:     {targetSpec(TargetEPUB), targetSpec(TargetKEPUB)},
 	format.FormatMarkdown: {targetSpec(TargetEPUB), targetSpec(TargetKEPUB)},
@@ -219,6 +220,9 @@ func convertContextWithLimits(ctx context.Context, w io.Writer, src io.ReaderAt,
 }
 
 func convertSourceToEPUB(ctx context.Context, w io.Writer, src io.ReaderAt, from format.Format, size int64, opts ConversionOptions) error {
+	if from == format.FormatKFX {
+		return convertKFXSourceToEPUB(ctx, w, src, size, opts)
+	}
 	if from == format.FormatFB2 {
 		return convertFB2SourceToEPUB(ctx, w, src, size, opts)
 	}

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/levmv/polka/internal/format/djvu"
+	"github.com/levmv/polka/internal/format/kfx"
 	"github.com/levmv/polka/internal/format/mobi"
 	"github.com/levmv/polka/internal/format/pdf"
 )
@@ -103,6 +104,12 @@ func CountPages(ctx context.Context, r io.ReaderAt, size int64, kind Format) (in
 			return 0, err
 		}
 		return mobiPageCount(ctx, doc)
+	case FormatKFX:
+		doc, err := kfx.ExtractDocument(ctx, r, size, nil)
+		if err != nil {
+			return 0, err
+		}
+		return kfxPageCount(ctx, doc)
 	case FormatTXT, FormatMarkdown, FormatTextile, FormatHTML, FormatXHTML, FormatTXTZ:
 		var raw []byte
 		var err error
