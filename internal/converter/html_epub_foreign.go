@@ -9,12 +9,14 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/levmv/polka/internal/css"
+	"github.com/levmv/polka/internal/xmlutil"
 	"golang.org/x/net/html"
 )
 
-// XML permits <m:math> and <s:svg>, whereas the HTML parser only enters
-// foreign-content mode for unprefixed roots. Change just those qualified tag
-// names after resolving their XML namespaces; retain all other source bytes.
+// XML permits qualified XHTML, MathML and SVG tags, whereas the HTML parser
+// needs their unprefixed names. Resolve namespaces before changing those names
+// and known attribute prefixes; retain all other source bytes.
 func normalizeEPUBForeignPrefixes(raw []byte, fallbacks map[string]string) []byte {
 	if !bytes.Contains(raw, []byte("xmlns:")) && len(fallbacks) == 0 {
 		return raw
@@ -79,10 +81,9 @@ func normalizeEPUBForeignPrefixes(raw []byte, fallbacks map[string]string) []byt
 func normalizeXMLForeignPrefixes(raw []byte) ([]byte, error) {
 	decoder := xml.NewDecoder(bytes.NewReader(raw))
 	decoder.Entity = xml.HTMLEntity
-	var out bytes.Buffer
-	var copied int64
+	var edits []rebuildXMLEdit
 	for {
-		before := decoder.InputOffset()
+		before := int(decoder.InputOffset())
 		token, err := decoder.Token()
 		if err == io.EOF {
 			break
@@ -91,20 +92,20 @@ func normalizeXMLForeignPrefixes(raw []byte) ([]byte, error) {
 			return nil, err
 		}
 		var name xml.Name
-		switch token := token.(type) {
+		switch t := token.(type) {
 		case xml.StartElement:
-			name = token.Name
+			name = t.Name
 		case xml.EndElement:
-			name = token.Name
+			name = t.Name
 		}
-		if name.Space != "http://www.w3.org/2000/svg" && name.Space != "http://www.w3.org/1998/Math/MathML" {
+		if name.Space != "http://www.w3.org/2000/svg" && name.Space != "http://www.w3.org/1998/Math/MathML" && name.Space != "http://www.w3.org/1999/xhtml" {
 			continue
 		}
 		part := raw[before:decoder.InputOffset()]
-		start := 1
-		if len(part) < 2 { // The synthetic end token of a self-closing element.
+		if len(part) < 2 { // Synthetic close of a self-closing tag.
 			continue
 		}
+		start := 1
 		if part[1] == '/' {
 			start++
 		}
@@ -112,18 +113,30 @@ func normalizeXMLForeignPrefixes(raw []byte) ([]byte, error) {
 		for end < len(part) && !strings.ContainsRune(" \t\r\n/>", rune(part[end])) {
 			end++
 		}
-		if !bytes.ContainsRune(part[start:end], ':') {
-			continue
+		if bytes.ContainsRune(part[start:end], ':') {
+			edits = append(edits, rebuildXMLEdit{before + start, before + end, []byte(name.Local)})
 		}
-		out.Write(raw[copied : before+int64(start)])
-		out.WriteString(name.Local)
-		copied = before + int64(end)
+		if element, ok := token.(xml.StartElement); ok {
+			spans := xmlutil.AttributeSpans(string(part))
+			for i, attr := range element.Attr {
+				if i >= len(spans) {
+					break
+				}
+				qualified := ""
+				switch attr.Name.Space {
+				case "http://www.w3.org/1999/xlink":
+					qualified = "xlink:" + attr.Name.Local
+				case "http://www.w3.org/XML/1998/namespace":
+					qualified = "xml:" + attr.Name.Local
+				}
+				if qualified != "" && string(part[spans[i].NameStart:spans[i].NameEnd]) != qualified {
+					edits = append(edits, rebuildXMLEdit{before + spans[i].NameStart, before + spans[i].NameEnd, []byte(qualified)})
+				}
+			}
+		}
 	}
-	if out.Len() == 0 {
-		return raw, nil
-	}
-	out.Write(raw[copied:])
-	return out.Bytes(), nil
+	out, _ := applyRebuildXMLEdits(raw, edits)
+	return out, nil
 }
 
 func isPrefixedEPUBForeign(n *html.Node) bool {
@@ -165,9 +178,10 @@ func epubBodyProperties(body string, assets []epubAsset) string {
 			svg = true
 		case "math":
 			math = true
-		case "img":
+		case "img", "object":
 			for _, attr := range token.Attr {
-				if attr.Key == "src" && svgImages[attr.Val] {
+				href, _, _ := strings.Cut(attr.Val, "#")
+				if (attr.Key == "src" || attr.Key == "data") && svgImages[href] {
 					svg = true
 				}
 			}
@@ -275,9 +289,12 @@ func renderEPUBForeign(out *strings.Builder, n *html.Node, parentNamespace strin
 			// MathML images need a packaged image, not an element in this XHTML.
 			value, err = epubForeignResource(value, true, resolvers, nil)
 		case "style", "fill", "stroke", "filter", "clip-path", "mask", "marker", "marker-start", "marker-mid", "marker-end", "cursor", "color-profile":
-			err = checkEPUBForeignCSS(value, &refs)
+			value, err = rewriteEPUBForeignCSS(value, resolvers, &refs)
 		}
 		if err != nil {
+			if fatalConversionError(err) {
+				return err
+			}
 			resolvers.options.warn("Could not preserve <%s> %s: %v", n.Data, name, err)
 			if tag == "image" || tag == "feimage" || tag == "use" || tag == "mglyph" {
 				renderEPUBForeignFallback(out, n, parentNamespace)
@@ -332,11 +349,14 @@ func renderEPUBForeign(out *strings.Builder, n *html.Node, parentNamespace strin
 			}
 		}
 		var refs []string
-		if err := checkEPUBForeignCSS(css.String(), &refs); err != nil {
+		if value, err := rewriteEPUBForeignCSS(css.String(), resolvers, &refs); err != nil {
+			if fatalConversionError(err) {
+				return err
+			}
 			resolvers.options.warn("Skipped SVG/MathML stylesheet: %v", err)
 		} else {
 			start := out.Len()
-			out.WriteString(stdhtml.EscapeString(css.String()))
+			out.WriteString(stdhtml.EscapeString(value))
 			if len(refs) > 0 {
 				state.references = append(state.references, htmlEPUBReference{start, out.Len(), refs})
 			}
@@ -429,73 +449,53 @@ func epubForeignResource(raw string, image bool, resolvers htmlEPUBResolvers, re
 			return href, nil
 		}
 	}
+	if !image && resolvers.resource != nil {
+		if href, ok := resolvers.resource(raw); ok {
+			return href, nil
+		}
+	}
 	return "", fmt.Errorf("SVG/MathML resource %.200q cannot be packaged: %w", raw, ErrUnsupportedContent)
 }
 
-// Accept ordinary static SVG CSS, including local paint/filter references.
-// Escaped syntax and unfamiliar functions need a full CSS parser; refuse them
-// rather than accidentally retaining a network dependency. The caller reports
-// a warning when it has to omit the affected styling.
-func checkEPUBForeignCSS(css string, refs *[]string) error {
-	for i := 0; i < len(css); {
-		switch css[i] {
-		case '\\', '@':
-			return fmt.Errorf("unsupported SVG/MathML CSS syntax: %w", ErrUnsupportedContent)
-		case '/', '*':
-			if strings.HasPrefix(css[i:], "/*") {
-				end := strings.Index(css[i+2:], "*/")
-				if end < 0 {
-					return fmt.Errorf("unterminated SVG/MathML CSS comment: %w", ErrUnsupportedContent)
-				}
-				i += end + 4
-				continue
-			}
-		case '\'', '"':
-			quote := css[i]
-			i++
-			for i < len(css) && css[i] != quote && css[i] != '\\' {
-				i++
-			}
-			if i == len(css) || css[i] == '\\' {
-				return fmt.Errorf("unsupported SVG/MathML CSS string: %w", ErrUnsupportedContent)
-			}
-			i++
-			continue
+// Validate the supported static CSS and package its dependencies. The syntax
+// reader owns strings, escapes and nesting; this is the foreign-content policy.
+func rewriteEPUBForeignCSS(raw string, resolvers htmlEPUBResolvers, refs *[]string) (string, error) {
+	values := css.Parse(raw)
+	var edits []css.Edit
+	err := values.Walk(func(c css.Component) error {
+		if !c.Closed || c.Kind == css.BadString || c.Kind == css.BadURL {
+			return fmt.Errorf("invalid SVG/MathML CSS: %w", ErrUnsupportedContent)
 		}
-		if css[i] != '(' {
-			i++
-			continue
+		if c.Kind == css.AtKeyword || c.Is('@') {
+			return fmt.Errorf("unsupported SVG/MathML CSS at-rule: %w", ErrUnsupportedContent)
 		}
-		start := i
-		for start > 0 && (css[start-1] == '-' || css[start-1] == '_' || css[start-1] >= 'a' && css[start-1] <= 'z' || css[start-1] >= 'A' && css[start-1] <= 'Z' || css[start-1] >= '0' && css[start-1] <= '9') {
-			start--
-		}
-		function := strings.ToLower(css[start:i])
-		switch function {
-		case "url":
-			end := strings.IndexByte(css[i+1:], ')')
-			if end < 0 {
-				return fmt.Errorf("unterminated SVG/MathML CSS URL: %w", ErrUnsupportedContent)
-			}
-			end += i + 1
-			href := strings.TrimSpace(css[i+1 : end])
-			if len(href) >= 2 && (href[0] == '\'' || href[0] == '"') && href[len(href)-1] == href[0] {
-				href = href[1 : len(href)-1]
-			}
-			if _, err := epubForeignResource(href, false, htmlEPUBResolvers{}, refs); err != nil {
+		if ref, ok := c.Reference(); ok {
+			href, err := epubForeignResource(ref.URL, false, resolvers, refs)
+			if err != nil {
 				return err
 			}
-			i = end + 1
-			continue
+			if href != ref.URL {
+				edits = append(edits, css.Edit{Span: ref.Span, Text: ref.WithURL(href)})
+			}
+			return nil
+		}
+		if c.Kind != css.Function {
+			return nil
+		}
+		function := strings.ToLower(c.Text())
+		switch function {
 		case "rgb", "rgba", "hsl", "hsla", "hwb", "lab", "lch", "oklab", "oklch", "color", "color-mix",
 			"calc", "min", "max", "clamp", "var", "matrix", "matrix3d", "translate", "translatex", "translatey", "translate3d",
 			"scale", "scalex", "scaley", "scale3d", "rotate", "rotatex", "rotatey", "rotatez", "rotate3d", "skew", "skewx", "skewy",
 			"blur", "brightness", "contrast", "drop-shadow", "grayscale", "hue-rotate", "invert", "opacity", "saturate", "sepia",
 			"not", "is", "where", "has", "nth-child", "nth-last-child", "nth-of-type", "nth-last-of-type":
+			return nil
 		default:
 			return fmt.Errorf("unsupported SVG/MathML CSS function %q: %w", function, ErrUnsupportedContent)
 		}
-		i++
+	})
+	if err != nil {
+		return "", err
 	}
-	return nil
+	return values.Apply(edits)
 }

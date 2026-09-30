@@ -2,10 +2,11 @@ package converter
 
 import (
 	"fmt"
-	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/levmv/polka/internal/css"
 	"golang.org/x/net/html"
 )
 
@@ -13,9 +14,27 @@ import (
 // legacy tags/attributes; retain ordinary HTML semantics for unsupported layout.
 type mobi6CSSRule struct {
 	selector    []mobi6SelectorPart
-	values      map[string]string
-	specificity int
+	values      map[string]mobi6CSSValue
+	specificity mobi6Specificity
 	pseudo      string
+}
+
+// Specificity is a tuple: any number of class selectors still loses to an ID.
+type mobi6Specificity [3]int // IDs, classes/attributes, types/pseudo-elements
+
+type mobi6CSSPriority struct {
+	important, inline bool
+	specificity       mobi6Specificity
+}
+
+func (p mobi6CSSPriority) less(other mobi6CSSPriority) bool {
+	if p.important != other.important {
+		return !p.important
+	}
+	if p.inline != other.inline {
+		return !p.inline
+	}
+	return slices.Compare(p.specificity[:], other.specificity[:]) < 0
 }
 
 type mobi6SelectorPart struct {
@@ -35,145 +54,142 @@ type mobi6Style struct {
 	before, after                                string
 }
 
-var mobi6SimpleSelector = regexp.MustCompile(`^(\*|[a-zA-Z][a-zA-Z0-9_-]*)?([.#][a-zA-Z_-][a-zA-Z0-9_-]*)*$`)
-var mobi6IDClassSelector = regexp.MustCompile(`[.#][a-zA-Z_-][a-zA-Z0-9_-]*`)
-var mobi6AttributeName = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_:-]*$`)
-
-func mobi6StripCSSComments(raw string) string {
-	if !strings.Contains(raw, "/*") {
-		return raw
-	}
-	var out strings.Builder
-	quote := byte(0)
-	for i := 0; i < len(raw); i++ {
-		c := raw[i]
-		if c == '\\' && i+1 < len(raw) {
-			out.WriteString(raw[i : i+2])
-			i++
-			continue
-		}
-		if quote == 0 && strings.HasPrefix(raw[i:], "/*") {
-			end := strings.Index(raw[i+2:], "*/")
-			if end < 0 {
-				break
-			}
-			i += end + 3
-			continue
-		}
-		out.WriteByte(c)
-		if quote == c {
-			quote = 0
-		} else if quote == 0 && (c == '\'' || c == '"') {
-			quote = c
-		}
-	}
-	return out.String()
+// Values are compiled once for the limited MOBI6 projection. The general CSS
+// views retain every declaration, including properties this target cannot use.
+type mobi6CSSValue struct {
+	text      string
+	important bool
+	err       error
 }
 
-func mobi6DeclarationValue(value string) (string, bool) {
-	if i := strings.LastIndexByte(value, '!'); i >= 0 && strings.EqualFold(strings.TrimSpace(value[i+1:]), "important") {
-		return strings.TrimSpace(value[:i]), true
-	}
-	return value, false
-}
-
-// Compile the supported selector subset once. Quoted attribute values remain
-// intact, and an unsupported selector is never widened to a partial match.
-func mobi6CompileSelector(selector string) ([]mobi6SelectorPart, int) {
+// Unsupported selectors fail as a whole; none may become a broader match.
+func mobi6CompileSelector(selector css.Values) ([]mobi6SelectorPart, mobi6Specificity, string) {
 	var parts []mobi6SelectorPart
-	specificity, child := 0, false
-	for pos := 0; pos < len(selector); {
-		if strings.ContainsRune(" \t\r\n\f", rune(selector[pos])) {
-			pos++
+	var specificity mobi6Specificity
+	pseudo := ""
+	gap, child, typeAllowed := true, false, false
+	p := selector.Components()
+	for p.Next() {
+		c := p.Component
+		if c.Kind == css.Comment {
 			continue
 		}
-		if selector[pos] == '>' {
+		if c.Kind == css.Whitespace {
+			gap = true
+			continue
+		}
+		if c.Is('>') {
 			if len(parts) == 0 || child {
-				return nil, 0
+				return nil, mobi6Specificity{}, ""
 			}
-			child = true
-			pos++
+			gap, child = true, true
 			continue
 		}
-		end := mobi6CSSDelimiter(selector, pos, " >\t\r\n\f")
-		token := selector[pos:end]
-		pos = end
-		part := mobi6SelectorPart{child: child}
-		child = false
-		var simple strings.Builder
-		for pos := 0; pos < len(token); {
-			open := mobi6CSSDelimiter(token, pos, "[")
-			simple.WriteString(token[pos:open])
-			if open == len(token) {
-				break
-			}
-			close := mobi6CSSDelimiter(token, open+1, "]")
-			if close == len(token) {
-				return nil, 0
-			}
-			name, value, equals := strings.Cut(token[open+1:close], "=")
-			name = strings.TrimSpace(name)
-			attribute := mobi6AttributeMatch{}
-			if equals {
-				attribute.operator = "="
-				if strings.HasSuffix(name, "~") {
-					attribute.operator = "~="
-					name = strings.TrimSpace(strings.TrimSuffix(name, "~"))
-				}
-				value = strings.TrimSpace(value)
-				if strings.HasPrefix(value, `"`) || strings.HasPrefix(value, `'`) {
-					var err error
-					value, err = mobi6CSSContent(value)
-					if err != nil {
-						return nil, 0
-					}
-				} else if !mobi6AttributeName.MatchString(value) {
-					return nil, 0
-				}
-				attribute.value = value
-			}
-			attribute.name = strings.ToLower(strings.ReplaceAll(name, "|", ":"))
-			if !mobi6AttributeName.MatchString(attribute.name) {
-				return nil, 0
-			}
-			part.attributes = append(part.attributes, attribute)
-			specificity += 10
-			pos = close + 1
+		if gap {
+			parts = append(parts, mobi6SelectorPart{child: child})
+			gap, child, typeAllowed = false, false, true
 		}
-		bare := simple.String()
-		if !mobi6SimpleSelector.MatchString(bare) {
-			return nil, 0
-		}
-		name := bare
-		if i := strings.IndexAny(name, ".#"); i >= 0 {
-			name = name[:i]
-		}
-		part.tag = strings.ToLower(name)
-		if name != "" && name != "*" {
-			specificity++
-		}
-		for _, term := range mobi6IDClassSelector.FindAllString(bare, -1) {
-			attribute := mobi6AttributeMatch{name: "class", value: term[1:], operator: "~="}
-			specificity += 10
-			if term[0] == '#' {
-				attribute.name, attribute.operator = "id", "="
-				specificity += 90
-			}
-			part.attributes = append(part.attributes, attribute)
-		}
-		parts = append(parts, part)
 		if len(parts) > 64 {
-			return nil, 0
+			return nil, mobi6Specificity{}, ""
 		}
+		part := &parts[len(parts)-1]
+		switch {
+		case c.Kind == css.Ident || c.Is('*'):
+			if !typeAllowed {
+				return nil, mobi6Specificity{}, ""
+			}
+			if c.Kind == css.Ident {
+				part.tag = strings.ToLower(c.Text())
+				specificity[2]++
+			}
+		case c.Kind == css.Hash && c.ID:
+			part.attributes = append(part.attributes, mobi6AttributeMatch{name: "id", value: c.Text(), operator: "="})
+			specificity[0]++
+		case c.Is('.'):
+			for p.Next() && p.Kind == css.Comment {
+			}
+			if p.Kind != css.Ident {
+				return nil, mobi6Specificity{}, ""
+			}
+			part.attributes = append(part.attributes, mobi6AttributeMatch{name: "class", value: p.Text(), operator: "~="})
+			specificity[1]++
+		case c.Kind == css.Block && c.Delim == '[' && c.Closed:
+			attribute, ok := mobi6CompileAttribute(c.Children)
+			if !ok {
+				return nil, mobi6Specificity{}, ""
+			}
+			part.attributes = append(part.attributes, attribute)
+			specificity[1]++
+		case c.Is(':'):
+			for p.Next() && p.Kind == css.Comment {
+			}
+			if p.Is(':') {
+				for p.Next() && p.Kind == css.Comment {
+				}
+			}
+			if p.Kind != css.Ident || !strings.EqualFold(p.Text(), "before") && !strings.EqualFold(p.Text(), "after") {
+				return nil, mobi6Specificity{}, ""
+			}
+			pseudo = strings.ToLower(p.Text())
+			if p.Significant() {
+				return nil, mobi6Specificity{}, ""
+			}
+			specificity[2]++
+		default:
+			return nil, mobi6Specificity{}, ""
+		}
+		typeAllowed = false
 	}
-	if child {
-		return nil, 0
+	if child || p.Err() != nil {
+		return nil, mobi6Specificity{}, ""
 	}
-	return parts, specificity
+	return parts, specificity, pseudo
 }
 
-func (s *mobi6Source) readDocumentStyles(doc *mobi6Document) error {
+func mobi6CompileAttribute(value css.Values) (mobi6AttributeMatch, bool) {
+	p := value.Components()
+	if !p.Significant() || p.Kind != css.Ident {
+		return mobi6AttributeMatch{}, false
+	}
+	attribute := mobi6AttributeMatch{name: strings.ToLower(p.Text())}
+	more, spaced := p.Next(), false
+	for more && p.Trivia() {
+		spaced = spaced || p.Kind == css.Whitespace
+		more = p.Next()
+	}
+	if more && p.Is('|') {
+		if spaced {
+			return attribute, false
+		}
+		for p.Next() && p.Kind == css.Comment {
+		}
+		if p.Kind != css.Ident {
+			return attribute, false
+		}
+		attribute.name += ":" + strings.ToLower(p.Text())
+		more = p.Significant()
+	}
+	if !more {
+		return attribute, p.Err() == nil
+	}
+	if p.Is('~') {
+		attribute.operator = "~"
+		// ~= is an adjacent pair, not two whitespace-separated operators.
+		if !p.Next() {
+			return attribute, false
+		}
+	}
+	if !p.Is('=') || !p.Significant() || p.Kind != css.Ident && p.Kind != css.String || !p.Closed {
+		return attribute, false
+	}
+	attribute.operator += "="
+	attribute.value = p.Text()
+	return attribute, !p.Significant() && p.Err() == nil
+}
+
+func (s *mobi6Source) readDocumentStyles(doc *kindleDocument) error {
 	var load func(string, string, map[string]bool) ([]mobi6CSSRule, error)
+	cycles := 0
 	load = func(base, href string, active map[string]bool) ([]mobi6CSSRule, error) {
 		file, _, external, err := s.reference(base, href)
 		if err != nil {
@@ -184,6 +200,7 @@ func (s *mobi6Source) readDocumentStyles(doc *mobi6Document) error {
 			return nil, nil
 		}
 		if active[file.Name] {
+			cycles++
 			return nil, nil
 		}
 		if rules, ok := s.styles[file]; ok {
@@ -198,25 +215,45 @@ func (s *mobi6Source) readDocumentStyles(doc *mobi6Document) error {
 		if err != nil {
 			return nil, err
 		}
+		before := cycles
 		rules, err := mobi6ParseCSS(string(raw), func(href string) ([]mobi6CSSRule, error) { return load(file.Name, href, active) }, s.options)
 		if err != nil {
 			return nil, fmt.Errorf("stylesheet %s: %w", file.Name, err)
 		}
-		s.styles[file] = rules
+		// A cycle cuts this expansion according to its active import chain.
+		// Only cache results that are also valid for another entry stylesheet.
+		if cycles == before {
+			s.styles[file] = rules
+		}
 		return rules, nil
 	}
-	return mobi6Walk(doc.root, func(n *html.Node) error {
+	return walkKindleHTML(doc.root, func(n *html.Node) error {
 		if err := checkContext(s.ctx); err != nil {
 			return err
 		}
 		if n.Type != html.ElementNode {
 			return nil
 		}
+		linked := n.Data == "link" && containsToken(attrValue(n, "rel"), "stylesheet")
+		if !linked && n.Data != "style" {
+			return nil
+		}
+		if linked && containsToken(attrValue(n, "rel"), "alternate") {
+			return nil
+		}
+		mediaType, _, _ := strings.Cut(attrValue(n, "type"), ";")
+		if mediaType = strings.TrimSpace(mediaType); mediaType != "" && !strings.EqualFold(mediaType, "text/css") {
+			return nil
+		}
+		media := css.Parse(attrValue(n, "media"))
+		if media.Keyword("print") {
+			return nil
+		}
 		var rules []mobi6CSSRule
 		var err error
-		if n.Data == "link" && containsToken(attrValue(n, "rel"), "stylesheet") {
+		if linked {
 			rules, err = load(doc.name, attrValue(n, "href"), map[string]bool{})
-		} else if n.Data == "style" {
+		} else {
 			var raw strings.Builder
 			for c := n.FirstChild; c != nil; c = c.NextSibling {
 				raw.WriteString(c.Data)
@@ -230,231 +267,234 @@ func (s *mobi6Source) readDocumentStyles(doc *mobi6Document) error {
 			s.options.warn("%s: could not preserve stylesheet: %v", doc.name, err)
 			return nil
 		}
-		doc.css = append(doc.css, rules...)
-		if len(doc.css) > 4096 {
-			return fmt.Errorf("too many MOBI6 style rules: %w", ErrResourceLimit)
+		combined := s.documentStyles[doc.root]
+		if err := mobi6AppendMediaRules(&combined, rules, media, s.options); err != nil {
+			return err
 		}
+		s.documentStyles[doc.root] = combined
 		return nil
 	})
 }
 
-// The scanner respects strings and parentheses when locating block/statement
-// boundaries. Unsupported selectors never become broader partially parsed ones.
-func mobi6CSSDelimiter(s string, start int, delimiters string) int {
-	quote := byte(0)
-	parens := 0
-	for i := start; i < len(s); i++ {
-		c := s[i]
-		if c == '\\' {
-			i++
-			continue
-		}
-		if quote != 0 {
-			if c == quote {
-				quote = 0
-			}
-			continue
-		}
-		if strings.HasPrefix(s[i:], "/*") {
-			end := strings.Index(s[i+2:], "*/")
-			if end < 0 {
-				return len(s)
-			}
-			i += end + 3
-			continue
-		}
-		if c == '\'' || c == '"' {
-			quote = c
-			continue
-		}
-		if parens == 0 && strings.ContainsRune(delimiters, rune(c)) {
-			return i
-		}
-		if c == '(' || c == '[' {
-			parens++
-		}
-		if c == ')' || c == ']' {
-			parens--
-		}
-	}
-	return len(s)
-}
-
 func mobi6ParseCSS(raw string, imported func(string) ([]mobi6CSSRule, error), opts ConversionOptions) ([]mobi6CSSRule, error) {
-	return mobi6ParseCSSRules(raw, imported, 0, opts)
+	return mobi6ParseCSSRules(css.Parse(raw), imported, opts, true)
 }
 
-func mobi6ParseCSSRules(raw string, imported func(string) ([]mobi6CSSRule, error), depth int, opts ConversionOptions) ([]mobi6CSSRule, error) {
-	if depth > 32 {
-		return nil, fmt.Errorf("CSS rule nesting exceeds limit: %w", ErrResourceLimit)
-	}
-	raw = mobi6StripCSSComments(raw)
+func mobi6ParseCSSRules(body css.Values, imported func(string) ([]mobi6CSSRule, error), opts ConversionOptions, importsAllowed bool) ([]mobi6CSSRule, error) {
 	var rules []mobi6CSSRule
-	for pos := 0; pos < len(raw); {
-		end := mobi6CSSDelimiter(raw, pos, "{;")
-		selector := strings.TrimSpace(raw[pos:end])
-		if end == len(raw) {
-			break
-		}
-		pos = end + 1
-		if raw[end] == ';' {
-			if len(selector) > 7 && strings.EqualFold(selector[:7], "@import") && strings.ContainsRune(" \t\r\n", rune(selector[7])) {
-				href, media := strings.TrimSpace(selector[7:]), ""
-				if strings.HasPrefix(href, "url(") {
-					close := mobi6CSSDelimiter(href, 4, ")")
-					if close == len(href) {
-						return nil, fmt.Errorf("invalid CSS import")
-					}
-					media, href = strings.TrimSpace(href[close+1:]), strings.TrimSpace(href[4:close])
-				} else if len(href) > 1 && (href[0] == '"' || href[0] == '\'') {
-					end := mobi6CSSDelimiter(href, 0, " \t\r\n")
-					media, href = strings.TrimSpace(href[end:]), href[:end]
-				}
-				if strings.EqualFold(media, "print") {
-					continue
-				}
-				if strings.HasPrefix(href, `"`) || strings.HasPrefix(href, `'`) {
-					var err error
-					href, err = mobi6CSSContent(href)
-					if err != nil {
-						return nil, err
-					}
-				}
-				more, err := imported(href)
-				if err != nil {
-					return nil, err
-				}
-				if err := mobi6AppendMediaRules(&rules, more, media, opts); err != nil {
-					return nil, err
-				}
-			}
-			continue
-		}
-		level, close := 1, pos
-		for level > 0 && close < len(raw) {
-			next := mobi6CSSDelimiter(raw, close, "{}")
-			if next == len(raw) {
-				close = next
-				break
-			}
-			if raw[next] == '{' {
-				level++
-			} else {
-				level--
-			}
-			close = next + 1
-		}
-		if level != 0 {
-			return nil, fmt.Errorf("unterminated CSS block")
-		}
-		body := raw[pos : close-1]
-		pos = close
-		if strings.HasPrefix(selector, "@") {
-			if strings.EqualFold(selector, "@font-face") || strings.EqualFold(selector, "@media print") {
+	input := body.Rules()
+	for input.Next() {
+		rule := input.Rule
+		if ref, conditions, ok := rule.Import(); ok {
+			if !importsAllowed || conditions.Keyword("print") {
 				continue
 			}
-			more, err := mobi6ParseCSSRules(body, imported, depth+1, opts)
+			more, err := imported(ref.URL)
 			if err != nil {
 				return nil, err
 			}
-			media := strings.TrimSpace(strings.TrimPrefix(strings.ToLower(selector), "@media"))
-			if err := mobi6AppendMediaRules(&rules, more, media, opts); err != nil {
+			if err := mobi6AppendMediaRules(&rules, more, conditions, opts); err != nil {
 				return nil, err
 			}
 			continue
 		}
-		values := mobi6CSSDeclarations(body)
+		// Imports belong before style rules and block at-rules, and are never
+		// allowed inside a group. A layer-order statement may precede them.
+		if !strings.EqualFold(rule.Name, "charset") && !strings.EqualFold(rule.Name, "import") && !(strings.EqualFold(rule.Name, "layer") && !rule.HasBlock) {
+			importsAllowed = false
+		}
+		if !rule.HasBlock {
+			continue
+		}
+		if rule.Name != "" {
+			if strings.EqualFold(rule.Name, "font-face") || strings.EqualFold(rule.Name, "media") && rule.Prelude.Keyword("print") {
+				continue
+			}
+			more, err := mobi6ParseCSSRules(rule.Body, imported, opts, false)
+			if err != nil {
+				return nil, err
+			}
+			if strings.EqualFold(rule.Name, "media") {
+				if err := mobi6AppendMediaRules(&rules, more, rule.Prelude, opts); err != nil {
+					return nil, err
+				}
+			} else {
+				// A condition or cascade layer we cannot evaluate must not
+				// silently become unconditional or lose its ordering semantics.
+				for _, skipped := range more {
+					mobi6WarnUnprojectedCSS(skipped.values, opts)
+				}
+			}
+			continue
+		}
+		values, err := mobi6CSSDeclarations(rule.Body)
+		if err != nil {
+			return nil, err
+		}
 		if len(values) == 0 {
 			continue
 		}
-		for pos := 0; pos < len(selector); {
-			end := mobi6CSSDelimiter(selector, pos, ",")
-			part := strings.TrimSpace(selector[pos:end])
-			pos = end + 1
-			if len(part) > 1024 {
+		selectors := rule.Prelude.Split(',')
+		for selectors.Next() {
+			if selectors.End-selectors.Start > 1024 {
 				return nil, fmt.Errorf("CSS selector exceeds limit: %w", ErrResourceLimit)
 			}
-			pseudo := ""
-			for _, name := range []string{"before", "after"} {
-				if strings.HasSuffix(part, ":"+name) {
-					part = strings.TrimSuffix(strings.TrimSuffix(part, ":"+name), ":")
-					pseudo = name
-				}
+			compiled, specificity, pseudo := mobi6CompileSelector(selectors.Values)
+			if len(compiled) == 0 {
+				mobi6WarnUnprojectedCSS(values, opts)
+				continue
 			}
-			compiled, specificity := mobi6CompileSelector(part)
-			if len(compiled) > 0 {
-				if len(rules) >= 4096 {
-					return nil, fmt.Errorf("too many CSS rules: %w", ErrResourceLimit)
-				}
-				rules = append(rules, mobi6CSSRule{selector: compiled, values: values, specificity: specificity, pseudo: pseudo})
-			} else if err := mobi6UnprojectedCSS(values); err != nil {
-				opts.warn("%v", err)
+			if len(rules) >= 4096 {
+				return nil, fmt.Errorf("too many CSS rules: %w", ErrResourceLimit)
 			}
+			rules = append(rules, mobi6CSSRule{selector: compiled, values: values, specificity: specificity, pseudo: pseudo})
+		}
+		if err := selectors.Err(); err != nil {
+			return nil, err
 		}
 	}
-	return rules, nil
+	return rules, input.Err()
 }
 
-func mobi6AppendMediaRules(rules *[]mobi6CSSRule, more []mobi6CSSRule, media string, opts ConversionOptions) error {
-	switch strings.ToLower(media) {
-	case "", "all", "screen":
+func mobi6AppendMediaRules(rules *[]mobi6CSSRule, more []mobi6CSSRule, media css.Values, opts ConversionOptions) error {
+	unconditional := media.Empty()
+	queries := media.Split(',')
+	for queries.Next() {
+		unconditional = unconditional || queries.Values.Keyword("all") || queries.Values.Keyword("screen")
+	}
+	if err := queries.Err(); err != nil {
+		return err
+	}
+	if unconditional {
 		if len(*rules)+len(more) > 4096 {
 			return fmt.Errorf("too many CSS rules: %w", ErrResourceLimit)
 		}
 		*rules = append(*rules, more...)
-	default:
-		// Unknown conditions must not become unconditional. Warn when skipping
-		// them could lose generated words or artwork.
+	} else {
 		for _, rule := range more {
-			if err := mobi6UnprojectedCSS(rule.values); err != nil {
-				opts.warn("%v", err)
-			}
+			mobi6WarnUnprojectedCSS(rule.values, opts)
 		}
 	}
 	return nil
 }
 
-func mobi6UnprojectedCSS(values map[string]string) error {
-	if value, ok := values["content"]; ok {
-		value, _ = mobi6DeclarationValue(value)
-		text, err := mobi6CSSContent(value)
-		if err != nil || text != "" {
-			return fmt.Errorf("MOBI6 cannot preserve content in unsupported CSS rule: %w", ErrUnsupportedContent)
-		}
+func mobi6WarnUnprojectedCSS(values map[string]mobi6CSSValue, opts ConversionOptions) {
+	if value := values["content"]; value.err != nil || value.text != "" {
+		opts.warn("MOBI6 cannot preserve content in unsupported CSS rule")
 	}
-	if strings.Contains(strings.ToLower(values["background-image"]), "url(") {
-		return fmt.Errorf("MOBI6 cannot preserve artwork in unsupported CSS rule: %w", ErrUnsupportedContent)
+	if values["background-image"].text != "" {
+		opts.warn("MOBI6 cannot preserve artwork in unsupported CSS rule")
 	}
-	return nil
 }
 
-func mobi6CSSDeclarations(raw string) map[string]string {
-	raw = mobi6StripCSSComments(raw)
-	values := map[string]string{}
-	for pos := 0; pos < len(raw); {
-		end := mobi6CSSDelimiter(raw, pos, ";")
-		key, value, found := strings.Cut(raw[pos:end], ":")
-		pos = end + 1
-		if !found {
-			continue
-		}
-		key, value = strings.ToLower(strings.TrimSpace(key)), strings.TrimSpace(value)
+func mobi6CSSDeclarations(body css.Values) (map[string]mobi6CSSValue, error) {
+	var values map[string]mobi6CSSValue
+	p := body.Declarations()
+	for p.Next() {
+		decl := p.Declaration
+		key := decl.Name
+		value := mobi6CSSValue{important: decl.Important}
 		switch key {
-		case "font-weight", "font-style", "font-family", "text-align", "text-transform", "text-decoration", "white-space", "display", "text-indent":
-			value = strings.ToLower(value)
+		case "font-family":
+			if decl.Value.Keyword("inherit") || decl.Value.Keyword("unset") {
+				value.text = "inherit"
+			} else {
+				families := decl.Value.Split(',')
+				for families.Next() {
+					if families.Values.Keyword("monospace") {
+						value.text = "monospace"
+					}
+				}
+				if err := families.Err(); err != nil {
+					return nil, err
+				}
+			}
+		case "font-weight", "font-style", "text-align", "text-transform", "text-decoration", "white-space", "display", "text-indent":
+			var ok bool
+			value.text, ok = mobi6CSSPresentationValue(key, decl.Value)
+			if !ok {
+				continue
+			}
 		case "background", "background-image":
 			key = "background-image"
+			if err := decl.Value.References(func(css.Reference) error { value.text = "image"; return nil }); err != nil {
+				return nil, err
+			}
 		case "content":
+			value.text, value.err = mobi6CSSContent(decl.Value)
 		default:
 			continue
 		}
-		_, previousImportant := mobi6DeclarationValue(values[key])
-		_, important := mobi6DeclarationValue(value)
-		if !previousImportant || important {
+		if values == nil {
+			values = make(map[string]mobi6CSSValue)
+		}
+		if !values[key].important || value.important {
 			values[key] = value
 		}
 	}
-	return values
+	return values, p.Err()
+}
+
+// Reject invalid/unsupported values before the cascade so they cannot erase a
+// usable fallback declaration. This is only the legacy target's projection,
+// not a property grammar for stylesheets preserved by other formats.
+func mobi6CSSPresentationValue(key string, value css.Values) (string, bool) {
+	if key == "display" || key == "text-decoration" {
+		// These properties can contain several keywords. Only none hides
+		// content; unfamiliar layout modes keep ordinary HTML presentation.
+		var text strings.Builder
+		p := value.Components()
+		for p.Significant() {
+			if p.Kind != css.Ident {
+				return "", false
+			}
+			if text.Len() > 0 {
+				text.WriteByte(' ')
+			}
+			text.WriteString(strings.ToLower(p.Text()))
+		}
+		v := text.String()
+		if p.Err() != nil {
+			return "", false
+		}
+		if key == "display" {
+			return v, v != ""
+		}
+		return v, containsToken("none inherit unset initial", v) || containsToken(v, "underline") ||
+			containsToken(v, "overline") || containsToken(v, "line-through") || containsToken(v, "blink")
+	}
+	c, ok := value.Single()
+	if !ok {
+		return "", false
+	}
+	text := strings.ToLower(c.Text())
+	if c.Kind == css.Ident && containsToken("inherit unset initial", text) {
+		return text, true
+	}
+	switch key {
+	case "font-weight":
+		if c.Kind == css.Ident {
+			return text, containsToken("normal bold bolder lighter", text)
+		}
+		weight, err := strconv.Atoi(text)
+		if c.Kind == css.Number && err == nil && weight >= 1 && weight <= 1000 {
+			if weight >= 600 {
+				return "bold", true
+			}
+			return "normal", true
+		}
+	case "font-style":
+		return text, c.Kind == css.Ident && containsToken("normal italic oblique", text)
+	case "text-align":
+		return text, c.Kind == css.Ident && containsToken("left right center justify start end", text)
+	case "text-transform":
+		return text, c.Kind == css.Ident && containsToken("none capitalize uppercase lowercase", text)
+	case "white-space":
+		return text, c.Kind == css.Ident && containsToken("normal pre nowrap pre-wrap pre-line break-spaces", text)
+	case "text-indent":
+		return text, c.Kind == css.Dimension || c.Kind == css.Percentage || c.Kind == css.Number && text == "0"
+	}
+	return "", false
 }
 
 func mobi6Matches(n *html.Node, parts []mobi6SelectorPart, work *int) bool {
@@ -524,36 +564,42 @@ func mobi6ComputedStyle(n *html.Node, rules []mobi6CSSRule, inherited mobi6Style
 	case "code", "tt", "kbd", "samp":
 		style.family = "monospace"
 	}
-	values, ranks := map[string]string{}, map[string]int{}
-	apply := func(declarations map[string]string, rank int) {
-		for key, value := range declarations {
-			priority := rank
-			value, important := mobi6DeclarationValue(value)
-			if important {
-				priority += 1000000
-			}
-			if previous, ok := ranks[key]; !ok || priority >= previous {
-				values[key], ranks[key] = value, priority
-			}
+	type rankedValue struct {
+		mobi6CSSValue
+		priority mobi6CSSPriority
+	}
+	values := map[string]rankedValue{}
+	apply := func(key string, value mobi6CSSValue, priority mobi6CSSPriority) {
+		priority.important = value.important
+		if previous, ok := values[key]; !ok || !priority.less(previous.priority) {
+			values[key] = rankedValue{value, priority}
 		}
 	}
 	for _, rule := range rules {
 		if mobi6Matches(n, rule.selector, work) {
 			if rule.pseudo != "" {
 				if content, ok := rule.values["content"]; ok {
-					apply(map[string]string{rule.pseudo: content}, rule.specificity)
+					apply(rule.pseudo, content, mobi6CSSPriority{specificity: rule.specificity})
 				}
 			} else {
-				apply(rule.values, rule.specificity)
+				for key, value := range rule.values {
+					apply(key, value, mobi6CSSPriority{specificity: rule.specificity})
+				}
 			}
 		}
 	}
 	if *work > 20000000 {
 		return style, fmt.Errorf("MOBI6 style work exceeds limit: %w", ErrResourceLimit)
 	}
-	inline := mobi6CSSDeclarations(attrValue(n, "style"))
-	apply(inline, 1000)
-	for key, value := range values {
+	inline, err := mobi6CSSDeclarations(css.Parse(attrValue(n, "style")))
+	if err != nil {
+		return style, err
+	}
+	for key, value := range inline {
+		apply(key, value, mobi6CSSPriority{inline: true})
+	}
+	for key, declaration := range values {
+		value := declaration.text
 		if value == "inherit" || value == "unset" {
 			switch key {
 			case "font-weight":
@@ -569,23 +615,17 @@ func mobi6ComputedStyle(n *html.Node, rules []mobi6CSSRule, inherited mobi6Style
 		}
 		switch key {
 		case "font-weight":
-			if number, err := strconv.Atoi(value); err == nil {
-				style.bold = number >= 600
-			} else if value == "bold" || value == "bolder" {
-				style.bold = true
-			} else if value == "normal" || value == "lighter" {
-				style.bold = false
-			}
+			style.bold = value == "bold" || value == "bolder"
 		case "font-style":
 			style.italic = value == "italic" || value == "oblique"
 		case "font-family":
-			if strings.Contains(value, "monospace") {
+			if value == "monospace" {
 				style.family = "monospace"
 			} else {
 				style.family = ""
 			}
 		case "text-decoration":
-			style.underline, style.strike = strings.Contains(value, "underline"), strings.Contains(value, "line-through")
+			style.underline, style.strike = containsToken(value, "underline"), containsToken(value, "line-through")
 		case "white-space":
 			style.pre = value == "pre" || value == "pre-wrap" || value == "break-spaces"
 		case "text-transform":
@@ -597,67 +637,34 @@ func mobi6ComputedStyle(n *html.Node, rules []mobi6CSSRule, inherited mobi6Style
 		case "display":
 			style.hidden = style.hidden || value == "none"
 		case "before", "after":
-			text, err := mobi6CSSContent(value)
-			if err != nil {
-				opts.warn("%v", err)
+			if declaration.err != nil {
+				opts.warn("%v", declaration.err)
 				continue
 			}
 			if key == "before" {
-				style.before = text
+				style.before = value
 			} else {
-				style.after = text
+				style.after = value
 			}
 		}
 	}
-	if !style.hidden && strings.Contains(strings.ToLower(values["background-image"]), "url(") {
+	if !style.hidden && values["background-image"].text != "" {
 		opts.warn("MOBI6 cannot preserve CSS background images")
 	}
 	return style, nil
 }
 
-func mobi6CSSContent(value string) (string, error) {
-	if value == "none" || value == "normal" {
+func mobi6CSSContent(value css.Values) (string, error) {
+	if value.Keyword("none") || value.Keyword("normal") {
 		return "", nil
 	}
 	var out strings.Builder
-	for value = strings.TrimSpace(value); value != ""; value = strings.TrimSpace(value) {
-		if value[0] != '\'' && value[0] != '"' {
-			return "", fmt.Errorf("MOBI6 cannot preserve generated CSS content %q: %w", value, ErrUnsupportedContent)
+	p := value.Components()
+	for p.Significant() {
+		if p.Kind != css.String || !p.Closed {
+			return "", fmt.Errorf("MOBI6 cannot preserve generated CSS content %.200q: %w", value.Raw(), ErrUnsupportedContent)
 		}
-		quote := value[0]
-		value = value[1:]
-		closed := false
-		for len(value) > 0 {
-			if value[0] == quote {
-				value = value[1:]
-				closed = true
-				break
-			}
-			if value[0] != '\\' {
-				out.WriteByte(value[0])
-				value = value[1:]
-				continue
-			}
-			value = value[1:]
-			i := 0
-			for i < len(value) && i < 6 && strings.ContainsRune("0123456789abcdefABCDEF", rune(value[i])) {
-				i++
-			}
-			if i > 0 {
-				n, _ := strconv.ParseUint(value[:i], 16, 32)
-				out.WriteRune(rune(n))
-				value = value[i:]
-				if len(value) > 0 && strings.ContainsRune(" \n\r\t", rune(value[0])) {
-					value = value[1:]
-				}
-			} else if len(value) > 0 {
-				out.WriteByte(value[0])
-				value = value[1:]
-			}
-		}
-		if !closed {
-			return "", fmt.Errorf("unterminated CSS generated string")
-		}
+		out.WriteString(p.Text())
 	}
-	return out.String(), nil
+	return out.String(), p.Err()
 }

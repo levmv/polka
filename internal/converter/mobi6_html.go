@@ -23,6 +23,7 @@ type mobi6Renderer struct {
 	references  []mobi6Reference
 	err         error
 	styleWork   int
+	rules       []mobi6CSSRule
 	column      int
 	tocRendered bool
 }
@@ -41,10 +42,11 @@ func (s *mobi6Source) render() (mobi6Book, error) {
 	r.reference(s.start)
 	r.write(`"></guide></head><body>`)
 	for i, doc := range s.documents {
+		r.rules = s.documentStyles[doc.root]
 		if i > 0 {
 			r.write(`<mbp:pagebreak/>`)
 		}
-		r.mark(mobi6Key(doc.name, ""))
+		r.mark(kindleKey(doc.name, ""))
 		r.node(doc.root, doc, mobi6Style{}, 0)
 		if r.err != nil {
 			return mobi6Book{}, fmt.Errorf("convert %s to MOBI6: %w", doc.name, r.err)
@@ -54,8 +56,8 @@ func (s *mobi6Source) render() (mobi6Book, error) {
 		r.write(`<mbp:pagebreak/>`)
 		r.mark(mobi6TOCAnchor)
 		r.write(`<h1>Contents</h1>`)
-		var toc func([]mobi6NavItem)
-		toc = func(items []mobi6NavItem) {
+		var toc func([]kindleNavItem)
+		toc = func(items []kindleNavItem) {
 			r.write(`<ul>`)
 			for _, item := range items {
 				r.write(`<li>`)
@@ -96,8 +98,8 @@ func (s *mobi6Source) render() (mobi6Book, error) {
 		copy(data[ref.at:], fmt.Sprintf("%010d", pos))
 	}
 	var nav []mobi6Navigation
-	var visitNav func([]mobi6NavItem)
-	visitNav = func(items []mobi6NavItem) {
+	var visitNav func([]kindleNavItem)
+	visitNav = func(items []kindleNavItem) {
 		for _, item := range items {
 			if item.Href != "" {
 				if pos, ok := r.anchors[item.Href]; ok {
@@ -113,7 +115,7 @@ func (s *mobi6Source) render() (mobi6Book, error) {
 	}
 	start, ok := r.anchors[s.start]
 	if !ok {
-		start = r.anchors[mobi6Key(s.documents[0].name, "")]
+		start = r.anchors[kindleKey(s.documents[0].name, "")]
 	}
 	return mobi6Book{text: data, images: s.images, cover: s.cover, meta: s.meta, nav: nav, start: start}, nil
 }
@@ -141,7 +143,7 @@ func (r *mobi6Renderer) reference(key string) {
 	r.write("0000000000")
 }
 
-func (r *mobi6Renderer) node(n *html.Node, doc mobi6Document, inherited mobi6Style, depth int) {
+func (r *mobi6Renderer) node(n *html.Node, doc kindleDocument, inherited mobi6Style, depth int) {
 	if r.err != nil {
 		return
 	}
@@ -169,14 +171,14 @@ func (r *mobi6Renderer) node(n *html.Node, doc mobi6Document, inherited mobi6Sty
 	style := inherited
 	if n.Type == html.ElementNode {
 		var err error
-		style, err = mobi6ComputedStyle(n, doc.css, inherited, &r.styleWork, r.source.options)
+		style, err = mobi6ComputedStyle(n, r.rules, inherited, &r.styleWork, r.source.options)
 		if err != nil {
 			r.err = err
 			return
 		}
 		for _, key := range []string{"id", "name"} {
 			if id := attrValue(n, key); id != "" {
-				r.mark(mobi6Key(doc.name, id))
+				r.mark(kindleKey(doc.name, id))
 			}
 		}
 	}
@@ -362,11 +364,11 @@ func (r *mobi6Renderer) image(base, href, alt string, node *html.Node) {
 	r.write(">")
 }
 
-func (r *mobi6Renderer) svg(n *html.Node, doc mobi6Document) error {
+func (r *mobi6Renderer) svg(n *html.Node, doc kindleDocument) error {
 	// A common EPUB cover is an SVG viewport containing just one raster image.
 	// Unwrap only that unambiguous case; actual vector artwork needs a rasterizer.
 	var img *html.Node
-	err := mobi6Walk(n, func(c *html.Node) error {
+	err := walkKindleHTML(n, func(c *html.Node) error {
 		for _, key := range []string{"transform", "clip-path", "mask", "filter", "style"} {
 			if attrValue(c, key) != "" {
 				return ErrUnsupportedContent

@@ -392,7 +392,7 @@ func extractKF8FlowResources(raw []byte, info *Inspection, text TextFlow, budget
 			}
 			resources = append(resources, resource)
 			added = true
-			if strings.EqualFold(mediaType, "text/css") {
+			if strings.EqualFold(mediaType, "text/css") || strings.EqualFold(mediaType, "image/svg+xml") {
 				for nestedFlow, nestedMediaType := range kindleFlowReferences(resource.Data, info) {
 					if _, exists := referenced[nestedFlow]; !exists {
 						referenced[nestedFlow] = nestedMediaType

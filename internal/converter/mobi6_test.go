@@ -17,7 +17,7 @@ import (
 	"github.com/levmv/polka/internal/testfixture"
 )
 
-func mobi6TestEPUB(t *testing.T, ncx bool, edit func(map[string][]byte)) []byte {
+func kindleTestEPUB(t *testing.T, ncx bool, edit func(map[string][]byte)) []byte {
 	t.Helper()
 	var pngBytes bytes.Buffer
 	img := image.NewRGBA(image.Rect(0, 0, 20, 12))
@@ -64,7 +64,7 @@ func TestMOBI6PreservesPublication(t *testing.T) {
 		ncx, hiddenNav bool
 	}{{"EPUB3", false, false}, {"NCX", true, false}, {"hidden EPUB navigation", false, true}} {
 		t.Run(tc.name, func(t *testing.T) {
-			src := mobi6TestEPUB(t, tc.ncx, func(files map[string][]byte) {
+			src := kindleTestEPUB(t, tc.ncx, func(files map[string][]byte) {
 				if tc.hiddenNav {
 					files["OEBPS/style.css"] = append(files["OEBPS/style.css"], []byte(`nav {display:none}`)...)
 				}
@@ -150,7 +150,7 @@ func TestMOBI6PreservesPublication(t *testing.T) {
 
 func TestMOBI6StableDownload(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		src := mobi6TestEPUB(t, false, nil)
+		src := kindleTestEPUB(t, false, nil)
 		convert := func() []byte {
 			var out bytes.Buffer
 			if err := ConvertContext(t.Context(), &out, bytes.NewReader(src), format.FormatEPUB, int64(len(src)), TargetMOBI6); err != nil {
@@ -167,20 +167,13 @@ func TestMOBI6StableDownload(t *testing.T) {
 }
 
 func TestMOBI6Presentation(t *testing.T) {
-	for _, tc := range []struct{ name, body, css, want, absent string }{
-		{"literal comment markers", `<p class="literal">text</p>`, `.literal::before {content:"/* keep */ "}`, `/* keep */ text`, ""},
-		{"quoted selector", `<p data-kind="one, &gt; two">chosen</p>`, `[data-kind="one, > two"]::before {content:"Start: "}`, `Start: chosen`, ""},
-		{"absent attribute", `<p>Keep unmarked text</p>`, `[data-kind=""] {display:none}`, `Keep unmarked text`, ""},
-		{"important declaration", `<p class="priority">Visible text</p>`, `.priority {display:block !important; display:none}`, `Visible text`, ""},
-		{"inline comment", `<b style="font-weight:/* comment */ normal">Normal text</b>`, "", `Normal text`, `<b>Normal text</b>`},
-		{"inherited emphasis", `<i style="font-style:inherit">Inherited text</i>`, "", `Inherited text`, `<i>Inherited text</i>`},
-		{"unused artwork", `<p>Ordinary text</p>`, `.absent {background-image:url(missing.svg)}`, `Ordinary text`, ""},
-		{"nested selector", `<div class="outer"><div class="middle"><div class="middle"><p class="leaf">Nested text</p></div></div></div>`, `.outer > .middle .leaf {font-weight:bold}`, `<b>Nested text</b>`, ""},
-		{"invalid selector", `<p class="1bad">Keep this text</p>`, `.1bad {display:none}`, `Keep this text`, ""},
-		{"screen stylesheet", `<p class="screen">Reading text</p>`, `@media screen {.screen::before {content:"Start: "}} @media print {.screen {display:none}}`, `Start: Reading text`, ""},
+	for _, tc := range []struct{ name, body, css, want string }{
+		{"escaped syntax", `<p class="chapter">Emphasized text</p>`, `.\63hapter {f\6fnt-weight:\62old !/**/IMPORTANT; font-weight:normal}`, `<b>Emphasized text</b>`},
+		{"print style element", `<style media="print">.visible{display:none}</style><p class="visible">Screen words</p>`, "", "Screen words"},
+		{"media list", `<style media="print, screen">.media{font-style:italic}</style><p class="media">Media words</p>`, "", "<i>Media words</i>"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			src := mobi6TestEPUB(t, false, func(files map[string][]byte) {
+			src := kindleTestEPUB(t, false, func(files map[string][]byte) {
 				files["OEBPS/one.xhtml"] = bytes.Replace(files["OEBPS/one.xhtml"], []byte("</body>"), []byte(tc.body+"</body>"), 1)
 				files["OEBPS/style.css"] = append(files["OEBPS/style.css"], []byte(tc.css)...)
 			})
@@ -193,8 +186,8 @@ func TestMOBI6Presentation(t *testing.T) {
 				t.Fatal(err)
 			}
 			text := string(doc.Flows[0].Data)
-			if !strings.Contains(text, tc.want) || tc.absent != "" && strings.Contains(text, tc.absent) {
-				t.Fatalf("presentation lost: want %q, exclude %q", tc.want, tc.absent)
+			if !strings.Contains(text, tc.want) {
+				t.Fatalf("presentation lost: want %q", tc.want)
 			}
 		})
 	}
@@ -215,7 +208,7 @@ func TestMOBI6RecoversContentWithWarnings(t *testing.T) {
 		{"conditional artwork", `<style>@media (min-width:30em) {p {background-image:url(red.png)}}</style>`, "unsupported CSS rule", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			src := mobi6TestEPUB(t, false, func(files map[string][]byte) {
+			src := kindleTestEPUB(t, false, func(files map[string][]byte) {
 				files["OEBPS/one.xhtml"] = bytes.Replace(files["OEBPS/one.xhtml"], []byte("</body>"), []byte(tc.body+"</body>"), 1)
 			})
 			var out bytes.Buffer
@@ -238,7 +231,7 @@ func TestMOBI6RecoversContentWithWarnings(t *testing.T) {
 }
 
 func TestMOBI6KeepsReadableChapters(t *testing.T) {
-	src := mobi6TestEPUB(t, false, func(files map[string][]byte) {
+	src := kindleTestEPUB(t, false, func(files map[string][]byte) {
 		delete(files, "OEBPS/two.xhtml")
 		delete(files, "OEBPS/nav.xhtml")
 	})

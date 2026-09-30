@@ -36,15 +36,13 @@ func convertHTMLSourceToEPUB(ctx context.Context, w io.Writer, src io.ReaderAt, 
 	if err != nil {
 		return fmt.Errorf("decode HTML source: %w", err)
 	}
-	if from == format.FormatXHTML {
-		decoded, err = xmlutil.PrepareXHTMLForHTML(decoded)
-		if err != nil {
-			return err
-		}
-	}
 	var assets []epubAsset
 	imageResolver := htmlDataImageResolver(&assets)
-	body, nav, _, err := htmlBodyToEPUB(decoded, "", htmlEPUBResolvers{image: imageResolver, options: opts})
+	render := htmlBodyToEPUB
+	if from == format.FormatXHTML {
+		render = xhtmlBodyToEPUB
+	}
+	body, nav, _, err := render(decoded, "", htmlEPUBResolvers{image: imageResolver, options: opts})
 	if err != nil {
 		return err
 	}
@@ -76,11 +74,9 @@ func convertHTMLZSourceToEPUB(ctx context.Context, w io.Writer, src io.ReaderAt,
 	if err != nil {
 		return fmt.Errorf("decode HTMLZ entry %s: %w", entry.Name, err)
 	}
+	render := htmlBodyToEPUB
 	if ext := strings.ToLower(path.Ext(entry.Name)); ext == ".xhtml" || ext == ".xhtm" {
-		decoded, err = xmlutil.PrepareXHTMLForHTML(decoded)
-		if err != nil {
-			return err
-		}
+		render = xhtmlBodyToEPUB
 	}
 	meta := format.MetadataFromHTML(raw)
 	extracted, err := htmlZMetadataForEPUB(ctx, zr)
@@ -92,48 +88,12 @@ func convertHTMLZSourceToEPUB(ctx context.Context, w io.Writer, src io.ReaderAt,
 	}
 
 	var assets []epubAsset
-	seenImages := make(map[string]string)
-	var resourceErr error
-	imageResolver := func(src string) (string, bool) {
-		if resourceErr != nil {
-			return "", false
-		}
-		name := cleanHTMLZResourceHref(entry.Name, src)
-		if name == "" {
-			return "", false
-		}
-		if href, ok := seenImages[name]; ok {
-			return href, true
-		}
-		img := htmlZOptionalZIPEntry(zr, name)
-		if img == nil || img.FileInfo().IsDir() {
-			return "", false
-		}
-		raw, err := readZipFileContextLimited(ctx, img, maxConverterResourceBytes, "HTMLZ image")
-		if err != nil {
-			if fatalConversionError(err) {
-				resourceErr = err
-			}
-			return "", false
-		}
-		data, mediaType, ext, ok := format.EPUBImageResource(raw, name)
-		if !ok {
-			return "", false
-		}
-		href := fmt.Sprintf("images/image%d%s", len(assets)+1, ext)
-		seenImages[name] = href
-		assets = append(assets, epubAsset{
-			ID:        fmt.Sprintf("img%d", len(assets)+1),
-			Href:      href,
-			MediaType: mediaType,
-			Data:      data,
-		})
-		return href, true
-	}
+	resources := htmlZResources{ctx: ctx, archive: zr, assets: &assets, seen: map[*zip.File]int{}, options: opts}
+	imageResolver := func(src string) (string, bool) { return resources.image(entry.Name, src) }
 	sourcePath := format.NormalizeZipName(entry.Name)
-	body, nav, ids, err := htmlBodyToEPUB(decoded, sourcePath, htmlEPUBResolvers{image: imageResolver, options: opts})
-	if resourceErr != nil {
-		return resourceErr
+	body, nav, ids, err := render(decoded, sourcePath, htmlEPUBResolvers{image: imageResolver, resource: func(href string) (string, bool) { return resources.reference(entry.Name, href, false) }, options: opts})
+	if resources.err != nil {
+		return resources.err
 	}
 	if err != nil {
 		return err
@@ -160,9 +120,10 @@ type (
 )
 
 type htmlEPUBResolvers struct {
-	image   htmlImageResolver
-	media   htmlMediaResolver
-	options ConversionOptions
+	image    htmlImageResolver
+	media    htmlMediaResolver
+	resource func(string) (string, bool)
+	options  ConversionOptions
 	// Format-owned conventions for prefixes omitted by legacy producers.
 	foreignNamespaces map[string]string
 }
@@ -259,6 +220,22 @@ func htmlBodyToEPUB(raw []byte, sourcePath string, resolvers htmlEPUBResolvers) 
 	if err != nil {
 		return "", nil, nil, fmt.Errorf("parse HTML source: %w", err)
 	}
+	return htmlDocumentToEPUB(doc, sourcePath, resolvers)
+}
+
+func xhtmlBodyToEPUB(raw []byte, sourcePath string, resolvers htmlEPUBResolvers) (string, []epubNavItem, map[string]bool, error) {
+	prepared, err := prepareEPUBXHTML(xmlutil.RemoveInvalidXML10Chars(raw))
+	if err != nil {
+		return "", nil, nil, err
+	}
+	doc, err := html.Parse(bytes.NewReader(prepared))
+	if err != nil {
+		return "", nil, nil, err
+	}
+	return htmlDocumentToEPUB(doc, sourcePath, resolvers)
+}
+
+func htmlDocumentToEPUB(doc *html.Node, sourcePath string, resolvers htmlEPUBResolvers) (string, []epubNavItem, map[string]bool, error) {
 	root := firstHTMLElement(doc, "body")
 	if root == nil {
 		root = doc
@@ -361,6 +338,10 @@ func renderHTMLElement(out *strings.Builder, n *html.Node, inPre bool, resolvers
 		return
 	}
 	tag := strings.ToLower(n.Data)
+	if tag == "object" {
+		renderHTMLObject(out, n, inPre, resolvers, state)
+		return
+	}
 	if tag == "audio" || tag == "video" {
 		renderHTMLMedia(out, n, inPre, resolvers, state)
 		return
@@ -497,6 +478,29 @@ func renderHTMLImage(out *strings.Builder, n *html.Node, resolvers htmlEPUBResol
 	fmt.Fprintf(out, `<img src="%s" alt="%s"%s/>`, stdhtml.EscapeString(href), stdhtml.EscapeString(alt), htmlSharedAttributes(n))
 }
 
+func renderHTMLObject(out *strings.Builder, n *html.Node, inPre bool, resolvers htmlEPUBResolvers, state *htmlEPUBRenderState) {
+	src := strings.TrimSpace(htmlAttr(n, "data"))
+	var href string
+	var ok bool
+	if resolvers.image != nil && src != "" {
+		href, ok = resolvers.image(src)
+	}
+	if !ok {
+		resolvers.options.warn("Object %.200q could not be included; kept fallback content", src)
+		renderHTMLPhrasingChildren(out, n, inPre, resolvers, state)
+		return
+	}
+	fmt.Fprintf(out, `<object data="%s"%s`, stdhtml.EscapeString(href), htmlElementAttributes(n, state))
+	for _, name := range []string{"type", "width", "height"} {
+		if value := htmlAttr(n, name); value != "" {
+			fmt.Fprintf(out, ` %s="%s"`, name, stdhtml.EscapeString(value))
+		}
+	}
+	out.WriteByte('>')
+	renderHTMLPhrasingChildren(out, n, inPre, resolvers, state)
+	out.WriteString("</object>")
+}
+
 func renderHTMLMedia(out *strings.Builder, n *html.Node, inPre bool, resolvers htmlEPUBResolvers, state *htmlEPUBRenderState) {
 	tag := strings.ToLower(n.Data)
 	if resolvers.media == nil {
@@ -556,6 +560,10 @@ func renderHTMLPhrasingElement(out *strings.Builder, n *html.Node, inPre bool, r
 		return
 	}
 	tag := strings.ToLower(n.Data)
+	if tag == "object" {
+		renderHTMLObject(out, n, inPre, resolvers, state)
+		return
+	}
 	if tag == "audio" || tag == "video" {
 		renderHTMLMedia(out, n, inPre, resolvers, state)
 		return
@@ -914,35 +922,21 @@ func htmlTargetDocumentFragment(rawHref, linkBasePath, targetPath string) (strin
 	if rawHref == "" {
 		return "", false
 	}
-	parsed, err := url.Parse(rawHref)
-	if err != nil || parsed.Scheme != "" || parsed.Host != "" {
+	ref, err := resolvePackageReference(linkBasePath, rawHref)
+	if err != nil || ref.external {
 		return "", false
 	}
-	fragment := safeHTMLAnchorID(parsed.Fragment)
+	fragment := safeHTMLAnchorID(ref.fragment)
 	if fragment == "" {
 		return "", false
 	}
-	hrefPath := parsed.Path
-	if unescaped, err := url.PathUnescape(hrefPath); err == nil {
-		hrefPath = unescaped
-	}
-	if strings.TrimSpace(hrefPath) == "" && linkBasePath == "" && targetPath == "" {
+	if ref.path == "" && linkBasePath == "" && targetPath == "" {
 		return fragment, true
 	}
-	if strings.TrimSpace(hrefPath) == "" {
-		hrefPath = linkBasePath
-	}
-	if targetPath == "" {
+	if targetPath == "" || ref.path == "" {
 		return "", false
 	}
-	if !strings.HasPrefix(hrefPath, "/") {
-		hrefPath = path.Join(path.Dir(linkBasePath), hrefPath)
-	}
-	cleanHref := format.NormalizeZipName(hrefPath)
-	if cleanHref == "" {
-		return "", false
-	}
-	return fragment, strings.EqualFold(cleanHref, targetPath)
+	return fragment, strings.EqualFold(ref.path, targetPath)
 }
 
 func htmlLinkNavLabel(n *html.Node) string {
@@ -1187,7 +1181,7 @@ func htmlZOPFNavigationRefs(raw []byte, opfPath string) (htmlZOPFNavigation, err
 	itemsByID := map[string]htmlZOPFItem{}
 	var refs htmlZOPFNavigation
 	for _, item := range pkg.Manifest {
-		href := cleanHTMLZResourceHref(opfPath, item.Href)
+		href := packageResourcePath(opfPath, item.Href)
 		if href == "" {
 			continue
 		}
@@ -1201,7 +1195,7 @@ func htmlZOPFNavigationRefs(raw []byte, opfPath string) (htmlZOPFNavigation, err
 	}
 	if tocID := strings.TrimSpace(pkg.Spine.Toc); tocID != "" {
 		if item, ok := itemsByID[tocID]; ok {
-			if href := cleanHTMLZResourceHref(opfPath, item.Href); href != "" {
+			if href := packageResourcePath(opfPath, item.Href); href != "" {
 				refs.NCXHrefs = appendUniqueString([]string{href}, refs.NCXHrefs...)
 			}
 		}
@@ -1373,29 +1367,6 @@ func htmlZMetadataForEPUB(ctx context.Context, zr *zip.Reader) (*format.Metadata
 		return nil, nil
 	}
 	return meta, nil
-}
-
-func cleanHTMLZResourceHref(basePath, href string) string {
-	href = strings.TrimSpace(href)
-	if href == "" {
-		return ""
-	}
-	if before, _, ok := strings.Cut(href, "#"); ok {
-		href = before
-	}
-	if parsed, err := url.Parse(href); err == nil {
-		if parsed.Scheme != "" || parsed.Host != "" {
-			return ""
-		}
-		href = parsed.Path
-	}
-	if unescaped, err := url.PathUnescape(href); err == nil {
-		href = unescaped
-	}
-	if basePath != "" && !strings.HasPrefix(href, "/") {
-		href = path.Join(path.Dir(basePath), href)
-	}
-	return format.NormalizeZipName(href)
 }
 
 // HTMLZ image and navigation members are optional. Missing and ambiguous paths

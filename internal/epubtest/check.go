@@ -269,6 +269,11 @@ func epubRefLocation(baseDir, raw string) (target, fragment string, ok, bad bool
 	if raw == "" {
 		return "", "", false, false, ""
 	}
+	// Embedded data has no package target. Base64 payloads may contain line
+	// breaks, which net/url rejects but image decoders accept.
+	if strings.HasPrefix(strings.ToLower(raw), "data:") {
+		return "", "", false, false, ""
+	}
 	u, err := url.Parse(raw)
 	if err != nil {
 		return "", "", false, true, "reference is not a valid URL"
@@ -324,6 +329,16 @@ func scanXHTMLIDsAndRefs(data []byte) (ids map[string]bool, refs []string, err e
 			return nil, nil, err
 		}
 		switch token := token.(type) {
+		case xml.ProcInst:
+			if token.Target == "xml-stylesheet" {
+				var sheet struct {
+					Href string `xml:"href,attr"`
+				}
+				if err := xml.Unmarshal([]byte("<style "+string(token.Inst)+"/>"), &sheet); err != nil {
+					return nil, nil, err
+				}
+				refs = append(refs, sheet.Href)
+			}
 		case xml.StartElement:
 			name := strings.ToLower(token.Name.Local)
 			refAttrs := epubRefAttrs[name]

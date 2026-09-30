@@ -154,15 +154,15 @@ func rebuildXMLAttrSpan(raw []byte, node rebuildXMLNode, name string) (int, int,
 		return 0, 0, false
 	}
 	tag := raw[node.Start:node.StartTagEnd]
-	for _, match := range kepubXMLAttrRe.FindAllSubmatchIndex(tag, -1) {
-		if !strings.EqualFold(string(tag[match[2]:match[3]]), name) {
+	for _, attr := range kepubXMLAttrsWithLocations(string(tag)) {
+		if !strings.EqualFold(attr.Name, name) {
 			continue
 		}
-		start := match[0]
+		start := attr.NameStart
 		for start > 0 && rebuildXMLSpace(tag[start-1]) {
 			start--
 		}
-		return node.Start + start, node.Start + match[1], true
+		return node.Start + start, node.Start + attr.ValueEnd + 1, true
 	}
 	return 0, 0, false
 }
@@ -188,14 +188,18 @@ func applyRebuildXMLEdits(raw []byte, edits []rebuildXMLEdit) ([]byte, bool) {
 		}
 		previousEnd = edit.end
 	}
-	out := bytes.Clone(raw)
-	for _, edit := range slices.Backward(edits) {
-		next := make([]byte, 0, len(out)+len(edit.value)-(edit.end-edit.start))
-		next = append(next, out[:edit.start]...)
-		next = append(next, edit.value...)
-		next = append(next, out[edit.end:]...)
-		out = next
+	size := len(raw)
+	for _, edit := range edits {
+		size += len(edit.value) - (edit.end - edit.start)
 	}
+	out := make([]byte, 0, size)
+	start := 0
+	for _, edit := range edits {
+		out = append(out, raw[start:edit.start]...)
+		out = append(out, edit.value...)
+		start = edit.end
+	}
+	out = append(out, raw[start:]...)
 	return out, true
 }
 
@@ -222,7 +226,7 @@ func removeMissingPresentationReferences(zr *zip.Reader, opfPath string, raw []b
 		if id == "" || idCounts[id] != 1 || spineIDs[id] || !rebuildPresentationResourceMediaType(item.MediaType) {
 			continue
 		}
-		itemPath := cleanEPUBHref(opfPath, item.Href)
+		itemPath := packageResourcePath(opfPath, item.Href)
 		if itemPath == "" {
 			continue
 		}
@@ -299,12 +303,12 @@ func removeLegacyPageMapPointer(ctx context.Context, zr *zip.Reader, opfPath str
 		if strings.TrimSpace(item.ID) == pageMapID {
 			pageMapMatches++
 			if strings.EqualFold(strings.TrimSpace(item.MediaType), rebuildLegacyPageMapMediaType) {
-				pageMapPath = cleanEPUBHref(opfPath, item.Href)
+				pageMapPath = packageResourcePath(opfPath, item.Href)
 			}
 		}
 		if containsToken(item.Properties, "nav") && strings.EqualFold(strings.TrimSpace(item.MediaType), "application/xhtml+xml") {
 			navMatches++
-			navPath = cleanEPUBHref(opfPath, item.Href)
+			navPath = packageResourcePath(opfPath, item.Href)
 		}
 	}
 	if pageMapMatches != 1 || pageMapPath == "" || navMatches != 1 || navPath == "" {
@@ -369,7 +373,7 @@ func classifyRebuildContent(opfPath string, raw []byte) (map[string]bool, string
 		if !strings.EqualFold(strings.TrimSpace(item.MediaType), "application/xhtml+xml") {
 			continue
 		}
-		candidate := cleanEPUBHref(opfPath, item.Href)
+		candidate := packageResourcePath(opfPath, item.Href)
 		if candidate == "" {
 			continue
 		}
@@ -406,7 +410,7 @@ func addMissingSVGProperties(opfPath string, raw []byte, inlineSVGDocuments map[
 		if !strings.EqualFold(strings.TrimSpace(rebuildXMLAttr(node.Attrs, "media-type")), "application/xhtml+xml") {
 			return
 		}
-		itemPath := cleanEPUBHref(opfPath, rebuildXMLAttr(node.Attrs, "href"))
+		itemPath := packageResourcePath(opfPath, rebuildXMLAttr(node.Attrs, "href"))
 		if itemPath == "" || !inlineSVGDocuments[itemPath] {
 			return
 		}
@@ -471,7 +475,7 @@ func normalizeVendorImageGuide(opfPath string, raw []byte) []byte {
 		if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(item.MediaType)), "image/") {
 			continue
 		}
-		itemPath := cleanEPUBHref(opfPath, item.Href)
+		itemPath := packageResourcePath(opfPath, item.Href)
 		id := strings.TrimSpace(item.ID)
 		if itemPath == "" || id == "" {
 			continue
@@ -489,7 +493,7 @@ func normalizeVendorImageGuide(opfPath string, raw []byte) []byte {
 	coverTargets := make(map[string]bool)
 	for _, ref := range doc.Guide.References {
 		if rebuildVendorGuideKind(ref.Type) == "cover" {
-			coverTargets[imageIDs[cleanEPUBHref(opfPath, ref.Href)]] = true
+			coverTargets[imageIDs[packageResourcePath(opfPath, ref.Href)]] = true
 		}
 	}
 	delete(coverTargets, "")
@@ -531,7 +535,7 @@ func normalizeVendorImageGuide(opfPath string, raw []byte) []byte {
 			return
 		}
 		kind := rebuildVendorGuideKind(rebuildXMLAttr(node.Attrs, "type"))
-		targetID := imageIDs[cleanEPUBHref(opfPath, rebuildXMLAttr(node.Attrs, "href"))]
+		targetID := imageIDs[packageResourcePath(opfPath, rebuildXMLAttr(node.Attrs, "href"))]
 		if kind != "" && targetID != "" {
 			refs = append(refs, guideRef{kind: kind, targetID: targetID, start: node.Start, end: node.End})
 		}
@@ -645,7 +649,11 @@ func rebuildXHTMLRepairs(ctx context.Context, zr *zip.Reader, pkg rebuildPackage
 		if recovery.omitted[file.Name] {
 			continue
 		}
-		if cleaned := recovery.cleanFontStyles(file.Name, raw); !bytes.Equal(cleaned, raw) {
+		cleaned, err := recovery.cleanFontStyles(file.Name, raw)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !bytes.Equal(cleaned, raw) {
 			raw = cleaned
 			repairs[file] = raw
 		}
@@ -831,7 +839,7 @@ func rebuildRedundantEPUB3BodyRole(node rebuildXMLNode) bool {
 }
 
 func rebuildStylesheetLinkTargets(attrs []xml.Attr, contentPath string, missingStylesheets map[string]bool) bool {
-	return rebuildLinkIsStylesheet(attrs) && missingStylesheets[cleanEPUBHref(contentPath, rebuildXMLAttr(attrs, "href"))]
+	return rebuildLinkIsStylesheet(attrs) && missingStylesheets[packageResourcePath(contentPath, rebuildXMLAttr(attrs, "href"))]
 }
 
 func rebuildAdobePageTemplateLinkTargets(raw []byte, contentPath string) map[string]bool {
@@ -860,7 +868,7 @@ func rebuildAdobePageTemplateLinkTarget(node rebuildXMLNode, contentPath string)
 	if !rebuildLinkIsStylesheet(node.Attrs) || !strings.EqualFold(strings.TrimSpace(rebuildXMLAttr(node.Attrs, "type")), rebuildAdobePageTemplateMediaType) {
 		return ""
 	}
-	return cleanEPUBHref(contentPath, rebuildXMLAttr(node.Attrs, "href"))
+	return packageResourcePath(contentPath, rebuildXMLAttr(node.Attrs, "href"))
 }
 
 func rebuildLinkIsStylesheet(attrs []xml.Attr) bool {
@@ -897,7 +905,7 @@ func rebuildNCXRepairs(ctx context.Context, zr *zip.Reader, pkg rebuildPackage) 
 	ncxMatches := 0
 	for _, item := range doc.Manifest.Items {
 		if strings.TrimSpace(item.ID) == tocID && strings.EqualFold(strings.TrimSpace(item.MediaType), "application/x-dtbncx+xml") {
-			ncxPath = cleanEPUBHref(pkg.opfPath, item.Href)
+			ncxPath = packageResourcePath(pkg.opfPath, item.Href)
 			if ncxPath != "" {
 				ncxMatches++
 			}

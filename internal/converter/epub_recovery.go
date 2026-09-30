@@ -14,6 +14,7 @@ import (
 	"golang.org/x/net/html"
 
 	"github.com/levmv/polka/internal/bookmeta"
+	"github.com/levmv/polka/internal/css"
 	"github.com/levmv/polka/internal/format"
 	"github.com/levmv/polka/internal/xmlutil"
 )
@@ -24,18 +25,22 @@ const (
 )
 
 type epubRecovery struct {
-	options ConversionOptions
-	omitted map[string]bool
-	patches map[*zip.File][]byte
-	fonts   map[*zip.File][]byte
+	options  ConversionOptions
+	omitted  map[string]bool
+	patches  map[*zip.File][]byte
+	fonts    map[*zip.File][]byte
+	fontKeys map[*zip.File]epubObfuscatedFont
 }
+
+type epubObfuscatedFont struct{ algorithm, key string }
 
 func prepareEPUBConversion(ctx context.Context, zr *zip.Reader, opfPath string, raw []byte, preloadFonts bool, opts ConversionOptions) ([]byte, *epubRecovery, error) {
 	r := &epubRecovery{
-		options: opts,
-		omitted: make(map[string]bool),
-		patches: make(map[*zip.File][]byte),
-		fonts:   make(map[*zip.File][]byte),
+		options:  opts,
+		omitted:  make(map[string]bool),
+		patches:  make(map[*zip.File][]byte),
+		fonts:    make(map[*zip.File][]byte),
+		fontKeys: make(map[*zip.File]epubObfuscatedFont),
 	}
 	for _, file := range zr.File {
 		if strings.EqualFold(path.Clean(file.Name), "META-INF/signatures.xml") {
@@ -56,7 +61,7 @@ func prepareEPUBConversion(ctx context.Context, zr *zip.Reader, opfPath string, 
 		if !isEPUBFontResource(item) {
 			continue
 		}
-		name := cleanEPUBHref(opfPath, item.Href)
+		name := packageResourcePath(opfPath, item.Href)
 		file, err := epubZipFile(zr, name)
 		if err != nil {
 			return nil, nil, err
@@ -126,7 +131,7 @@ func prepareEPUBConversion(ctx context.Context, zr *zip.Reader, opfPath string, 
 				}
 				keep := len(entry.Cipher.References) == 1 && (algorithm == idpfFontObfuscation || algorithm == adobeFontObfuscation)
 				for _, ref := range entry.Cipher.References {
-					name := cleanEPUBHref("", ref.URI)
+					name := packageResourcePath("", ref.URI)
 					resource, err := epubZipFile(zr, name)
 					if err != nil {
 						return nil, nil, err
@@ -152,9 +157,12 @@ func prepareEPUBConversion(ctx context.Context, zr *zip.Reader, opfPath string, 
 				}
 				keep = keep && oldKey != "" && oldKey == newKey
 				for _, ref := range entry.Cipher.References {
-					name := cleanEPUBHref("", ref.URI)
+					name := packageResourcePath("", ref.URI)
 					if !keep && name != "" {
 						r.omit(name, "Could not preserve encrypted EPUB resource %s; omitted it", name)
+					} else if keep {
+						resource, _ := epubZipFile(zr, name)
+						r.fontKeys[resource] = epubObfuscatedFont{algorithm, oldKey}
 					}
 				}
 				if !keep {
@@ -266,7 +274,7 @@ func (r *epubRecovery) finishOPF(zr *zip.Reader, opfPath string, raw []byte) ([]
 	removedIDs := make(map[string]bool)
 	available := make(map[string]bool)
 	for _, item := range doc.Manifest.Items {
-		name := cleanEPUBHref(opfPath, item.Href)
+		name := packageResourcePath(opfPath, item.Href)
 		file, err := epubZipFile(zr, name)
 		if err != nil {
 			return nil, err
@@ -352,91 +360,133 @@ func (r *epubRecovery) finishOPF(zr *zip.Reader, opfPath string, raw []byte) ([]
 	return out, nil
 }
 
-func (r *epubRecovery) cleanFontCSS(base string, raw []byte) []byte {
-	if len(r.omitted) == 0 || !bytes.Contains(bytes.ToLower(raw), []byte("@font-face")) {
-		return raw
+func (r *epubRecovery) cleanFontCSS(base string, raw []byte) ([]byte, error) {
+	if len(r.omitted) == 0 || !bytes.ContainsRune(raw, '@') {
+		return raw, nil
 	}
-	// Token boundaries keep comments, strings and unrelated CSS intact.
-	css := string(raw)
-	var edits []rebuildXMLEdit
-	for pos := 0; pos < len(raw); {
-		pos = mobi6CSSDelimiter(css, pos, "@")
-		if pos == len(raw) {
-			break
-		}
-		if len(raw)-pos < 10 || !strings.EqualFold(string(raw[pos:pos+10]), "@font-face") {
-			pos++
-			continue
-		}
-		if pos+10 < len(raw) && !strings.ContainsRune(" \t\r\n\f{/", rune(raw[pos+10])) {
-			pos += 10
-			continue
-		}
-		start := pos
-		open := mobi6CSSDelimiter(css, pos+10, "{;")
-		if open == len(raw) || raw[open] != '{' {
-			pos += 10
-			continue
-		}
-		end := mobi6CSSDelimiter(css, open+1, "}")
-		if end == len(raw) {
-			break
-		}
-		declarations := mobi6StripCSSComments(string(raw[open+1 : end]))
-		body := ""
-		for pos := 0; pos < len(declarations); {
-			end := mobi6CSSDelimiter(declarations, pos, ";")
-			key, value, found := strings.Cut(declarations[pos:end], ":")
-			if found && strings.EqualFold(strings.TrimSpace(key), "src") {
-				body += value + ";"
+	stylesheet := css.Parse(string(raw))
+	var edits []css.Edit
+	var clean func(css.Values) error
+	clean = func(body css.Values) error {
+		rules := body.Rules()
+		for rules.Next() {
+			rule := rules.Rule
+			if !rule.HasBlock {
+				continue
 			}
-			pos = end + 1
-		}
-		lowerBody := strings.ToLower(body)
-		remove := false
-		for offset := 0; offset < len(body); {
-			i := strings.Index(lowerBody[offset:], "url(")
-			if i < 0 {
-				break
+			if !strings.EqualFold(rule.Name, "font-face") {
+				// A style rule's declarations (especially custom properties)
+				// are not another stylesheet. Only descend into rule groups.
+				if containsToken("media supports layer container scope document -moz-document", strings.ToLower(rule.Name)) {
+					if err := clean(rule.Body); err != nil {
+						return err
+					}
+				}
+				continue
 			}
-			i += offset + 4
-			close := mobi6CSSDelimiter(body, i, ")")
-			if close == len(body) {
-				break
+			var changes []css.Edit
+			remainingSource := false
+			declarations := rule.Body.Declarations()
+			for declarations.Next() {
+				decl := declarations.Declaration
+				if decl.Name != "src" {
+					continue
+				}
+				var kept []string
+				removed := false
+				sources := decl.Value.Split(',')
+				for sources.Next() {
+					omitted := false
+					if err := sources.Values.References(func(ref css.Reference) error {
+						if ref.URL != "" && !strings.HasPrefix(ref.URL, "#") && r.omitted[packageResourcePath(base, ref.URL)] {
+							omitted = true
+						}
+						return nil
+					}); err != nil {
+						return err
+					}
+					if omitted {
+						removed = true
+					} else if !sources.Values.Empty() {
+						kept = append(kept, sources.Raw())
+					}
+				}
+				if err := sources.Err(); err != nil {
+					return err
+				}
+				remainingSource = remainingSource || !removed || len(kept) > 0
+				if removed {
+					if len(kept) == 0 {
+						changes = append(changes, css.Edit{Span: decl.Span})
+					} else {
+						changes = append(changes, css.Edit{Span: decl.Value.Span, Text: strings.Join(kept, ",")})
+					}
+				}
 			}
-			href := strings.Trim(strings.TrimSpace(body[i:close]), "\"'")
-			if r.omitted[cleanEPUBHref(base, href)] {
-				remove = true
+			if err := declarations.Err(); err != nil {
+				return err
 			}
-			offset = close + 1
+			if len(changes) > 0 {
+				if remainingSource {
+					edits = append(edits, changes...)
+				} else {
+					edits = append(edits, css.Edit{Span: rule.Span})
+				}
+			}
 		}
-		if remove {
-			edits = append(edits, rebuildXMLEdit{start: start, end: end + 1})
-		}
-		pos = end + 1
+		return rules.Err()
 	}
-	out, _ := applyRebuildXMLEdits(raw, edits)
-	return out
+	if err := clean(stylesheet); err != nil {
+		return nil, err
+	}
+	if len(edits) == 0 {
+		return raw, nil
+	}
+	out, err := stylesheet.Apply(edits)
+	return []byte(out), err
 }
 
-func (r *epubRecovery) cleanFontStyles(base string, raw []byte) []byte {
+func (r *epubRecovery) cleanFontStyles(base string, raw []byte) ([]byte, error) {
 	if len(r.omitted) == 0 {
-		return raw
+		return raw, nil
 	}
 	var edits []rebuildXMLEdit
-	if !walkRebuildXML(raw, func(node rebuildXMLNode) {
-		if node.Name.Local != "style" || node.StartTagEnd >= node.EndTagStart {
+	var cssErr error
+	validXML := walkRebuildXML(raw, func(node rebuildXMLNode) {
+		if cssErr != nil {
 			return
 		}
-		css := raw[node.StartTagEnd:node.EndTagStart]
-		if cleaned := r.cleanFontCSS(base, css); !bytes.Equal(cleaned, css) {
-			edits = append(edits, rebuildXMLEdit{start: node.StartTagEnd, end: node.EndTagStart, value: cleaned})
+		if node.Name.Space != "" && node.Name.Space != "http://www.w3.org/1999/xhtml" && node.Name.Space != "http://www.w3.org/2000/svg" {
+			return
 		}
-	}) {
-		return raw
+		if node.Name.Local != "style" || !node.Simple || node.StartTagEnd >= node.EndTagStart {
+			return
+		}
+		css := node.Text
+		cleaned, err := r.cleanFontCSS(base, css)
+		if err != nil {
+			cssErr = err
+			return
+		}
+		if !bytes.Equal(cleaned, css) {
+			content := raw[node.StartTagEnd:node.EndTagStart]
+			var replacement string
+			if bytes.HasPrefix(content, []byte("<![CDATA[")) && bytes.HasSuffix(content, []byte("]]>")) {
+				replacement = "<![CDATA[" + strings.ReplaceAll(string(cleaned), "]]>", "]]]]><![CDATA[>") + "]]>"
+			} else {
+				replacement = html.EscapeString(string(cleaned))
+			}
+			edits = append(edits, rebuildXMLEdit{start: node.StartTagEnd, end: node.EndTagStart, value: []byte(replacement)})
+		}
+	})
+	if cssErr != nil {
+		return nil, cssErr
+	}
+	if !validXML {
+		return raw, nil
 	}
 	out, _ := applyRebuildXMLEdits(raw, edits)
-	return out
+	return out, nil
 }
 
 func recoverKEPUBContent(raw []byte) ([]byte, error) {

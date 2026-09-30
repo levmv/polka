@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+
+	"github.com/levmv/polka/internal/css"
 )
 
 const (
@@ -35,7 +37,7 @@ var ErrUnsupportedContent = errors.New("unsupported content for target format")
 // apply to the whole operation.
 func fatalConversionError(err error) bool {
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
-		errors.Is(err, ErrResourceLimit)
+		errors.Is(err, ErrResourceLimit) || errors.Is(err, css.ErrLimit)
 }
 
 type conversionLimits struct {

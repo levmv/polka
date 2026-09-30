@@ -26,13 +26,22 @@ func isSVGImageResource(data []byte, name string) bool {
 	if !strings.EqualFold(path.Ext(strings.TrimSpace(name)), ".svg") {
 		return false
 	}
-	sample := bytes.TrimSpace(bytes.TrimPrefix(data, []byte{0xef, 0xbb, 0xbf}))
-	if len(sample) > 1024 {
-		sample = sample[:1024]
+	// Recognize the root by its resolved XML name. A missing namespace is a
+	// legacy fallback; an explicit unrelated namespace is not SVG.
+	dec := xml.NewDecoder(io.LimitReader(bytes.NewReader(data), 64<<10))
+	// Recognition is not validation. Unknown producer entities in unrelated
+	// attributes must not prevent recognizing an otherwise clear SVG root.
+	dec.Strict = false
+	for tokens := 0; tokens < 256; tokens++ {
+		token, err := dec.Token()
+		if err != nil {
+			return false
+		}
+		if root, ok := token.(xml.StartElement); ok {
+			return root.Name.Local == "svg" && (root.Name.Space == "http://www.w3.org/2000/svg" || root.Name.Space == "")
+		}
 	}
-	lower := bytes.ToLower(sample)
-	return bytes.HasPrefix(lower, []byte("<svg")) ||
-		(bytes.HasPrefix(lower, []byte("<?xml")) && bytes.Contains(lower, []byte("<svg")))
+	return false
 }
 
 // Remove only a declaration in the prolog, preserving internal subsets that

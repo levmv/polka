@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net/url"
 	"path"
 	"strings"
 
@@ -44,7 +43,7 @@ func (s *EPUBSource) ContentDocument(href, mediaType string) (*zip.File, error) 
 	if !isEPUBContentDocument(epubManifestItem{Href: href, MediaType: mediaType}) {
 		return nil, nil
 	}
-	return epubZipFile(s.archive, cleanEPUBHref(s.OPFPath, href))
+	return epubZipFile(s.archive, packageResourcePath(s.OPFPath, href))
 }
 
 type epubManifestItem struct {
@@ -65,33 +64,6 @@ func isEPUBContentDocument(item epubManifestItem) bool {
 	default:
 		return false
 	}
-}
-
-func cleanEPUBHref(basePath, href string) string {
-	href = strings.TrimSpace(href)
-	if href == "" {
-		return ""
-	}
-	if before, _, ok := strings.Cut(href, "#"); ok {
-		href = before
-	}
-	if parsed, err := url.Parse(href); err == nil {
-		if parsed.Scheme != "" || parsed.Host != "" {
-			return ""
-		}
-		href = parsed.Path
-	}
-	if unescaped, err := url.PathUnescape(href); err == nil {
-		href = unescaped
-	}
-	if basePath != "" && !strings.HasPrefix(href, "/") {
-		href = path.Join(path.Dir(basePath), href)
-	}
-	href = path.Clean(strings.TrimPrefix(href, "/"))
-	if href == "." || strings.HasPrefix(href, "../") {
-		return ""
-	}
-	return href
 }
 
 func epubZipFile(zr *zip.Reader, name string) (*zip.File, error) {

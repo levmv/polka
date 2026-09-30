@@ -126,6 +126,15 @@ func TestCheckEPUBInternalLinksDetectsBrokenReferences(t *testing.T) {
 			wantLoc: "OEBPS/styles/main.css",
 		},
 		{
+			name: "processing-instruction stylesheet missing",
+			mutate: func(files map[string]string) {
+				files["OEBPS/text.xhtml"] = strings.Replace(files["OEBPS/text.xhtml"], `<html`,
+					`<?xml-stylesheet href="styles/missing.css" type="text/css"?><html`, 1)
+			},
+			want:    "target is not packaged",
+			wantLoc: "OEBPS/text.xhtml",
+		},
+		{
 			name: "SVG paint reference in XML-escaped style text",
 			mutate: func(files map[string]string) {
 				files["OEBPS/text.xhtml"] = strings.Replace(files["OEBPS/text.xhtml"], `</body>`,

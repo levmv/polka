@@ -2297,14 +2297,26 @@ func TestTransformKEPUBContentProducesXMLCompatibleXHTML(t *testing.T) {
   <body>
     <!-- preserved comment -->
     <p epub:type="note">A&#160;note.</p>
-    <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><use xlink:href="#shape"/></svg>
+    <s:svg xmlns:s="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><s:defs><s:linearGradient id="paint"/></s:defs><s:use xlink:href="#shape"/><s:text>Diagram.</s:text></s:svg>
   </body>
 </html>`))
 	if err != nil {
 		t.Fatalf("transform KEPUB content: %v", err)
 	}
-	if err := xmlutil.WalkXHTML(out, nil); err != nil {
+	gradientFound := false
+	if err := xmlutil.WalkXHTML(out, func(token xml.Token, depth int) error {
+		if element, ok := token.(xml.StartElement); ok && strings.EqualFold(element.Name.Local, "linearGradient") {
+			gradientFound = true
+			if element.Name.Local != "linearGradient" || element.Name.Space != "http://www.w3.org/2000/svg" {
+				return fmt.Errorf("lost SVG gradient namespace or name")
+			}
+		}
+		return nil
+	}); err != nil {
 		t.Fatalf("validate transformed XHTML: %v\n%s", err, out)
+	}
+	if !gradientFound {
+		t.Fatalf("transformed XHTML lost SVG gradient:\n%s", out)
 	}
 	xhtml := string(out)
 	for _, want := range []string{
@@ -2312,6 +2324,7 @@ func TestTransformKEPUBContentProducesXMLCompatibleXHTML(t *testing.T) {
 		`epub:type="note"`,
 		`xmlns:xlink="http://www.w3.org/1999/xlink"`,
 		`xlink:href="#shape"`,
+		`<text>Diagram.</text>`,
 		`<!-- preserved comment -->`,
 		`<title>XML-sensitive &lt;title&gt; &amp;amp;</title>`,
 		`if (a &lt; b &amp;&amp; c &gt; d)`,

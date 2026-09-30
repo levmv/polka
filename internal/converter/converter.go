@@ -2,6 +2,7 @@ package converter
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/levmv/polka/internal/bookmeta"
+	"github.com/levmv/polka/internal/css"
 	"github.com/levmv/polka/internal/format"
 	"github.com/levmv/polka/internal/format/mobi"
 )
@@ -22,6 +24,7 @@ const (
 	TargetEPUB  Target = "epub"
 	TargetKEPUB Target = "kepub"
 	TargetMOBI6 Target = "mobi6"
+	TargetAZW3  Target = "azw3"
 	TargetCBZ   Target = "cbz"
 )
 
@@ -36,6 +39,7 @@ var supportedTargetSpecs = []TargetSpec{
 	{Target: TargetPDF, Label: "PDF", Extension: ".pdf", MediaType: "application/pdf"},
 	{Target: TargetEPUB, Label: "EPUB", Extension: ".epub", MediaType: "application/epub+zip"},
 	{Target: TargetKEPUB, Label: "KEPUB", Extension: ".kepub.epub", MediaType: "application/epub+zip"},
+	{Target: TargetAZW3, Label: "AZW3", Extension: ".azw3", MediaType: "application/vnd.amazon.mobi8-ebook"},
 	{Target: TargetMOBI6, Label: "MOBI6", Extension: ".mobi", MediaType: "application/x-mobipocket-ebook"},
 	{Target: TargetCBZ, Label: "CBZ", Extension: ".cbz", MediaType: "application/vnd.comicbook+zip"},
 }
@@ -49,26 +53,26 @@ var repairedEPUBTargetSpec = TargetSpec{
 
 var targetSpecsBySourceFormat = map[format.Format][]TargetSpec{
 	format.FormatAZW4:     {targetSpec(TargetPDF)},
-	format.FormatEPUB:     {repairedEPUBTargetSpec, targetSpec(TargetKEPUB), targetSpec(TargetMOBI6)},
-	format.FormatFB2:      {targetSpec(TargetEPUB), targetSpec(TargetKEPUB)},
-	format.FormatMOBI:     {targetSpec(TargetEPUB), targetSpec(TargetKEPUB)},
-	format.FormatAZW:      {targetSpec(TargetEPUB), targetSpec(TargetKEPUB)},
+	format.FormatEPUB:     {repairedEPUBTargetSpec, targetSpec(TargetKEPUB), targetSpec(TargetAZW3), targetSpec(TargetMOBI6)},
+	format.FormatFB2:      {targetSpec(TargetEPUB), targetSpec(TargetKEPUB), targetSpec(TargetAZW3), targetSpec(TargetMOBI6)},
+	format.FormatMOBI:     {targetSpec(TargetEPUB), targetSpec(TargetKEPUB), targetSpec(TargetAZW3), targetSpec(TargetMOBI6)},
+	format.FormatAZW:      {targetSpec(TargetEPUB), targetSpec(TargetKEPUB), targetSpec(TargetAZW3), targetSpec(TargetMOBI6)},
 	format.FormatAZW3:     {targetSpec(TargetEPUB), targetSpec(TargetKEPUB), targetSpec(TargetMOBI6)},
-	format.FormatPRC:      {targetSpec(TargetEPUB), targetSpec(TargetKEPUB)},
-	format.FormatPDB:      {targetSpec(TargetEPUB)},
-	format.FormatKFX:      {targetSpec(TargetEPUB), targetSpec(TargetKEPUB)},
-	format.FormatTXT:      {targetSpec(TargetEPUB), targetSpec(TargetKEPUB)},
-	format.FormatTXTZ:     {targetSpec(TargetEPUB), targetSpec(TargetKEPUB)},
-	format.FormatMarkdown: {targetSpec(TargetEPUB), targetSpec(TargetKEPUB)},
-	format.FormatHTML:     {targetSpec(TargetEPUB), targetSpec(TargetKEPUB)},
-	format.FormatHTMLZ:    {targetSpec(TargetEPUB), targetSpec(TargetKEPUB)},
-	format.FormatXHTML:    {targetSpec(TargetEPUB), targetSpec(TargetKEPUB)},
+	format.FormatPRC:      {targetSpec(TargetEPUB), targetSpec(TargetKEPUB), targetSpec(TargetAZW3), targetSpec(TargetMOBI6)},
+	format.FormatPDB:      {targetSpec(TargetEPUB), targetSpec(TargetAZW3), targetSpec(TargetMOBI6)},
+	format.FormatKFX:      {targetSpec(TargetEPUB), targetSpec(TargetKEPUB), targetSpec(TargetAZW3), targetSpec(TargetMOBI6)},
+	format.FormatTXT:      {targetSpec(TargetEPUB), targetSpec(TargetKEPUB), targetSpec(TargetAZW3), targetSpec(TargetMOBI6)},
+	format.FormatTXTZ:     {targetSpec(TargetEPUB), targetSpec(TargetKEPUB), targetSpec(TargetAZW3), targetSpec(TargetMOBI6)},
+	format.FormatMarkdown: {targetSpec(TargetEPUB), targetSpec(TargetKEPUB), targetSpec(TargetAZW3), targetSpec(TargetMOBI6)},
+	format.FormatHTML:     {targetSpec(TargetEPUB), targetSpec(TargetKEPUB), targetSpec(TargetAZW3), targetSpec(TargetMOBI6)},
+	format.FormatHTMLZ:    {targetSpec(TargetEPUB), targetSpec(TargetKEPUB), targetSpec(TargetAZW3), targetSpec(TargetMOBI6)},
+	format.FormatXHTML:    {targetSpec(TargetEPUB), targetSpec(TargetKEPUB), targetSpec(TargetAZW3), targetSpec(TargetMOBI6)},
 	format.FormatCBR:      {targetSpec(TargetCBZ)},
 	format.FormatCB7:      {targetSpec(TargetCBZ)},
 }
 
 type ConversionOptions struct {
-	// Metadata is a complete catalog snapshot for EPUB, KEPUB and MOBI6 output.
+	// Metadata is a complete catalog snapshot for EPUB, KEPUB and Kindle output.
 	// Its supported book fields replace source values, including empty fields.
 	// Existing packages use write-back's per-field preservation rules.
 	// Nil keeps the source metadata. Page counts remain specific to each asset;
@@ -163,7 +167,11 @@ func ConvertContext(ctx context.Context, w io.Writer, src io.ReaderAt, from form
 }
 
 func ConvertContextWithOptions(ctx context.Context, w io.Writer, src io.ReaderAt, from format.Format, size int64, target Target, opts ConversionOptions) error {
-	return convertContextWithLimits(ctx, w, src, from, size, target, opts, defaultConversionLimits)
+	err := convertContextWithLimits(ctx, w, src, from, size, target, opts, defaultConversionLimits)
+	if errors.Is(err, css.ErrLimit) {
+		return fmt.Errorf("%w: %w", ErrResourceLimit, err)
+	}
+	return err
 }
 
 func convertContextWithLimits(ctx context.Context, w io.Writer, src io.ReaderAt, from format.Format, size int64, target Target, opts ConversionOptions, limits conversionLimits) error {
@@ -201,8 +209,11 @@ func convertContextWithLimits(ctx context.Context, w io.Writer, src io.ReaderAt,
 			// The generated intermediate already carries the catalog snapshot.
 			return convertEPUBToKEPUB(ctx, w, src, size, ConversionOptions{OnWarning: opts.OnWarning})
 		})
-	case TargetMOBI6:
+	case TargetAZW3, TargetMOBI6:
 		convert := func(ctx context.Context, w io.Writer, src io.ReaderAt, size int64) error {
+			if target == TargetAZW3 {
+				return convertEPUBToKF8(ctx, w, src, size, opts)
+			}
 			return convertEPUBToMOBI6(ctx, w, src, size, opts)
 		}
 		if from == format.FormatEPUB {

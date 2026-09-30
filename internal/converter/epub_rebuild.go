@@ -187,7 +187,10 @@ func rebuildEPUB(ctx context.Context, w io.Writer, src io.ReaderAt, size int64, 
 			continue
 		}
 		if strings.EqualFold(path.Ext(file.Name), ".css") {
-			data = recovery.cleanFontCSS(file.Name, data)
+			data, err = recovery.cleanFontCSS(file.Name, data)
+			if err != nil {
+				return closeWith(err)
+			}
 		}
 		if err := writeRebuildSourceEntry(zw, file, data, manifestEntries[file]); err != nil {
 			return closeWith(err)
@@ -248,7 +251,7 @@ func readRebuildPackage(ctx context.Context, zr *zip.Reader) (rebuildPackage, er
 					if requireStandardMediaType && !standard {
 						continue
 					}
-					requested := cleanEPUBHref("", rootfile.FullPath)
+					requested := packageResourcePath("", rootfile.FullPath)
 					if requested == "" || seen[requested] {
 						continue
 					}
@@ -351,7 +354,7 @@ func readRebuildCandidate(ctx context.Context, zr *zip.Reader, file *zip.File) (
 	manifestPaths := make(map[string]string, len(doc.Manifest.Items))
 	for _, item := range doc.Manifest.Items {
 		if id := strings.TrimSpace(item.ID); id != "" {
-			if itemPath := cleanEPUBHref(file.Name, item.Href); itemPath != "" {
+			if itemPath := packageResourcePath(file.Name, item.Href); itemPath != "" {
 				manifestPaths[id] = itemPath
 			}
 		}
@@ -376,7 +379,7 @@ func readRebuildCandidate(ctx context.Context, zr *zip.Reader, file *zip.File) (
 			if !isEPUBContentDocument(item) {
 				continue
 			}
-			entry, err := epubZipFile(zr, cleanEPUBHref(file.Name, item.Href))
+			entry, err := epubZipFile(zr, packageResourcePath(file.Name, item.Href))
 			if err == nil && entry != nil {
 				matchedSpine = true
 				break

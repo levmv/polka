@@ -335,6 +335,7 @@ reorganize managed files by hand.
 polka meta book.epub
 polka meta book.djvu --cover cover.jpg
 polka convert --to epub in.fb2 out.epub
+polka convert --to azw3 in.epub out.azw3
 ```
 
 `meta --cover` saves the book's cover image.

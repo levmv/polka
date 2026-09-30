@@ -209,6 +209,17 @@ func planBest(book Book, opts PlanOptions) Plan {
 
 	var tooLargeCandidate *Asset
 	for _, f := range directPreference(opts.Preset) {
+		// Kindle email turns EPUB into a reflowable document. Prefer that to a
+		// fixed-page PDF even when conversion from a library asset is needed.
+		// Already accepted documents keep their native format and preference;
+		// wrapping a TXT in EPUB must not outrank a DOCX or RTF alternative.
+		if opts.Preset == PresetKindle && f == format.FormatPDF {
+			for _, asset := range sortedAssets(book.Assets) {
+				if !directAllowed(opts.Preset, asset.Format) && conversionAllowed(opts.Preset, asset.Format, converter.TargetEPUB) {
+					return conversionPlan(book, asset, converter.TargetEPUB)
+				}
+			}
+		}
 		candidates := assetsByFormat(book.Assets, f)
 		for i := range candidates {
 			candidate := candidates[i]

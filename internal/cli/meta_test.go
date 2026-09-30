@@ -132,8 +132,8 @@ func TestRunMetaJSONIncludesFormatDetails(t *testing.T) {
 	if report.Details == nil || report.Details.FB2Container != "plain" {
 		t.Fatalf("details = %+v; want plain FB2 container", report.Details)
 	}
-	if len(report.ConversionTargets) != 2 || report.ConversionTargets[0].Target != "epub" || report.ConversionTargets[1].Target != "kepub" {
-		t.Fatalf("conversion targets = %+v; want epub, kepub", report.ConversionTargets)
+	if len(report.ConversionTargets) != 4 || report.ConversionTargets[0].Target != "epub" || report.ConversionTargets[1].Target != "kepub" {
+		t.Fatalf("conversion targets = %+v; want epub, kepub, azw3, mobi6", report.ConversionTargets)
 	}
 }
 
@@ -282,8 +282,8 @@ func TestRunMetaJSONIncludesFB2ContainerDetails(t *testing.T) {
 		if report == nil || report.Format != "fb2" || report.Details == nil || report.Details.FB2Container != want {
 			t.Fatalf("%s report = %+v; want FB2 container %s", path, report, want)
 		}
-		if len(report.ConversionTargets) != 2 || report.ConversionTargets[0].Target != "epub" || report.ConversionTargets[1].Target != "kepub" {
-			t.Fatalf("%s conversion targets = %+v; want epub, kepub", path, report.ConversionTargets)
+		if len(report.ConversionTargets) != 4 || report.ConversionTargets[0].Target != "epub" || report.ConversionTargets[1].Target != "kepub" {
+			t.Fatalf("%s conversion targets = %+v; want epub, kepub, azw3, mobi6", path, report.ConversionTargets)
 		}
 	}
 }
@@ -391,8 +391,8 @@ func TestRunMetaJSONIncludesPalmDBSubtype(t *testing.T) {
 	if report.Details.Kindle == nil || report.Details.Kindle.SourceClass != "palmdoc" || report.Details.Kindle.Container != "palmdoc" || report.Details.Kindle.Compression != "palmdoc" {
 		t.Fatalf("kindle details = %+v; want PalmDOC classification", report.Details.Kindle)
 	}
-	if len(report.ConversionTargets) != 1 || report.ConversionTargets[0].Target != "epub" || report.ConversionTargets[0].Label != "EPUB" {
-		t.Fatalf("conversion targets = %+v; want EPUB for PalmDOC", report.ConversionTargets)
+	if len(report.ConversionTargets) != 3 || report.ConversionTargets[0].Target != "epub" || report.ConversionTargets[0].Label != "EPUB" {
+		t.Fatalf("conversion targets = %+v; want EPUB and Kindle output for PalmDOC", report.ConversionTargets)
 	}
 }
 
@@ -418,7 +418,7 @@ func TestRunMetaJSONRecognizesEncryptedPalmDOC(t *testing.T) {
 		t.Fatalf("reports len = %d; want 1", len(reports))
 	}
 	report := reports[0]
-	if report.Format != "pdb" || len(report.ConversionTargets) != 1 || report.ConversionTargets[0].Target != "epub" {
+	if report.Format != "pdb" || len(report.ConversionTargets) != 3 || report.ConversionTargets[0].Target != "epub" {
 		t.Fatalf("encrypted PalmDOC report = %+v", report)
 	}
 	if report.Details == nil || report.Details.Kindle == nil {

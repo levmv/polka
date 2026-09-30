@@ -56,7 +56,7 @@ func TestEPUBConversionRecoversResources(t *testing.T) {
 				"OEBPS/content.opf": []byte(opf), "OEBPS/text.xhtml": []byte(chapter),
 				"OEBPS/broken.xhtml": []byte(strings.ReplaceAll(chapter, "Readable chapter.", "Second chapter.")),
 				"OEBPS/font.ttf":     []byte("synthetic font"),
-				"OEBPS/style.css":    []byte(`/* preserved comment */ @font-face {font-family: Embedded;src: url("font.ttf"); /* } */} @font-face {font-family:Local;src:local("Local")} p {color:red}`),
+				"OEBPS/style.css":    []byte(`/* preserved comment */ @font-face {font-family: Embedded;src: url("font.ttf"), local("Fallback"); /* } */} @font-face {font-family:Local;src:local("Local")} p {color:red}`),
 			}
 			tc.modify(files)
 			packageXML := files["OEBPS/content.opf"]
@@ -114,7 +114,7 @@ func TestEPUBConversionRecoversResources(t *testing.T) {
 					t.Fatal("dangling font in manifest")
 				}
 				css := zipEntry(t, out.Bytes(), "OEBPS/style.css")
-				if strings.Contains(css, "font.ttf") || !strings.Contains(css, "p {color:red}") || !strings.Contains(css, "preserved comment") || !strings.Contains(css, `src:local("Local")`) {
+				if strings.Contains(css, "font.ttf") || !strings.Contains(css, "p {color:red}") || !strings.Contains(css, "preserved comment") || !strings.Contains(css, `src:local("Local")`) || !strings.Contains(css, `local("Fallback")`) {
 					t.Fatalf("font CSS cleanup: %s", css)
 				}
 				if strings.Contains(zipEntry(t, out.Bytes(), "OEBPS/text.xhtml"), "font.ttf") {

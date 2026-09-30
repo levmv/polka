@@ -76,6 +76,41 @@ func TestPlanDeliveryKindleConversions(t *testing.T) {
 	}
 }
 
+func TestPlanDeliveryKindlePrefersReflowableConversion(t *testing.T) {
+	book := Book{Title: "Book", Assets: []Asset{
+		{ID: 1, Filename: "book.pdf", Extension: ".pdf", Format: format.FormatPDF, Size: 1024, IsPrimary: true},
+		{ID: 2, Filename: "book.fb2", Extension: ".fb2", Format: format.FormatFB2, Size: 2048},
+	}}
+	choices := PlanChoices(book, PlanOptions{Preset: PresetKindle})
+	if len(choices) != 2 || !choices[0].Default || choices[0].Plan.AssetID != 2 || choices[0].Plan.Target != converter.TargetEPUB {
+		t.Fatalf("choices = %+v; want FB2 -> EPUB first, with PDF available", choices)
+	}
+	requested := PlanDelivery(book, PlanOptions{Preset: PresetKindle, RequestedAssetID: 1})
+	if requested.AssetID != 1 || requested.Converted {
+		t.Fatalf("explicit PDF selection changed: %+v", requested)
+	}
+	book.Assets = book.Assets[:1]
+	if plan := PlanDelivery(book, PlanOptions{Preset: PresetKindle}); plan.AssetID != 1 || plan.Converted {
+		t.Fatalf("PDF fallback changed: %+v", plan)
+	}
+}
+
+func TestPlanDeliveryKindleKeepsDirectDocumentPreference(t *testing.T) {
+	for _, richer := range []format.Format{format.FormatDOCX, format.FormatRTF, format.FormatTXT} {
+		book := Book{Title: "Book", Assets: []Asset{
+			{ID: 1, Filename: "book.txt", Extension: ".txt", Format: format.FormatTXT, Size: 1024, IsPrimary: true},
+		}}
+		want := int64(1)
+		if richer != format.FormatTXT {
+			book.Assets = append(book.Assets, Asset{ID: 2, Format: richer, Size: 2048})
+			want = 2
+		}
+		if plan := PlanDelivery(book, PlanOptions{Preset: PresetKindle}); plan.AssetID != want || plan.Converted {
+			t.Errorf("%v: got %+v, want native asset %d", richer, plan, want)
+		}
+	}
+}
+
 func TestPlanDeliverySizeLimitUsesEncodedSize(t *testing.T) {
 	raw19MB := int64(19 * 1024 * 1024)
 	book := Book{Title: "Large", Assets: []Asset{

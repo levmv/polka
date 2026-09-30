@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"io"
 	"path"
-	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -29,12 +27,6 @@ const (
 	kepubInnerDivID      = "book-inner"
 	kepubSpanClass       = "koboSpan"
 	kepubXHTMLNamespace  = "http://www.w3.org/1999/xhtml"
-)
-
-var (
-	kepubOPFMetaTagRe = regexp.MustCompile(`(?is)<\s*meta\b[^>]*>`)
-	kepubOPFItemTagRe = regexp.MustCompile(`(?is)<\s*item\b[^>]*>`)
-	kepubXMLAttrRe    = regexp.MustCompile(`(?is)([A-Za-z_:][-A-Za-z0-9_:.]*)\s*=\s*("([^"]*)"|'([^']*)')`)
 )
 
 type kepubContainerDoc struct {
@@ -172,7 +164,11 @@ func convertEPUBToKEPUB(ctx context.Context, w io.Writer, src io.ReaderAt, size 
 			if recovery.omitted[f.Name] {
 				continue
 			}
-			data = recovery.cleanFontStyles(f.Name, data)
+			data, err = recovery.cleanFontStyles(f.Name, data)
+			if err != nil {
+				zw.Close()
+				return err
+			}
 			raw := data
 			data, err = transformKEPUBContent(raw)
 			if err != nil {
@@ -190,8 +186,8 @@ func convertEPUBToKEPUB(ctx context.Context, w io.Writer, src io.ReaderAt, size 
 			if recovery.omitted[f.Name] {
 				continue
 			}
-			if strings.EqualFold(path.Ext(f.Name), ".css") {
-				data = recovery.cleanFontCSS(f.Name, data)
+			if err == nil && strings.EqualFold(path.Ext(f.Name), ".css") {
+				data, err = recovery.cleanFontCSS(f.Name, data)
 			}
 			method = f.Method
 		}
@@ -273,7 +269,7 @@ func kepubReadDeclaredPackage(ctx context.Context, zr *zip.Reader) (kepubPackage
 			if requireStandardMediaType && !standardMediaType {
 				continue
 			}
-			opfPath := cleanEPUBHref("", rootfile.FullPath)
+			opfPath := packageResourcePath("", rootfile.FullPath)
 			if opfPath == "" || seen[opfPath] {
 				continue
 			}
@@ -378,7 +374,7 @@ func kepubContentDocuments(opfPath string, opfBytes []byte) ([]string, error) {
 		if !isEPUBContentDocument(item) {
 			continue
 		}
-		name := cleanEPUBHref(opfPath, item.Href)
+		name := packageResourcePath(opfPath, item.Href)
 		if name == "" || seen[name] {
 			continue
 		}
@@ -395,7 +391,7 @@ func kepubManifestPaths(opfPath string, opfBytes []byte) (map[string]bool, error
 	}
 	out := make(map[string]bool, len(doc.Manifest.Items))
 	for _, item := range doc.Manifest.Items {
-		if name := cleanEPUBHref(opfPath, item.Href); name != "" {
+		if name := packageResourcePath(opfPath, item.Href); name != "" {
 			out[name] = true
 		}
 	}
@@ -411,33 +407,37 @@ func parseKEPUBOPF(opfPath string, opfBytes []byte) (kepubOPFDoc, error) {
 }
 
 func transformKEPUBOPF(raw []byte) ([]byte, error) {
-	coverID := kepubCoverID(raw)
-	out := slices.Clone(raw)
-	matches := kepubOPFItemTagRe.FindAllIndex(raw, -1)
-	for _, match := range slices.Backward(matches) {
-		start, end := match[0], match[1]
-		tag := string(raw[start:end])
-		attrs := kepubXMLAttrs(tag)
-		mediaType := strings.ToLower(strings.TrimSpace(attrs["media-type"]))
-		if attrs["id"] != coverID || !strings.HasPrefix(mediaType, "image/") {
-			continue
+	coverID := "cover"
+	coverFound := false
+	var items []rebuildXMLNode
+	if !walkRebuildXML(raw, func(node rebuildXMLNode) {
+		if node.Name.Space != rebuildOPFNamespace && node.Name.Space != "" || node.Parent.Space != rebuildOPFNamespace && node.Parent.Space != "" {
+			return
 		}
-		next := kepubEnsureOPFProperty(tag, "cover-image")
-		out = append(out[:start], append([]byte(next), out[end:]...)...)
-	}
-	return out, nil
-}
-
-func kepubCoverID(raw []byte) string {
-	for _, tag := range kepubOPFMetaTagRe.FindAll(raw, -1) {
-		attrs := kepubXMLAttrs(string(tag))
-		if strings.EqualFold(strings.TrimSpace(attrs["name"]), "cover") {
-			if content := strings.TrimSpace(attrs["content"]); content != "" {
-				return content
+		if !coverFound && node.Name.Local == "meta" && node.Parent.Local == "metadata" && strings.EqualFold(strings.TrimSpace(rebuildXMLAttr(node.Attrs, "name")), "cover") {
+			if id := strings.TrimSpace(rebuildXMLAttr(node.Attrs, "content")); id != "" {
+				coverID = id
+				coverFound = true
 			}
 		}
+		if node.Name.Local == "item" && node.Parent.Local == "manifest" {
+			items = append(items, node)
+		}
+	}) {
+		return nil, fmt.Errorf("read EPUB OPF cover declaration")
 	}
-	return "cover"
+	var edits []rebuildXMLEdit
+	for _, item := range items {
+		if rebuildXMLAttr(item.Attrs, "id") != coverID || !strings.HasPrefix(strings.ToLower(strings.TrimSpace(rebuildXMLAttr(item.Attrs, "media-type"))), "image/") {
+			continue
+		}
+		tag := string(raw[item.Start:item.StartTagEnd])
+		if next := kepubEnsureOPFProperty(tag, "cover-image"); next != tag {
+			edits = append(edits, rebuildXMLEdit{item.Start, item.StartTagEnd, []byte(next)})
+		}
+	}
+	out, _ := applyRebuildXMLEdits(raw, edits)
+	return out, nil
 }
 
 func kepubEnsureOPFProperty(tag, property string) string {
@@ -486,20 +486,14 @@ func kepubXMLAttrs(tag string) map[string]string {
 }
 
 func kepubXMLAttrsWithLocations(tag string) []kepubXMLAttr {
-	matches := kepubXMLAttrRe.FindAllStringSubmatchIndex(tag, -1)
-	out := make([]kepubXMLAttr, 0, len(matches))
-	for _, match := range matches {
-		valueStart, valueEnd := match[6], match[7]
-		if valueStart < 0 {
-			valueStart, valueEnd = match[8], match[9]
-		}
+	spans := xmlutil.AttributeSpans(tag)
+	out := make([]kepubXMLAttr, 0, len(spans))
+	for _, span := range spans {
 		out = append(out, kepubXMLAttr{
-			Name:       tag[match[2]:match[3]],
-			NameStart:  match[2],
-			NameEnd:    match[3],
-			Value:      tag[valueStart:valueEnd],
-			ValueStart: valueStart,
-			ValueEnd:   valueEnd,
+			Name:      tag[span.NameStart:span.NameEnd],
+			NameStart: span.NameStart, NameEnd: span.NameEnd,
+			Value:      tag[span.ValueStart:span.ValueEnd],
+			ValueStart: span.ValueStart, ValueEnd: span.ValueEnd,
 		})
 	}
 	return out
@@ -521,7 +515,7 @@ func transformKEPUBContent(raw []byte) ([]byte, error) {
 // does this while collecting spans, avoiding a second XML pass.
 func RenderKEPUBContent(raw []byte) ([]byte, error) {
 	raw = xmlutil.StripXMLDeclaration(raw)
-	raw, err := xmlutil.PrepareXHTMLForHTML(raw)
+	raw, err := prepareEPUBXHTML(raw)
 	if err != nil {
 		return nil, err
 	}
@@ -535,15 +529,14 @@ func RenderKEPUBContent(raw []byte) ([]byte, error) {
 	// rendering. Structural problems that cannot produce coherent XHTML still
 	// fail XHTML validation by the caller.
 	sanitizeKEPUBXMLCompatibility(doc)
+	if err := declareHTMLNamespaces(doc, ""); err != nil {
+		return nil, err
+	}
 	// One generated anchor does not prove the rest of the document was marked.
 	// Refuse both partial and repeated conversion instead of creating mixed
 	// address semantics for Kobo progress and annotations.
 	if hasKEPUBSpanMarker(doc) {
 		return nil, fmt.Errorf("EPUB content document already contains Kobo span markup; refusing partial or repeated KEPUB conversion")
-	}
-	root := firstHTMLElement(doc, "html")
-	if root != nil && !hasKEPUBAttr(root, "xmlns") {
-		root.Attr = append(root.Attr, html.Attribute{Key: "xmlns", Val: "http://www.w3.org/1999/xhtml"})
 	}
 	normalizeKEPUBContentModels(doc)
 	head := firstHTMLElement(doc, "head")
