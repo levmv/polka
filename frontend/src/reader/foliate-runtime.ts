@@ -117,6 +117,9 @@ async function initFoliateReader(
         annotationAt: annotations.annotationAt,
         onSearchSelection: search.openWithQuery,
     });
+    // Restore in the requested flow. FB2 needs an initial scrolled mount;
+    // its saved preference is applied after init.
+    view.renderer?.setAttribute('flow', format === 'fb2' ? 'scrolled' : preferences.reader_flow);
     applyFoliateDisplay(view, preferences);
     await annotations.load();
     wireReaderControls(page, stage, view, {
@@ -129,11 +132,6 @@ async function initFoliateReader(
 
     const state = await statePromise;
     positionSaver.initialize(state);
-    // FB2 mounts its first document more reliably in scrolled flow. Apply the
-    // user's saved preference immediately after Foliate finishes init.
-    if (format === 'fb2') {
-        view.renderer?.setAttribute('flow', 'scrolled');
-    }
     const annotationID = Number(
         new URLSearchParams(window.location.hash.slice(1)).get('annotation'),
     );

@@ -70,8 +70,13 @@ export function foliateAnnotationSurface(view: FoliateViewElement): AnnotationSu
                 doc.addEventListener('pointerdown', handlers.leave, true);
             };
             view.addEventListener('load', (event) => {
-                if (!view.isFixedLayout) ranges.clear();
                 wireDocument((event as CustomEvent<FoliateLoadDetail>).detail.doc);
+            });
+            view.addEventListener('unload', (event) => {
+                const doc = (event as CustomEvent<FoliateLoadDetail>).detail.doc;
+                for (const [id, range] of ranges) {
+                    if (range.startContainer.ownerDocument === doc) ranges.delete(id);
+                }
             });
             for (const content of view.renderer?.getContents?.() ?? []) {
                 if (content.doc) wireDocument(content.doc);

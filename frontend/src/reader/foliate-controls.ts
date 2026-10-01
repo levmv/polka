@@ -276,18 +276,7 @@ function handleReaderKey(
 ): void {
     if (shouldIgnoreReaderShortcut(event)) return;
 
-    if (event.key === 'ArrowLeft') {
-        event.preventDefault();
-        options.onNavigate?.();
-        turnLeft(view).catch((e) => console.error('Failed to turn page:', e));
-        focusReaderSurface(page);
-    } else if (event.key === 'ArrowRight' || isSpaceKey(event)) {
-        event.preventDefault();
-        options.onNavigate?.();
-        const turn = event.shiftKey && isSpaceKey(event) ? turnLeft : turnRight;
-        turn(view).catch((e) => console.error('Failed to turn page:', e));
-        focusReaderSurface(page);
-    } else if (event.key === 'Escape') {
+    if (event.key === 'Escape') {
         event.preventDefault();
         if (page.classList.contains('reader-chrome-hidden')) {
             revealChrome(page, false);
@@ -295,7 +284,31 @@ function handleReaderKey(
             return;
         }
         closeReader(page, options.beforeClose);
+        return;
     }
+
+    let turn: () => Promise<void>;
+    if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+        if (view.renderer?.getAttribute('flow') !== 'scrolled') return;
+        if (event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) return;
+        // Let the browser handle smooth scrolling and held keys. When focus is
+        // outside the book, move it to the renderer before the default action.
+        if (event.view === window) view.renderer.focusView?.();
+        options.onNavigate?.();
+        return;
+    } else if (event.key === 'PageUp' || event.key === 'PageDown') {
+        if (event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) return;
+        turn = () => (event.key === 'PageUp' ? view.prev() : view.next());
+    } else if (event.key === 'ArrowLeft' || (isSpaceKey(event) && event.shiftKey)) {
+        turn = () => turnLeft(view);
+    } else if (event.key === 'ArrowRight' || isSpaceKey(event)) {
+        turn = () => turnRight(view);
+    } else return;
+
+    event.preventDefault();
+    options.onNavigate?.();
+    turn().catch((e) => console.error('Failed to turn page:', e));
+    focusReaderSurface(page);
 }
 
 function isSpaceKey(event: KeyboardEvent): boolean {

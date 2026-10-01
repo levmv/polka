@@ -105,7 +105,7 @@ export function wireReaderSelection(
     const refresh = (doc: Document, index?: number): void => {
         const selection = doc.getSelection();
         if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
-            clearToolbar();
+            if (active?.doc === doc) clearToolbar();
             return;
         }
         const text = selection.toString();
@@ -221,6 +221,13 @@ export function wireReaderSelection(
         );
         doc.addEventListener('selectionchange', () => {
             if (annotationActionsPending || (active?.annotation && active.doc === doc)) return;
+            const selected = doc.getSelection();
+            if (!selected || selected.isCollapsed) {
+                // Clearing the old document's selection must not cancel a
+                // pending refresh for a newly selected neighbouring document.
+                if (active?.doc === doc) clearToolbar();
+                return;
+            }
             if (!pointerDown) {
                 scheduleRefresh(doc, index);
                 return;

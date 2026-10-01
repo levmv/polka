@@ -156,15 +156,22 @@ export function epubWithVerticalWriting(title: string, author: string, name: str
 
 export function paginationEPUB({
   vertical = false,
+  rtl = false,
   importedStylesheet = 'imported.css',
+  chapterCount = 3,
 }: {
   vertical?: boolean;
+  rtl?: boolean;
   importedStylesheet?: string;
+  chapterCount?: number;
 } = {}): UploadFile {
-  const names = ['first', 'second', 'third'];
+  const names = Array.from(
+    { length: chapterCount },
+    (_, index) => ['first', 'second', 'third'][index] ?? `chapter-${index + 1}`,
+  );
   const chapters = names.map((name, index) => {
     const paragraphs = Array.from(
-      { length: [8, 15, 5][index] },
+      { length: [8, 15, 5][index % 3] },
       (_, n) =>
         `<p id="p${n}">${name} paragraph ${n + 1}. ${'A small synthetic book checks real screen turns, chapter boundaries, and changing text size. '.repeat(3)}</p>`,
     ).join('');
@@ -175,7 +182,7 @@ export function paginationEPUB({
       ),
     };
   });
-  const opf = `<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">pagination-${vertical}</dc:identifier><dc:title>Screen pagination</dc:title><dc:language>en</dc:language></metadata><manifest>${names.map((name) => `<item id="${name}" href="${name}.xhtml" media-type="application/xhtml+xml"${name === 'second' ? ' media-overlay="overlay"' : ''}/>`).join('')}<item id="css" href="shared.css" media-type="text/css"/><item id="imported-css" href="imported.css" media-type="text/css"/><item id="nested-css" href="nested.css" media-type="text/css"/><item id="font" href="font.woff2" media-type="font/woff2"/><item id="image" href="illustration.svg" media-type="image/svg+xml"/><item id="last-image" href="last.svg" media-type="image/svg+xml"/><item id="overlay" href="overlay.smil" media-type="application/smil+xml"/></manifest><spine>${names.map((name) => `<itemref idref="${name}"/>`).join('')}</spine></package>`;
+  const opf = `<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">pagination-${vertical}</dc:identifier><dc:title>Screen pagination</dc:title><dc:language>en</dc:language></metadata><manifest>${names.map((name) => `<item id="${name}" href="${name}.xhtml" media-type="application/xhtml+xml"${name === 'second' ? ' media-overlay="overlay"' : ''}/>`).join('')}<item id="css" href="shared.css" media-type="text/css"/><item id="imported-css" href="imported.css" media-type="text/css"/><item id="nested-css" href="nested.css" media-type="text/css"/><item id="font" href="font.woff2" media-type="font/woff2"/><item id="image" href="illustration.svg" media-type="image/svg+xml"/><item id="last-image" href="last.svg" media-type="image/svg+xml"/><item id="overlay" href="overlay.smil" media-type="application/smil+xml"/></manifest><spine page-progression-direction="${rtl ? 'rtl' : 'ltr'}">${names.map((name) => `<itemref idref="${name}"/>`).join('')}</spine></package>`;
   return {
     name: 'pagination.epub',
     mimeType: 'application/epub+zip',

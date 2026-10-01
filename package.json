@@ -24,7 +24,7 @@
     "typescript": "^7.0.2"
   },
   "dependencies": {
-    "foliate-js": "github:levmv/foliate-js#4dba3ff850ff7cbb8d7e4472769410785f219c6f",
+    "foliate-js": "github:levmv/foliate-js#83efc18471be41cc129dbc63ff5a13e20a8009af",
     "pdfjs-dist": "6.3.289"
   }
 }

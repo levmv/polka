@@ -97,6 +97,8 @@ export interface FoliateRendererElement extends HTMLElement {
     pages?: number;
     setStyles?: (styles: string | [string, string]) => void;
     getContents?: () => Array<{ doc?: Document; index?: number }>;
+    getCurrentContent?: () => { doc?: Document; index?: number } | undefined;
+    focusView?: () => void;
 }
 
 export interface FoliateViewElement extends HTMLElement {
@@ -165,7 +167,7 @@ export function foliatePagePosition(
             return { index, current: index + 1, total: view.book?.sections?.length ?? 0 };
         }
     } else {
-        const index = renderer.getContents?.()[0]?.index;
+        const index = renderer.index;
         const pages = renderer.pages;
         if (index !== undefined && pages !== undefined && Number.isFinite(pages) && pages >= 2) {
             // Foliate adds a sentinel screen before and after each section.
@@ -494,7 +496,11 @@ export function wireFoliateDocumentStyling(page: HTMLElement, view: FoliateViewE
         const sectionID = view.book?.sections?.[detail.index ?? -1]?.id;
         fitFoliateCoverDocument(detail.doc, String(sectionID ?? ''), detail.index);
         setFoliateDocumentJustification(detail.doc, page.dataset.readerStyle !== 'original');
-        syncFoliateWritingMode(view, detail.doc);
+    });
+    view.addEventListener('relocate', () => {
+        const doc =
+            view.renderer?.getCurrentContent?.()?.doc ?? view.renderer?.getContents?.()[0]?.doc;
+        if (doc) syncFoliateWritingMode(view, doc);
     });
 }
 

@@ -71,9 +71,11 @@ export function wireFoliatePosition(
             locator: foliateLocation(page, view, detail.cfi, detail.range),
         });
         window.clearTimeout(saveTimer);
+        const observedNavigation = navigation;
         saveTimer = window.setTimeout(() => {
             saveTimer = undefined;
-            userNavigationSeen = false;
+            // A newer native scroll may still be animating before its relocate.
+            if (navigation === observedNavigation) userNavigationSeen = false;
             void positionSaver.flush();
         }, 700);
     };
